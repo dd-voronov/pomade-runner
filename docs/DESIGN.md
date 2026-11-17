@@ -18,8 +18,8 @@ workspace-level app: one list of every job, filterable to the current project.
 | Part | What it does | Lifecycle |
 |---|---|---|
 | **UI** | the Runner side panel and the Runner tab, in Pomade (`pomade-app://pomade-runner/`) | hidden-not-unmounted, like every pane |
-| **Keeper** | owns every service's and run's terminal session (PTY); serves the attach protocol Pomade tabs use; reports exits | always-on login item; tiny and rarely updated; a keeper update asks the user before restarting services |
-| **Scheduler** | loads job files; evaluates triggers; applies missed-run, queue and load policies; starts runs through the keeper; writes history; posts notices; publishes events; serves Runner's API | started by the keeper; updated freely; reattaches to running sessions on restart |
+| **Scheduler** | the always-on backend: loads job files; evaluates triggers; applies missed-run, queue and load policies; starts the keeper and starts runs through it as its owner; writes history; posts notices; publishes events; serves Runner's API | a login item (launchd) that keeps running when Pomade quits; updated and restarted freely; reconnects to the keeper and its running sessions on restart |
+| **Keeper** | `pomade-kit/keeper`, run as Runner's own detached process: holds every service's and run's terminal session (PTY); serves the attach protocol Pomade tabs use; reports exits | started by the scheduler (`startKeeper`); does not notice a scheduler restart or update; a keeper update hands the open PTYs to the new keeper process, so sessions keep running |
 | **`pomade-runner` command** | `check [file…]` validates job files · `run <job>` starts a run now · `list` prints jobs with their next run and last result | on `PATH` via `~/.pomade/bin`; talks to the scheduler directly, so it works with Pomade closed |
 | **Skill** | `skill/pomade-runner-jobs/SKILL.md` teaches agents the job format and location | master in this repo; install links it into agents' skill folders |
 
@@ -138,11 +138,24 @@ and goes to Needs you.
   environment (same PATH and keys as Daniil's terminals).
 - Low-priority runs start with macOS background priority (`taskpolicy -b`).
 
+**Sessions.** The scheduler owns the keeper's sessions (`connectKeeper` from `pomade-kit/node`, as
+the owner, with the app's key):
+- **Ids** are Runner's choice (a service: e.g. `svc:coda-web`).
+- **Restart** stops the session and spawns the same id; attached tabs follow the new session.
+- **Exit reasons** the keeper reports: `exited` · `crashed` · `stopped` (by Runner) ·
+  `stopped-by-you` · `time-limit` · `lost-in-keeper-crash`.
+- **Output.** The keeper keeps ~1,000 lines of scrollback per session. The full history is the
+  per-run output log, which the keeper appends to at the path Runner gives at spawn.
+
 **Attached tabs.** Any session opens as a Pomade terminal tab attached to the keeper
-(`pomade:E-034`):
+(`pomade:E-034`), with `tabs.openAttached({ session: { app: "pomade-runner", session } })`. Pomade
+attaches at the keeper's socket directly and never calls Runner to do it:
 - the tab shows earlier and live output and takes input;
 - closing the tab only detaches;
-- Ctrl+C typed through a tab, or Stop, ends the process as **stopped by you**.
+- Ctrl+C typed through a tab followed by an exit within 5 s, or the tab's Stop, ends the process as
+  **stopped by you**;
+- header actions (Restart) are set by Runner per session; a click arrives as the platform event
+  `attachedTab.action`, delivered to Runner only.
 
 **Services:**
 - Start at login one by one, each given until it is "up" (alive after 5 s, or its `ready` check)
@@ -160,10 +173,15 @@ and goes to Needs you.
 - **Finish:** when the agent's turn completes and it sits idle with no pending prompt, Runner ends
   the session cleanly → `done`.
 
-**Git runs** call `pomade-git` and record its structured result:
+**Git runs** call `pomade-git <operation> <repo…> --json --job "<job name>"` and record its
+structured result, a `GitRunOutput` (type and check `isGitRunOutput` from `pomade-kit/protocol`)
+with one `GitRunResult` per repo:
 - done / skipped / failed + reason
 - the steps
 - the commit hash
+
+The command decides the "agent working" skip and appends every run to Pomade's git run log, which
+the Git panel's failure mark reads. It posts no notice: Runner notifies about a failed run.
 
 **Result card.** One per run: job · time · duration · result. Kind-specific content:
 
@@ -242,14 +260,18 @@ example. This is a product requirement, not polish.
 |---|---|
 | Job files | `<workspace>/Apps/pomade-runner/jobs/` (synced with the workspace) |
 | Workspace settings (max heavy runs 2, warm-up 2 min, long-run warning 3h, retention 30 days) | `<workspace>/Apps/pomade-runner/settings.yaml` |
-| Run history, captured output (30 days), keeper state, switch position, last-alive record, logs | `<userData>/app-state/pomade-runner/` (machine-local) |
-| Installed build (keeper login item path) | `<userData>/apps/pomade-runner/` |
+| Run history, captured output (30 days), keeper state (`keeper/`), switch position, last-alive record | `<userData>/app-state/pomade-runner/` (machine-local) |
+| Scheduler log (its stdout and stderr) | `<userData>/app-logs/pomade-runner/backend.log` |
+| Keeper socket (`POMADE_KEEPER_SOCKET`) | `<userData>/run/keepers/pomade-runner.sock` |
+| Installed build (the scheduler's login item path) | `<userData>/apps/pomade-runner/` |
 
 ## Interfaces
 
 **Runner offers:**
-- **"Jobs that target repo X"** through the broker: name, operation, schedule in words, next run,
-  last result, open-in-Runner link. Pomade's git repo row reads it (PLATFORM rule 7).
+- **`jobs.forRepo`** through the broker: the jobs that target a repo. Params `RepoJobsParams`, result
+  `RepoJobsResult` with `RepoJob`s (id, name, operation, schedule in words, next run, last result,
+  and `route`, Runner's tab route that opens the job) — the contract is in `pomade-kit/protocol`.
+  Pomade's git repo row reads it (PLATFORM rule 7).
 - **Events** on the platform bus: **run started**, **run finished**.
   - Payload: job name, run id, kind, folder, project id, and on run finished the result.
   - For agent runs, also the session id, the agent and the started-by-Runner flag.
@@ -268,9 +290,9 @@ example. This is a product requirement, not polish.
 | Platform (`pomade:E-031`) | events |
 | Platform (`pomade:E-032`) | notices and the closed-Pomade queue |
 | Platform (`pomade:E-033`) | Open session |
-| Platform (`pomade:E-034`) | attached terminals |
+| Platform (`pomade:E-034`) | attached terminals: the pane, `tabs.openAttached`, `attachedTab.action` |
 | `pomade-git` (`pomade:E-042`) | git operations, structured results |
-| `pomade-kit` | SDK, schedule format, date phrases, agent scanners |
+| `pomade-kit` | SDK, schedule format, date phrases, agent scanners, the keeper library and attach protocol, the git runs contract |
 | `pomade-agents` | agents + modes + launch specs, projects ↔ agents, last message, session lookup, events B and C |
 
 ## Stack
