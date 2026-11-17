@@ -231,6 +231,9 @@ describe("one file's problems: each names its line, its field and the fix", () =
     ["git with a repo twice", file("kind: git\nname: G\ngit:\n  operation: pull\n  repos:\n    - K\n    - K\nhook: { event: login }"), { line: 8, field: "git.repos[1]", problem: "K is listed twice" }],
     ["git with a bad repo", file("kind: git\nname: G\ngit: { operation: pull, repos: [K, 3] }\nhook: { event: login }"), { field: "git.repos[1]", problem: "3 is not a repo name" }],
     ["git with an unknown key", file("kind: git\nname: G\ngit: { operation: pull, repos: [K], branch: main }\nhook: { event: login }"), { field: "git.branch", problem: "git does not take branch" }],
+    ["git with a repo pomade-git would read as an option", file("kind: git\nname: G\ngit: { operation: pull, repos: [K, --force] }\nhook: { event: login }"), { field: "git.repos[1]", problem: '"--force" starts with -, which pomade-git reads as an option' }],
+    ["git with one repo pomade-git would read as an option", file("kind: git\nname: G\ngit: { operation: pull, repos: -x }\nhook: { event: login }"), { field: "git.repos", problem: '"-x" starts with -, which pomade-git reads as an option' }],
+    ["a git job's name longer than its commits take", file(`kind: git\nname: ${"n".repeat(101)}\ngit: { operation: pull, repos: [K] }\nhook: { event: login }`), { line: 3, field: "name", problem: "a git job's name is at most 100 characters — its commits name the job — and this one has 101" }],
   ];
 
   for (const [what, text, expected] of cases) {

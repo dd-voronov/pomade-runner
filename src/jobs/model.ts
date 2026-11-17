@@ -1,6 +1,7 @@
 // The job model: what a job file says once it is read and checked (docs/DESIGN.md "Job files").
 // Plain JSON throughout, so the scheduler serves it to the UI unchanged. Pure: no I/O.
 
+import { GIT_RUN_OPS, type GitRunOp } from "pomade-kit/protocol";
 import type { Schedule } from "pomade-kit/schedule";
 
 /** Where job files live, workspace-relative. */
@@ -27,8 +28,9 @@ export type MissedPolicy = (typeof MISSED_POLICIES)[number];
 export const OVERLAP_POLICIES = ["skip", "parallel", "queue"] as const;
 export type OverlapPolicy = (typeof OVERLAP_POLICIES)[number];
 
-export const GIT_OPERATIONS = ["commit-push", "pull", "push", "fetch"] as const;
-export type GitOperation = (typeof GIT_OPERATIONS)[number];
+/** The operations a git job runs: `pomade-git`'s. */
+export const GIT_OPERATIONS = GIT_RUN_OPS;
+export type GitOperation = GitRunOp;
 
 export const HOOK_EVENTS = ["login", "pomade-started", "project-first-open", "project-created", "session-finished", "session-status"] as const;
 export type HookEvent = (typeof HOOK_EVENTS)[number];

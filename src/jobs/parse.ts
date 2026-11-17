@@ -21,6 +21,7 @@ import {
   SESSION_STATUSES,
   workspacePath,
   type Chain,
+  type GitOperation,
   type Hook,
   type HookFilter,
   type Job,
@@ -64,6 +65,10 @@ export const FIELD_KINDS: Readonly<Record<string, readonly JobKind[]>> = {
   overlap: RUN_KINDS,
   "time-limit": RUN_KINDS,
 };
+
+/** The longest name a git job takes: `pomade-git --job` words its commits with it, and refuses a
+ *  longer one. */
+export const GIT_JOB_NAME_MAX = 100;
 
 /** Defaults that depend on the kind. */
 export const KIND_DEFAULTS: Record<JobKind, { notify: Job["notify"]; lowPriority: boolean; missed: RunPolicies["missed"] }> = {
@@ -428,7 +433,7 @@ function checkReadiness(c: FileCheck): Readiness {
   return { kind: "alive" };
 }
 
-function checkGit(c: FileCheck): { operation: (typeof GIT_OPERATIONS)[number]; repos: string[] } | null {
+function checkGit(c: FileCheck): { operation: GitOperation; repos: string[] } | null {
   const value = c.required("git", "{ operation: commit-push, repos: [Knowledge] }", "git");
   if (value === undefined) return null;
   const fix = "write git: { operation: commit-push, repos: [Knowledge] }";
@@ -437,7 +442,7 @@ function checkGit(c: FileCheck): { operation: (typeof GIT_OPERATIONS)[number]; r
     return null;
   }
   c.keys(["git"], value, ["operation", "repos"], "git");
-  let operation: (typeof GIT_OPERATIONS)[number] | null = null;
+  let operation: GitOperation | null = null;
   if (value.operation === undefined || value.operation === null) c.add(["git"], "names no operation", `add one: ${listWords(GIT_OPERATIONS)}`);
   else operation = c.oneOf(["git", "operation"], value.operation, GIT_OPERATIONS);
   const repos: string[] = [];
@@ -446,11 +451,13 @@ function checkGit(c: FileCheck): { operation: (typeof GIT_OPERATIONS)[number]; r
   if (raw === undefined || raw === null || (Array.isArray(raw) && raw.length === 0)) {
     c.add(raw === undefined || raw === null ? ["git"] : ["git", "repos"], "names no repos", reposFix);
   } else if (!Array.isArray(raw)) {
-    if (typeof raw === "string" && raw.trim() !== "") repos.push(raw.trim());
+    if (typeof raw === "string" && raw.trim().startsWith("-")) c.add(["git", "repos"], `${show(raw.trim())} starts with -, which pomade-git reads as an option`, reposFix);
+    else if (typeof raw === "string" && raw.trim() !== "") repos.push(raw.trim());
     else c.add(["git", "repos"], `${show(raw)} is not a list of repos`, reposFix);
   } else {
     raw.forEach((repo: unknown, i) => {
       if (typeof repo !== "string" || repo.trim() === "") c.add(["git", "repos", i], `${show(repo)} is not a repo name`, reposFix);
+      else if (repo.trim().startsWith("-")) c.add(["git", "repos", i], `${show(repo.trim())} starts with -, which pomade-git reads as an option`, reposFix);
       else if (repos.includes(repo.trim())) c.add(["git", "repos", i], `${repo.trim()} is listed twice`, "list each repo once");
       else repos.push(repo.trim());
     });
@@ -618,6 +625,9 @@ export function parseJobFile(input: JobFileInput): ParsedJobFile {
       const agent = checkAgent(c);
       if (folder !== null && agent !== null && trigger !== "invalid") job = { ...common, ...policies, kind, folder, ...agent, trigger };
     } else {
+      if (name !== null && name.length > GIT_JOB_NAME_MAX) {
+        c.add(["name"], `a git job's name is at most ${GIT_JOB_NAME_MAX} characters — its commits name the job — and this one has ${name.length}`, "shorten it");
+      }
       const git = checkGit(c);
       if (git !== null && trigger !== "invalid") job = { ...common, ...policies, kind, git, trigger };
     }
