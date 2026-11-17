@@ -12,7 +12,7 @@ import { checkJobs } from "../jobs/check";
 import type { Notify } from "../jobs/model";
 import type { ServicesReport, ServiceStatus } from "../keeper/model";
 import type { RunRecord } from "./model";
-import { createNeedsYou, fileNeedsYouStore, gaveUpNotice, runNotice, type NeedsYou, type NeedsYouStore } from "./needs-you";
+import { createNeedsYou, fileNeedsYouStore, gaveUpNotice, loopNotice, runNotice, type NeedsYou, type NeedsYouStore } from "./needs-you";
 
 const T0 = Date.parse("2026-11-17T12:00:00.000Z");
 
@@ -25,8 +25,10 @@ function record(state: RunRecord["state"], extra: Partial<RunRecord> = {}): RunR
     folder: "",
     run: "20261117-120000-abcdef",
     trigger: "scheduled",
+    cause: null,
     dueAt: T0,
     state,
+    action: null,
     reason: state === "skipped" ? "previous run still going" : null,
     startedAt: state === "skipped" ? null : T0,
     endedAt: T0 + 12_000,
@@ -70,6 +72,20 @@ describe("runNotice", () => {
     expect(runNotice(record("failed", { startedAt: null, durationMs: null }), "always")).toMatchObject({ title: "Backup failed" });
     expect(runNotice(record("skipped"), "always")).toBeNull();
     for (const state of ["done", "failed", "skipped", "stopped-by-you"] as const) expect(runNotice(record(state), "never")).toBeNull();
+  });
+
+  it("a chain's action on a service: failed is noticed with its reason; done only with always", () => {
+    const action = (state: RunRecord["state"], reason: string | null = null): RunRecord =>
+      record(state, { kind: "service", job: "web", name: "Web", trigger: "chain", action: "restart", reason, startedAt: null, durationMs: null, exitCode: null, lastLines: [] });
+    const webRoute = "run/web/20261117-120000-abcdef";
+    expect(runNotice(action("failed", "no such folder"), "on-failure")).toEqual({ title: "Web: restart failed", body: "no such folder", action: { kind: "openApp", route: webRoute } });
+    expect(runNotice(action("done"), "on-failure")).toBeNull();
+    expect(runNotice(action("done"), "always")).toEqual({ title: "Web restarted", action: { kind: "openApp", route: webRoute } });
+    expect(runNotice(action("skipped", "it is not running"), "always")).toBeNull();
+  });
+
+  it("a loop-guard pause opens Runner", () => {
+    expect(loopNotice("Lint")).toEqual({ title: "Lint paused: triggered 10× in 10 min — looks like a loop", body: expect.stringContaining("Resume") as string, action: { kind: "openApp", route: "" } });
   });
 
   it("a service that gave up opens Runner", () => {

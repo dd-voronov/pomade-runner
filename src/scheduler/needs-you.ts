@@ -8,8 +8,8 @@
 //   the run's result or dismisses it, when a run of the job is done, or when the job's file is gone.
 // - **A service that gave up** after a crash loop is an item while it stays `failed` (Start, a fixed
 //   or disabled file, or its removal end it), and is noticed once — Needs-you items always notify.
-// - Missed runs that wait for the person and long-run warnings are runs' items (`runs.ts`), noticed
-//   with `missedNotice` and `longRunNotice`.
+// - Missed runs that wait for the person, long-run warnings and the jobs the loop guard paused are
+//   runs' items (`runs.ts`), noticed with `missedNotice`, `longRunNotice` and `loopNotice`.
 //
 // The items live in `needs-you.json` in Runner's state folder, with the giving-ups already noticed,
 // so a restarted scheduler neither forgets an item nor notices one twice.
@@ -23,7 +23,8 @@ import { runRoute } from "../integrations/runner-api";
 import { entryId, type JobsSnapshot, type Notify } from "../jobs/model";
 import type { ServicesReport, ServiceStatus } from "../keeper/model";
 import type { Log } from "./log";
-import { dayTime, durationWords, failureWords, type ActiveRun, type NeedsYouItem, type RunRecord } from "./model";
+import { FIRING_LIMIT, FIRING_WINDOW_MS } from "./loop-guard";
+import { ACTION_DONE_WORDS, dayTime, durationWords, failureWords, type ActiveRun, type NeedsYouItem, type RunRecord } from "./model";
 
 /** A failed-run item as it is kept. */
 interface Failure {
@@ -113,6 +114,10 @@ export function runNotice(record: RunRecord, notify: Notify): NoticeParams | nul
   if (record.state !== "failed" && notify !== "always") return null;
   const action = { kind: "openApp" as const, route: runRoute(record.job, record.run) };
   const took = record.durationMs === null ? null : `took ${durationWords(record.durationMs)}`;
+  if (record.action !== null) {
+    // A chain's action on a service: done (noticed with `always`) or failed.
+    return record.state === "failed" ? { title: `${record.name}: ${record.action} failed`, body: failureWords(record), action } : { title: `${record.name} ${ACTION_DONE_WORDS[record.action]}`, action };
+  }
   switch (record.state) {
     case "failed": {
       const line = [...record.lastLines].reverse().find((text) => text.trim() !== "")?.trim();
@@ -141,6 +146,15 @@ export function longRunNotice(run: ActiveRun, ranMs: number): NoticeParams {
     title: `${run.name} has been running ${durationWords(ranMs)} — still expected?`,
     body: "It keeps running: Runner never stops a run for running long. Open it, or Stop it.",
     action: { kind: "openApp", route: runRoute(run.job, run.run) },
+  };
+}
+
+/** The notice for a job the loop guard paused. */
+export function loopNotice(name: string): NoticeParams {
+  return {
+    title: `${name} paused: triggered ${FIRING_LIMIT}× in ${FIRING_WINDOW_MS / 60_000} min — looks like a loop`,
+    body: "Hooks and chains no longer start it. Resume it in Runner once the loop is fixed.",
+    action: { kind: "openApp", route: "" },
   };
 }
 

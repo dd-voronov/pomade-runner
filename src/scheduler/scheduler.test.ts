@@ -19,6 +19,7 @@ import {
   JOBS_CHANGED_EVENT,
   JOBS_LIST_METHOD,
   MISSED_METHOD,
+  RESUME_METHOD,
   RUN_FINISHED_EVENT,
   RUN_GET_METHOD,
   RUN_NOW_METHOD,
@@ -355,7 +356,7 @@ describe("scheduler and the job files", () => {
   let link: PomadeLinkHandlers | null;
   let sessions: StubSessions;
   const running: Scheduler[] = [];
-  const job = (name: string): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ./x.sh\nhook: { event: login }\n---\n`;
+  const job = (name: string): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ./x.sh\nhook: { event: project-created }\n---\n`;
 
   async function start(): Promise<Scheduler> {
     const result = await startScheduler({
@@ -637,14 +638,14 @@ describe("scheduler and runs", () => {
   });
 
   it("Enable and Disable write the job's file, field-only, through Pomade and the control socket", async () => {
-    const text = "---\nkind: script\nname: Note\nfolder: .\ncommand: ./x.sh   # keep me\nhook: { event: login }\n---\nBody stays.\n";
+    const text = "---\nkind: script\nname: Note\nfolder: .\ncommand: ./x.sh   # keep me\nhook: { event: project-created }\n---\nBody stays.\n";
     await writeFile(join(jobs, "note.md"), text);
     await start();
     await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", RUNS_LIST_METHOD)).toBeTruthy());
     expect(await ui.apps.call("pomade-runner", SET_ENABLED_METHOD, { job: "Note", enabled: false })).toEqual({ ok: true, job: "note", enabled: false });
-    expect(await readFile(join(jobs, "note.md"), "utf8")).toBe(text.replace("login }\n", "login }\nenabled: false\n"));
+    expect(await readFile(join(jobs, "note.md"), "utf8")).toBe(text.replace("created }\n", "created }\nenabled: false\n"));
     expect(await callScheduler(socketPath(), "enable", { job: "note" })).toEqual({ status: "ok", value: { job: "note", name: "Note", enabled: true } });
-    expect(await readFile(join(jobs, "note.md"), "utf8")).toBe(text.replace("login }\n", "login }\nenabled: true\n"));
+    expect(await readFile(join(jobs, "note.md"), "utf8")).toBe(text.replace("created }\n", "created }\nenabled: true\n"));
     expect(await callScheduler(socketPath(), "disable", { job: "nope" })).toEqual({ status: "failed", code: "refused", message: 'cannot disable "nope": no job "nope"' });
     expect(lines).toContain("job note: disabled");
   });
@@ -712,6 +713,35 @@ describe("scheduler and runs", () => {
     // An edit by hand applies within a tick.
     await writeFile(join(dir, "ws/Apps/pomade-runner/settings.yaml"), "history-days: 7\n");
     await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", SETTINGS_GET_METHOD)).toMatchObject({ settings: { maxLowPriorityRuns: 2, historyDays: 7 } }));
+  });
+
+  it("a run's end fires its chains: a service restarts through the supervisor and History says so; a runaway chain is paused, noticed and badged, and Resume answers through Pomade and the control socket", async () => {
+    await writeFile(join(jobs, "web.md"), "---\nkind: service\nname: Web\nfolder: .\ncommand: ./web.sh\nafter: { job: backup }\n---\n");
+    await writeFile(join(jobs, "after.md"), "---\nkind: script\nname: After\nfolder: .\ncommand: ./after.sh\nafter: { job: backup }\noverlap: parallel\nlow-priority: false\n---\n");
+    await start();
+    await vi.waitFor(() => expect(sessions.spawned.map((spawn) => spawn.job)).toContain("web"));
+    const backups = (): RunnerSession[] => sessions.list().filter((session) => session.job === "backup");
+    for (let i = 1; i <= 11; i++) {
+      expect(await ui.apps.call("pomade-runner", RUN_NOW_METHOD, { job: "backup" })).toMatchObject({ ok: true, run: { state: "running" } });
+      const run = backups().at(-1);
+      sessions.exit(run?.id ?? "", 0);
+      await vi.waitFor(() => expect(backups()).toHaveLength(0));
+    }
+    await vi.waitFor(() => expect(sessions.spawned.filter((spawn) => spawn.job === "after")).toHaveLength(10));
+    expect(sessions.spawned.find((spawn) => spawn.job === "after")?.command.env).toMatchObject({ POMADE_TRIGGER: "chain", POMADE_PARENT_JOB: "backup", POMADE_PARENT_RESULT: "done" });
+    expect(sessions.restarted.map((restart) => restart.job)).toHaveLength(10);
+    await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", HISTORY_LIST_METHOD, { job: "web", limit: 20 })).toMatchObject({ records: Array<unknown>(10).fill(expect.objectContaining({ kind: "service", trigger: "chain", action: "restart", state: "done", cause: expect.objectContaining({ job: "backup", name: "Backup" }) as unknown })) }));
+    expect(lines).toContain("service web: Restart — chain: after Backup");
+
+    const paused = { id: "loop-paused:after", kind: "loop-paused", job: "after", name: "After" };
+    await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", RUNS_LIST_METHOD)).toMatchObject({ needsYou: expect.arrayContaining([expect.objectContaining(paused)]) as unknown }));
+    await vi.waitFor(() => expect(fake.notices).toContainEqual(expect.objectContaining({ title: "After paused: triggered 10× in 10 min — looks like a loop" })));
+    await vi.waitFor(() => expect(fake.badges.runner?.count).toBeGreaterThanOrEqual(2));
+    expect(await ui.apps.call("pomade-runner", DISMISS_METHOD, { id: "loop-paused:after" })).toEqual({ resolved: false });
+    expect(await callScheduler(socketPath(), "resumeJob", { job: "After" })).toMatchObject({ status: "ok", value: { job: "after", name: "After" } });
+    expect(await callScheduler(socketPath(), "resumeJob", { job: "after" })).toMatchObject({ status: "failed", code: "refused", message: 'cannot resume "after": "after" is not paused' });
+    expect(await ui.apps.call("pomade-runner", RESUME_METHOD, { job: "after" })).toEqual({ ok: false, reason: '"after" is not paused' });
+    await expect(ui.apps.call("pomade-runner", RESUME_METHOD, {})).rejects.toMatchObject({ code: "invalid-params" });
   });
 
   it("answers a missed run's choice, Stop and a long-run warning's Dismiss through Pomade, and refuses bad params", async () => {

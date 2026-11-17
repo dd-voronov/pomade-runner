@@ -99,7 +99,7 @@ export class FakeSessions implements Sessions {
 /** Records kept in memory, as `runs.json` keeps them. */
 export function memoryStore(): RunsStore & { saved: RunsRecords } {
   const store = {
-    saved: { active: [], last: {}, lookedAt: null, held: {} } as RunsRecords,
+    saved: { active: [], last: {}, lookedAt: null, held: {}, guard: { fired: {}, paused: {} } } as RunsRecords,
     load: () => Promise.resolve(structuredClone(store.saved)),
     save(records: RunsRecords) {
       store.saved = structuredClone(records);

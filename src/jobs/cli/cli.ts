@@ -6,7 +6,7 @@ import { APP_VERSION } from "../../app";
 import { exitWords, type KeeperLink, type RunnerSession, type ServiceStatus } from "../../keeper/model";
 import type { ControlCallResult } from "../../scheduler/control/client";
 import type { ControlMethod, ControlMethods, ControlParams } from "../../scheduler/control/protocol";
-import { dayTime, durationWords, runWords, SWITCH_WORDS, type ActiveRun, type JobListing, type NeedsYouItem, type RunRecord, type SwitchPosition, type SwitchState } from "../../scheduler/model";
+import { dayTime, durationWords, runTriggerWords, runWords, SWITCH_WORDS, type ActiveRun, type JobListing, type NeedsYouItem, type RunRecord, type SwitchPosition, type SwitchState } from "../../scheduler/model";
 import { checkSettings, SETTINGS_PATH } from "../../scheduler/settings";
 import { checkJobs, projectJobsFolder } from "../check";
 import { formatJobError } from "../format";
@@ -62,6 +62,7 @@ Usage:
   ${COMMAND} pause [low|all]      hold scheduled runs: of low-priority jobs, or all (the default);
                                  Run now still runs, services keep running
   ${COMMAND} resume               let held runs go: the late ones follow their missed-run policy
+  ${COMMAND} resume-job <job>     let hooks and chains fire a job the loop guard paused again
   ${COMMAND} enable <job>         write enabled: true into a job's file
   ${COMMAND} disable <job>        write enabled: false into a job's file; a running service stops
   ${COMMAND} services             every service: its state, restarts and last crash
@@ -289,7 +290,7 @@ async function history(job: string | null, deps: CliDeps): Promise<number> {
   const { records } = answer.value;
   if (records.length === 0) deps.out(job === null ? "No runs yet.\n" : `No runs of ${job} yet.\n`);
   for (const record of records) {
-    deps.out(`${record.job}  ${record.name}  ${record.trigger}  ${runLine(record)}${record.log === null ? "" : `  output ${record.log}`}\n`);
+    deps.out(`${record.job}  ${record.name}  ${runTriggerWords(record)}  ${runLine(record)}${record.log === null ? "" : `  output ${record.log}`}\n`);
   }
   return EXIT_OK;
 }
@@ -311,6 +312,8 @@ function needsYouLine(item: NeedsYouItem): string {
       return `needs you: ${item.name} — ${item.detail}; it waits for you: Run now, Run at… or Skip in Runner`;
     case "long-run":
       return `needs you: ${item.name} — ${item.detail}`;
+    case "loop-paused":
+      return `needs you: ${item.name} — paused: ${item.detail}; ${COMMAND} resume-job ${item.job} lets hooks and chains fire it again`;
   }
 }
 
@@ -355,6 +358,7 @@ const JOB_COMMANDS = {
   restart: { holds: "supervises the services", target: "service" },
   enable: { holds: "holds the jobs", target: "job" },
   disable: { holds: "holds the jobs", target: "job" },
+  "resume-job": { holds: "runs the jobs", target: "job" },
 } as const;
 type JobCommand = keyof typeof JOB_COMMANDS;
 
@@ -365,6 +369,10 @@ async function jobCommand(name: JobCommand, job: string, deps: CliDeps): Promise
     const answer = answerOf(await deps.ask("run", { job }), holds);
     if (!answer.ok) return refused(name, answer.why, deps);
     line = startedLine(answer.value);
+  } else if (name === "resume-job") {
+    const answer = answerOf(await deps.ask("resumeJob", { job }), holds);
+    if (!answer.ok) return refused(name, answer.why, deps);
+    line = `${answer.value.job}  ${answer.value.name}  resumed: hooks and chains fire it again`;
   } else if (name === "enable" || name === "disable") {
     const answer = answerOf(await deps.ask(name, { job }), holds);
     if (!answer.ok) return refused(name, answer.why, deps);
@@ -397,7 +405,8 @@ export async function runCli(args: readonly string[], deps: CliDeps): Promise<nu
     const [which, ...extra] = rest;
     const position: SwitchPosition | null = first === "resume" ? (which === undefined ? "running" : null) : which === undefined || which === "all" ? "pause-all" : which === "low" ? "pause-low" : null;
     if (position === null || extra.length > 0) {
-      deps.err(`${COMMAND} ${first}: unexpected "${extra[0] ?? which ?? ""}". Usage: ${first === "pause" ? `${COMMAND} pause [low|all]` : `${COMMAND} resume`}.\n`);
+      const usage = first === "pause" ? `${COMMAND} pause [low|all]` : `${COMMAND} resume — for a job the loop guard paused: ${COMMAND} resume-job <job>`;
+      deps.err(`${COMMAND} ${first}: unexpected "${extra[0] ?? which ?? ""}". Usage: ${usage}.\n`);
       return EXIT_USAGE;
     }
     return switchCommand(first, position, deps);

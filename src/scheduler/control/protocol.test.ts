@@ -41,7 +41,7 @@ describe("control protocol", () => {
     expect(PARAMS_PARSERS.status(null)).toBeNull();
     expect(PARAMS_PARSERS.sessions({})).toBeUndefined();
     expect(PARAMS_PARSERS.services(null)).toBeNull();
-    for (const method of ["run", "stop", "restart", "enable", "disable"] as const) {
+    for (const method of ["run", "stop", "restart", "enable", "disable", "resumeJob"] as const) {
       expect(PARAMS_PARSERS[method]({ job: "coda/web", extra: 1 })).toEqual({ job: "coda/web" });
       for (const bad of [null, {}, { job: "" }, { job: 3 }, "web"]) expect(PARAMS_PARSERS[method](bad)).toBeUndefined();
     }
@@ -63,13 +63,13 @@ describe("control protocol", () => {
   });
 
   it("checks the runs' answers' shapes", () => {
-    const base = { job: "backup", name: "Backup", kind: "script", project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled", dueAt: 1 };
+    const base = { job: "backup", name: "Backup", kind: "script", project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled", cause: null, dueAt: 1 };
     const going = { lowPriority: true, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false };
     const active = { ...base, ...going, state: "running", startedAt: 2, session: "run:backup:20261117-120000-abcdef", log: "/s/o.log" };
-    const record = { ...base, state: "failed", reason: null, startedAt: 2, endedAt: 3, durationMs: 1, exitCode: 1, signal: null, log: "/s/o.log", lastLines: ["boom"] };
+    const record = { ...base, state: "failed", action: null, reason: null, startedAt: 2, endedAt: 3, durationMs: 1, exitCode: 1, signal: null, log: "/s/o.log", lastLines: ["boom"] };
     expect(RESULT_GUARDS.run({ run: active })).toBe(true);
     expect(RESULT_GUARDS.run({ run: { ...active, state: "queued", startedAt: null, session: null, log: null } })).toBe(true);
-    for (const bad of [{}, { run: { ...active, state: "done" } }, { run: { ...active, trigger: "hook" } }, { run: { ...active, dueAt: null } }]) expect(RESULT_GUARDS.run(bad)).toBe(false);
+    for (const bad of [{}, { run: { ...active, state: "done" } }, { run: { ...active, trigger: "cron" } }, { run: { ...active, dueAt: null } }]) expect(RESULT_GUARDS.run(bad)).toBe(false);
     expect(RESULT_GUARDS.history({ records: [record, { ...record, state: "skipped", reason: "previous run still going", startedAt: null, durationMs: null, exitCode: null, log: null, lastLines: [] }], next: "2026-11-17:3" })).toBe(true);
     for (const bad of [{ records: [] }, { records: [{ ...record, lastLines: [1] }], next: null }, { records: [{ ...record, state: "queued" }], next: null }]) expect(RESULT_GUARDS.history(bad)).toBe(false);
     const listing = { job: "backup", name: "Backup", kind: "script", enabled: true, trigger: "daily at 13:00", problem: null, next: 5, finished: false, last: record, service: null };
@@ -77,6 +77,8 @@ describe("control protocol", () => {
     for (const bad of [{}, [{ ...listing, kind: "cron" }], [{ ...listing, last: {} }]]) expect(RESULT_GUARDS.list(bad)).toBe(false);
     expect(RESULT_GUARDS.enable({ job: "backup", name: "Backup", enabled: false })).toBe(true);
     expect(RESULT_GUARDS.disable({ job: "backup", enabled: false })).toBe(false);
+    expect(RESULT_GUARDS.resumeJob({ job: "backup", name: "Backup" })).toBe(true);
+    expect(RESULT_GUARDS.resumeJob({ job: "backup" })).toBe(false);
   });
 
   it("checks a sessions answer's shape", () => {

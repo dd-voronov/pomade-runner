@@ -61,6 +61,7 @@ describe("runs", () => {
       switchStore,
       post: (notice) => notices.push(notice),
       projectPath: (project) => (project === "p1" ? "/ws/Projects/one" : null),
+      serviceAction: () => Promise.reject(new Error("no services here")),
       onStarted: (run) => started.push(structuredClone(run)),
       onFinished: (record) => finished.push(record),
       onChange: () => changes++,
@@ -145,6 +146,7 @@ describe("runs", () => {
           name: "Backup",
           kind: "script",
           project: null,
+          cause: null,
           folder: "Projects/x",
           run: "20261118-120000-000001",
           trigger: "scheduled",
@@ -176,8 +178,10 @@ describe("runs", () => {
         folder: "Projects/x",
         run: "20261118-120000-000001",
         trigger: "scheduled",
+        cause: null,
         dueAt: Date.parse("2026-11-18T12:00:00.000Z"),
         state: "done",
+        action: null,
         reason: null,
         startedAt: Date.parse("2026-11-18T12:00:00.000Z"),
         endedAt: Date.parse("2026-11-18T12:00:02.500Z"),
@@ -192,7 +196,7 @@ describe("runs", () => {
       expect(runs.active()).toEqual([]);
       expect(sessions.forgotten).toEqual([id]);
       // The last look that fired something, written at once.
-      expect(store.saved).toEqual({ active: [], last: { backup: record }, lookedAt: Date.parse("2026-11-18T12:00:00.000Z"), held: {} });
+      expect(store.saved).toEqual({ active: [], last: { backup: record }, lookedAt: Date.parse("2026-11-18T12:00:00.000Z"), held: {}, guard: { fired: {}, paused: {} } });
       expect(lines).toContain("run backup 20261118-120000-000001: done — exit 0");
       // The next day, again.
       await minutes("2026-11-19T13:00:00");
@@ -249,11 +253,11 @@ describe("runs", () => {
       expect(sessions.spawned).toHaveLength(1);
     });
 
-    it("never fires a disabled job, an invalid one, a service, or a script on a hook", async () => {
+    it("never fires a disabled job, an invalid one, a service, or a script on a hook no event fired", async () => {
       files = {
         "off.md": script("Off", "schedule:\n  daily: { at: 13:00 }\nenabled: false\n"),
         "bad.md": script("Bad", "schedule:\n  daily: { at: 25:00 }\n"),
-        "hooked.md": script("Hooked", "hook: { event: login }\n"),
+        "hooked.md": script("Hooked", "hook: { event: project-created }\n"),
         "web.md": "---\nkind: service\nname: Web\nfolder: .\ncommand: ./web.sh\n---\n",
       };
       load();
@@ -487,20 +491,20 @@ describe("runs", () => {
 
     it("keeps its records in runs.json, and starts empty from a missing or broken file", async () => {
       const file = fileRunsStore(join(dir, "state"), (line) => lines.push(line));
-      expect(await file.load()).toEqual({ active: [], last: {}, lookedAt: null, held: {} });
-      store.saved = { active: [], last: {}, lookedAt: null, held: {} };
+      expect(await file.load()).toEqual({ active: [], last: {}, lookedAt: null, held: {}, guard: { fired: {}, paused: {} } });
+      store.saved = { active: [], last: {}, lookedAt: null, held: {}, guard: { fired: {}, paused: {} } };
       await at("2026-11-18T12:59:59");
       await at("2026-11-18T13:00:00");
       file.save(store.saved);
       await file.flush();
       expect(await file.load()).toEqual(store.saved);
       await writeFile(join(dir, "state/runs.json"), "{ not json");
-      expect(await file.load()).toEqual({ active: [], last: {}, lookedAt: null, held: {} });
+      expect(await file.load()).toEqual({ active: [], last: {}, lookedAt: null, held: {}, guard: { fired: {}, paused: {} } });
       expect(lines.at(-1)).toContain("is not readable JSON");
       await writeFile(join(dir, "state/runs.json"), JSON.stringify({ active: [{ job: 1 }], last: { a: { nope: true } }, lookedAt: "soon", held: { a: "x" } }));
-      expect(await file.load()).toEqual({ active: [], last: {}, lookedAt: null, held: {} });
+      expect(await file.load()).toEqual({ active: [], last: {}, lookedAt: null, held: {}, guard: { fired: {}, paused: {} } });
       // A run going as an older build kept it: what it lacks gets its default.
-      const { lowPriority: _priority, runAt: _at, deadline: _deadline, waits: _waits, limitHit: _limit, warnedAt: _warned, warningDismissed: _dismissed, ...older } = store.saved.active[0] ?? ({} as ActiveRun);
+      const { lowPriority: _priority, cause: _cause, runAt: _at, deadline: _deadline, waits: _waits, limitHit: _limit, warnedAt: _warned, warningDismissed: _dismissed, ...older } = store.saved.active[0] ?? ({} as ActiveRun);
       await writeFile(join(dir, "state/runs.json"), JSON.stringify({ active: [older], last: {} }));
       expect((await file.load()).active).toEqual(store.saved.active);
     });
@@ -513,17 +517,34 @@ describe("runs", () => {
     });
   });
 
-  it("gives a run its context in the environment: the job, run, trigger, and its project", () => {
-    files = { "one/web.md": "---\nkind: script\nname: Web\nproject: p1\nfolder: Projects/one\ncommand: ./x\nhook: { event: login }\n---\n" };
+  it("gives a run its context in the environment: the job, run, trigger, its project, a hook's context, a chain's parent", () => {
+    files = { "one/web.md": "---\nkind: script\nname: Web\nproject: p1\nfolder: Projects/one\ncommand: ./x\nhook: { event: project-created }\n---\n" };
     load();
     const entry = snapshot.jobs[0];
     if (entry?.valid !== true) throw new Error("invalid");
-    expect(runEnv(entry.job, "r1", "manual", "/ws/Projects/one")).toEqual({ POMADE_JOB: "one/web", POMADE_RUN_ID: "r1", POMADE_TRIGGER: "manual", POMADE_PROJECT: "p1", POMADE_PROJECT_PATH: "/ws/Projects/one" });
-    expect(runEnv(entry.job, "r1", "manual", null)).toEqual({ POMADE_JOB: "one/web", POMADE_RUN_ID: "r1", POMADE_TRIGGER: "manual", POMADE_PROJECT: "p1" });
+    expect(runEnv(entry.job, "r1", "manual", "/ws/Projects/one", null)).toEqual({ POMADE_JOB: "one/web", POMADE_RUN_ID: "r1", POMADE_TRIGGER: "manual", POMADE_PROJECT: "p1", POMADE_PROJECT_PATH: "/ws/Projects/one" });
+    expect(runEnv(entry.job, "r1", "manual", null, null)).toEqual({ POMADE_JOB: "one/web", POMADE_RUN_ID: "r1", POMADE_TRIGGER: "manual", POMADE_PROJECT: "p1" });
+    expect(runEnv(entry.job, "r1", "hook", null, { kind: "hook", event: "session-finished", context: { POMADE_SESSION_ID: "s1", POMADE_AGENT: "claude" } })).toEqual({
+      POMADE_JOB: "one/web",
+      POMADE_RUN_ID: "r1",
+      POMADE_TRIGGER: "hook",
+      POMADE_PROJECT: "p1",
+      POMADE_SESSION_ID: "s1",
+      POMADE_AGENT: "claude",
+    });
+    expect(runEnv(entry.job, "r1", "chain", null, { kind: "chain", job: "pull", name: "Pull", run: "r0", result: "failed" })).toEqual({
+      POMADE_JOB: "one/web",
+      POMADE_RUN_ID: "r1",
+      POMADE_TRIGGER: "chain",
+      POMADE_PROJECT: "p1",
+      POMADE_PARENT_JOB: "pull",
+      POMADE_PARENT_RUN_ID: "r0",
+      POMADE_PARENT_RESULT: "failed",
+    });
   });
 
   it("runs a project job with its project's path", async () => {
-    files = { "one/web.md": "---\nkind: script\nname: Web\nproject: p1\nfolder: Projects/one\ncommand: ./x\nhook: { event: login }\nlow-priority: false\n---\n" };
+    files = { "one/web.md": "---\nkind: script\nname: Web\nproject: p1\nfolder: Projects/one\ncommand: ./x\nhook: { event: project-created }\nlow-priority: false\n---\n" };
     load();
     await runs.runNow("web");
     expect(sessions.spawned[0]?.command).toMatchObject({ background: false, env: { POMADE_PROJECT: "p1", POMADE_PROJECT_PATH: "/ws/Projects/one" } });

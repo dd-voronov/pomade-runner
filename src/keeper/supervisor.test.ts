@@ -552,7 +552,7 @@ describe("service supervision", () => {
 
   describe("Start and Restart", () => {
     beforeEach(async () => {
-      files = { "web.md": service("Web"), "off.md": service("Off", "enabled: false\n"), "job.md": "---\nkind: script\nname: Job\nfolder: .\ncommand: ./j.sh\nhook: { event: login }\n---\n", "bad.md": "---\nkind: service\n---\n" };
+      files = { "web.md": service("Web"), "off.md": service("Off", "enabled: false\n"), "job.md": "---\nkind: script\nname: Job\nfolder: .\ncommand: ./j.sh\nhook: { event: project-created }\n---\n", "bad.md": "---\nkind: service\n---\n" };
       load();
       await at(0);
     });
@@ -597,6 +597,61 @@ describe("service supervision", () => {
       sessions.refuse = "the keeper is not connected (connecting)";
       expect(await supervisor.start("web")).toEqual({ ok: false, reason: "the keeper is not connected (connecting)" });
       expect(status("web")).toMatchObject({ state: "stopped-by-you", problem: "the keeper is not connected (connecting)" });
+    });
+  });
+
+  describe("a chain's action", () => {
+    const why = "chain: after Pull";
+
+    beforeEach(async () => {
+      files = { "web.md": service("Web"), "off.md": service("Off", "enabled: false\n"), "one/later.md": service("Later", "start: project-first-open\nproject: p1\n"), "bad.md": "---\nkind: service\n---\n" };
+      load();
+      await at(0);
+      await at(ALIVE_MS);
+    });
+
+    it("restart restarts a running service with its file as it is now", async () => {
+      files["web.md"] = service("Web").replace("./web.sh", "./web2.sh");
+      load();
+      expect(await supervisor.chainAction("web", "restart", why)).toEqual({ result: "done" });
+      expect(sessions.restarted).toEqual(["web"]);
+      expect(sessions.spawned.at(-1)?.command.command).toBe("./web2.sh");
+      expect(lines).toContain("service web: Restart — chain: after Pull");
+    });
+
+    it("restart skips a service that is not running — stopped by you, waiting — and leaves it as it is", async () => {
+      await supervisor.stop("web");
+      await at(ALIVE_MS + 1000);
+      expect(await supervisor.chainAction("web", "restart", why)).toEqual({ result: "skipped", reason: "it is not running" });
+      expect(await supervisor.chainAction("one/later", "restart", why)).toEqual({ result: "skipped", reason: "it is not running" });
+      expect(states()).toMatchObject({ web: "stopped-by-you", "one/later": "waiting" });
+      expect(sessions.restarted).toEqual([]);
+    });
+
+    it("start starts a service that is not running, clearing a hold as Start does; it skips a running one", async () => {
+      expect(await supervisor.chainAction("web", "start", why)).toEqual({ result: "skipped", reason: "it is running already" });
+      await supervisor.stop("web");
+      await at(ALIVE_MS + 1000);
+      expect(await supervisor.chainAction("web", "start", why)).toEqual({ result: "done" });
+      expect(await supervisor.chainAction("one/later", "start", why)).toEqual({ result: "done" });
+      expect(states()).toMatchObject({ web: "starting", "one/later": "starting" });
+    });
+
+    it("stop stops it as Stop does: it stays stopped until Start", async () => {
+      expect(await supervisor.chainAction("web", "stop", why)).toEqual({ result: "done" });
+      expect(sessions.stops).toEqual([{ id: "svc:web", reason: "stopped-by-you" }]);
+      await at(60_000);
+      expect(status("web").state).toBe("stopped-by-you");
+    });
+
+    it("skips a disabled, invalid, unknown or non-service job, and fails when the keeper refuses", async () => {
+      expect(await supervisor.chainAction("off", "restart", why)).toEqual({ result: "skipped", reason: "its job is disabled" });
+      expect(await supervisor.chainAction("bad", "start", why)).toMatchObject({ result: "skipped", reason: expect.stringContaining('the job "bad" is invalid') as string });
+      expect(await supervisor.chainAction("gone", "start", why)).toEqual({ result: "skipped", reason: 'no job "gone"' });
+      await supervisor.stop("web");
+      await at(ALIVE_MS + 1000);
+      sessions.refuse = "no such folder";
+      expect(await supervisor.chainAction("web", "start", why)).toEqual({ result: "failed", reason: "no such folder" });
     });
   });
 

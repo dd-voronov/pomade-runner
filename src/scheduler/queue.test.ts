@@ -16,6 +16,7 @@ function run(job: string, state: "queued" | "running", extra: Partial<ActiveRun>
     folder: "",
     run: `20261118-0700${String(serial).padStart(2, "0")}-abcdef`,
     trigger: "scheduled",
+    cause: null,
     dueAt: 0,
     state,
     lowPriority: true,

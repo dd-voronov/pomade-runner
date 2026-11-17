@@ -4,7 +4,8 @@
 // 1. **its time** — Run at… sets one;
 // 2. **the switch** — Pause all holds every run but Run now; Pause low-priority holds the runs of
 //    low-priority jobs but Run now;
-// 3. **the warm-up** — a caught-up run waits until the staged start after login or wake is over;
+// 3. **the warm-up** — a caught-up run and a hook run wait until the staged start after login or
+//    wake is over;
 // 4. **the job's previous run** — unless the job's overlap is `parallel`;
 // 5. **a slot** — at most `maxLowPriority` low-priority runs go at once. A low-priority run that finds
 //    them taken waits, first come first served, as "N ahead": the slot-waiting runs ahead of it, and
@@ -56,7 +57,7 @@ export function planQueue(active: readonly ActiveRun[], state: QueueState): Queu
       waits.set(run, { kind: "time", at: run.runAt });
     } else if (state.position !== "running" && holds(state.position, run)) {
       waits.set(run, { kind: "switch", position: state.position });
-    } else if (run.trigger === "caught-up" && !state.warmUp.over) {
+    } else if ((run.trigger === "caught-up" || run.trigger === "hook") && !state.warmUp.over) {
       waits.set(run, { kind: "warm-up", until: state.warmUp.until });
     } else if (busy.has(run.job) && state.overlap(run.job) !== "parallel" && state.overlap(run.job) !== undefined) {
       waits.set(run, { kind: "previous-run" });

@@ -68,6 +68,10 @@ export const RUN_STOP_METHOD = "runs.stop";
  *  global switch. Runner's own frames only; the position is in `runs.list`. */
 export const SWITCH_METHOD = "switch.set";
 
+/** `{ job }` → `ResumeResult` (`isResumeResult`): lift the loop guard's pause of a job, by its id
+ *  or name, so hooks and chains fire it again. Runner's own frames only. */
+export const RESUME_METHOD = "jobs.resume";
+
 /** `settings.get` → `SettingsReport` (`isSettingsReport`): the workspace settings that apply, and the
  *  settings file's problems. */
 export const SETTINGS_GET_METHOD = "settings.get";

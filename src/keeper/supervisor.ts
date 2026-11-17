@@ -14,11 +14,11 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import type { JobsSnapshot, ServiceJob } from "../jobs/model";
+import type { JobsSnapshot, ServiceAction, ServiceJob } from "../jobs/model";
 import { entryId } from "../jobs/model";
 import type { Clock } from "../scheduler/clock";
 import type { Log } from "../scheduler/log";
-import type { RunnerSession, ServiceActionResult, ServicesReport, ServiceState, ServiceStatus } from "./model";
+import type { ChainActionOutcome, RunnerSession, ServiceActionResult, ServicesReport, ServiceState, ServiceStatus } from "./model";
 import type { NetworkReadiness } from "./readiness";
 import { findService, jobIdOf, serviceCommand } from "./services";
 import type { Sessions } from "./sessions";
@@ -155,6 +155,10 @@ export interface Supervisor {
   stop(ref: string): Promise<ServiceActionResult>;
   /** Restart it with its file as it is now; one that does not run is started. */
   restart(ref: string): Promise<ServiceActionResult>;
+  /** A chain's action on a service (`why` says which chain, for the log): `restart` restarts a
+   *  running service and skips one that is not running · `start` starts one that is not running,
+   *  as Start does, and skips a running one · `stop` stops it as Stop does. */
+  chainAction(ref: string, action: ServiceAction, why: string): Promise<ChainActionOutcome>;
   /** Stop listening for ends; resolves once the records are written. */
   close(): Promise<void>;
 }
@@ -171,6 +175,8 @@ interface Entry {
 
 /** Start order: workspace jobs first, then each project's (a sub-folder), each by id. */
 const startOrder = (a: string, b: string): number => Number(a.includes("/")) - Number(b.includes("/")) || (a < b ? -1 : a > b ? 1 : 0);
+
+const ACTION_WORDS: Record<ServiceAction, string> = { restart: "Restart", start: "Start", stop: "Stop" };
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 const seconds = (ms: number): string => `${Math.round(ms / 1000)} s`;
@@ -509,6 +515,47 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     return done(service.id);
   }
 
+  /** Stop a service as stopped by you: it stays stopped until Start. */
+  async function stopNow(entry: Entry): Promise<ServiceActionResult> {
+    const record = recordOf(entry.job);
+    record.hold = "stopped-by-you";
+    record.retryAt = null;
+    save();
+    if (current?.job === entry.job) current = null;
+    const session = live(entry.session);
+    if (session !== null && stopping.get(entry.job) !== session.info.startedAt) {
+      stopping.set(entry.job, session.info.startedAt);
+      try {
+        await sessions.stop(session.id, "stopped-by-you");
+      } catch (err) {
+        stopping.delete(entry.job);
+        return { ok: false, reason: errorText(err) };
+      }
+    }
+    return done(entry.job);
+  }
+
+  /** Restart a running service with its file as it is now; one that does not run is started. */
+  async function restartNow(service: ServiceJob, workspace: string): Promise<ServiceActionResult> {
+    const entry = entries().find((candidate) => candidate.job === service.id);
+    if (entry === undefined || live(entry.session) === null) return startNow(service.id, false);
+    if (!service.enabled) return { ok: false, reason: `"${service.name}" is disabled in its file; enable it first` };
+    const record = recordOf(service.id);
+    record.hold = null;
+    record.retryAt = null;
+    try {
+      await sessions.restartService(service.id, serviceCommand(service, workspace));
+      record.problem = null;
+    } catch (err) {
+      record.problem = errorText(err);
+      save();
+      return { ok: false, reason: record.problem };
+    }
+    save();
+    if (current?.job === service.id) current = null;
+    return done(service.id);
+  }
+
   return {
     async load() {
       records = await store.load();
@@ -539,47 +586,30 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
         const entry = entryOf(ref);
         if (entry === undefined) return { ok: false, reason: `no service "${ref}"` };
         log(`service ${entry.job}: Stop`);
-        const record = recordOf(entry.job);
-        record.hold = "stopped-by-you";
-        record.retryAt = null;
-        save();
-        if (current?.job === entry.job) current = null;
-        const session = live(entry.session);
-        if (session !== null && stopping.get(entry.job) !== session.info.startedAt) {
-          stopping.set(entry.job, session.info.startedAt);
-          try {
-            await sessions.stop(session.id, "stopped-by-you");
-          } catch (err) {
-            stopping.delete(entry.job);
-            return { ok: false, reason: errorText(err) };
-          }
-        }
-        return done(entry.job);
+        return stopNow(entry);
       }),
 
     restart: (ref) =>
       inLane(async () => {
         const found = findService(options.jobs(), ref);
         if (!found.ok) return found;
+        log(`service ${found.job.id}: Restart`);
+        return restartNow(found.job, found.workspace);
+      }),
+
+    chainAction: (ref, action, why) =>
+      inLane(async (): Promise<ChainActionOutcome> => {
+        const found = findService(options.jobs(), ref);
+        if (!found.ok) return { result: "skipped", reason: found.reason };
         const { job: service, workspace } = found;
-        log(`service ${service.id}: Restart`);
+        if (!service.enabled) return { result: "skipped", reason: "its job is disabled" };
         const entry = entries().find((candidate) => candidate.job === service.id);
-        if (entry === undefined || live(entry.session) === null) return startNow(ref, false);
-        if (!service.enabled) return { ok: false, reason: `"${service.name}" is disabled in its file; enable it first` };
-        const record = recordOf(service.id);
-        record.hold = null;
-        record.retryAt = null;
-        try {
-          await sessions.restartService(service.id, serviceCommand(service, workspace));
-          record.problem = null;
-        } catch (err) {
-          record.problem = errorText(err);
-          save();
-          return { ok: false, reason: record.problem };
-        }
-        save();
-        if (current?.job === service.id) current = null;
-        return done(service.id);
+        const running = entry !== undefined && live(entry.session) !== null;
+        if (action === "restart" && !running) return { result: "skipped", reason: "it is not running" };
+        if (action === "start" && running) return { result: "skipped", reason: "it is running already" };
+        log(`service ${service.id}: ${ACTION_WORDS[action]} — ${why}`);
+        const answer = action === "restart" ? await restartNow(service, workspace) : action === "start" ? await startNow(service.id, true) : entry === undefined ? null : await stopNow(entry);
+        return answer === null || answer.ok ? { result: "done" } : { result: "failed", reason: answer.reason };
       }),
 
     async close() {

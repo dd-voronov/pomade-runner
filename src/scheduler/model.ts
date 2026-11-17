@@ -4,13 +4,23 @@
 // runs next, the switch, and what needs the person. Plain JSON. Pure: shared by the scheduler, the
 // control protocol, the command and the UI.
 
-import { JOB_KINDS, type JobKind } from "../jobs/model";
+import { HOOK_EVENTS, JOB_KINDS, SERVICE_ACTIONS, type HookEvent, type JobKind, type ServiceAction } from "../jobs/model";
 import { isServiceStatus, type ServiceStatus } from "../keeper/model";
 
 /** What started a run: its schedule on time · `caught-up`, a missed run run late, once however many
- *  were missed · Run now. Hooks and chains come with later epics. */
-export const RUN_TRIGGERS = ["scheduled", "caught-up", "manual"] as const;
+ *  were missed · Run now · a hook's event · a chain: another job finished. */
+export const RUN_TRIGGERS = ["scheduled", "caught-up", "manual", "hook", "chain"] as const;
 export type RunTrigger = (typeof RUN_TRIGGERS)[number];
+
+/** The parent results a chain follows: a run that ended `done` or `failed`. */
+export const PARENT_RESULTS = ["done", "failed"] as const;
+export type ParentResult = (typeof PARENT_RESULTS)[number];
+
+/** What fired a hook or chain run: the event, with the context its run gets in its environment
+ *  (`POMADE_PROJECT`, `POMADE_SESSION_ID`…; empty for `login`) · the parent run that finished. */
+export type RunCause =
+  | { kind: "hook"; event: HookEvent; context: Record<string, string> }
+  | { kind: "chain"; job: string; name: string; run: string; result: ParentResult };
 
 /** A run that has not ended: `missed-waiting` a missed run of a `wait-for-me` job, waiting for the
  *  person to pick Run now, Run at… or Skip · `queued` waits to start (`waits` says for what) ·
@@ -37,7 +47,7 @@ export interface SwitchState {
 }
 
 /** What a queued run waits for, the first that holds it: Run at…'s time · the switch · the warm-up
- *  after login or wake (a caught-up run; `until` is `null` while the services still start) · the
+ *  after login or wake (a caught-up or hook run; `until` is `null` while the services still start) · the
  *  job's previous run (overlap `queue`) · a free low-priority slot, with how many runs have to end
  *  before it starts: the slot-waiting runs ahead of it and the one whose slot it takes. */
 export type Waits =
@@ -63,7 +73,9 @@ interface RunBase {
   /** The run id (`20261117-080509-a1b2c3`): sorts by when the run was due; names its session and output log. */
   run: string;
   trigger: RunTrigger;
-  /** When it was due — the schedule's time, or the click (epoch ms, the scheduler's clock). */
+  /** A hook or chain run's cause; `null` for any other run. */
+  cause: RunCause | null;
+  /** When it was due — the schedule's time, the click, the event (epoch ms, the scheduler's clock). */
   dueAt: number;
 }
 
@@ -94,9 +106,13 @@ export interface ActiveRun extends RunBase {
   warningDismissed: boolean;
 }
 
-/** A finished run: one history record. */
+/** A finished run: one history record. A chain's action on a service is a record too, with its
+ *  `action`: `done` once the service was restarted, started or stopped, `skipped` or `failed` with
+ *  the reason; it never started a run (`startedAt` is `null`). */
 export interface RunRecord extends RunBase {
   state: RunResult;
+  /** A chain's action on a service; `null` for a run. */
+  action: ServiceAction | null;
   /** A failed or skipped run's reason in words ("previous run still going", "lost in a keeper
    *  crash"); `null` when the exit code says it all. */
   reason: string | null;
@@ -141,7 +157,7 @@ export interface JobRuns {
 }
 
 /** Something Runner cannot settle alone: a run that failed, a service that gave up, a missed run of
- *  a `wait-for-me` job, a run going longer than the long-run warning. */
+ *  a `wait-for-me` job, a run going longer than the long-run warning, a job the loop guard paused. */
 export type NeedsYouItem =
   | {
       /** `run-failed:<job>`: one per job. */
@@ -196,6 +212,17 @@ export type NeedsYouItem =
       /** When the run started (epoch ms). */
       startedAt: number;
       detail: string;
+    }
+  | {
+      /** `loop-paused:<job>`. */
+      id: string;
+      kind: "loop-paused";
+      job: string;
+      name: string;
+      project: string | null;
+      /** When the loop guard paused it (epoch ms). */
+      at: number;
+      detail: string;
     };
 
 /** What the panel, the Jobs view and the badge show: everything about runs that changes on its own. */
@@ -242,6 +269,15 @@ export type MissedChoiceResult = { ok: true; at: number | null } | { ok: false; 
 /** The answer to Stop on a run. */
 export type RunStopResult = { ok: true } | { ok: false; reason: string };
 
+/** The answer to Resume on a job the loop guard paused: the job, or why not. */
+export type ResumeResult = { ok: true; job: string; name: string } | { ok: false; reason: string };
+
+export function isResumeResult(value: unknown): value is ResumeResult {
+  if (!isRecord(value)) return false;
+  if (value.ok === false) return typeof value.reason === "string";
+  return value.ok === true && typeof value.job === "string" && typeof value.name === "string";
+}
+
 export function isMissedChoiceResult(value: unknown): value is MissedChoiceResult {
   if (!isRecord(value)) return false;
   if (value.ok === false) return typeof value.reason === "string";
@@ -278,12 +314,27 @@ const TRIGGERS: readonly string[] = RUN_TRIGGERS;
 const ACTIVE: readonly string[] = ACTIVE_STATES;
 const RESULTS: readonly string[] = RUN_RESULTS;
 const POSITIONS: readonly string[] = SWITCH_POSITIONS;
+const EVENTS: readonly string[] = HOOK_EVENTS;
+const ACTIONS: readonly string[] = SERVICE_ACTIONS;
+const PARENTS: readonly string[] = PARENT_RESULTS;
 const nullableString = (value: unknown): boolean => value === null || typeof value === "string";
 const nullableNumber = (value: unknown): boolean => value === null || (typeof value === "number" && Number.isFinite(value));
 const finite = (value: unknown): boolean => typeof value === "number" && Number.isFinite(value);
 
+function isRunCause(value: unknown): value is RunCause {
+  if (!isRecord(value)) return false;
+  switch (value.kind) {
+    case "hook":
+      return typeof value.event === "string" && EVENTS.includes(value.event) && isRecord(value.context) && Object.values(value.context).every((v) => typeof v === "string");
+    case "chain":
+      return typeof value.job === "string" && typeof value.name === "string" && typeof value.run === "string" && typeof value.result === "string" && PARENTS.includes(value.result);
+    default:
+      return false;
+  }
+}
+
 function isRunBase(value: Record<string, unknown>): boolean {
-  const { job, name, kind, project, folder, run, trigger, dueAt } = value;
+  const { job, name, kind, project, folder, run, trigger, cause, dueAt } = value;
   return (
     typeof job === "string" &&
     typeof name === "string" &&
@@ -294,6 +345,7 @@ function isRunBase(value: Record<string, unknown>): boolean {
     typeof run === "string" &&
     typeof trigger === "string" &&
     TRIGGERS.includes(trigger) &&
+    (cause === null || isRunCause(cause)) &&
     finite(dueAt)
   );
 }
@@ -341,10 +393,11 @@ export function isSwitchState(value: unknown): value is SwitchState {
 
 export function isRunRecord(value: unknown): value is RunRecord {
   if (!isRecord(value) || !isRunBase(value)) return false;
-  const { state, reason, startedAt, endedAt, durationMs, exitCode, signal, log, lastLines } = value;
+  const { state, action, reason, startedAt, endedAt, durationMs, exitCode, signal, log, lastLines } = value;
   return (
     typeof state === "string" &&
     RESULTS.includes(state) &&
+    (action === null || (typeof action === "string" && ACTIONS.includes(action))) &&
     nullableString(reason) &&
     nullableNumber(startedAt) &&
     finite(endedAt) &&
@@ -355,6 +408,13 @@ export function isRunRecord(value: unknown): value is RunRecord {
     Array.isArray(lastLines) &&
     lastLines.every((line) => typeof line === "string")
   );
+}
+
+/** A history record as a file keeps it; a field a record of an older build lacks gets its default. */
+export function parseRunRecord(value: unknown): RunRecord | null {
+  if (!isRecord(value)) return null;
+  const record = { cause: null, action: null, ...value };
+  return isRunRecord(record) ? record : null;
 }
 
 export function isRunView(value: unknown): value is RunView {
@@ -374,6 +434,8 @@ function isNeedsYouItem(value: unknown): value is NeedsYouItem {
       return typeof value.run === "string";
     case "long-run":
       return typeof value.run === "string" && finite(value.startedAt);
+    case "loop-paused":
+      return true;
     default:
       return false;
   }
@@ -459,8 +521,29 @@ export function dayTime(epochMs: number): string {
   return `${WEEKDAYS[new Date(epochMs).getDay()] ?? ""} ${clockTime(epochMs)}`;
 }
 
-/** What started a run, in words: "scheduled", "caught up", "manual". */
-export const TRIGGER_WORDS: Record<RunTrigger, string> = { scheduled: "scheduled", "caught-up": "caught up", manual: "manual" };
+/** What started a run, in words: "scheduled", "caught up", "manual", "hook", "chain". */
+export const TRIGGER_WORDS: Record<RunTrigger, string> = { scheduled: "scheduled", "caught-up": "caught up", manual: "manual", hook: "hook", chain: "chain" };
+
+/** A hook event in words, as a run's trigger: "hook: Mac login". */
+export const HOOK_WORDS: Record<HookEvent, string> = {
+  login: "Mac login",
+  "pomade-started": "Pomade started",
+  "project-first-open": "project first opened",
+  "project-created": "project created",
+  "session-finished": "agent session finished",
+  "session-status": "session status changed",
+};
+
+/** What started a run, in words, with its cause: "scheduled", "hook: Mac login", "chain: after
+ *  Backup". */
+export function runTriggerWords(run: { trigger: RunTrigger; cause: RunCause | null }): string {
+  if (run.cause?.kind === "chain") return `chain: after ${run.cause.name}`;
+  if (run.cause?.kind === "hook") return `hook: ${HOOK_WORDS[run.cause.event]}`;
+  return TRIGGER_WORDS[run.trigger];
+}
+
+/** A chain's action on a service, done, in words. */
+export const ACTION_DONE_WORDS: Record<ServiceAction, string> = { restart: "restarted", start: "started", stop: "stopped" };
 
 /** The switch's position in words. */
 export const SWITCH_WORDS: Record<SwitchPosition, string> = { running: "Running", "pause-low": "Pause low-priority", "pause-all": "Pause all" };
@@ -492,7 +575,7 @@ export function runWords(view: RunView): string {
     case "running":
       return "running";
     case "done":
-      return "done";
+      return "action" in view && view.action !== null ? ACTION_DONE_WORDS[view.action] : "done";
     case "stopped-by-you":
       return "stopped by you";
     case "skipped":

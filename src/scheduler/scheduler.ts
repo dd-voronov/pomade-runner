@@ -28,7 +28,8 @@ import {
 import { formatJobError } from "../jobs/format";
 import { writeEnabled } from "../jobs/folder";
 import { createJobsLoader } from "../jobs/loader";
-import { entryId, entryPath, type JobEntry, type JobsSnapshot } from "../jobs/model";
+import { entryId, entryPath, type JobsSnapshot } from "../jobs/model";
+import { jobTriggerWords } from "../jobs/words";
 import { KIND_DEFAULTS } from "../jobs/parse";
 import { sessionOwner } from "../keeper/ids";
 import { exitWords, type ServiceActionResult, type ServiceStatus } from "../keeper/model";
@@ -86,21 +87,6 @@ export type StartResult =
   /** Another scheduler serves the control socket; it stays in charge. */
   | { status: "already-running" }
   | { status: "failed"; reason: string };
-
-/** A job's trigger in words. */
-function triggerWords(entry: JobEntry): string | null {
-  if (!entry.valid) return null;
-  const { job } = entry;
-  if (job.kind === "service") return job.start === "login" ? "always on, from login" : "always on, from its project's first open";
-  switch (job.trigger.kind) {
-    case "schedule":
-      return job.trigger.words;
-    case "hook":
-      return `on ${job.trigger.hook.event}`;
-    case "chain":
-      return `after ${job.trigger.chain.job} (${job.trigger.chain.result})`;
-  }
-}
 
 const startedPayload = (run: ActiveRun | RunRecord): RunStartedPayload => ({
   job: run.job,
@@ -186,6 +172,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     store: fileRunsStore(state, log),
     switchStore: fileSwitchStore(state, log),
     post,
+    serviceAction: supervisor.chainAction,
     projectPath: (project) => {
       const workspace = jobs.snapshot().workspace;
       const root = projects.root(project);
@@ -252,7 +239,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         name: entry.valid ? entry.job.name : (entry.invalid.name ?? id),
         kind: entry.valid ? entry.job.kind : entry.invalid.kind,
         enabled: entry.valid ? entry.job.enabled : false,
-        trigger: triggerWords(entry),
+        trigger: entry.valid ? jobTriggerWords(entry.job) : null,
         problem: first === undefined ? null : formatJobError(first),
         next: info?.next ?? null,
         finished: info?.finished ?? false,
@@ -279,6 +266,11 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     history: ({ job, limit }) => history.page({ job: job === null ? null : (jobIdOf(jobs.snapshot(), job) ?? job), before: null, limit }),
     runs: report,
     switch: ({ position }) => (position === null ? runs.switch() : runs.setSwitch(position)),
+    resumeJob: async ({ job }) => {
+      const result = await runs.resume(job);
+      if (!result.ok) throw new ControlRefused(`cannot resume "${job}": ${result.reason}`);
+      return { job: result.job, name: result.name };
+    },
   });
   async function enabledAnswer(job: string, enabled: boolean): Promise<JobEnabled> {
     const result = await setEnabled(job, enabled);
@@ -334,6 +326,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         missed: runs.missed,
         stopRun: runs.stop,
         setSwitch: runs.setSwitch,
+        resume: runs.resume,
         settings: settings.report,
         setSetting: settings.write,
         ready: () => showBadge(needsYou.items().length),

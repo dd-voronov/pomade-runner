@@ -58,6 +58,7 @@ describe("missed runs and load", () => {
       store,
       switchStore,
       projectPath: () => null,
+      serviceAction: () => Promise.reject(new Error("no services here")),
       post: (notice) => notices.push(notice),
       onStarted: () => undefined,
       onFinished: (record) => finished.push(record),
@@ -122,7 +123,7 @@ describe("missed runs and load", () => {
     it("asleep across 7:00, awake at 8:30: one caught-up run after the 2-minute warm-up", async () => {
       await awake("2026-11-18T06:50:00", 60_000);
       await at("2026-11-18T08:30:00");
-      expect(lines).toContain("wake: 1 h 40 min since the previous tick; caught-up runs wait for the warm-up");
+      expect(lines).toContain("wake: 1 h 40 min since the previous tick; caught-up and hook runs wait for the warm-up");
       expect(lines).toContain("job summary: missed Wed 07:00 — one caught-up run, worth it until Thu 07:00");
       expect(going("summary").map((run) => [run.state, run.trigger, run.waits])).toEqual([["queued", "caught-up", { kind: "warm-up", until: ms("2026-11-18T08:32:00") }]]);
       await awake("2026-11-18T08:31:59");

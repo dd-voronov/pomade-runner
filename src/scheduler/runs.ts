@@ -28,13 +28,21 @@
 //   Ctrl+C or Stop `stopped-by-you`; past its job's `time-limit` Runner stops it (`failed`, "stopped:
 //   ran over 45 min"). Going longer than the long-run warning (a setting) makes it a Needs-you
 //   item, once — it keeps running. The record keeps the last lines of the output log.
-// - **Records.** The runs going, each job's latest record, the last look and the held looks live in
-//   `runs.json` in Runner's state folder, written on every change and at least every
-//   `ALIVE_EVERY_MS`, so a restarted scheduler picks up the runs that are going — and the ends that
-//   came while it was down — where the last one left them.
+// - **Hooks and chains.** An event fires the jobs whose hook it matches (`hooks.ts`): Runner's own
+//   `login` once per scheduler start — the scheduler is the login item — and the platform's events
+//   through `hook()`. A run that ends `done` or `failed` fires the jobs that follow it (`chains.ts`):
+//   a script runs (trigger `chain`, linked to its parent), a service gets its action through the
+//   supervisor, recorded in the history. Every such firing passes the loop guard (`loop-guard.ts`)
+//   first: one too many within its window pauses the job until Resume. Hook and chain runs join the
+//   queue like any run; a hook run waits for the warm-up, a chain run does not.
+// - **Records.** The runs going, each job's latest record, the last look, the held looks and the
+//   loop guard live in `runs.json` in Runner's state folder, written on every change and at least
+//   every `ALIVE_EVERY_MS`, so a restarted scheduler picks up the runs that are going — and the ends
+//   that came while it was down, firing their chains once — where the last one left them.
 //
-// Every action — a tick, Run now, the switch, a missed run's choice — runs in one lane, one after
-// another. Time comes from the clock given, so every rule is tested without waiting.
+// Every action — a tick, Run now, a hook, the switch, a missed run's choice, Resume — runs in one
+// lane, one after another. Time comes from the clock given, so every rule is tested without
+// waiting.
 
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -43,22 +51,26 @@ import { dirname, join } from "node:path";
 import type { NoticeParams } from "pomade-kit/protocol";
 import { nextOccurrence } from "pomade-kit/schedule";
 
-import { entryId, type Job, type JobsSnapshot, type ScriptJob } from "../jobs/model";
+import { entryId, type Job, type JobsSnapshot, type ScriptJob, type ServiceAction, type ServiceJob } from "../jobs/model";
 import { KIND_DEFAULTS } from "../jobs/parse";
 import { newRunId, sessionIdOf } from "../keeper/ids";
-import type { RunnerSession } from "../keeper/model";
+import type { ChainActionOutcome, RunnerSession } from "../keeper/model";
 import { jobIdOf } from "../keeper/services";
 import type { Sessions } from "../keeper/sessions";
+import { chainCause, followers, parentResult } from "./chains";
 import type { Clock } from "./clock";
 import { lastLines, type History } from "./history";
+import { hooked, LOGIN, type HookFiring } from "./hooks";
 import type { Log } from "./log";
+import { createLoopGuard, FIRING_LIMIT, FIRING_WINDOW_MS, parseLoopGuard, type LoopGuardRecords } from "./loop-guard";
 import { decideMissed, parseRunAt, pastWords, type MissedDecision } from "./missed";
 import {
   clockTime,
   dayTime,
   durationWords,
   isActiveRun,
-  isRunRecord,
+  parseRunRecord,
+  runTriggerWords,
   SWITCH_WORDS,
   waitsWords,
   type ActiveRun,
@@ -67,7 +79,9 @@ import {
   type MissedChoiceResult,
   type NeedsYouItem,
   type NextRun,
+  type ResumeResult,
   type RunActionResult,
+  type RunCause,
   type RunRecord,
   type RunStopResult,
   type RunTrigger,
@@ -75,7 +89,7 @@ import {
   type SwitchPosition,
   type SwitchState,
 } from "./model";
-import { longRunNotice, missedNotice } from "./needs-you";
+import { longRunNotice, loopNotice, missedNotice } from "./needs-you";
 import { holds, planQueue } from "./queue";
 import type { Settings } from "./settings";
 import type { SwitchStore } from "./switch";
@@ -100,6 +114,8 @@ export interface RunsRecords {
   lookedAt: number | null;
   /** The jobs the switch holds: the look their schedule waits at (epoch ms), by job id. */
   held: Record<string, number>;
+  /** The loop guard: recent hook and chain firings, and the jobs it paused. */
+  guard: LoopGuardRecords;
 }
 
 export interface RunsStore {
@@ -118,7 +134,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function parseActiveRun(value: unknown): ActiveRun | null {
   if (!isRecord(value)) return null;
   const kind = typeof value.kind === "string" && Object.hasOwn(KIND_DEFAULTS, value.kind) ? (value.kind as keyof typeof KIND_DEFAULTS) : "script";
-  const run = { lowPriority: KIND_DEFAULTS[kind].lowPriority, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false, ...value };
+  const run = { lowPriority: KIND_DEFAULTS[kind].lowPriority, cause: null, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false, ...value };
   return isActiveRun(run) ? run : null;
 }
 
@@ -128,7 +144,7 @@ export function fileRunsStore(state: string, log: Log): RunsStore {
   let writing: Promise<void> = Promise.resolve();
   return {
     async load() {
-      const empty: RunsRecords = { active: [], last: {}, lookedAt: null, held: {} };
+      const empty: RunsRecords = { active: [], last: {}, lookedAt: null, held: {}, guard: { fired: {}, paused: {} } };
       let text: string;
       try {
         text = await readFile(file, "utf8");
@@ -145,11 +161,16 @@ export function fileRunsStore(state: string, log: Log): RunsStore {
       if (!isRecord(data)) return empty;
       const active = Array.isArray(data.active) ? data.active.flatMap((value) => parseActiveRun(value) ?? []) : [];
       const last: Record<string, RunRecord> = {};
-      if (isRecord(data.last)) for (const [job, record] of Object.entries(data.last)) if (isRunRecord(record)) last[job] = record;
+      if (isRecord(data.last)) {
+        for (const [job, value] of Object.entries(data.last)) {
+          const record = parseRunRecord(value);
+          if (record !== null) last[job] = record;
+        }
+      }
       const lookedAt = typeof data.lookedAt === "number" && Number.isFinite(data.lookedAt) ? data.lookedAt : null;
       const held: Record<string, number> = {};
       if (isRecord(data.held)) for (const [job, at] of Object.entries(data.held)) if (typeof at === "number" && Number.isFinite(at)) held[job] = at;
-      return { active, last, lookedAt, held };
+      return { active, last, lookedAt, held, guard: parseLoopGuard(data.guard) };
     },
     save(records) {
       const data = `${JSON.stringify(records, null, 2)}\n`;
@@ -165,11 +186,15 @@ export function fileRunsStore(state: string, log: Log): RunsStore {
   };
 }
 
-/** A run's environment, beyond the login shell's (docs/DESIGN.md "Triggers", "Context for scripts"). */
-export function runEnv(job: Job, run: string, trigger: RunTrigger, projectPath: string | null): Record<string, string> {
+/** A run's environment, beyond the login shell's (docs/DESIGN.md "Triggers", "Context for
+ *  scripts"): the job, the run and its trigger; the job's project; a hook's context; a chain's
+ *  parent. */
+export function runEnv(job: Job, run: string, trigger: RunTrigger, projectPath: string | null, cause: RunCause | null): Record<string, string> {
   const env: Record<string, string> = { POMADE_JOB: job.id, POMADE_RUN_ID: run, POMADE_TRIGGER: trigger };
   if (job.project !== null) env.POMADE_PROJECT = job.project;
   if (projectPath !== null) env.POMADE_PROJECT_PATH = projectPath;
+  if (cause?.kind === "hook") Object.assign(env, cause.context);
+  if (cause?.kind === "chain") Object.assign(env, { POMADE_PARENT_JOB: cause.job, POMADE_PARENT_RUN_ID: cause.run, POMADE_PARENT_RESULT: cause.result });
   return env;
 }
 
@@ -194,8 +219,10 @@ export interface RunsOptions {
   switchStore: SwitchStore;
   /** A project's root folder (absolute); `null` when it is not known. */
   projectPath(project: string): string | null;
-  /** Post a notice: a missed run that waits for the person, a long-run warning. */
+  /** Post a notice: a missed run that waits for the person, a long-run warning, a loop-guard pause. */
   post(notice: NoticeParams): void;
+  /** A chain's action on a service, through the supervisor; `why` names the chain, for its log. */
+  serviceAction(job: string, action: ServiceAction, why: string): Promise<ChainActionOutcome>;
   /** A run's session started. */
   onStarted(run: ActiveRun): void;
   /** A run ended, could not start, was skipped or missed: its record is in the history. */
@@ -214,6 +241,11 @@ export interface Runs {
   tick(): Promise<void>;
   /** Run a script job now (trigger `manual`), by its id or name, under its overlap policy. */
   runNow(ref: string): Promise<RunActionResult>;
+  /** An event: fire every job whose hook it matches, through the loop guard and the queue. Runner
+   *  fires `login` itself, once per start; Pomade's and the agents' events come here (E-007). */
+  hook(firing: HookFiring): Promise<void>;
+  /** Lift the loop guard's pause of a job, by its id or name. */
+  resume(ref: string): Promise<ResumeResult>;
   /** The person's choice for the missed run of `ref` that waits for them. */
   missed(ref: string, choice: MissedChoice): Promise<MissedChoiceResult>;
   /** Stop a running run as stopped by you. */
@@ -226,7 +258,7 @@ export interface Runs {
   setSwitch(position: SwitchPosition): Promise<SwitchState>;
   /** Missed runs waiting for the person, queued and running runs, oldest first. */
   active(): ActiveRun[];
-  /** Missed runs waiting for the person and long-run warnings. */
+  /** Missed runs waiting for the person, long-run warnings and the jobs the loop guard paused. */
   needsYou(): NeedsYouItem[];
   /** Every enabled scheduled script job's next run, and the runs set with Run at…, soonest first. */
   nextUp(): NextRun[];
@@ -236,12 +268,16 @@ export interface Runs {
   find(job: string, run: string): Promise<RunView | null>;
   /** The output logs runs write now. */
   logsInUse(): Set<string>;
-  /** Resolves once the lane is idle and the records are written. */
+  /** Resolves once the lane is idle, the service actions under way are recorded and the records
+   *  are written. */
   close(): Promise<void>;
 }
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 const MINUTE_MS = 60_000;
+
+/** A loop-guard pause in words. */
+export const LOOP_WORDS = `triggered ${FIRING_LIMIT}× in ${FIRING_WINDOW_MS / MINUTE_MS} min — looks like a loop`;
 
 /** The script jobs a schedule fires: valid, enabled, scheduled. */
 function scheduledScripts(snapshot: JobsSnapshot): ScriptJob[] {
@@ -289,12 +325,17 @@ export function createRuns(options: RunsOptions): Runs {
   let stage: { settledAt: number | null } | null = null;
   let lane: Promise<unknown> = Promise.resolve();
   let tickQueued = false;
+  let guard = createLoopGuard();
+  /** The scheduler started — a login: its hooks fire on the first reconcile that can run them. */
+  let login = false;
+  /** Chain actions on services under way: each records its outcome in the lane when it answers. */
+  const acting = new Set<Promise<void>>();
 
   const now = (): Date => clock.now();
   const key = (job: string, run: string): string => `${job}\n${run}`;
   const save = (): void => {
     savedAt = now().getTime();
-    store.save({ active, last: Object.fromEntries(last), lookedAt, held: Object.fromEntries(held) });
+    store.save({ active, last: Object.fromEntries(last), lookedAt, held: Object.fromEntries(held), guard: guard.records(savedAt) });
   };
 
   function inLane<T>(work: () => Promise<T>): Promise<T> {
@@ -303,7 +344,8 @@ export function createRuns(options: RunsOptions): Runs {
     return result;
   }
 
-  /** Write a finished run's record, once. */
+  /** Write a finished run's record, once, and fire the jobs that follow it — once: a record a
+   *  previous scheduler wrote fired them then. */
   async function record(entry: RunRecord): Promise<void> {
     const runKey = key(entry.job, entry.run);
     const written = recovered.delete(runKey) && (await history.find(entry.job, entry.run)) !== null;
@@ -313,9 +355,84 @@ export function createRuns(options: RunsOptions): Runs {
     save();
     options.onChange();
     options.onFinished(entry);
+    if (!written) await chain(entry);
   }
 
-  function newRun(job: ScriptJob, trigger: RunTrigger, dueAt: Date): ActiveRun {
+  /** A finished run fires the jobs that follow it. */
+  async function chain(entry: RunRecord): Promise<void> {
+    const result = parentResult(entry);
+    if (result === null) return;
+    const at = now();
+    for (const job of followers(options.jobs(), entry)) await triggered(job, chainCause(entry, result), at);
+  }
+
+  /** An event fires the jobs whose hook it matches. */
+  async function fireHook(firing: HookFiring): Promise<void> {
+    const jobs = hooked(options.jobs(), firing);
+    if (jobs.length === 0) return;
+    log(`hook ${firing.event}: fires ${jobs.map((job) => job.id).join(", ")}`);
+    const at = now();
+    for (const job of jobs) await triggered(job, { kind: "hook", event: firing.event, context: firing.context }, at);
+  }
+
+  /** A hook or a chain fires a job: past the loop guard, a script's run joins the queue; a
+   *  service gets its chain's action. */
+  async function triggered(job: ScriptJob | ServiceJob, cause: RunCause, at: Date): Promise<void> {
+    const verdict = guard.fire(job, at.getTime());
+    const why = runTriggerWords({ trigger: cause.kind, cause });
+    if (verdict === "paused") {
+      log(`job ${job.id}: paused by the loop guard; ${why} does not fire it`);
+    } else if (verdict === "pause") {
+      log(`job ${job.id}: fired more than ${FIRING_LIMIT} times in ${durationWords(FIRING_WINDOW_MS)} by hooks or chains — looks like a loop; paused until Resume`);
+      options.onChange();
+      options.post(loopNotice(job.name));
+    } else if (job.kind === "service") {
+      if (cause.kind === "chain" && job.after !== null) act(job, job.after.action, cause, at);
+    } else {
+      await fire(job, cause.kind, at, null, cause);
+    }
+    save();
+  }
+
+  /** A chain's action on a service, through the supervisor; its outcome is recorded once it
+   *  answers, without holding the lane while a restart waits for the old session to end. */
+  function act(job: ServiceJob, action: ServiceAction, cause: Extract<RunCause, { kind: "chain" }>, at: Date): void {
+    const run = newRunId(at, random);
+    const why = runTriggerWords({ trigger: "chain", cause });
+    const work = options
+      .serviceAction(job.id, action, why)
+      .catch((err: unknown): ChainActionOutcome => ({ result: "failed", reason: errorText(err) }))
+      .then((outcome) =>
+        inLane(async () => {
+          log(`service ${job.id}: ${action} (${why}) — ${outcome.result === "done" ? "done" : `${outcome.result}: ${outcome.reason}`}`);
+          await record({
+            job: job.id,
+            name: job.name,
+            kind: job.kind,
+            project: job.project,
+            folder: job.folder,
+            run,
+            trigger: "chain",
+            cause,
+            dueAt: at.getTime(),
+            state: outcome.result,
+            action,
+            reason: outcome.result === "done" ? null : outcome.reason,
+            startedAt: null,
+            endedAt: now().getTime(),
+            durationMs: null,
+            exitCode: null,
+            signal: null,
+            log: null,
+            lastLines: [],
+          });
+        }),
+      );
+    acting.add(work);
+    void work.finally(() => acting.delete(work));
+  }
+
+  function newRun(job: ScriptJob, trigger: RunTrigger, dueAt: Date, cause: RunCause | null = null): ActiveRun {
     return {
       job: job.id,
       name: job.name,
@@ -324,6 +441,7 @@ export function createRuns(options: RunsOptions): Runs {
       folder: job.folder,
       run: newRunId(dueAt, random),
       trigger,
+      cause,
       dueAt: dueAt.getTime(),
       state: "queued",
       lowPriority: job.lowPriority,
@@ -340,7 +458,7 @@ export function createRuns(options: RunsOptions): Runs {
   }
 
   /** A run's record: what it was, and how it ended. */
-  const ended = (run: ActiveRun, end: Omit<RunRecord, keyof Omit<ActiveRun, "state" | "startedAt" | "log">>): RunRecord => ({
+  const ended = (run: ActiveRun, end: Omit<RunRecord, keyof Omit<ActiveRun, "state" | "startedAt" | "log"> | "action">): RunRecord => ({
     job: run.job,
     name: run.name,
     kind: run.kind,
@@ -348,7 +466,9 @@ export function createRuns(options: RunsOptions): Runs {
     folder: run.folder,
     run: run.run,
     trigger: run.trigger,
+    cause: run.cause,
     dueAt: run.dueAt,
+    action: null,
     ...end,
   });
 
@@ -408,7 +528,7 @@ export function createRuns(options: RunsOptions): Runs {
           title: job.name,
           command: job.command,
           cwd: join(workspace, job.folder),
-          env: runEnv(job, run.run, run.trigger, job.project === null ? null : options.projectPath(job.project)),
+          env: runEnv(job, run.run, run.trigger, job.project === null ? null : options.projectPath(job.project), run.cause),
           background: job.lowPriority,
         },
       );
@@ -426,8 +546,8 @@ export function createRuns(options: RunsOptions): Runs {
 
   /** A run is due: queue it, or apply the job's overlap policy. The run, whatever became of it. An
    *  on-time run covers a caught-up run of its job still queued. */
-  async function fire(job: ScriptJob, trigger: RunTrigger, dueAt: Date, deadline: number | null = null): Promise<ActiveRun> {
-    const run = newRun(job, trigger, dueAt);
+  async function fire(job: ScriptJob, trigger: RunTrigger, dueAt: Date, deadline: number | null = null, cause: RunCause | null = null): Promise<ActiveRun> {
+    const run = newRun(job, trigger, dueAt, cause);
     run.deadline = deadline;
     if (trigger === "scheduled") {
       for (const late of active.filter((candidate) => candidate.job === job.id && candidate.state === "queued" && candidate.trigger === "caught-up" && candidate.runAt === null)) {
@@ -454,7 +574,7 @@ export function createRuns(options: RunsOptions): Runs {
     if (stage.settledAt === null) {
       if (!options.servicesSettled()) return { over: false, until: null };
       stage.settledAt = at;
-      log(`warm-up: the services are up; caught-up runs wait until ${clockTime(at + options.settings().warmUpMinutes * MINUTE_MS)}`);
+      log(`warm-up: the services are up; caught-up and hook runs wait until ${clockTime(at + options.settings().warmUpMinutes * MINUTE_MS)}`);
     }
     const until = stage.settledAt + options.settings().warmUpMinutes * MINUTE_MS;
     if (at < until) return { over: false, until };
@@ -657,6 +777,10 @@ export function createRuns(options: RunsOptions): Runs {
       held = new Map([...held].map(([job, since]) => [job, Math.min(since, lookedAt)]));
     }
     await settleOrphans();
+    if (login) {
+      login = false;
+      await fireHook(LOGIN);
+    }
     await look(at);
     await enforce(at.getTime());
     await advance();
@@ -702,9 +826,11 @@ export function createRuns(options: RunsOptions): Runs {
       last = new Map(Object.entries(loaded.last));
       lookedAt = loaded.lookedAt ?? at;
       held = new Map(Object.entries(loaded.held));
+      guard = createLoopGuard(loaded.guard);
       switchState = await options.switchStore.load();
       for (const run of active) recovered.add(key(run.job, run.run));
       stage = { settledAt: null };
+      login = true;
       if (loaded.lookedAt !== null && at - loaded.lookedAt > WAKE_GAP_MS) log(`runs: last alive ${new Date(loaded.lookedAt).toISOString()}; what was missed since goes to its policy`);
       if (switchState.position !== "running") log(`switch: ${SWITCH_WORDS[switchState.position]}`);
     },
@@ -712,7 +838,7 @@ export function createRuns(options: RunsOptions): Runs {
     tick() {
       const at = now().getTime();
       if (tickedAt !== null && at - tickedAt > WAKE_GAP_MS) {
-        log(`wake: ${durationWords(at - tickedAt)} since the previous tick; caught-up runs wait for the warm-up`);
+        log(`wake: ${durationWords(at - tickedAt)} since the previous tick; caught-up and hook runs wait for the warm-up`);
         stage = { settledAt: null };
       }
       tickedAt = at;
@@ -725,6 +851,23 @@ export function createRuns(options: RunsOptions): Runs {
     },
 
     runNow: (ref) => inLane(() => runNowIn(ref)),
+
+    hook: (firing) =>
+      inLane(async () => {
+        await fireHook(firing);
+        if (sessions.followed() && options.jobs().workspace !== null) await advance();
+      }),
+
+    resume: (ref) =>
+      inLane(async (): Promise<ResumeResult> => {
+        const id = jobIdOf(options.jobs(), ref) ?? ref;
+        const pause = guard.paused().get(id);
+        if (pause === undefined || !guard.resume(id)) return { ok: false, reason: `"${ref}" is not paused` };
+        log(`job ${id}: Resume — hooks and chains fire it again`);
+        save();
+        options.onChange();
+        return { ok: true, job: id, name: pause.name };
+      }),
 
     missed: (ref, choice) =>
       inLane(async (): Promise<MissedChoiceResult> => {
@@ -811,13 +954,19 @@ export function createRuns(options: RunsOptions): Runs {
     active: () => [...active],
 
     needsYou() {
-      return active.flatMap((run): NeedsYouItem[] => {
+      const runs = active.flatMap((run): NeedsYouItem[] => {
         const base = { job: run.job, name: run.name, project: run.project, run: run.run };
         if (run.state === "missed-waiting") return [{ id: `missed:${run.job}`, kind: "missed", ...base, at: run.dueAt, detail: `missed ${dayTime(run.dueAt)}` }];
         if (run.state !== "running" || run.warnedAt === null || run.warningDismissed || run.startedAt === null) return [];
         const words = durationWords(minutesOf(run.warnedAt - run.startedAt));
         return [{ id: `long-run:${run.job}:${run.run}`, kind: "long-run", ...base, at: run.warnedAt, startedAt: run.startedAt, detail: `running ${words} — still expected?` }];
       });
+      // A paused job's item shows while its file is there; the pause itself lasts until Resume.
+      const present = new Set(options.jobs().jobs.map(entryId));
+      const paused = [...guard.paused()].flatMap(([job, pause]): NeedsYouItem[] =>
+        present.has(job) ? [{ id: `loop-paused:${job}`, kind: "loop-paused", job, name: pause.name, project: pause.project, at: pause.at, detail: LOOP_WORDS }] : [],
+      );
+      return [...runs, ...paused];
     },
 
     nextUp() {
@@ -856,6 +1005,7 @@ export function createRuns(options: RunsOptions): Runs {
     },
 
     async close() {
+      while (acting.size > 0) await Promise.all(acting);
       await lane;
       save();
       await store.flush();

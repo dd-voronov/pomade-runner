@@ -162,6 +162,10 @@ export function isServiceStatus(value: unknown): value is ServiceStatus {
 /** The answer to Start, Stop or Restart: where the service stands after it, or why it was refused. */
 export type ServiceActionResult = { ok: true; service: ServiceStatus } | { ok: false; reason: string };
 
+/** What a chain's action did to a service: `done`, or `skipped` (nothing to do: "it is not
+ *  running") or `failed` (the keeper refused) with the reason. */
+export type ChainActionOutcome = { result: "done" } | { result: "skipped" | "failed"; reason: string };
+
 export function isServiceActionResult(value: unknown): value is ServiceActionResult {
   if (!isRecord(value)) return false;
   return value.ok === true ? isServiceStatus(value.service) : value.ok === false && typeof value.reason === "string";

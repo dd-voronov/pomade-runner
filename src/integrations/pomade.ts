@@ -16,6 +16,7 @@ import {
   type HistoryPage,
   type MissedChoice,
   type MissedChoiceResult,
+  type ResumeResult,
   type RunActionResult,
   type RunOutput,
   type RunsReport,
@@ -31,6 +32,7 @@ import {
   JOBS_CHANGED_EVENT,
   JOBS_LIST_METHOD,
   MISSED_METHOD,
+  RESUME_METHOD,
   RUN_GET_METHOD,
   RUN_NOW_METHOD,
   RUN_OUTPUT_METHOD,
@@ -112,6 +114,8 @@ export interface RunnerOffer {
   stopRun(job: string, run: string): Promise<RunStopResult>;
   /** Set the global switch. */
   setSwitch(position: SwitchPosition): Promise<SwitchState>;
+  /** Lift the loop guard's pause of a job. */
+  resume(job: string): Promise<ResumeResult>;
   /** The workspace settings. */
   settings(): SettingsReport;
   /** Write one setting. */
@@ -171,7 +175,7 @@ function historyParams(params: JsonValue): { job: string | null; before: string 
 /**
  * On a new connection: serve Runner's API — the jobs, the services and their Start, Stop and
  * Restart, the runs, the history, Run now, Enable / Disable, Needs you and a missed run's choice,
- * Stop on a run, the switch, the settings — follow the projects, hear tab actions and
+ * Stop on a run, the switch, Resume on a job the loop guard paused, the settings — follow the projects, hear tab actions and
  * `pomade.ready`, and announce the jobs, the services, the runs and the settings: a frame that
  * found no scheduler before asks again when it hears `jobs.changed`, `services.changed`,
  * `runs.changed` or `settings.changed`.
@@ -229,6 +233,10 @@ export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise
         const position = paramsOf(SWITCH_METHOD, params, takes).position;
         if (typeof position !== "string" || !(SWITCH_POSITIONS as readonly string[]).includes(position)) throw new HostError("invalid-params", `${SWITCH_METHOD} takes ${takes}`);
         return offer.setSwitch(position as SwitchPosition);
+      }),
+      [RESUME_METHOD]: own(RESUME_METHOD, (params) => {
+        const takes = "{ job: <a job's id or name> }";
+        return offer.resume(text(RESUME_METHOD, paramsOf(RESUME_METHOD, params, takes), "job", takes));
       }),
       [SETTINGS_GET_METHOD]: () => asJson(offer.settings()),
       [SETTINGS_SET_METHOD]: own(SETTINGS_SET_METHOD, (params) => {

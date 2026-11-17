@@ -61,6 +61,7 @@
     "runs.missed",
     "runs.stop",
     "switch.set",
+    "jobs.resume",
     "settings.get",
     "settings.set"
   ],

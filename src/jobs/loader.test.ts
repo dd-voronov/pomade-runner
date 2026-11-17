@@ -8,7 +8,7 @@ import { readJobFiles } from "./folder";
 import { createJobsLoader, type JobsLoader } from "./loader";
 import type { JobsSnapshot } from "./model";
 
-const job = (name: string): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ./x.sh\nhook: { event: login }\n---\n`;
+const job = (name: string): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ./x.sh\nhook: { event: project-created }\n---\n`;
 
 describe("reading the jobs folder", () => {
   let dir: string;

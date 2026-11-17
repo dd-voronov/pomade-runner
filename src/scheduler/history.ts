@@ -17,7 +17,7 @@ import { appendFile, mkdir, open, readdir, readFile, rm, rmdir } from "node:fs/p
 import { join } from "node:path";
 
 import type { Log } from "./log";
-import { isRunRecord, LAST_LINES, plainLines, type HistoryPage, type RunOutput, type RunRecord } from "./model";
+import { LAST_LINES, parseRunRecord, plainLines, type HistoryPage, type RunOutput, type RunRecord } from "./model";
 
 /** The most a page holds. */
 export const PAGE_MAX = 200;
@@ -51,7 +51,7 @@ function parseLine(line: string): RunRecord | null {
   if (line === "") return null;
   try {
     const value: unknown = JSON.parse(line);
-    return isRunRecord(value) ? value : null;
+    return parseRunRecord(value);
   } catch {
     return null;
   }

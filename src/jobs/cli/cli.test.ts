@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { APP_VERSION } from "../../app";
 import type { RunnerSession, ServicesReport, ServiceStatus, SessionsReport } from "../../keeper/model";
 import type { ControlCallResult } from "../../scheduler/control/client";
-import type { ControlMethod, ControlMethods, JobEnabled, RunStarted, SchedulerStatus } from "../../scheduler/control/protocol";
+import type { ControlMethod, ControlMethods, JobEnabled, JobResumed, RunStarted, SchedulerStatus } from "../../scheduler/control/protocol";
 import type { ActiveRun, HistoryPage, JobListing, RunsReport, SwitchState } from "../../scheduler/model";
 import type { ProjectRecord } from "../model";
 import { runCli, USAGE } from "./cli";
@@ -28,6 +28,8 @@ interface World {
   enabled?: ControlCallResult<JobEnabled> | null;
   runs?: ControlCallResult<RunsReport> | null;
   switch?: ControlCallResult<SwitchState> | null;
+  /** The answer to resumeJob. */
+  resumed?: ControlCallResult<JobResumed> | null;
   /** The settings file's text; `null` (the default) = none. */
   settings?: string | null;
   /** The params of every call. */
@@ -73,6 +75,9 @@ async function run(args: string[], status: StatusResult = { status: "not-running
             return world.runs;
           case "switch":
             return world.switch;
+          case "resumeJob":
+            world.actions?.push({ verb: method, job: (params as { job: string }).job });
+            return world.resumed;
         }
       };
       const given = answer();
@@ -341,8 +346,8 @@ describe("pomade-runner", () => {
 
   describe("runs", () => {
     const at = (time: string): number => Date.parse(`2026-11-17T${time}.000Z`);
-    const base = { job: "backup", name: "Backup", kind: "script" as const, project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled" as const, dueAt: at("12:00:00") };
-    const failed = { ...base, state: "failed" as const, reason: null, startedAt: at("12:00:00"), endedAt: at("12:00:03"), durationMs: 3000, exitCode: 1, signal: null, log: "/ud/output/backup/r.log", lastLines: [] };
+    const base = { job: "backup", name: "Backup", kind: "script" as const, project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled" as const, cause: null, dueAt: at("12:00:00") };
+    const failed = { ...base, state: "failed" as const, action: null, reason: null, startedAt: at("12:00:00"), endedAt: at("12:00:03"), durationMs: 3000, exitCode: 1, signal: null, log: "/ud/output/backup/r.log", lastLines: [] };
     const listing: JobListing = { job: "backup", name: "Backup", kind: "script", enabled: true, trigger: "daily at 13:00", problem: null, next: at("13:00:00"), finished: false, last: failed, service: null };
     const fresh = { lowPriority: true, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false };
 
@@ -359,6 +364,7 @@ describe("pomade-runner", () => {
         needsYou: [
           { id: "missed:w", kind: "missed", job: "w", name: "Weekly", project: null, run: "r3", at: at("02:00:00"), detail: "missed Tue 03:00" },
           { id: "long-run:backup:r", kind: "long-run", job: "backup", name: "Backup", project: null, run: "r", at: at("15:00:00"), startedAt: at("12:00:00"), detail: "running 3 h — still expected?" },
+          { id: "loop-paused:lint", kind: "loop-paused", job: "lint", name: "Lint", project: null, at: at("15:00:00"), detail: "triggered 10× in 10 min — looks like a loop" },
         ],
         switch: { position: "pause-low", since: at("11:00:00") },
       };
@@ -370,7 +376,8 @@ describe("pomade-runner", () => {
           "c  C  run r2  queued · 1 ahead\n" +
           "w  Weekly  run r3  missed · waiting for you, due 2026-11-17T02:00:00.000Z\n" +
           "needs you: Weekly — missed Tue 03:00; it waits for you: Run now, Run at… or Skip in Runner\n" +
-          "needs you: Backup — running 3 h — still expected?\n",
+          "needs you: Backup — running 3 h — still expected?\n" +
+          "needs you: Lint — paused: triggered 10× in 10 min — looks like a loop; pomade-runner resume-job lint lets hooks and chains fire it again\n",
       });
       const quiet = { ...report, active: [], needsYou: [], switch: { position: "running" as const, since: null } };
       expect((await run(["runs"], undefined, { runs: { status: "ok", value: quiet } })).out).toBe("switch: Running — scheduled runs run\nNo runs going.\n");
@@ -389,7 +396,7 @@ describe("pomade-runner", () => {
       expect((await run(["resume"], undefined, { switch: { status: "ok", value: { position: "running", since } }, calls })).out).toBe("switch: Running — scheduled runs run (since 2026-11-17T11:00:00.000Z)\n");
       expect(calls.map((call) => call.params)).toEqual([{ position: "pause-all" }, { position: "pause-all" }, { position: "pause-low" }, { position: "running" }]);
       expect(await run(["pause", "some"])).toMatchObject({ code: 2, err: 'pomade-runner pause: unexpected "some". Usage: pomade-runner pause [low|all].\n' });
-      expect(await run(["resume", "now"])).toMatchObject({ code: 2, err: 'pomade-runner resume: unexpected "now". Usage: pomade-runner resume.\n' });
+      expect(await run(["resume", "lint"])).toMatchObject({ code: 2, err: 'pomade-runner resume: unexpected "lint". Usage: pomade-runner resume — for a job the loop guard paused: pomade-runner resume-job <job>.\n' });
       expect(await run(["pause", "low", "x"])).toMatchObject({ code: 2 });
       expect(await run(["resume"])).toMatchObject({ code: 1, err: expect.stringContaining("it holds the switch") as string });
     });
@@ -401,7 +408,7 @@ describe("pomade-runner", () => {
         listing,
         { ...listing, job: "off", name: "Off", enabled: false, next: null, last: null },
         { ...listing, job: "tonight", name: "Tonight", trigger: "once on 2026-11-17 at 23:00", next: null, finished: true, last: { ...failed, state: "done", exitCode: 0, durationMs: 850 } },
-        { ...listing, job: "hooked", name: "Hooked", trigger: "on login", next: null, last: { ...failed, state: "skipped", reason: "previous run still going", startedAt: null, durationMs: null } },
+        { ...listing, job: "hooked", name: "Hooked", trigger: "at Mac login", next: null, last: { ...failed, state: "skipped", reason: "previous run still going", startedAt: null, durationMs: null } },
         { ...listing, job: "web", name: "Web", kind: "service", trigger: "always on, from login", next: null, last: null, service: web },
         { ...listing, job: "bad", name: "bad", kind: null, enabled: false, trigger: null, problem: "bad.md:2: kind — missing.", next: null, last: null },
       ];
@@ -411,7 +418,7 @@ describe("pomade-runner", () => {
         "backup  Backup  script  daily at 13:00  next 2026-11-17T13:00:00.000Z · last failed · exit 1, 2026-11-17T12:00:03.000Z, took 3 s",
         "off  Off  script  daily at 13:00  disabled · never ran",
         "tonight  Tonight  script  once on 2026-11-17 at 23:00  finished · last done, 2026-11-17T12:00:03.000Z, took 850 ms",
-        "hooked  Hooked  script  on login  no next run · last skipped · previous run still going, 2026-11-17T12:00:03.000Z",
+        "hooked  Hooked  script  at Mac login  no next run · last skipped · previous run still going, 2026-11-17T12:00:03.000Z",
         "web  Web  service  always on, from login  running, pid 7, since 2026-11-17T08:00:00.000Z",
         "bad  bad  invalid — bad.md:2: kind — missing.",
         "",
@@ -423,8 +430,15 @@ describe("pomade-runner", () => {
 
     it("history prints the latest runs, of every job or one", async () => {
       const calls: { method: ControlMethod; params: unknown }[] = [];
-      const r = await run(["history"], undefined, { history: { status: "ok", value: { records: [failed, { ...failed, job: "x", name: "X", trigger: "manual", state: "done", exitCode: 0, log: null }], next: null } }, calls });
-      expect(r.out).toBe("backup  Backup  scheduled  failed · exit 1, 2026-11-17T12:00:03.000Z, took 3 s  output /ud/output/backup/r.log\nx  X  manual  done, 2026-11-17T12:00:03.000Z, took 3 s\n");
+      const chained = { ...failed, job: "web", name: "Web", kind: "service" as const, trigger: "chain" as const, cause: { kind: "chain" as const, job: "x", name: "X", run: "r0", result: "done" as const }, state: "done" as const, action: "restart" as const, startedAt: null, durationMs: null, exitCode: null, log: null };
+      const records = [failed, { ...failed, job: "x", name: "X", trigger: "manual" as const, state: "done" as const, exitCode: 0, log: null }, chained, { ...chained, job: "mount", name: "Mount", kind: "script" as const, trigger: "hook" as const, cause: { kind: "hook" as const, event: "login" as const, context: {} }, action: null }];
+      const r = await run(["history"], undefined, { history: { status: "ok", value: { records, next: null } }, calls });
+      expect(r.out).toBe(
+        "backup  Backup  scheduled  failed · exit 1, 2026-11-17T12:00:03.000Z, took 3 s  output /ud/output/backup/r.log\n" +
+          "x  X  manual  done, 2026-11-17T12:00:03.000Z, took 3 s\n" +
+          "web  Web  chain: after X  restarted, 2026-11-17T12:00:03.000Z\n" +
+          "mount  Mount  hook: Mac login  done, 2026-11-17T12:00:03.000Z\n",
+      );
       expect(calls).toEqual([{ method: "history", params: { job: null, limit: 20 } }]);
       expect((await run(["history", "backup"], undefined, { history: { status: "ok", value: { records: [], next: null } }, calls })).out).toBe("No runs of backup yet.\n");
       expect(calls.at(-1)).toEqual({ method: "history", params: { job: "backup", limit: 20 } });
@@ -445,6 +459,18 @@ describe("pomade-runner", () => {
         code: 1,
         err: 'pomade-runner run: cannot run "backup": "Backup" is running, and its overlap is skip.\n',
       });
+    });
+
+    it("resume-job lifts the loop guard's pause of a job", async () => {
+      const calls: { method: ControlMethod; params: unknown }[] = [];
+      expect((await run(["resume-job", "Lint"], undefined, { resumed: { status: "ok", value: { job: "lint", name: "Lint" } }, calls })).out).toBe("lint  Lint  resumed: hooks and chains fire it again\n");
+      expect(calls).toEqual([{ method: "resumeJob", params: { job: "Lint" } }]);
+      expect(await run(["resume-job", "lint"], undefined, { resumed: { status: "failed", code: "refused", message: 'cannot resume "lint": "lint" is not paused' } })).toMatchObject({
+        code: 1,
+        err: 'pomade-runner resume-job: cannot resume "lint": "lint" is not paused.\n',
+      });
+      expect(await run(["resume-job"])).toMatchObject({ code: 2, err: "pomade-runner resume-job: names no job. Usage: pomade-runner resume-job <job> — its id or its name.\n" });
+      expect(await run(["resume-job", "lint"])).toMatchObject({ code: 1, err: expect.stringContaining("it runs the jobs") as string });
     });
 
     it("enable and disable write the job's file and print it", async () => {

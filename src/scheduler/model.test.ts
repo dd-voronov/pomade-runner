@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { outputRoute, parseRoute, runRoute } from "../integrations/runner-api";
 import { clockTime, dayTime, durationWords, isActiveRun, isRunsReport, runWords, type ActiveRun, type RunRecord } from "./model";
 
-const base = { job: "coda/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/coda", run: "20261117-120000-abcdef", trigger: "manual" as const, dueAt: 1 };
+const base = { job: "coda/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/coda", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1 };
 const active: ActiveRun = {
   ...base,
   state: "running",
@@ -19,7 +19,7 @@ const active: ActiveRun = {
   warningDismissed: false,
 };
 const queued: ActiveRun = { ...active, state: "queued", startedAt: null, session: null, log: null };
-const record: RunRecord = { ...base, state: "failed", reason: null, startedAt: 1, endedAt: 2, durationMs: 1, exitCode: 1, signal: null, log: "/o.log", lastLines: [] };
+const record: RunRecord = { ...base, state: "failed", action: null, reason: null, startedAt: 1, endedAt: 2, durationMs: 1, exitCode: 1, signal: null, log: "/o.log", lastLines: [] };
 
 describe("runs in words", () => {
   it("says each state", () => {
@@ -54,13 +54,19 @@ describe("runs in words", () => {
   it("checks an active run's shape", () => {
     expect(isActiveRun(active)).toBe(true);
     expect(isActiveRun({ ...queued, runAt: 5, deadline: 9, waits: { kind: "time", at: 5 } })).toBe(true);
+    expect(isActiveRun({ ...queued, trigger: "hook", cause: { kind: "hook", event: "login", context: {} } })).toBe(true);
+    expect(isActiveRun({ ...queued, trigger: "chain", cause: { kind: "chain", job: "a", name: "A", run: "r", result: "failed" } })).toBe(true);
     for (const bad of [
       { ...active, lowPriority: undefined },
       { ...active, waits: { kind: "slot", ahead: 0 } },
       { ...active, waits: { kind: "nap" } },
       { ...active, waits: { kind: "switch", position: "running" } },
       { ...active, warningDismissed: null },
-      { ...active, trigger: "hook" },
+      { ...active, trigger: "cron" },
+      { ...active, cause: undefined },
+      { ...active, cause: { kind: "hook", event: "reboot", context: {} } },
+      { ...active, cause: { kind: "hook", event: "login", context: { A: 1 } } },
+      { ...active, cause: { kind: "chain", job: "a", name: "A", run: "r", result: "stopped-by-you" } },
     ]) {
       expect(isActiveRun(bad)).toBe(false);
     }

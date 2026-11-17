@@ -50,10 +50,18 @@ export interface ControlMethods {
   runs: RunsReport;
   /** Set the global switch, or — `position: null` — read it. */
   switch: SwitchState;
+  /** Lift the loop guard's pause of a job. */
+  resumeJob: JobResumed;
 }
 
 /** What Run now started: a script's run, or a service. */
 export type RunStarted = { run: ActiveRun } | { service: ServiceStatus };
+
+/** A job the loop guard paused, resumed. */
+export interface JobResumed {
+  job: string;
+  name: string;
+}
 
 /** A job after Enable or Disable. */
 export interface JobEnabled {
@@ -80,6 +88,8 @@ export interface ControlParams {
   history: { job: string | null; limit: number };
   runs: null;
   switch: { position: SwitchPosition | null };
+  /** `job`: a job's id or name. */
+  resumeJob: { job: string };
 }
 
 export type ControlMethod = keyof ControlMethods;
@@ -155,6 +165,10 @@ function isRunStarted(value: unknown): value is RunStarted {
   return isRecord(value) && (isActiveRun(value.run) || isServiceStatus(value.service));
 }
 
+function isJobResumed(value: unknown): value is JobResumed {
+  return isRecord(value) && typeof value.job === "string" && typeof value.name === "string";
+}
+
 function isJobEnabled(value: unknown): value is JobEnabled {
   return isRecord(value) && typeof value.job === "string" && typeof value.name === "string" && typeof value.enabled === "boolean";
 }
@@ -172,6 +186,7 @@ export const RESULT_GUARDS: { [M in ControlMethod]: (value: unknown) => value is
   history: isHistoryPage,
   runs: isRunsReport,
   switch: isSwitchState,
+  resumeJob: isJobResumed,
 };
 
 const noParams = (params: unknown): null | undefined => (params === null ? null : undefined);
@@ -202,6 +217,7 @@ export const PARAMS_PARSERS: { [M in ControlMethod]: (params: unknown) => Contro
     if (position === null) return { position };
     return typeof position === "string" && (SWITCH_POSITIONS as readonly string[]).includes(position) ? { position: position as SwitchPosition } : undefined;
   },
+  resumeJob: jobParams,
 };
 
 /** What each method's params look like, for the error that refuses others. */
@@ -218,6 +234,7 @@ export const PARAMS_SHAPES: { [M in ControlMethod]: string } = {
   history: "{ job: <a job's id or name> | null, limit: <a whole number ≥ 1> }",
   runs: "none",
   switch: '{ position: "running" | "pause-low" | "pause-all" | null }',
+  resumeJob: "{ job: <a job's id or name> }",
 };
 
 export function isControlMethod(method: string): method is ControlMethod {
