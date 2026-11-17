@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { expect, test, type FrameLocator, type Page } from "@playwright/test";
 
 import manifest from "../app/manifest.json" with { type: "json" };
+import type { NeedsYouItem, RunRecord, RunsReport } from "../src/scheduler/model";
 import { clockTime } from "../src/ui/serviceWords";
 import { APP_PORT, HARNESS_PORT } from "./support/ports";
 
@@ -161,4 +162,131 @@ test("the build serves its manifest and icon next to the page", async ({ request
   const icon = await request.get(`${APP}${manifest.icon}`);
   expect(icon.ok()).toBe(true);
   expect(icon.headers()["content-type"]).toContain("image/svg+xml");
+});
+
+test.describe("runs", () => {
+  const SCRIPT = "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\nschedule:\n  daily: { at: 13:00 }\n---\n";
+  const RUN = "20261117-120000-abcdef";
+  const at = (hours: number, minutes: number): number => new Date(2026, 10, 17, hours, minutes).getTime();
+  const failed: RunRecord = {
+    job: "backup",
+    name: "Backup",
+    kind: "script",
+    project: null,
+    folder: "",
+    run: RUN,
+    trigger: "scheduled",
+    dueAt: at(13, 0),
+    state: "failed",
+    reason: null,
+    startedAt: at(13, 0),
+    endedAt: at(13, 0) + 3000,
+    durationMs: 3000,
+    exitCode: 2,
+    signal: null,
+    log: "/ud/output/backup/r.log",
+    lastLines: ["copying", "rsync: connection refused"],
+  };
+  const item: NeedsYouItem = { id: "run-failed:backup", kind: "run-failed", job: "backup", name: "Backup", project: null, run: RUN, at: failed.endedAt, count: 2, detail: "exit 2" };
+  const report = (now: number): RunsReport => ({
+    active: [],
+    nextUp: [{ job: "backup", name: "Backup", project: null, at: now + 40 * 60_000 + 30_000 }],
+    jobs: [{ job: "backup", next: now + 40 * 60_000, finished: false, last: failed }],
+    needsYou: [item, { id: "service-failed:web", kind: "service-failed", job: "web", name: "Web", project: null, at: at(12, 0), detail: "crashed 5 times within a minute" }],
+  });
+
+  async function setRuns(page: Page, history: RunRecord[]): Promise<void> {
+    await page.waitForFunction(() => typeof window.setRuns === "function");
+    const now = await page.evaluate(() => Date.now());
+    await page.evaluate(([r, h]) => window.setRuns({ report: r, history: h, output: "\x1b[32mcopying\x1b[0m\r\nrsync: connection refused\r\n" }), [report(now), history] as const);
+  }
+
+  test("the panel shows Needs you with each item's actions, and Next up", async ({ page }) => {
+    await page.setViewportSize({ width: 240, height: 640 });
+    await page.goto(harness({ surface: "panel" }));
+    await expect(app(page).getByTestId("panel-empty")).toBeVisible();
+    await writeJob(page, "backup.md", SCRIPT);
+    await expect(app(page).getByTestId("panel-jobs")).toBeVisible();
+    await expect(app(page).getByTestId("needs-you")).toContainText("Nothing needs you.");
+    await expect(app(page).getByTestId("next-up")).toContainText("Nothing is scheduled.");
+    await setRuns(page, [failed]);
+    const items = app(page).getByTestId("needs-you-item");
+    await expect(items).toHaveCount(2);
+    await expect(items.first()).toContainText("Failed: exit 2 · 2×");
+    await expect(items.last()).toContainText("Gave up: crashed 5 times within a minute");
+    await expect(app(page).getByTestId("next-up-item")).toHaveText(/in 4[01] min\s*Backup/);
+    await expect(app(page).getByTestId("job-runs")).toContainText("daily at 13:00 · next");
+    await expect(app(page).getByTestId("job-runs")).toContainText("last failed · exit 2");
+    await shoot(page, "panel-runs");
+
+    await items.first().getByRole("button", { name: "Open" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "app", projectId: "alpha", route: `run/backup/${RUN}` }]);
+    await items.first().getByRole("button", { name: "Run now" }).click();
+    await items.last().getByRole("button", { name: "Start" }).click();
+    await items.first().getByRole("button", { name: "Dismiss" }).click();
+    await expect(items).toHaveCount(1);
+    expect(await page.evaluate(() => window.runnerCalls)).toEqual([
+      { method: "jobs.run", params: { job: "backup" } },
+      { method: "services.start", params: { job: "web" } },
+      { method: "needsYou.dismiss", params: { id: "run-failed:backup" } },
+    ]);
+  });
+
+  test("a job row runs a script now, disables and enables it", async ({ page }) => {
+    await page.goto(harness());
+    await expect(app(page).getByTestId("tab-empty")).toBeVisible();
+    await writeJob(page, "backup.md", SCRIPT);
+    const row = app(page).getByTestId("job-row");
+    await row.getByRole("button", { name: "Run now" }).click();
+    await row.getByRole("button", { name: "Disable" }).click();
+    await writeJob(page, "backup.md", SCRIPT.replace("folder: .\n", "folder: .\nenabled: false\n"));
+    await row.getByRole("button", { name: "Enable" }).click();
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toEqual([
+      { method: "jobs.run", params: { job: "backup" } },
+      { method: "jobs.setEnabled", params: { job: "backup", enabled: false } },
+      { method: "jobs.setEnabled", params: { job: "backup", enabled: true } },
+    ]);
+    await expect(row.getByTestId("job-runs")).toContainText("disabled · never ran");
+  });
+
+  test("History lists the runs; a row opens the result card: red, the exit code and the last lines; View output shows the whole output", async ({ page }) => {
+    await page.goto(harness());
+    await expect(app(page).getByTestId("tab-empty")).toBeVisible();
+    await writeJob(page, "backup.md", SCRIPT);
+    await setRuns(page, [failed, { ...failed, run: "20261117-110000-abcdef", state: "done", exitCode: 0, lastLines: [], endedAt: at(12, 0) }]);
+    await app(page).getByTestId("nav-history").click();
+    const rows = app(page).getByTestId("history-row");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.first()).toContainText("Backup");
+    await expect(rows.first()).toContainText("failed · exit 2");
+    await expect(rows.first()).toContainText("3 s");
+    await shoot(page, "tab-history");
+
+    await rows.first().click();
+    const card = app(page).getByTestId("run-card");
+    await expect(card).toHaveAttribute("data-state", "failed");
+    await expect(card.getByTestId("run-result")).toHaveText("failed · exit 2");
+    await expect(card.getByTestId("run-exit")).toHaveText("Exit code 2");
+    await expect(card.getByTestId("run-last-lines")).toHaveText("copying\nrsync: connection refused");
+    // Opening it resolves its Needs-you item.
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toContainEqual({ method: "needsYou.dismiss", params: { id: "run-failed:backup" } });
+    await shoot(page, "tab-run-failed");
+
+    await card.getByRole("button", { name: "View output" }).click();
+    await expect(app(page).getByTestId("run-output-text")).toHaveText("copying\nrsync: connection refused\n");
+    await app(page).getByRole("button", { name: "Back to the result" }).click();
+    await expect(card).toBeVisible();
+    await app(page).getByTestId("nav-jobs").click();
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+  });
+
+  test("the tab opens at a run's route, as a notice's click opens it", async ({ page }) => {
+    await page.goto(harness({ route: `run/backup/${RUN}` }));
+    await setRuns(page, [failed]);
+    await expect(app(page).getByTestId("run-card").getByTestId("run-result")).toHaveText("failed · exit 2");
+    await page.evaluate((route) => window.mounted.navigate(route), "history");
+    await expect(app(page).getByTestId("history-row")).toHaveCount(1);
+    await page.evaluate((route) => window.mounted.navigate(route), "run/backup/20000101-000000-000000");
+    await expect(app(page).getByTestId("run-missing")).toHaveText("This run is not in the history any more.");
+  });
 });

@@ -1,18 +1,35 @@
 // A stand-in for Runner's scheduler in the fake host: another client of the app that serves
-// `jobs.list` and `services.list` and announces `jobs.changed` and `services.changed`, as the real
-// scheduler does through Pomade. It reads the fake workspace's jobs folder through the Host API and
-// checks it with the real validator, so the UI specs drive it by writing files
-// (`fakeHost.writeFile`). Every valid service runs; a spec sets another state with
-// `window.setServiceStatus`.
+// Runner's API — the jobs, the services, the runs, the history, one run and its output, Run now,
+// Enable / Disable, Needs you — and announces `jobs.changed`, `services.changed` and
+// `runs.changed`, as the real scheduler does through Pomade. It reads the fake workspace's jobs
+// folder through the Host API and checks it with the real validator, so the UI specs drive it by
+// writing files (`fakeHost.writeFile`). Every valid service runs; a spec sets another state with
+// `window.setServiceStatus`, the runs with `window.setRuns`, and reads the actions the UI asked
+// for in `window.runnerCalls`.
 
 import type { FakeHost } from "pomade-kit/fake-host";
 import type { JsonValue } from "pomade-kit/protocol";
 import { connect } from "pomade-kit/sdk";
 
-import { JOBS_CHANGED_EVENT, JOBS_LIST_METHOD, SERVICES_CHANGED_EVENT, SERVICES_LIST_METHOD } from "../../src/integrations/runner-api";
+import {
+  DISMISS_METHOD,
+  HISTORY_LIST_METHOD,
+  JOBS_CHANGED_EVENT,
+  JOBS_LIST_METHOD,
+  RUN_GET_METHOD,
+  RUN_NOW_METHOD,
+  RUN_OUTPUT_METHOD,
+  RUNS_CHANGED_EVENT,
+  RUNS_LIST_METHOD,
+  SERVICE_METHODS,
+  SERVICES_CHANGED_EVENT,
+  SERVICES_LIST_METHOD,
+  SET_ENABLED_METHOD,
+} from "../../src/integrations/runner-api";
 import { checkJobs } from "../../src/jobs/check";
 import { JOBS_FOLDER, type JobsSnapshot } from "../../src/jobs/model";
 import type { ServicesReport, ServiceStatus } from "../../src/keeper/model";
+import type { RunRecord, RunsReport } from "../../src/scheduler/model";
 
 export async function startFakeScheduler(fake: FakeHost): Promise<void> {
   const result = await connect({ transport: fake.createTransport({ surface: "backend" }), keySource: null });
@@ -39,10 +56,41 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
   });
 
   let snapshot = await read();
+  let runs: { report: RunsReport; history: RunRecord[]; output: string } = { report: { active: [], nextUp: [], jobs: [], needsYou: [] }, history: [], output: "" };
+  const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
+  /** An action the UI asked for: recorded, answered `answer`. */
+  const action =
+    (method: string, answer: (params: JsonValue) => unknown = () => ({ ok: true })) =>
+    (params: JsonValue): JsonValue => {
+      window.runnerCalls.push({ method, params });
+      return json(answer(params));
+    };
+  const find = (params: JsonValue): RunRecord | undefined => {
+    const { job, run } = params as { job: string; run: string };
+    return runs.history.find((record) => record.job === job && record.run === run);
+  };
+  window.runnerCalls = [];
   await host.api.serve({
-    [JOBS_LIST_METHOD]: () => JSON.parse(JSON.stringify(snapshot)) as JsonValue,
-    [SERVICES_LIST_METHOD]: () => JSON.parse(JSON.stringify(services(snapshot))) as JsonValue,
+    [JOBS_LIST_METHOD]: () => json(snapshot),
+    [SERVICES_LIST_METHOD]: () => json(services(snapshot)),
+    [RUNS_LIST_METHOD]: () => json(runs.report),
+    [HISTORY_LIST_METHOD]: () => json({ records: runs.history, next: null }),
+    [RUN_GET_METHOD]: (params) => json(find(params) ?? null),
+    [RUN_OUTPUT_METHOD]: () => json({ text: runs.output, truncated: false }),
+    [RUN_NOW_METHOD]: action(RUN_NOW_METHOD),
+    [SET_ENABLED_METHOD]: action(SET_ENABLED_METHOD),
+    [SERVICE_METHODS.start]: action(SERVICE_METHODS.start),
+    [DISMISS_METHOD]: action(DISMISS_METHOD, (params) => {
+      const { id } = params as { id: string };
+      runs = { ...runs, report: { ...runs.report, needsYou: runs.report.needsYou.filter((item) => item.id !== id) } };
+      void host.events.publish(RUNS_CHANGED_EVENT);
+      return { resolved: true };
+    }),
   });
+  window.setRuns = (next) => {
+    runs = { ...runs, ...next };
+    void host.events.publish(RUNS_CHANGED_EVENT);
+  };
   await host.files.watch({ path: "", recursive: true }, () => {
     void read().then(async (next) => {
       snapshot = next;
@@ -56,4 +104,5 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
   };
   await host.events.publish(JOBS_CHANGED_EVENT);
   await host.events.publish(SERVICES_CHANGED_EVENT);
+  await host.events.publish(RUNS_CHANGED_EVENT);
 }

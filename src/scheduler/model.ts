@@ -343,3 +343,18 @@ export function durationWords(ms: number): string {
   const hours = Math.floor(minutes / 60);
   return minutes % 60 === 0 ? `${hours} h` : `${hours} h ${minutes % 60} min`;
 }
+
+/** Terminal escape sequences: CSI (colours, cursor moves), OSC (titles, links), and the two-byte ones. */
+const ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-Z\\-_]|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
+
+/** A terminal's output as plain lines: escape sequences gone, and a line rewritten with `\r` (a
+ *  progress bar) as it ended up. */
+export function plainLines(text: string): string[] {
+  return text
+    .replace(ESCAPES, "")
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.replace(/\r+$/, "");
+      return trimmed.slice(trimmed.lastIndexOf("\r") + 1);
+    });
+}

@@ -8,8 +8,8 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createHistory, HISTORY_DAYS, lastLines, plainLines, readOutput, type History } from "./history";
-import type { RunRecord } from "./model";
+import { createHistory, HISTORY_DAYS, lastLines, readOutput, type History } from "./history";
+import { plainLines, type RunRecord } from "./model";
 
 const DAY = 86_400_000;
 const T0 = Date.parse("2026-11-17T12:00:00.000Z");

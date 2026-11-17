@@ -16,7 +16,7 @@ import { appendFile, mkdir, open, readdir, readFile, rm, rmdir } from "node:fs/p
 import { join } from "node:path";
 
 import type { Log } from "./log";
-import { isRunRecord, LAST_LINES, type HistoryPage, type RunOutput, type RunRecord } from "./model";
+import { isRunRecord, LAST_LINES, plainLines, type HistoryPage, type RunOutput, type RunRecord } from "./model";
 
 /** How long records and output logs are kept. The setting arrives with E-003. */
 export const HISTORY_DAYS = 30;
@@ -214,21 +214,6 @@ export async function readOutput(file: string, maxBytes = OUTPUT_MAX_BYTES): Pro
   } finally {
     await handle.close();
   }
-}
-
-/** Terminal escape sequences: CSI (colours, cursor moves), OSC (titles, links), and the two-byte ones. */
-const ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-Z\\-_]|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
-
-/** A terminal's output as plain lines: escape sequences gone, and a line rewritten with `\r` (a
- *  progress bar) as it ended up. */
-export function plainLines(text: string): string[] {
-  return text
-    .replace(ESCAPES, "")
-    .split("\n")
-    .map((line) => {
-      const trimmed = line.replace(/\r+$/, "");
-      return trimmed.slice(trimmed.lastIndexOf("\r") + 1);
-    });
 }
 
 /** The last `count` lines of a run's output, plain, each cut to `LINE_MAX` characters; trailing

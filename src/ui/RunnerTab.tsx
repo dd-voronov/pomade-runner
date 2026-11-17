@@ -1,16 +1,22 @@
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_NAME, APP_VERSION } from "../app";
+import { parseRoute } from "../integrations/runner-api";
 import { EmptyState } from "./EmptyState";
+import { HistoryView } from "./HistoryView";
 import { JobsList } from "./JobsList";
+import { OutputView, RunCard } from "./RunCard";
 import styles from "./RunnerTab.module.css";
 import { JobsProblem } from "./JobsProblem";
-import { useJobs, useServices } from "./useRunnerApi";
+import { useJobs, useRoute, useRuns, useServices } from "./useRunnerApi";
 
-/** The Runner tab: every job, its history and the services. */
+/** The Runner tab: every job, the history, a run's result and output — by its route. */
 export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   const jobs = useJobs(host);
   const services = useServices(host);
+  const runs = useRuns(host);
+  const [route, open] = useRoute(host);
+  const view = parseRoute(route);
   const version = (
     <span data-testid="version">
       {APP_NAME} {APP_VERSION}
@@ -19,6 +25,28 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
 
   if (jobs.status === "loading") return <main className={styles.root} data-testid="tab-loading" />;
   if (jobs.status !== "ready") return <JobsProblem state={jobs} testId="tab-problem" footer={version} />;
+  const report = runs.status === "ready" ? runs.value : null;
+  const nav = (
+    <nav className={styles.nav}>
+      <button type="button" className={styles.navItem} aria-current={view.view === "jobs" ? "page" : undefined} data-testid="nav-jobs" onClick={() => open("")}>
+        Jobs
+      </button>
+      <button type="button" className={styles.navItem} aria-current={view.view === "jobs" ? undefined : "page"} data-testid="nav-history" onClick={() => open("history")}>
+        History
+      </button>
+    </nav>
+  );
+  if (view.view !== "jobs") {
+    return (
+      <main className={styles.root} data-testid={`tab-${view.view}`}>
+        <header className={styles.header}>{nav}</header>
+        {view.view === "history" && <HistoryView host={host} open={open} />}
+        {view.view === "run" && <RunCard host={host} job={view.job} run={view.run} needsYou={report?.needsYou ?? []} open={open} />}
+        {view.view === "output" && <OutputView host={host} job={view.job} run={view.run} open={open} />}
+        <footer className={styles.footer}>{version}</footer>
+      </main>
+    );
+  }
   const count = jobs.value.jobs.length;
   if (count === 0) {
     return (
@@ -32,13 +60,13 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   return (
     <main className={styles.root} data-testid="tab-jobs">
       <header className={styles.header}>
-        <h1 className={styles.title}>Jobs</h1>
+        {nav}
         <span className={styles.count}>
           {count} {count === 1 ? "job" : "jobs"}
           {invalid > 0 && ` · ${invalid} invalid`}
         </span>
       </header>
-      <JobsList host={host} jobs={jobs.value.jobs} services={services.status === "ready" ? services.value.services : []} />
+      <JobsList host={host} jobs={jobs.value.jobs} services={services.status === "ready" ? services.value.services : []} runs={report?.jobs ?? []} />
       <footer className={styles.footer}>{version}</footer>
     </main>
   );
