@@ -1,7 +1,8 @@
 // The keeper a spec's scheduler started: asked over its socket as a viewer, as Pomade asks it, and
 // stopped in teardown with everything it runs — a keeper outlives the scheduler by design. Its
-// sessions are started and read through the scheduler's control socket.
+// sessions are read through the scheduler's control socket.
 
+import { expect } from "@playwright/test";
 import { connectKeeper } from "pomade-kit/node";
 import type { SessionInfo } from "pomade-kit/protocol";
 
@@ -44,13 +45,6 @@ export async function stopKeeper(socketPath: string, pids: readonly number[] = [
   }
 }
 
-/** Start a service job's session through the scheduler's control socket. */
-export async function startService(schedulerSocket: string, job: string): Promise<RunnerSession> {
-  const result = await callScheduler(schedulerSocket, "start", { job });
-  if (result.status !== "ok") throw new Error(`start ${job}: ${result.status === "failed" ? result.message : result.status}`);
-  return result.value;
-}
-
 /** What the scheduler reports of the keeper and its sessions. */
 export async function sessionsReport(schedulerSocket: string): Promise<SessionsReport> {
   const result = await callScheduler(schedulerSocket, "sessions", null);
@@ -61,4 +55,21 @@ export async function sessionsReport(schedulerSocket: string): Promise<SessionsR
 /** The keeper's view of session `id`, as the scheduler reports it. */
 export async function sessionInfo(schedulerSocket: string, id: string): Promise<SessionInfo | undefined> {
   return (await sessionsReport(schedulerSocket)).sessions.find((session) => session.id === id)?.info;
+}
+
+/** Wait until session `id` runs — another start than `not`, when given — and return it. The wait
+ *  covers a service's turn in the staged start: up to two services ahead, 5 s each. */
+export async function runningSession(schedulerSocket: string, id: string, not?: RunnerSession): Promise<RunnerSession> {
+  let found: RunnerSession | undefined;
+  await expect
+    .poll(
+      async () => {
+        found = (await sessionsReport(schedulerSocket)).sessions.find((session) => session.id === id);
+        return found?.info.state === "running" && (not === undefined || found.info.startedAt !== not.info.startedAt);
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+  if (found === undefined) throw new Error(`no session ${id}`);
+  return found;
 }

@@ -13,7 +13,7 @@ import { expect, test } from "@playwright/test";
 import manifest from "../app/manifest.json" with { type: "json" };
 import { REPO, cleanEnv, removeDir, run, tempDir } from "./support/env";
 import { pomadeCheckout, pomadeEnv } from "./support/pomade";
-import { startService, stopKeeper } from "./support/keeper";
+import { runningSession, stopKeeper } from "./support/keeper";
 import { startSchedulerProcess } from "./support/scheduler";
 
 test("./install builds Runner, installs it and links its skill; run again, it updates; the installed copy runs; ./uninstall removes it", async () => {
@@ -76,12 +76,12 @@ test("./install builds Runner, installs it and links its skill; run again, it up
     });
     expect(version.stdout).toContain(`pomade-runner ${manifest.version}\nscheduler: running — ${manifest.version}, pid ${running.child.pid},`);
 
-    // The installed keeper runs a service.
+    // The installed scheduler starts a new service in the installed keeper.
     const jobs = join(folders.workspace, "Apps/pomade-runner/jobs");
     await mkdir(jobs, { recursive: true });
     await writeFile(join(jobs, "echo.md"), '---\nkind: service\nname: Echo\nfolder: .\ncommand: "echo installed keeper; exec sleep 600"\n---\n');
     await expect.poll(() => running.output()).toContain("jobs: 1 job file, 0 invalid\n");
-    const started = await startService(join(folders.userData, "app-state", manifest.id, "scheduler.sock"), "echo");
+    const started = await runningSession(join(folders.userData, "app-state", manifest.id, "scheduler.sock"), "svc:echo");
     pids.push(started.info.pid ?? 0);
     await expect.poll(() => readFile(started.log ?? "", "utf8").catch(() => "")).toContain("installed keeper");
     const sessions = await run(pomade.runtime, [join(installed, "cli/pomade-runner.mjs"), "sessions"], { env: { ...runtimeEnv, POMADE_CLIENT: "command" }, cwd: tmp });

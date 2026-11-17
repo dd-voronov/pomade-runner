@@ -19,7 +19,7 @@ import manifest from "../app/manifest.json" with { type: "json" };
 import { STRIP_ICON } from "../src/app";
 import { callScheduler } from "../src/scheduler/control/client";
 import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
-import { sessionInfo, startService, stopKeeper } from "./support/keeper";
+import { runningSession, sessionInfo, stopKeeper } from "./support/keeper";
 import { pomadeCheckout, pomadeEnv, type PomadeFolders } from "./support/pomade";
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
 
@@ -201,9 +201,9 @@ test.describe("Runner in Pomade", () => {
   test("a service's session opens as an attached tab: earlier and live output, Restart from its header, closing leaves it running, Ctrl+C stops it as stopped by you", async () => {
     const running = scheduler ?? (await startTheScheduler());
     await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/ticker.md"), `---\nkind: service\nname: Ticker\nfolder: .\ncommand: ${JSON.stringify(TICKER)}\n---\n`);
-    // The scheduler loads the new file within a second.
+    // The scheduler loads the new file within a second, and starts the service.
     await expect.poll(() => running.output()).toContain("jobs: 2 job files, 0 invalid\n");
-    const started = await startService(schedulerSocket(), "ticker");
+    const started = await runningSession(schedulerSocket(), "svc:ticker");
     pids.push(started.info.pid ?? 0);
     await expect.poll(() => readFile(started.log ?? "", "utf8").catch(() => "")).toContain("tick 2");
     const runner = await connectAsRunner();
@@ -226,6 +226,7 @@ test.describe("Runner in Pomade", () => {
       // Restart from the header: the same id, a new process; the tab shows the new session.
       await page.getByTestId(`attached-${id}`).getByTestId("attached-action-restart").click();
       await expect.poll(() => running.output()).toContain("session svc:ticker: Restart from its tab\n");
+      await expect.poll(() => running.output()).toContain("service ticker: Restart\n");
       await expect.poll(() => running.output()).toContain("session svc:ticker: ended: stopped");
       await expect.poll(async () => (await sessionInfo(schedulerSocket(), "svc:ticker"))?.pid).not.toBe(started.info.pid);
       const restarted = await sessionInfo(schedulerSocket(), "svc:ticker");
@@ -249,6 +250,7 @@ test.describe("Runner in Pomade", () => {
       await expect(page.getByTestId(`attached-status-${again}`)).toHaveText("Stopped by you");
       await expect.poll(() => running.output()).toContain("session svc:ticker: ended: stopped-by-you — code 130, SIGINT\n");
       expect((await command("sessions")).stdout).toContain("svc:ticker  job ticker  ended: stopped-by-you — code 130, SIGINT, at ");
+      await expect.poll(async () => (await command("services")).stdout).toContain("ticker  Ticker  stopped by you\n");
       await page.getByTestId(`close-${again}`).click();
     } finally {
       runner.close();
@@ -259,7 +261,7 @@ test.describe("Runner in Pomade", () => {
     const running = scheduler ?? (await startTheScheduler());
     await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/stay.md"), `---\nkind: service\nname: Stay\nfolder: .\ncommand: ${JSON.stringify(TICKER)}\n---\n`);
     await expect.poll(() => running.output()).toContain("jobs: 3 job files, 0 invalid\n");
-    const stay = await startService(schedulerSocket(), "stay");
+    const stay = await runningSession(schedulerSocket(), "svc:stay");
     pids.push(stay.info.pid ?? 0);
 
     await app?.close();
@@ -275,5 +277,8 @@ test.describe("Runner in Pomade", () => {
     await expect.poll(() => restarted.output()).toContain("keeper: connected");
     expect(await sessionInfo(schedulerSocket(), "svc:stay")).toMatchObject({ state: "running", pid: stay.info.pid, startedAt: stay.info.startedAt });
     expect((await command("sessions")).stdout).toContain(`svc:stay  job stay  running, pid ${stay.info.pid ?? ""}, `);
+    // Stopped by you stays stopped across the restart; the running service is not restarted.
+    await expect.poll(async () => (await command("services")).stdout).toMatch(/\nstay {2}Stay {2}running, pid \d+[^\n]*\nticker {2}Ticker {2}stopped by you\n$/);
+    expect(restarted.output()).not.toMatch(/service \S+: (starting|restarted)/);
   });
 });
