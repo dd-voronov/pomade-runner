@@ -262,6 +262,7 @@ example. This is a product requirement, not polish.
 | Workspace settings (max heavy runs 2, warm-up 2 min, long-run warning 3h, retention 30 days) | `<workspace>/Apps/pomade-runner/settings.yaml` |
 | Run history, captured output (30 days), keeper state (`keeper/`), switch position, last-alive record | `<userData>/app-state/pomade-runner/` (machine-local) |
 | Scheduler log (its stdout and stderr) | `<userData>/app-logs/pomade-runner/backend.log` |
+| Scheduler control socket | `<userData>/app-state/pomade-runner/scheduler.sock` |
 | Keeper socket (`POMADE_KEEPER_SOCKET`) | `<userData>/run/keepers/pomade-runner.sock` |
 | Installed build (the scheduler's login item path) | `<userData>/apps/pomade-runner/` |
 
@@ -297,4 +298,38 @@ example. This is a product requirement, not polish.
 
 ## Stack
 
-Chosen by the first epic ([[T-002-app-skeleton]]) on top of `pomade-kit`'s SDK, and recorded here.
+TypeScript (strict) everywhere, on `pomade-kit` (`github:dd-voronov/pomade-kit#v0.9.0`).
+
+| Part | Built with | Why |
+|---|---|---|
+| UI | React 19, CSS modules over `src/ui/tokens.css`, bundled by Vite | the tab grows into several views and a form with many dependent fields: component state and composition carry that; Pomade's renderer is React with CSS modules and tokens, so the look and the habits are shared; no UI framework on top |
+| Scheduler, command | Node programs on Pomade's runtime (Electron in Node mode), each bundled by esbuild into one `.mjs` file with everything it imports | an installed copy has no `node_modules`; one file per entry runs from the build folder alone |
+| Tests | vitest for logic; Playwright for the built app — the UI in `pomade-kit`'s fake host, the scheduler and command as processes, Runner hosted by a real Pomade, the install script | the family's split: input matrices in vitest, behavior through the real thing in e2e |
+| Lint | ESLint flat config, type-aware typescript-eslint with hand-picked rules, React's hook rules, Playwright's rules | the platform's approach: silent bug classes, not style |
+
+**The build folder** (`dist/`, what `pomade apps install` copies):
+
+| Path | What |
+|---|---|
+| `manifest.json`, `icon.svg` | the static files of `app/` |
+| `index.html`, `assets/` | the UI — one bundle for the panel, the tab and a plain browser |
+| `backend/scheduler.mjs` | the scheduler, the manifest's always-on `backend` (`restartOnUpdate`: an update restarts it) |
+| `cli/pomade-runner.mjs` | the `pomade-runner` command |
+
+**Theme.** The UI's tokens carry Pomade's names and light values; the dark values follow the
+system's colour scheme (`prefers-color-scheme`).
+
+**The scheduler's control socket.** The command reaches the scheduler over the scheduler's own
+unix socket, `<userData>/app-state/pomade-runner/scheduler.sock`, so it works with Pomade closed:
+- **Protocol:** one JSON object per line, request → response; `src/scheduler/control/protocol.ts`
+  is the one definition both sides import. A request names the protocol version it speaks and
+  every response carries the scheduler's; a mismatch is answered with an error that says both.
+- **Location:** found from `POMADE_APP_KEY_FILE` (`<userData>/app-keys/pomade-runner`), which
+  Pomade gives the scheduler and the command alike — each Pomade (dev, stable, a test run) has its
+  own scheduler.
+- **One scheduler per Pomade:** a second one finds the first answering on the socket and exits
+  cleanly; the socket file of a killed scheduler is replaced.
+
+**Test hooks.** Every part of the scheduler reads the time from the `Clock` it is given
+(`src/scheduler/clock.ts`); `POMADE_RUNNER_TICK_MS` shortens its 1 s tick for a run of the real
+process (unset, empty or invalid means the production value).
