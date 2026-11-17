@@ -18,9 +18,9 @@ workspace-level app: one list of every job, filterable to the current project.
 | Part | What it does | Lifecycle |
 |---|---|---|
 | **UI** | the Runner side panel and the Runner tab, in Pomade (`pomade-app://pomade-runner/`) | hidden-not-unmounted, like every pane |
-| **Scheduler** | the always-on backend: loads job files; evaluates triggers; applies missed-run, queue and load policies; starts the keeper and starts runs through it as its owner; writes history; posts notices; publishes events; serves Runner's API | a login item (launchd) that keeps running when Pomade quits; updated and restarted freely; reconnects to the keeper and its running sessions on restart |
+| **Scheduler** | the always-on backend: loads job files; supervises the services; evaluates triggers; applies missed-run, queue and load policies; starts the keeper and starts runs through it as its owner; writes history; posts notices; publishes events; serves Runner's API | a login item (launchd) that keeps running when Pomade quits; updated and restarted freely; reconnects to the keeper and its running sessions on restart |
 | **Keeper** | `pomade-kit/keeper`, run as Runner's own detached process (`backend/keeper.mjs`): holds every service's and run's terminal session (PTY); serves the attach protocol Pomade tabs use; reports exits | started by the scheduler (`startKeeper`), and started again when it dies; does not notice a scheduler restart or update; a keeper update hands the open PTYs to the new keeper process, so sessions keep running |
-| **`pomade-runner` command** | `check [file…]` validates job files · `projects` lists the project ids and jobs sub-folders · `sessions` shows the keeper and its sessions · `run <job>` starts a run now · `list` prints jobs with their next run and last result | on `PATH` via `~/.pomade/bin`; reads the job files and talks to the scheduler directly, so it works with Pomade closed |
+| **`pomade-runner` command** | `check [file…]` validates job files · `projects` lists the project ids and jobs sub-folders · `services` shows every service and where it stands · `run <job>` starts a run now — for a service, Start · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions · `list` prints jobs with their next run and last result | on `PATH` via `~/.pomade/bin`; reads the job files and talks to the scheduler directly, so it works with Pomade closed |
 | **Skill** | `pomade-runner-jobs` teaches agents the job format and location | master in `app/skills/pomade-runner-jobs/SKILL.md`, shipped in the build at `skills/pomade-runner-jobs` (the manifest's `skills`); `./install` links the installed copy into agents' skill folders |
 
 **What Runner tracks:** only jobs created in Runner. A terminal opened by hand, inside Pomade or
@@ -240,12 +240,62 @@ attaches at the keeper's socket directly and never calls Runner to do it:
   `attachedTab.action`, delivered to Runner only — the scheduler subscribes while connected to
   Pomade and restarts the service.
 
-**Services:**
-- Start at login one by one, each given until it is "up" (alive after 5 s, or its `ready` check)
-  before the next.
-- A crash restarts it with a back-off.
-- 5 crashes within 1 minute → `failed`, no more restarts.
-- "Stopped by you" stays stopped until Start.
+**Services** (`src/keeper/supervisor.ts`). The scheduler supervises every service job: each tick,
+after it follows the keeper, it compares each service with its session and acts; each session end
+the keeper reports updates the service's record.
+- **What keeps running.** A valid, enabled service with `start: login` runs all the time. "At
+  login" is the scheduler's start — the scheduler is the login item — so every such service that
+  is not running is started then. A scheduler restarted after a crash or an update does the same
+  and reattaches the running ones: it never restarts a running service. A new service file, or one
+  enabled again, starts the same way within a tick.
+- **`start: project-first-open`** services start on the first open of their project, a trigger
+  that comes with the platform's event bus (E-007). Until it fires they
+  are `waiting`, and Start runs them. Once started, a crash restarts them like any service; an end
+  that is not their own fault (`lost-in-keeper-crash`) leaves them waiting again.
+- **Staged start.** Services start one at a time, in a stable order: workspace jobs first, then
+  each project's (by sub-folder), each by id. The next starts when the current one is up, or after
+  30 s; one not up by then stays `starting` and keeps being checked. Restarts after a crash take
+  their turn the same way. Start, Stop and Restart act at once, out of turn.
+- **Up.** By default a service is up once it has run 5 s. `ready: { port }` is up once the port
+  accepts a connection on this Mac's loopback (IPv4 or IPv6); `ready: { url }` once the URL gives
+  any HTTP answer, an error status or a redirect included — the server is there. Checked every tick.
+- **Session ends:**
+
+  | Exit reason | The service |
+  |---|---|
+  | `crashed`, and `exited` with status 0 | a crash: a service is meant to stay up, so ending at all is a failure. It starts again after a back-off of 1 s, 2 s, 5 s, 10 s, 30 s, then 60 s on every further crash |
+  | 5 crashes within 1 minute | `failed`: no more restarts until Start |
+  | `stopped-by-you` (Ctrl+C in its tab, its tab's Stop, Stop) | stays stopped until Start |
+  | `lost-in-keeper-crash` | not its fault: it starts again at once, through the staged start, and no crash is counted |
+  | `stopped` (Runner's own: disable, removal, Restart), `time-limit` | nothing of its own |
+
+  A start the keeper refuses (a folder that does not exist…) counts as a crash, and the reason
+  shows as the service's `problem`.
+- **"restarted 3× · last crash 14:02"** counts the restarts after a crash. It resets after 10
+  minutes of uptime, and on Start; Restart is not counted.
+- **Start** starts a service now: it clears `stopped by you` or `failed` and the crash count. It is
+  refused for a running, disabled, invalid or unknown service and for a job of another kind.
+  **Stop** stops it as stopped by you (SIGTERM, then SIGKILL after 3 s): it stays stopped, and a
+  restart due is called off. **Restart** stops a running service (reason `stopped`) and starts it
+  again with its job file as it is now, keeping the crash count; one that does not run is started.
+  They reach the scheduler from the `pomade-runner` command (`run`, `stop`, `restart`), from
+  Runner's frames through the broker, and — Restart — from an attached tab's header.
+- **Job file changes:**
+  - disabled (`enabled: false`) → a running service is stopped (reason `stopped`);
+  - the file deleted, or no longer a service → stopped once it has been gone 2 s, then dropped with
+    its session and record (an editor that saves by deleting and writing again stops nothing);
+  - its `command` or `folder` edited → it keeps running with what it started with and says it
+    needs a restart (`needsRestart`); a restart applies the file;
+  - the file invalid → nothing starts or stops it until the file is fixed: a half-written edit
+    never takes a running server down.
+- **States** (`ServiceState` in `src/keeper/model.ts`, the one model of the services view, the
+  broker API and the command): `queued` · `starting` · `running` · `restarting` · `failed` ·
+  `stopped-by-you` · `waiting` · `disabled` · `invalid` · `removed`.
+- **Records.** What the keeper does not know — holds (`stopped by you`, `failed`), crash counts,
+  a restart due, the last start's problem — is in `services.json` in Runner's state folder,
+  written on every change, so a restarted scheduler carries on where the last one stopped.
+- Without a known workspace, or while the scheduler does not follow the keeper, supervision does
+  nothing.
 
 **Agent runs** (an agent → folder → mode):
 - **Launch:** Runner builds the command from the agent's launch spec in `pomade-agents`.
@@ -345,6 +395,7 @@ example. This is a product requirement, not polish.
 | Workspace settings (max heavy runs 2, warm-up 2 min, long-run warning 3h, retention 30 days) | `<workspace>/Apps/pomade-runner/settings.yaml` |
 | Run history, captured output (30 days), keeper state (`keeper/`), switch position, last-alive record | `<userData>/app-state/pomade-runner/` (machine-local) |
 | Session records (job, run, output log, end) | `<userData>/app-state/pomade-runner/sessions.json` |
+| Service supervision records (holds, crash counts, a restart due) | `<userData>/app-state/pomade-runner/services.json` |
 | Run output logs | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.log` |
 | The keeper's own state (session records, exit statuses, `keeper.log`) and its stdout and stderr (`keeper.out`) | `<userData>/app-state/pomade-runner/keeper/` |
 | Scheduler log (its stdout and stderr) | `<userData>/app-logs/pomade-runner/backend.log` |
@@ -357,6 +408,12 @@ example. This is a product requirement, not polish.
 **Runner offers:**
 - **`jobs.list`** through the broker, to Runner's own frames: the checked jobs (see "Job files").
   **`jobs.changed`** on the platform bus tells them to ask again.
+- **`services.list`** through the broker, to Runner's own frames: every service and where it
+  stands (`ServicesReport`, check `isServicesReport`); **`services.changed`** tells them to ask
+  again. **`services.start`**, **`services.stop`**, **`services.restart`** with `{ job }` (its id or
+  name), from Runner's own frames only, answer `ServiceActionResult` — the service's status after,
+  or why it was refused. A start or restart may wait for a running session to end: callers give it
+  `SERVICE_ACTION_TIMEOUT_MS` (`src/integrations/runner-api.ts`).
 - **`jobs.forRepo`** through the broker: the jobs that target a repo. Params `RepoJobsParams`, result
   `RepoJobsResult` with `RepoJob`s (id, name, operation, schedule in words, next run, last result,
   and `route`, Runner's tab route that opens the job) — the contract is in `pomade-kit/protocol`.
@@ -427,8 +484,10 @@ unix socket, `<userData>/app-state/pomade-runner/scheduler.sock`, so it works wi
   older scheduler answers a method it does not have with `unknown-method`.
 - **Methods:** `status` (the scheduler: version, pid, start, last tick, Pomade link) · `sessions`
   (the keeper's state and every session with its job, run and output log; `pomade-runner
-  sessions` prints it) · `start { job }` (start a service's session now; `refused`, with the
-  reason, for a job that is not a valid service or a service that runs).
+  sessions` prints it) · `services` (the keeper's state and every service: its `ServiceStatus`;
+  `pomade-runner services` prints it) · `start { job }` · `stop { job }` · `restart { job }`
+  (Start, Stop, Restart a service named by its id or name, answering its status after; `refused`,
+  with the reason, for what cannot be done — "Services" says what).
 - **Location:** found from `POMADE_APP_KEY_FILE` (`<userData>/app-keys/pomade-runner`), which
   Pomade gives the scheduler and the command alike — each Pomade (dev, stable, a test run) has its
   own scheduler.

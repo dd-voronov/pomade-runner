@@ -200,3 +200,9 @@ The script gets POMADE_PROJECT and POMADE_PROJECT_PATH.
 
 Run `pomade-runner check` (all files) or `pomade-runner check <file>` and fix what it prints. With
 Pomade closed it checks everything but project ids, and says so.
+
+A valid, enabled `start: login` service starts within seconds of being written (services start one
+at a time). `pomade-runner services` shows every service and where it stands — running,
+restarting, failed after a crash loop, stopped by you; `pomade-runner run|stop|restart <service>`
+(its id or name) starts, stops or restarts one. Disabling a service in its file or deleting the
+file stops it; an edited `command` or `folder` applies on its next restart.
