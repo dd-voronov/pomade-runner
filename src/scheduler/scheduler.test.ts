@@ -652,6 +652,8 @@ describe("scheduler and runs", () => {
     expect(await callScheduler(socketPath(), "run", { job: "backup" })).toEqual({ status: "failed", code: "refused", message: 'cannot run "backup": "Backup" is running, and its overlap is skip' });
     sessions.exit(lastRun().id, 2);
     await vi.waitFor(async () => expect(await callScheduler(socketPath(), "history", { job: null, limit: 5 })).toMatchObject({ status: "ok", value: { records: [{ job: "backup", state: "failed" }] } }));
+    expect(await callScheduler(socketPath(), "history", { job: "Backup", limit: 5 })).toMatchObject({ status: "ok", value: { records: [{ job: "backup" }] } });
+    expect(await callScheduler(socketPath(), "history", { job: "web", limit: 5 })).toEqual({ status: "ok", value: { records: [], next: null } });
     await vi.waitFor(async () => expect(await readdir(join(dir, "ud/notices/queue"))).toHaveLength(1));
     const [queued] = await readdir(join(dir, "ud/notices/queue"));
     expect(JSON.parse(await readFile(join(dir, "ud/notices/queue", queued ?? ""), "utf8"))).toMatchObject({ source: "pomade-runner", title: "Backup failed", action: { kind: "openApp", route: expect.stringMatching(/^run\/backup\//) as string } });

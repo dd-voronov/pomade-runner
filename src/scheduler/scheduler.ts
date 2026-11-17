@@ -247,7 +247,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     enable: ({ job }) => enabledAnswer(job, true),
     disable: ({ job }) => enabledAnswer(job, false),
     list: listings,
-    history: ({ job, limit }) => history.page({ job, before: null, limit }),
+    history: ({ job, limit }) => history.page({ job: job === null ? null : (jobIdOf(jobs.snapshot(), job) ?? job), before: null, limit }),
   });
   async function enabledAnswer(job: string, enabled: boolean): Promise<JobEnabled> {
     const result = await setEnabled(job, enabled);

@@ -72,7 +72,7 @@ export interface ControlParams {
   enable: { job: string };
   disable: { job: string };
   list: null;
-  /** `job`: one job's id, or every job's runs; `limit`: at most this many records. */
+  /** `job`: one job's id or name, or `null` for every job's runs; `limit`: at most this many records. */
   history: { job: string | null; limit: number };
 }
 
@@ -200,7 +200,7 @@ export const PARAMS_SHAPES: { [M in ControlMethod]: string } = {
   enable: "{ job: <a job's id or name> }",
   disable: "{ job: <a job's id or name> }",
   list: "none",
-  history: "{ job: <a job's id> | null, limit: <a whole number ≥ 1> }",
+  history: "{ job: <a job's id or name> | null, limit: <a whole number ≥ 1> }",
 };
 
 export function isControlMethod(method: string): method is ControlMethod {
