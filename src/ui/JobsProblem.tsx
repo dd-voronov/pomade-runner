@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 import { EmptyState } from "./EmptyState";
-import type { JobsState } from "./useJobs";
+import type { JobsState } from "./useRunnerApi";
 
 /** Why there are no jobs to show: the scheduler does not answer, or answered with an error. */
 export function JobsProblem({

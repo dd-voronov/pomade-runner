@@ -3,11 +3,23 @@ import type { HostClient } from "pomade-kit/sdk";
 
 import { describeJobError } from "../jobs/format";
 import { entryId, entryPath, type JobEntry, type JobKind } from "../jobs/model";
+import type { ServiceStatus } from "../keeper/model";
 import styles from "./JobsList.module.css";
+import { serviceWords } from "./serviceWords";
 
 const KIND_LABEL: Record<JobKind, string> = { service: "Service", script: "Script", agent: "Agent", git: "Git" };
 
-function Row({ entry, projectName, onOpen }: { entry: JobEntry; projectName: (id: string | null) => string; onOpen: (path: string) => void }): React.JSX.Element {
+function Row({
+  entry,
+  service,
+  projectName,
+  onOpen,
+}: {
+  entry: JobEntry;
+  service: ServiceStatus | undefined;
+  projectName: (id: string | null) => string;
+  onOpen: (path: string) => void;
+}): React.JSX.Element {
   if (entry.valid) {
     const { job } = entry;
     return (
@@ -16,6 +28,11 @@ function Row({ entry, projectName, onOpen }: { entry: JobEntry; projectName: (id
         <span className={styles.meta}>
           {KIND_LABEL[job.kind]} · {projectName(job.project)}
         </span>
+        {service !== undefined && (
+          <span className={`${styles.meta} ${service.state === "failed" ? styles.failed : ""}`} data-testid="service-state">
+            {serviceWords(service)}
+          </span>
+        )}
       </li>
     );
   }
@@ -36,8 +53,9 @@ function Row({ entry, projectName, onOpen }: { entry: JobEntry; projectName: (id
   );
 }
 
-/** Every job file, valid ones by name, kind and project, invalid ones with their first error. */
-export function JobsList({ host, jobs }: { host: HostClient; jobs: readonly JobEntry[] }): React.JSX.Element {
+/** Every job file, valid ones by name, kind and project — a service with where it stands — invalid
+ *  ones with their first error. */
+export function JobsList({ host, jobs, services }: { host: HostClient; jobs: readonly JobEntry[]; services: readonly ServiceStatus[] }): React.JSX.Element {
   const [projects, setProjects] = useState<ReadonlyMap<string, string>>(new Map());
   const [error, setError] = useState<string | null>(null);
 
@@ -67,7 +85,7 @@ export function JobsList({ host, jobs }: { host: HostClient; jobs: readonly JobE
     <section className={styles.root} data-testid="jobs">
       <ul className={styles.list}>
         {ordered.map((entry) => (
-          <Row key={entryId(entry)} entry={entry} projectName={projectName} onOpen={open} />
+          <Row key={entryId(entry)} entry={entry} service={services.find((status) => status.job === entryId(entry))} projectName={projectName} onOpen={open} />
         ))}
       </ul>
       {error !== null && (

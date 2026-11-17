@@ -5,11 +5,12 @@ import { EmptyState } from "./EmptyState";
 import { JobsList } from "./JobsList";
 import styles from "./Panel.module.css";
 import { JobsProblem } from "./JobsProblem";
-import { useJobs } from "./useJobs";
+import { useJobs, useServices } from "./useRunnerApi";
 
 /** The side panel: what runs now and what needs the user, with the way into the Runner tab. */
 export function Panel({ host }: { host: HostClient }): React.JSX.Element {
   const jobs = useJobs(host);
+  const services = useServices(host);
   const [error, setError] = useState<string | null>(null);
 
   const openRunner = (): void => {
@@ -31,7 +32,7 @@ export function Panel({ host }: { host: HostClient }): React.JSX.Element {
 
   if (jobs.status === "loading") return <main className={styles.root} data-testid="panel-loading" />;
   if (jobs.status !== "ready") return <JobsProblem state={jobs} testId="panel-problem" action={open} />;
-  if (jobs.snapshot.jobs.length === 0) {
+  if (jobs.value.jobs.length === 0) {
     return (
       <EmptyState testId="panel-empty" title="No jobs yet" action={open}>
         Services and runs show here once Runner has jobs.
@@ -41,7 +42,7 @@ export function Panel({ host }: { host: HostClient }): React.JSX.Element {
   return (
     <main className={styles.root} data-testid="panel-jobs">
       <h2 className={styles.heading}>Jobs</h2>
-      <JobsList host={host} jobs={jobs.snapshot.jobs} />
+      <JobsList host={host} jobs={jobs.value.jobs} services={services.status === "ready" ? services.value.services : []} />
       <footer className={styles.footer}>{open}</footer>
     </main>
   );

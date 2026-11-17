@@ -5,11 +5,12 @@ import { EmptyState } from "./EmptyState";
 import { JobsList } from "./JobsList";
 import styles from "./RunnerTab.module.css";
 import { JobsProblem } from "./JobsProblem";
-import { useJobs } from "./useJobs";
+import { useJobs, useServices } from "./useRunnerApi";
 
 /** The Runner tab: every job, its history and the services. */
 export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   const jobs = useJobs(host);
+  const services = useServices(host);
   const version = (
     <span data-testid="version">
       {APP_NAME} {APP_VERSION}
@@ -18,7 +19,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
 
   if (jobs.status === "loading") return <main className={styles.root} data-testid="tab-loading" />;
   if (jobs.status !== "ready") return <JobsProblem state={jobs} testId="tab-problem" footer={version} />;
-  const count = jobs.snapshot.jobs.length;
+  const count = jobs.value.jobs.length;
   if (count === 0) {
     return (
       <EmptyState testId="tab-empty" title="No jobs yet" footer={version}>
@@ -27,7 +28,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
       </EmptyState>
     );
   }
-  const invalid = jobs.snapshot.jobs.filter((entry) => !entry.valid).length;
+  const invalid = jobs.value.jobs.filter((entry) => !entry.valid).length;
   return (
     <main className={styles.root} data-testid="tab-jobs">
       <header className={styles.header}>
@@ -37,7 +38,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
           {invalid > 0 && ` · ${invalid} invalid`}
         </span>
       </header>
-      <JobsList host={host} jobs={jobs.snapshot.jobs} />
+      <JobsList host={host} jobs={jobs.value.jobs} services={services.status === "ready" ? services.value.services : []} />
       <footer className={styles.footer}>{version}</footer>
     </main>
   );

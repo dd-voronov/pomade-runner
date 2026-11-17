@@ -1,15 +1,18 @@
 // A stand-in for Runner's scheduler in the fake host: another client of the app that serves
-// `jobs.list` and announces `jobs.changed`, as the real scheduler does through Pomade. It reads the
-// fake workspace's jobs folder through the Host API and checks it with the real validator, so the
-// UI specs drive it by writing files (`fakeHost.writeFile`).
+// `jobs.list` and `services.list` and announces `jobs.changed` and `services.changed`, as the real
+// scheduler does through Pomade. It reads the fake workspace's jobs folder through the Host API and
+// checks it with the real validator, so the UI specs drive it by writing files
+// (`fakeHost.writeFile`). Every valid service runs; a spec sets another state with
+// `window.setServiceStatus`.
 
 import type { FakeHost } from "pomade-kit/fake-host";
 import type { JsonValue } from "pomade-kit/protocol";
 import { connect } from "pomade-kit/sdk";
 
-import { JOBS_CHANGED_EVENT, JOBS_LIST_METHOD } from "../../src/integrations/runner-api";
+import { JOBS_CHANGED_EVENT, JOBS_LIST_METHOD, SERVICES_CHANGED_EVENT, SERVICES_LIST_METHOD } from "../../src/integrations/runner-api";
 import { checkJobs } from "../../src/jobs/check";
 import { JOBS_FOLDER, type JobsSnapshot } from "../../src/jobs/model";
+import type { ServicesReport, ServiceStatus } from "../../src/keeper/model";
 
 export async function startFakeScheduler(fake: FakeHost): Promise<void> {
   const result = await connect({ transport: fake.createTransport({ surface: "backend" }), keySource: null });
@@ -24,13 +27,33 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     return checkJobs(files, { workspace: "/fake/workspace", projects: projects.map(({ id, name, root }) => ({ id, name, root })) });
   };
 
+  /** Services whose status a spec set, by job id. */
+  const set = new Map<string, Partial<ServiceStatus>>();
+  const services = (snapshot: JobsSnapshot): ServicesReport => ({
+    keeper: { state: "connected", version: "e2e", pid: 1 },
+    services: snapshot.jobs.flatMap((entry) =>
+      entry.valid && entry.job.kind === "service"
+        ? [{ job: entry.job.id, name: entry.job.name, project: entry.job.project, state: "running", session: null, restarts: 0, lastCrashAt: null, retryAt: null, needsRestart: false, problem: null, ...set.get(entry.job.id) }]
+        : [],
+    ),
+  });
+
   let snapshot = await read();
-  await host.api.serve({ [JOBS_LIST_METHOD]: () => JSON.parse(JSON.stringify(snapshot)) as JsonValue });
+  await host.api.serve({
+    [JOBS_LIST_METHOD]: () => JSON.parse(JSON.stringify(snapshot)) as JsonValue,
+    [SERVICES_LIST_METHOD]: () => JSON.parse(JSON.stringify(services(snapshot))) as JsonValue,
+  });
   await host.files.watch({ path: "", recursive: true }, () => {
-    void read().then((next) => {
+    void read().then(async (next) => {
       snapshot = next;
-      return host.events.publish(JOBS_CHANGED_EVENT);
+      await host.events.publish(JOBS_CHANGED_EVENT);
+      await host.events.publish(SERVICES_CHANGED_EVENT);
     });
   });
+  window.setServiceStatus = (job, status) => {
+    set.set(job, status);
+    void host.events.publish(SERVICES_CHANGED_EVENT);
+  };
   await host.events.publish(JOBS_CHANGED_EVENT);
+  await host.events.publish(SERVICES_CHANGED_EVENT);
 }

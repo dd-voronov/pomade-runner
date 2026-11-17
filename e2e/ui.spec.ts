@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { expect, test, type FrameLocator, type Page } from "@playwright/test";
 
 import manifest from "../app/manifest.json" with { type: "json" };
+import { clockTime } from "../src/ui/serviceWords";
 import { APP_PORT, HARNESS_PORT } from "./support/ports";
 
 const APP = `http://localhost:${APP_PORT}/`;
@@ -99,6 +100,21 @@ test.describe("the jobs list", () => {
 
     await page.evaluate(() => window.fakeHost.deleteFile("Apps/pomade-runner/jobs/alpha/coda-web.md"));
     await expect(row).toHaveCount(0, { timeout: 1000 });
+  });
+
+  test("a service's row says where it stands: its state, restarts and last crash", async ({ page }) => {
+    await page.goto(harness());
+    await expect(app(page).getByTestId("tab-empty")).toBeVisible();
+    await writeJob(page, "alpha/coda-web.md", VALID);
+    const state = app(page).getByTestId("service-state");
+    await expect(state).toHaveText("Running");
+    const crash = new Date(2026, 10, 17, 14, 2).getTime();
+    await page.evaluate((at) => window.setServiceStatus("alpha/coda-web", { restarts: 3, lastCrashAt: at }), crash);
+    await expect(state).toHaveText(`Running · restarted 3× · last crash ${clockTime(crash)}`);
+    await shoot(page, "tab-service-restarted");
+    await page.evaluate((at) => window.setServiceStatus("alpha/coda-web", { state: "failed", restarts: 4, lastCrashAt: at }), crash);
+    await expect(state).toHaveText(`Failed: crashed 5 times in a minute · restarted 4× · last crash ${clockTime(crash)}`);
+    await shoot(page, "tab-service-failed");
   });
 
   test("the panel lists the jobs above Open Runner", async ({ page }) => {

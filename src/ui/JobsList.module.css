@@ -37,6 +37,10 @@
   font-size: var(--fs-sm);
 }
 
+.failed {
+  color: var(--danger);
+}
+
 .invalid .name {
   color: var(--danger);
 }
