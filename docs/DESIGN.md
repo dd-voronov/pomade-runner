@@ -20,7 +20,7 @@ workspace-level app: one list of every job, filterable to the current project.
 | **UI** | the Runner side panel and the Runner tab, in Pomade (`pomade-app://pomade-runner/`) | hidden-not-unmounted, like every pane |
 | **Scheduler** | the always-on backend: loads job files; supervises the services; evaluates triggers; applies missed-run, queue and load policies; starts the keeper and starts runs through it as its owner; writes history; posts notices; publishes events; serves Runner's API | a login item (launchd) that keeps running when Pomade quits; updated and restarted freely; reconnects to the keeper and its running sessions on restart |
 | **Keeper** | `pomade-kit/keeper`, run as Runner's own detached process (`backend/keeper.mjs`): holds every service's and run's terminal session (PTY); serves the attach protocol Pomade tabs use; reports exits | started by the scheduler (`startKeeper`), and started again when it dies; does not notice a scheduler restart or update; a keeper update hands the open PTYs to the new keeper process, so sessions keep running |
-| **`pomade-runner` command** | `check [file…]` validates job files and the settings file · `projects` lists the project ids and jobs sub-folders · `list` prints every job with its kind, trigger in words, next run and last result · `run <job>` runs a job now — a script's run, a service's Start · `history [job]` prints the latest runs · `runs` prints the switch, the runs going with what each queued one waits for, and Needs you · `pause [low\|all]` · `resume` set the switch · `enable <job>` · `disable <job>` · `services` shows every service and where it stands · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions | on `PATH` via `~/.pomade/bin`; reads the job files and the settings and talks to the scheduler directly, so it works with Pomade closed |
+| **`pomade-runner` command** | `check [file…]` validates job files and the settings file · `projects` lists the project ids and jobs sub-folders · `list` prints every job with its kind, trigger in words, next run and last result · `run <job>` runs a job now — a script's run, a service's Start · `history [job]` prints the latest runs · `runs` prints the switch, the runs going with what each queued one waits for, and Needs you · `pause [low\|all]` · `resume` set the switch · `resume-job <job>` lifts the loop guard's pause of a job · `enable <job>` · `disable <job>` · `services` shows every service and where it stands · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions | on `PATH` via `~/.pomade/bin`; reads the job files and the settings and talks to the scheduler directly, so it works with Pomade closed |
 | **Skill** | `pomade-runner-jobs` teaches agents the job format and location | master in `app/skills/pomade-runner-jobs/SKILL.md`, shipped in the build at `skills/pomade-runner-jobs` (the manifest's `skills`); `./install` links the installed copy into agents' skill folders |
 
 **What Runner tracks:** only jobs created in Runner. A terminal opened by hand, inside Pomade or
@@ -166,14 +166,14 @@ disk.
   - while the keeper is not followed nothing is due: the look waits for it, so a short keeper
     outage delays a run instead of losing it.
 - **Once at** runs once; after its time it has no next run and shows as **finished**.
-- Script jobs fire on schedules; hooks and chains (E-005, E-007), agent and git jobs (E-004,
-  E-006) come with their epics.
+- Script jobs fire on schedules, hooks and chains; Pomade's and the agents' hook events (E-007),
+  agent and git jobs (E-004, E-006) come with their epics.
 
 **Hooks:**
 
 | Hook | In the file | Source | Note |
 |---|---|---|---|
-| Mac login | `hook: { event: login }` | Runner | one-shot scripts after the warm-up |
+| Mac login | `hook: { event: login }` | Runner | one-shot scripts, once per scheduler start, after the warm-up |
 | Pomade started | `event: pomade-started` | platform event bus | fires when Pomade is ready (tabs restored) |
 | First open of project X since Pomade started | `event: project-first-open` | platform event bus | — |
 | Project created | `event: project-created` | platform event bus | — |
@@ -181,17 +181,70 @@ disk.
 | Session status changed to X | `event: session-status` | `pomade-agents` event C | always fires: it is a user action |
 | Another job finished (done / failed / any) | `after: { job, result }` | Runner | a **chain** |
 
+**Firing hooks** (`src/scheduler/hooks.ts`, `runs.ts`):
+- An event fires every valid, enabled script whose `hook` names it and whose filters it passes; a
+  filter left out takes any value. Every event comes through one firing path, `hook()`, with the
+  context its runs get in their environment; E-007 brings Pomade's and the agents' events to it.
+- **Mac login** is the scheduler's start: the scheduler is the login item. Each start fires the
+  login hooks once, as soon as it follows the keeper in a known workspace — after a log-in or a
+  reboot, and after the scheduler was updated or restarted after a crash, which start it the same
+  way.
+- A hook run has trigger `hook` and its event in `cause` (History: "hook: Mac login"). It joins the
+  queue and waits for the warm-up while a staged start is under way ("Missed runs and load"). It has
+  no missed-run policy: the switch holds it, and it runs late on release.
+
+**Chains** (`src/scheduler/chains.ts`, `runs.ts`):
+- A run that ends **done** or **failed** fires every valid, enabled job whose `after` names its job
+  and takes its result (`any` takes both). Failed is any failure: an exit code, a signal, a time
+  limit, a start the keeper refused, a lost session. A run stopped by you, skipped or missed fires
+  nothing: the person stepped in, or nothing ran.
+- Every follower fires, in id order. A script's run has trigger `chain` and its parent in `cause` —
+  the parent's job, name, run and result — so History shows "chain: after Pull" and its card opens
+  the parent's run; `POMADE_PARENT_*` are in its environment. It joins the queue like any run: its
+  overlap applies, the switch holds it and it runs late on release, and it never waits for the
+  warm-up — it follows a run that already ran.
+- A **service** follows with its `action`, through the supervisor, at once — the switch and the
+  warm-up never hold a service:
+  - `restart` (default) restarts a running service with its job file as it is now, and skips one
+    that is not running;
+  - `start` starts one that is not running — clearing stopped by you or failed, as Start does —
+    and skips a running one;
+  - `stop` stops it as Stop does: it stays stopped until Start.
+  - Each action is a History record of the service, with trigger `chain`, its parent in `cause`
+    and its `action`: **done** ("restarted"), **skipped** with the reason ("it is not running"), or
+    **failed** with the keeper's. A failed one is noticed and is a Needs-you item as the service's
+    `notify` says. An action is no run: it never started (`startedAt` is `null`), publishes no
+    `run.started` or `run.finished`, and fires no chain.
+- A run that ended while the scheduler was down fires its chains when the next scheduler records
+  it. A record already in the history fired them then, and fires nothing again.
+- Agent and git jobs fire on hooks and chains with their epics (E-004, E-006).
+
 **Context for scripts.** Scripts receive the context as environment variables:
 - `POMADE_JOB` (the job's id: `backup`, `coda-helper/nightly`), `POMADE_RUN_ID`, `POMADE_TRIGGER`
-  (`scheduled` · `caught-up` · `manual`; later `hook` · `chain`)
+  (`scheduled` · `caught-up` · `manual` · `hook` · `chain`)
 - `POMADE_PROJECT` (a project job's stable id), `POMADE_PROJECT_PATH` (its project's folder,
   absolute — from Pomade's projects as the scheduler last heard them, `projects.json`; absent until
   it has heard them once)
-- `POMADE_SESSION_ID`, `POMADE_AGENT`, `POMADE_SESSION_STATUS` (hooks on agent sessions)
-- `POMADE_PARENT_JOB`, `POMADE_PARENT_RUN_ID`, `POMADE_PARENT_RESULT` (chains)
+- a hook's context: `POMADE_PROJECT`, `POMADE_PROJECT_PATH`, `POMADE_SESSION_ID`, `POMADE_AGENT`,
+  `POMADE_SESSION_STATUS` as its event gives them (E-007; none for `login`)
+- `POMADE_PARENT_JOB` (the parent's id), `POMADE_PARENT_RUN_ID`, `POMADE_PARENT_RESULT` (`done` ·
+  `failed`) (chains)
 
-**Loop safety net.** A job fired more than 10 times in 10 minutes by hooks or chains is paused
-and goes to Needs you.
+**Loop guards** (`src/jobs/check.ts`, `src/scheduler/loop-guard.ts`):
+- **Cycle refusal.** The validator refuses a chain that leads back to itself on every job in the
+  loop, naming it: "the chain loops back: a → b → a". A service is never followed, so no loop
+  passes through one.
+- **Safety net.** A job fired more than 10 times in 10 minutes by hooks or chains — counted per job
+  on the scheduler's clock, whatever became of each firing: a run, a skipped run, a service's
+  action — is **paused**: that firing and every later one by a hook or a chain is dropped, and
+  logged. It is a Needs-you item, *"Paused: triggered 10× in 10 min — looks like a loop"*, with
+  Resume, and is noticed once. Run now still runs it, and never counts.
+- **Resume** lifts the pause with a fresh count: from Runner's frames (`jobs.resume`), the control
+  method `resumeJob`, and `pomade-runner resume-job <job>` — `resume` alone is the switch's.
+- The pause and the firings within the window are kept in `runs.json`: a restart neither forgets
+  a pause nor starts the count over. A paused job's item shows while its file is there; the pause
+  lasts until Resume.
+- Every firing passes the guard, so the platform's hooks (E-007) are covered too.
 
 ## Runs
 
@@ -205,8 +258,8 @@ you`. A run that never started is `skipped` or `missed`, with a reason ("missed 
 - Low-priority runs start with macOS background priority (`taskpolicy -b`).
 
 **A script's run** (`src/scheduler/runs.ts`, the model in `model.ts`):
-- **Start.** A due run, or Run now, joins the queue ("Missed runs and load"), and when the queue
-  lets it start, starts the session `run:<job>:<run id>`: the job's `command` by the login shell, in
+- **Start.** A due run, a hook or chain run, or Run now, joins the queue ("Missed runs and load"),
+  and when the queue lets it start, starts the session `run:<job>:<run id>`: the job's `command` by the login shell, in
   its `folder`, with low priority as the job says and the context above in its environment. Its run
   id is made from the time it was due, so ids sort by due time.
 - **End.** The keeper's exit reason says how it ended: `exited` (status 0) → **done**; `crashed`
@@ -328,7 +381,8 @@ the keeper reports updates the service's record.
   restart due is called off. **Restart** stops a running service (reason `stopped`) and starts it
   again with its job file as it is now, keeping the crash count; one that does not run is started.
   They reach the scheduler from the `pomade-runner` command (`run`, `stop`, `restart`), from
-  Runner's frames through the broker, and — Restart — from an attached tab's header.
+  Runner's frames through the broker, from a chain on the service (`after`, "Chains") and —
+  Restart — from an attached tab's header.
 - **Job file changes:**
   - disabled (`enabled: false`) → a running service is stopped (reason `stopped`);
   - the file deleted, or no longer a service → stopped once it has been gone 2 s, then dropped with
@@ -376,9 +430,11 @@ the Git panel's failure mark reads. It posts no notice: Runner notifies about a 
 Every card has **View output** (the full captured log).
 
 **History** (`src/scheduler/history.ts`). One record per run that ended or never started
-(`RunRecord`): the job's id, name and kind, project, folder, run id, trigger, when it was due,
+(`RunRecord`), and per chain's action on a service: the job's id, name and kind, project, folder,
+run id, trigger and — a hook or chain run — its cause, a service's chain `action`, when it was due,
 started and ended, how long it ran, the result and its reason, exit code and signal, the output
-log, and the last 20 lines of the output as plain text.
+log, and the last 20 lines of the output as plain text. A record of an older build reads with the
+fields it lacks at their defaults.
 - **Format:** append-only JSON Lines, one file per day of the runs' ends (UTC):
   `history/YYYY-MM-DD.jsonl`. A record is one line, written once, when the run ends; nothing is
   rewritten, so a crash can at worst leave a half line at a file's end. A reader skips a line that
@@ -434,7 +490,7 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
   each queued run waits for the first of:
   1. its **time** — Run at…;
   2. the **switch**;
-  3. the **warm-up**, for a caught-up run — a Run at… one included;
+  3. the **warm-up**, for a caught-up run — a Run at… one included — and a hook run;
   4. the job's **previous run**, unless its overlap is `parallel`;
   5. a **slot**: at most `max-low-priority-runs` (default 2) low-priority runs run at once.
   - **What takes a slot:** a running run of a low-priority job. A job with `low-priority: false` —
@@ -453,7 +509,8 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
      already);
   2. once no service waits for its turn or is starting (`servicesSettled`), the **warm-up**
      (`warm-up`, default 2 minutes);
-  3. then the caught-up runs, and the login hooks (E-005), go through the queue.
+  3. then the caught-up runs and the hook runs — the login hooks among them — go through the
+     queue; chain runs never wait for it.
   - A scheduled run due on time during the warm-up runs on time: it is what was asked for at that
     time, and the slots keep it from storming the Mac. A wake during a warm-up starts it over.
 - **The switch**, three positions: **Running · Pause low-priority · Pause all**.
@@ -535,9 +592,12 @@ history-days: 30           # run history and output logs kept
     Actions: Run now · Run at… · Skip (`runs.missed`).
   - **A long-run warning** (`long-run:<job>:<run>`) is an item while its run runs, until dismissed;
     noticed once. Actions: Open · Stop (`runs.stop`) · Dismiss (`needsYou.dismiss`).
+  - **A job the loop guard paused** (`loop-paused:<job>`) is an item while it is paused and its file
+    is there: *"Paused: triggered 10× in 10 min — looks like a loop"*; noticed once, when it
+    pauses. Action: Resume (`jobs.resume`). It cannot be dismissed.
   - The failed runs' items, and the giving-ups already noticed, are in `needs-you.json` in Runner's
-    state folder; the missed runs and the warnings are the runs' own, in `runs.json`: a restarted
-    scheduler neither forgets an item nor notices one twice.
+    state folder; the missed runs, the warnings and the loop guard's pauses are the runs' own, in
+    `runs.json`: a restarted scheduler neither forgets an item nor notices one twice.
 - **Posting:** the scheduler posts every notice: over its connection while Pomade runs, into
   Pomade's closed-Pomade queue (`<userData>/notices/queue/`) otherwise — and when posting over the
   connection fails.
@@ -563,8 +623,9 @@ history-days: 30           # run history and output logs kept
 - **Jobs:** grouped by project, workspace jobs first, "This project" chip. Each row: trigger in
   words, last result, next run, Run now · Edit · Disable · Open file.
 - **History:** the runs going on top, queued ones with what they wait for; then every run, with
-  time, job, result, duration and trigger type (scheduled · caught up · manual · hook · chain);
-  opens the result card or the output.
+  time, job, result, duration and what started it (scheduled · caught up · manual · hook: Mac login
+  · chain: after Pull); opens the result card — a chain run's card opens the run it followed — or
+  the output.
 - **Services:** start / stop / restart, crash count, log.
 - **Settings:** the four settings ("Settings"), each written field-only.
 
@@ -590,7 +651,7 @@ example. This is a product requirement, not polish.
 | Service supervision records (holds, crash counts, a restart due) | `<userData>/app-state/pomade-runner/services.json` |
 | Run output logs | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.log` |
 | Run history (one file per day, JSON Lines) | `<userData>/app-state/pomade-runner/history/YYYY-MM-DD.jsonl` |
-| Runs going (missed runs waiting for you, queued, running), each job's latest record, the last alive time, the looks the switch holds | `<userData>/app-state/pomade-runner/runs.json` |
+| Runs going (missed runs waiting for you, queued, running), each job's latest record, the last alive time, the looks the switch holds, the loop guard's firings and pauses | `<userData>/app-state/pomade-runner/runs.json` |
 | The switch's position | `<userData>/app-state/pomade-runner/switch.json` |
 | Needs-you items, the giving-ups noticed | `<userData>/app-state/pomade-runner/needs-you.json` |
 | Pomade's projects as last heard (for `POMADE_PROJECT_PATH`) | `<userData>/app-state/pomade-runner/projects.json` |
@@ -625,7 +686,8 @@ example. This is a product requirement, not polish.
     field-only · **`needsYou.dismiss`** `{ id }` → `{ resolved }` · **`runs.missed`** `{ job, choice:
     "run-now" | "run-at" | "skip", at? }` → `MissedChoiceResult` (when it runs, or why not) ·
     **`runs.stop`** `{ job, run }` → `RunStopResult` · **`switch.set`** `{ position }` →
-    `SwitchState`.
+    `SwitchState` · **`jobs.resume`** `{ job }` → `ResumeResult`: the loop guard's pause lifted, or
+    why not.
 - **Settings**, through the broker: **`settings.get`** → `SettingsReport` (`isSettingsReport`);
   from Runner's own frames only **`settings.set`** `{ field, value }` → `SettingsWriteResult`;
   **`settings.changed`** tells Runner's frames to ask again.
@@ -710,7 +772,8 @@ unix socket, `<userData>/app-state/pomade-runner/scheduler.sock`, so it works wi
   into the job's file) · `list` (every job: `JobListing`; `pomade-runner list`) · `history { job,
   limit }` (`HistoryPage`; `pomade-runner history`) · `runs` (`RunsReport`; `pomade-runner runs`) ·
   `switch { position }` (sets the switch, or — `position: null` — reads it: `SwitchState`;
-  `pomade-runner pause`, `resume`). A job is named by its id or name; what cannot be done is
+  `pomade-runner pause`, `resume`) · `resumeJob { job }` (lifts the loop guard's pause of a job:
+  `JobResumed`; `pomade-runner resume-job`). A job is named by its id or name; what cannot be done is
   `refused`, with the reason — "Runs" and "Services" say what.
 - **Location:** found from `POMADE_APP_KEY_FILE` (`<userData>/app-keys/pomade-runner`), which
   Pomade gives the scheduler and the command alike — each Pomade (dev, stable, a test run) has its

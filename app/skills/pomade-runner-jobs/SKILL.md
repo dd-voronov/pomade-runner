@@ -86,9 +86,12 @@ A service runs all the time (`start`). Every script, agent and git job has **exa
   | `session-finished` | an agent session the user ran ends (never Runner's own runs) | `project`, `agent` |
   | `session-status` | a session's status changes to `status` | `status` (required: `active` · `on-hold` · `done` · `done-skip`), `project`, `agent` |
 - **`after`** — a chain: `{ job: <id>, result: done | failed | any }` (default `done`). `<id>` is
-  the other job's path inside the jobs folder without `.md`: `backup`, `coda-helper/git-pull`. A
-  service can also have `after:`, with `action: restart | start | stop` (default `restart`). Chains
-  must not loop back (A → B → A), and a service is never followed.
+  the other job's path inside the jobs folder without `.md`: `backup`, `coda-helper/git-pull`.
+  `failed` is any failure — an exit code, a signal, a time limit; a run the user stopped fires no
+  chain. A service can also have `after:`, with `action: restart | start | stop` (default
+  `restart`; `restart` leaves a service that is not running alone). Chains must not loop back
+  (A → B → A), and a service is never followed. A job fired more than 10 times in 10 minutes by
+  hooks or chains is paused as a loop until the user resumes it.
 
 ## Policies (script, agent, git)
 
@@ -104,7 +107,7 @@ N ahead". A job with `low-priority: false` neither waits for nor takes a slot.
 
 ## Examples
 
-One complete file per kind, plus a chain and a hook. They form one valid jobs folder.
+One complete file per kind, plus a chain and two hooks. They form one valid jobs folder.
 
 A **service** — a project's web server, restarted after its repo is pulled.
 File: `Apps/pomade-runner/jobs/coda-helper/coda-web.md`
@@ -199,21 +202,38 @@ hook: { event: project-created }
 The script gets POMADE_PROJECT and POMADE_PROJECT_PATH.
 ```
 
+A **login** one-shot — mount a drive once after each Mac login.
+File: `Apps/pomade-runner/jobs/mount-drive.md`
+
+```markdown
+---
+kind: script
+name: Mount drive
+folder: .
+command: ./scripts/mount-drive.sh
+hook: { event: login }
+low-priority: false
+---
+```
+
 ## Then
 
 Run `pomade-runner check` (all files) or `pomade-runner check <file>` and fix what it prints. With
 Pomade closed it checks everything but project ids, and says so.
 
-A scheduled script runs at its times, in its folder, by the login shell, with `POMADE_JOB` (its
-id), `POMADE_RUN_ID`, `POMADE_TRIGGER` (`scheduled`, `caught-up` for a missed run run late, or
-`manual`) and, for a project job, `POMADE_PROJECT` and `POMADE_PROJECT_PATH` in its environment;
-exit 0 is done, anything else failed. `pomade-runner list` prints every job with its trigger in
+A script runs in its folder, by the login shell, with `POMADE_JOB` (its id), `POMADE_RUN_ID`,
+`POMADE_TRIGGER` (`scheduled`, `caught-up` for a missed run run late, `manual`, `hook` or `chain`)
+and, for a project job, `POMADE_PROJECT` and `POMADE_PROJECT_PATH` in its environment; a chain's
+run also gets `POMADE_PARENT_JOB`, `POMADE_PARENT_RUN_ID` and `POMADE_PARENT_RESULT` (`done` or
+`failed`). Exit 0 is done, anything else failed. A `login` hook runs once each time Runner's
+scheduler starts — at Mac login — after a short warm-up. `pomade-runner list` prints every job with its trigger in
 words, next run and last result; `pomade-runner run <job>` runs one now; `pomade-runner history
 [job]` prints the latest runs with their output log; `pomade-runner runs` prints the runs going,
 queued ones with what they wait for, and what needs the user; `pomade-runner enable|disable <job>`
 writes `enabled:` into its file. `pomade-runner pause [low|all]` holds scheduled runs — of
 low-priority jobs, or all — and `pomade-runner resume` lets them go; that switch is the user's, so
-leave it alone unless asked.
+leave it alone unless asked. `pomade-runner resume-job <job>` lets hooks and chains fire a job the
+loop guard paused again — fix the loop first, and resume only when asked.
 
 Runner's workspace settings live in `Apps/pomade-runner/settings.yaml` — `max-low-priority-runs: 2`,
 `warm-up: 2m`, `long-run-warning: 3h`, `history-days: 30`, each optional; change one only when
