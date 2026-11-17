@@ -25,8 +25,10 @@ export interface CliDeps {
   /** Asks the scheduler for its status; `null` when the command does not run under Pomade's shim,
    *  so there is no scheduler to find. */
   schedulerStatus(): Promise<ControlCallResult<SchedulerStatus> | null>;
-  /** The workspace root (absolute), with Pomade open or closed; `null` when none is recorded. */
+  /** The workspace root (absolute, by its real path), with Pomade open or closed; `null` when none is recorded. */
   workspace(): string | null;
+  /** An absolute path by its real path (symlinks resolved), as far as it exists. */
+  realPath(path: string): string;
   /** The job files under an absolute jobs folder; `null` when it does not exist. */
   readJobFiles(folder: string): Promise<JobFileInput[] | null>;
   /** Pomade's projects; `null` when Pomade is not running (or this is not run through its shim). */
@@ -71,7 +73,7 @@ async function check(files: readonly string[], deps: CliDeps): Promise<number> {
   const wanted = new Set<string>();
   const problems: string[] = [];
   for (const file of files) {
-    const absolute = resolve(deps.cwd, file);
+    const absolute = deps.realPath(resolve(deps.cwd, file));
     const inside = relative(folder, absolute);
     if (inside.startsWith("..") || isAbsolute(inside) || !absolute.endsWith(".md")) {
       problems.push(`${file}: not a job file — Runner reads job files only from ${folder}. Fix: move it there (a project job into its project's sub-folder), as <slug>.md.`);

@@ -2,6 +2,7 @@
 // runtime, with Pomade open or closed.
 
 import { realpathSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 import { connectSocket, resolveWorkspace } from "pomade-kit/node";
 
@@ -30,15 +31,19 @@ async function projects(): Promise<ProjectRecord[] | null> {
   }
 }
 
-/** The workspace by its real path — the form `process.cwd()` has — so paths print relative to where the command runs. */
+/** A path by its real path — the form `process.cwd()` has — as far as it exists: a missing file by its folder's. */
+function realPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    const parent = dirname(path);
+    return parent === path ? path : join(realPath(parent), basename(path));
+  }
+}
+
 function workspace(): string | null {
   const root = resolveWorkspace();
-  if (root === null) return null;
-  try {
-    return realpathSync(root);
-  } catch {
-    return root;
-  }
+  return root === null ? null : realPath(root);
 }
 
 process.exitCode = await runCli(process.argv.slice(2), {
@@ -47,6 +52,7 @@ process.exitCode = await runCli(process.argv.slice(2), {
   cwd: process.cwd(),
   schedulerStatus: () => (socketPath === null ? Promise.resolve(null) : callScheduler(socketPath, "status")),
   workspace,
+  realPath,
   readJobFiles,
   projects,
 });

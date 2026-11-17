@@ -35,6 +35,10 @@ export interface JobsLoader {
 
 const SETTLE_MS = 30;
 
+/** A new watch can miss what happens while it starts (macOS reports through FSEvents): the folder is
+ *  read once more this long after a new watch begins. */
+const RECHECK_MS = 250;
+
 export function createJobsLoader(options: JobsLoaderOptions): JobsLoader {
   const settleMs = options.settleMs ?? SETTLE_MS;
   let snapshot: JobsSnapshot = { workspace: null, projectsChecked: false, jobs: [] };
@@ -44,6 +48,7 @@ export function createJobsLoader(options: JobsLoaderOptions): JobsLoader {
   let watcher: FSWatcher | null = null;
   let watched: string | null = null;
   let settle: NodeJS.Timeout | null = null;
+  let recheck: NodeJS.Timeout | null = null;
   let running: Promise<void> | null = null;
   let again = false;
   let stopped = false;
@@ -74,6 +79,11 @@ export function createJobsLoader(options: JobsLoaderOptions): JobsLoader {
     try {
       watcher = watch(target, { recursive: exists }, onEvent);
       watched = target;
+      if (recheck !== null) clearTimeout(recheck);
+      recheck = setTimeout(() => {
+        recheck = null;
+        void refresh();
+      }, RECHECK_MS);
       // The folder went away (deleted, or a volume unmounted): the next refresh watches again.
       watcher.on("error", unwatch);
     } catch {
@@ -139,6 +149,7 @@ export function createJobsLoader(options: JobsLoaderOptions): JobsLoader {
     stop() {
       stopped = true;
       if (settle !== null) clearTimeout(settle);
+      if (recheck !== null) clearTimeout(recheck);
       unwatch();
     },
   };

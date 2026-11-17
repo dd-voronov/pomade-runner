@@ -34,6 +34,8 @@ async function run(args: string[], status: StatusResult = { status: "not-running
       return Promise.resolve(status);
     },
     workspace: () => (world.workspace === undefined ? WS : world.workspace),
+    // `/ws/…` is the real path of `/link/ws/…`, as `/private/var` is of macOS's `/var`.
+    realPath: (path) => path.replace(/^\/link\//, "/"),
     readJobFiles: (folder) => {
       expect(folder).toBe(JOBS);
       return Promise.resolve(files === null ? null : Object.entries(files).map(([path, text]) => ({ path, text })));
@@ -135,7 +137,7 @@ describe("pomade-runner", () => {
         "a.md: not a job file — Runner reads job files only from /ws/Apps/pomade-runner/jobs. Fix: move it there (a project job into its project's sub-folder), as <slug>.md.\n",
       ).replace("1 problem in", "2 problems in").replace("of 2 job files", "of 1 job file"),
     );
-    const named = await run(["check", "/ws/Apps/pomade-runner/jobs/a.md"], undefined, { files, projects: [] });
+    const named = await run(["check", "/link/ws/Apps/pomade-runner/jobs/a.md"], undefined, { files, projects: [] });
     expect(named).toMatchObject({ code: 0, out: "1 job file: no problems.\n" });
     const missing = await run(["check", "/ws/Apps/pomade-runner/jobs/zz.md"], undefined, { files, projects: [] });
     expect(missing).toMatchObject({ code: 1, out: "Apps/pomade-runner/jobs/zz.md: no such job file. Fix: check the path, or write the file first.\n1 problem.\n" });
