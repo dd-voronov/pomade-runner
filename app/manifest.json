@@ -1,0 +1,27 @@
+{
+  "id": "pomade-runner",
+  "name": "Runner",
+  "version": "0.1.0",
+  "hostApi": 0,
+  "icon": "icon.svg",
+  "capabilities": [],
+  "strip": [
+    {
+      "id": "runner",
+      "title": "Runner",
+      "action": "panel"
+    }
+  ],
+  "backend": {
+    "entry": "backend/scheduler.mjs",
+    "mode": "always-on",
+    "restartOnUpdate": true
+  },
+  "commands": [
+    {
+      "name": "pomade-runner",
+      "entry": "cli/pomade-runner.mjs",
+      "title": "Runner from the command line"
+    }
+  ]
+}

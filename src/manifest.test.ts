@@ -1,0 +1,27 @@
+import { parseManifest } from "pomade-kit/protocol";
+import { describe, expect, it } from "vitest";
+
+import manifest from "../app/manifest.json";
+import pkg from "../package.json";
+import { APP_ID, STRIP_ICON } from "./app";
+
+describe("manifest.json", () => {
+  it("is a valid Pomade manifest", () => {
+    const result = parseManifest(manifest);
+    expect(result.ok ? [] : result.errors).toEqual([]);
+  });
+
+  it("declares what Runner is hosted as", () => {
+    const result = parseManifest(manifest);
+    if (!result.ok) throw new Error(result.message);
+    const { id, name, strip, backend, commands } = result.manifest;
+    expect({ id, name }).toEqual({ id: "pomade-runner", name: "Runner" });
+    expect(strip).toEqual([expect.objectContaining({ id: STRIP_ICON, title: "Runner", action: "panel" })]);
+    expect(backend).toMatchObject({ entry: "backend/scheduler.mjs", mode: "always-on", restartOnUpdate: true });
+    expect(commands).toEqual([expect.objectContaining({ name: APP_ID, entry: "cli/pomade-runner.mjs" })]);
+  });
+
+  it("carries the package's version", () => {
+    expect(manifest.version).toBe(pkg.version);
+  });
+});
