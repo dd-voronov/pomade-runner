@@ -94,10 +94,13 @@ A service runs all the time (`start`). Every script, agent and git job has **exa
 
 | Field | Value | Default |
 |---|---|---|
-| `missed` | scheduled jobs only: `run-on-wake` (once, after the Mac wakes) · `wait-for-me` (asks the user) · `skip` | `run-on-wake` for script and agent, `skip` for git |
-| `worth-until` | with `run-on-wake`: a time (`12:00`) after which a catch-up is skipped, or `next-run` | `next-run` |
+| `missed` | scheduled jobs only — a run the Mac slept through, was off for, or Runner's switch held: `run-on-wake` (one catch-up run after wake, however many were missed) · `wait-for-me` (the user picks Run now, Run at… or Skip) · `skip` (recorded missed) | `run-on-wake` for script and agent, `skip` for git |
+| `worth-until` | with `run-on-wake`: a time (`12:00`) after which a catch-up is skipped, or `next-run` (skipped once the next run is due) | `next-run` |
 | `overlap` | the previous run is still going: `skip` · `parallel` · `queue` | `skip` |
-| `time-limit` | `45m`, `2h`, `1h30m`; empty = no limit | none |
+| `time-limit` | `45m`, `2h`, `1h30m`; a run past it is stopped and fails; empty = no limit | none |
+
+Low-priority runs share slots: at most 2 run at once (a workspace setting), the rest wait "queued ·
+N ahead". A job with `low-priority: false` neither waits for nor takes a slot.
 
 ## Examples
 
@@ -202,11 +205,19 @@ Run `pomade-runner check` (all files) or `pomade-runner check <file>` and fix wh
 Pomade closed it checks everything but project ids, and says so.
 
 A scheduled script runs at its times, in its folder, by the login shell, with `POMADE_JOB` (its
-id), `POMADE_RUN_ID`, `POMADE_TRIGGER` (`scheduled` or `manual`) and, for a project job,
-`POMADE_PROJECT` and `POMADE_PROJECT_PATH` in its environment; exit 0 is done, anything else
-failed. `pomade-runner list` prints every job with its trigger in words, next run and last result;
-`pomade-runner run <job>` runs one now; `pomade-runner history [job]` prints the latest runs with
-their output log; `pomade-runner enable|disable <job>` writes `enabled:` into its file.
+id), `POMADE_RUN_ID`, `POMADE_TRIGGER` (`scheduled`, `caught-up` for a missed run run late, or
+`manual`) and, for a project job, `POMADE_PROJECT` and `POMADE_PROJECT_PATH` in its environment;
+exit 0 is done, anything else failed. `pomade-runner list` prints every job with its trigger in
+words, next run and last result; `pomade-runner run <job>` runs one now; `pomade-runner history
+[job]` prints the latest runs with their output log; `pomade-runner runs` prints the runs going,
+queued ones with what they wait for, and what needs the user; `pomade-runner enable|disable <job>`
+writes `enabled:` into its file. `pomade-runner pause [low|all]` holds scheduled runs — of
+low-priority jobs, or all — and `pomade-runner resume` lets them go; that switch is the user's, so
+leave it alone unless asked.
+
+Runner's workspace settings live in `Apps/pomade-runner/settings.yaml` — `max-low-priority-runs: 2`,
+`warm-up: 2m`, `long-run-warning: 3h`, `history-days: 30`, each optional; change one only when
+asked, then run `pomade-runner check`.
 
 A valid, enabled `start: login` service starts within seconds of being written (services start one
 at a time). `pomade-runner services` shows every service and where it stands — running,

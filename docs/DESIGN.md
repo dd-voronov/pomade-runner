@@ -20,7 +20,7 @@ workspace-level app: one list of every job, filterable to the current project.
 | **UI** | the Runner side panel and the Runner tab, in Pomade (`pomade-app://pomade-runner/`) | hidden-not-unmounted, like every pane |
 | **Scheduler** | the always-on backend: loads job files; supervises the services; evaluates triggers; applies missed-run, queue and load policies; starts the keeper and starts runs through it as its owner; writes history; posts notices; publishes events; serves Runner's API | a login item (launchd) that keeps running when Pomade quits; updated and restarted freely; reconnects to the keeper and its running sessions on restart |
 | **Keeper** | `pomade-kit/keeper`, run as Runner's own detached process (`backend/keeper.mjs`): holds every service's and run's terminal session (PTY); serves the attach protocol Pomade tabs use; reports exits | started by the scheduler (`startKeeper`), and started again when it dies; does not notice a scheduler restart or update; a keeper update hands the open PTYs to the new keeper process, so sessions keep running |
-| **`pomade-runner` command** | `check [file…]` validates job files · `projects` lists the project ids and jobs sub-folders · `list` prints every job with its kind, trigger in words, next run and last result · `run <job>` runs a job now — a script's run, a service's Start · `history [job]` prints the latest runs · `enable <job>` · `disable <job>` · `services` shows every service and where it stands · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions | on `PATH` via `~/.pomade/bin`; reads the job files and talks to the scheduler directly, so it works with Pomade closed |
+| **`pomade-runner` command** | `check [file…]` validates job files and the settings file · `projects` lists the project ids and jobs sub-folders · `list` prints every job with its kind, trigger in words, next run and last result · `run <job>` runs a job now — a script's run, a service's Start · `history [job]` prints the latest runs · `runs` prints the switch, the runs going with what each queued one waits for, and Needs you · `pause [low\|all]` · `resume` set the switch · `enable <job>` · `disable <job>` · `services` shows every service and where it stands · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions | on `PATH` via `~/.pomade/bin`; reads the job files and the settings and talks to the scheduler directly, so it works with Pomade closed |
 | **Skill** | `pomade-runner-jobs` teaches agents the job format and location | master in `app/skills/pomade-runner-jobs/SKILL.md`, shipped in the build at `skills/pomade-runner-jobs` (the manifest's `skills`); `./install` links the installed copy into agents' skill folders |
 
 **What Runner tracks:** only jobs created in Runner. A terminal opened by hand, inside Pomade or
@@ -94,11 +94,11 @@ Notes for humans and agents.
 | `after` | script · agent · git · service | `{ job: <id>, result: done \| failed \| any }` (chains); a service also takes `action: restart \| start \| stop` |
 | `agent`, `mode` | agent | `agent` (required): a roster id from `pomade-agents`; `mode`: one of that agent's modes, default `normal`; the file **body is the prompt** and must not be empty |
 | `git` | git | required: `{ operation: commit-push \| pull \| push \| fetch, repos: [...] }`; repos by the name `pomade-git` accepts, each once; one repo may be written without the list |
-| `missed` | scheduled jobs only | `run-on-wake` (agent, script) · `wait-for-me` · `skip` (git) |
-| `worth-until` | with `missed: run-on-wake` | `next-run` (default) or a time of day (`12:00`) |
+| `missed` | scheduled jobs only | `run-on-wake` (agent, script) · `wait-for-me` · `skip` (git) — what a missed run becomes ("Missed runs and load") |
+| `worth-until` | with `missed: run-on-wake` | `next-run` (default) or a time of day (`12:00`): until when a caught-up run is worth starting |
 | `overlap` | non-service jobs | `skip` · `parallel` · `queue` |
-| `low-priority` | all | `true` for agent and script; `false` for service and git |
-| `time-limit` | non-service jobs | empty (none) or a duration: hours and/or minutes (`45m`, `2h`, `1h30m`) |
+| `low-priority` | all | `true` for agent and script; `false` for service and git — macOS background priority; a low-priority run takes one of the low-priority slots and is held by Pause low-priority |
+| `time-limit` | non-service jobs | empty (none) or a duration: hours and/or minutes (`45m`, `2h`, `1h30m`); a run past it is stopped |
 | `notify` | all | `always` for agent; `on-failure` otherwise; `never` |
 
 **Format rules:**
@@ -154,14 +154,15 @@ disk.
 - **No raw cron syntax.**
 - **UI:** shows every schedule in words ("weekdays at 7:00").
 - **Firing** (`src/scheduler/triggers.ts`, `runs.ts`). Every tick the scheduler takes each enabled,
-  valid scheduled job's occurrences since its previous look (`occurrencesBetween`):
+  valid scheduled job's occurrences since its previous look (`occurrencesBetween`; a look over
+  more than 1,000 keeps the earliest and always the latest):
   - the latest one runs when it is at most 5 minutes old (`ON_TIME_MS`) — a tick, a short stall or
     a wake within 5 minutes still runs it, at once;
-  - every other one is **missed**: the Mac slept through it, or the clock jumped past it. Missed
-    runs are E-003's ("Missed runs and load"); the scheduler logs them
-    (`job backup: missed 07:00 — not run`) and runs nothing for them;
-  - nothing before the scheduler's start is due; a clock set back is a fresh start, so the next
-    occurrence after the new time runs;
+  - every other one is **missed**: the Mac slept through it, was off, the clock jumped past it, or
+    the switch held it. Missed runs go to the job's missed-run policy ("Missed runs and load");
+  - the previous look is kept as the scheduler's last alive time, so a scheduler started after
+    being stopped — the Mac off — sees what it missed; nothing before the scheduler's first start
+    ever is due. A clock set back is a fresh start, so the next occurrence after the new time runs;
   - while the keeper is not followed nothing is due: the look waits for it, so a short keeper
     outage delays a run instead of losing it.
 - **Once at** runs once; after its time it has no next run and shows as **finished**.
@@ -182,7 +183,7 @@ disk.
 
 **Context for scripts.** Scripts receive the context as environment variables:
 - `POMADE_JOB` (the job's id: `backup`, `coda-helper/nightly`), `POMADE_RUN_ID`, `POMADE_TRIGGER`
-  (`scheduled` · `manual`; later `hook` · `chain` · `caught-up`)
+  (`scheduled` · `caught-up` · `manual`; later `hook` · `chain`)
 - `POMADE_PROJECT` (a project job's stable id), `POMADE_PROJECT_PATH` (its project's folder,
   absolute — from Pomade's projects as the scheduler last heard them, `projects.json`; absent until
   it has heard them once)
@@ -194,8 +195,9 @@ and goes to Needs you.
 
 ## Runs
 
-**States:** `queued` → `running` ⇄ `waiting for you` → `done` · `failed` · `stopped by you` ·
-`stopped: time limit`. A run that never started is `skipped` (with a reason) or `missed`.
+**States:** `missed · waiting for you` (a `wait-for-me` job's missed run) → `queued` → `running` ⇄
+`waiting for you` → `done` · `failed` (a time limit too: "stopped: ran over 45 min") · `stopped by
+you`. A run that never started is `skipped` or `missed`, with a reason ("missed · skipped").
 
 **Execution:**
 - Every run and every service is a keeper session, in the job's folder, in the user's login-shell
@@ -203,28 +205,34 @@ and goes to Needs you.
 - Low-priority runs start with macOS background priority (`taskpolicy -b`).
 
 **A script's run** (`src/scheduler/runs.ts`, the model in `model.ts`):
-- **Start.** A due run, or Run now, starts the session `run:<job>:<run id>`: the job's `command`
-  by the login shell, in its `folder`, with low priority as the job says and the context above in
-  its environment. Its run id is made from the time it was due, so ids sort by due time.
+- **Start.** A due run, or Run now, joins the queue ("Missed runs and load"), and when the queue
+  lets it start, starts the session `run:<job>:<run id>`: the job's `command` by the login shell, in
+  its `folder`, with low priority as the job says and the context above in its environment. Its run
+  id is made from the time it was due, so ids sort by due time.
 - **End.** The keeper's exit reason says how it ended: `exited` (status 0) → **done**; `crashed`
   (any other status, or a signal) → **failed**; `stopped-by-you` (Ctrl+C or Stop in its tab) →
   **stopped by you**; `lost-in-keeper-crash`, `stopped` (by Runner) and `time-limit` → **failed**
   with the reason. A session gone from the keeper is **failed** ("its session is gone"); a start
-  the keeper refuses is **failed** ("cannot start — …") and never started. Once its record is
-  written the session is forgotten.
-- **Overlap**, when the job has a run going: `skip` (default) records the new one **skipped ·
-  previous run still going** · `parallel` starts it too · `queue` holds one **queued** run that
-  starts when the job has none going; while one is held, a further one is **skipped · a run is
-  already queued**. A queued run whose job meanwhile is disabled, invalid or gone is skipped when
-  its turn comes.
+  the keeper refuses is **failed** ("cannot start — …") and never started. Past the job's
+  `time-limit` Runner stops the run (reason `time-limit`): **failed**, "stopped: ran over 45 min".
+  Once its record is written the session is forgotten.
+- **Overlap**, when the job has a run going or queued: `skip` (default) records the new one
+  **skipped · previous run still going** · `parallel` queues it too · `queue` holds one **queued**
+  run that starts when the job has none running; while one is held, a further one is **skipped · a
+  run is already queued**. A queued run whose job meanwhile is disabled, invalid or gone is skipped
+  when its turn comes. An on-time run covers a caught-up run of its job still queued: that one is
+  **missed · skipped · the 09:00 run covers it**.
 - **Run now** runs a script now, trigger `manual`, under the same overlap: refused with `skip`
   while a run goes and with `queue` while one is held, as it is for a disabled, invalid or unknown
-  job and for agent and git jobs. For a service it is Start.
+  job and for agent and git jobs. The switch never holds it; it takes a low-priority slot like any
+  run, so it may wait as `queued · 1 ahead`. For a service it is Start.
 - **Attach.** A running run opens as an attached tab like a service
   (`tabs.openAttached({ session: { app: "pomade-runner", session: "run:…" } })`).
-- **Records.** The queued and running runs and each job's latest record are in `runs.json` in
-  Runner's state folder, written on every change. A restarted scheduler picks the runs going up
-  from it, records the ends that came while it was down, and never writes a record twice.
+- **Records.** The runs going (missed runs waiting for you, queued and running), each job's latest
+  record, the last look and the looks the switch holds are in `runs.json` in Runner's state
+  folder, written on every change and at least once a minute (`ALIVE_EVERY_MS`). A restarted
+  scheduler picks the runs going up from it, records the ends that came while it was down, and
+  never writes a record twice.
 
 **Sessions.** The scheduler owns the keeper's sessions (`src/keeper/sessions.ts`): it starts the
 keeper (`startKeeper` from `pomade-kit/node`, the entry `backend/keeper.mjs` next to its own) and
@@ -378,36 +386,134 @@ log, and the last 20 lines of the output as plain text.
   line never swallows the next record. A restarted scheduler reads it as it is.
 - **Reading:** newest first, a page at a time (at most 200); a page ends at a cursor
   (`<day>:<line>`) the next page starts before, valid while new runs land.
-- **Retention:** whole days, 30 (`HISTORY_DAYS`; the setting comes with E-003): a day's file and
-  the output logs of the runs that started that day go once the day is 30 days behind, checked at
-  the scheduler's start and every hour; a log a session still writes stays.
+- **Retention:** whole days, as many as the settings keep (`history-days`, default 30): a day's file
+  and the output logs of the runs that started that day go once the day is that many days behind,
+  checked at the scheduler's start and every hour; a log a session still writes stays.
 
 ## Missed runs and load
 
-- **Missed-run detection.** The scheduler records its last alive time. On start or wake, it
-  computes each job's missed occurrences, after sleep and after power-off alike.
-- **Missed-run policies, per job:**
-  - **Run on wake:** once, while within "still worth it until".
-  - **Wait for me:** a Needs-you card with Run now · Run at… · Skip.
-  - **Skip:** recorded only.
-- **Overlap**, per job: skip (default) · parallel · queue after.
-- **Concurrency:** at most 2 low-priority runs at once; others are `queued · N ahead`.
-- **Staged start after login or wake:**
-  1. services, one by one;
-  2. a 2-minute warm-up;
-  3. caught-up runs and hooks, through the queue.
-- **Global switch**, three positions: **Running · Pause low-priority · Pause all**.
-  - Held runs become missed runs and follow their policy on resume.
-  - Services keep running in every position.
-- **Time limits:**
-  - per job, empty by default;
-  - when hit: the run stops with a red card.
-- **Long-run warning:** always on, never kills; at 3h: *"still expected? · Open · Stop"*.
+The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-run policies
+(`missed.ts`), the queue (`queue.ts`), the switch (`switch.ts`), the settings (`settings.ts`).
+
+- **Last alive.** The scheduler keeps its latest look at the schedules — its last alive time — in
+  `runs.json`: at once when a look fires, misses or holds something, otherwise at least every
+  minute (`ALIVE_EVERY_MS`). Started after a power-off, it knows within a minute since when it
+  missed, and never runs again what it fired before.
+- **Wake.** A gap of more than a minute between two ticks on the scheduler's clock (`WAKE_GAP_MS`;
+  a tick is a second) is a wake: the Mac slept — the scheduler did not run while time went on — or
+  the clock jumped ahead. The gap needs no system API and sees every way the scheduler stops
+  running while time passes; a stall of a busy Mac is far shorter, and a wake that was none only
+  starts a warm-up, which holds nothing but missed runs.
+- **Missed runs.** Each look takes every job's occurrences since its previous look; those more than
+  5 minutes old are missed — after sleep, after power-off (the look starts at the last alive
+  time), after a clock jump, or held by the switch. However many, a job gets one decision, about the
+  latest missed time, by its `missed` policy:
+  - **`run-on-wake`** (agent, script): one **caught-up** run (trigger `caught-up`, due at the latest
+    missed time) while it is still worth it — until the job's next occurrence after that time
+    (`worth-until: next-run`, the default), or until a time of day (`worth-until: 12:00`: the first
+    12:00 after it). Past that it is **missed · skipped · past 12:00** (or **· past its next run**);
+    a caught-up run still queued when its moment passes goes the same way. An on-time run of the
+    job in the same look covers it: **missed · skipped · the 09:00 run covers it**. A `once`
+    schedule has no next run: its catch-up is always worth it.
+  - **`wait-for-me`**: the run waits as **missed · waiting for you**, a Needs-you item *"Inbox triage
+    · missed Sun 3:00"* with a notice; one per job — a later miss moves it to the later time. It
+    never starts on its own:
+    - **Run now** — a run of yours (trigger `manual`) takes its place, under the job's overlap;
+    - **Run at…** — it waits, queued, until that time (trigger `caught-up`) and shows in Next up. The
+      time is typed as a time (`23:00`: the next one), a day and a time (`tomorrow 9:00`,
+      `2026-11-20 23:00`, or a date-time picker's `2026-11-20T23:00`) or elapsed time (`+2h`) —
+      `pomade-kit`'s date phrases, read on the scheduler's clock. A time that has passed, or a day
+      without a time, is refused with the reason. It is kept in `runs.json`, so it survives restarts;
+    - **Skip** — **missed · skipped by you**.
+    - A job disabled, invalid or gone while its run waits: **missed · skipped · its job is
+      disabled** (or why else).
+  - **`skip`** (git): **missed · skipped**.
+  - Hook and chain jobs have no missed-run policy: a run the switch held runs late.
+  - Missed runs are history records (state `missed`), never noticed but a `wait-for-me` one.
+- **The queue** (`queue.ts`). Every run joins it, oldest first, and starts when nothing holds it;
+  each queued run waits for the first of:
+  1. its **time** — Run at…;
+  2. the **switch**;
+  3. the **warm-up**, for a caught-up run — a Run at… one included;
+  4. the job's **previous run**, unless its overlap is `parallel`;
+  5. a **slot**: at most `max-low-priority-runs` (default 2) low-priority runs run at once.
+  - **What takes a slot:** a running run of a low-priority job. A job with `low-priority: false` —
+    git, by default — neither takes nor waits for one; neither does a missed run waiting for you.
+    An agent run waiting for you at a permission prompt (E-004) holds no slot: it is idle, and a
+    forgotten prompt must not hold back every low-priority job; once answered it goes on, past the
+    cap if need be.
+  - **"queued · N ahead"**: N runs have to end before it starts — the slot-waiting runs ahead of it
+    and the one whose slot it takes. Three low-priority runs due at once: two run, the third is
+    "queued · 1 ahead", a fourth would be "2 ahead". The others: "queued · at Wed 23:00", "queued ·
+    held · Pause all", "queued · warm-up until 08:32", "queued · after the previous run".
+  - Run now joins the queue too: the switch never holds it, a slot may.
+- **Staged start after login or wake.** The scheduler's start — it is the login item — and every
+  wake begin a staged start:
+  1. the services start one by one (the supervisor's staged start, "Services"; at a wake they run
+     already);
+  2. once no service waits for its turn or is starting (`servicesSettled`), the **warm-up**
+     (`warm-up`, default 2 minutes);
+  3. then the caught-up runs, and the login hooks (E-005), go through the queue.
+  - A scheduled run due on time during the warm-up runs on time: it is what was asked for at that
+    time, and the slots keep it from storming the Mac. A wake during a warm-up starts it over.
+- **The switch**, three positions: **Running · Pause low-priority · Pause all**.
+  - Pause all holds every run but Run now; Pause low-priority holds the runs of low-priority jobs.
+    Running runs go on; services keep running in every position.
+  - A held job's look stays where the switch caught it: on release its occurrences come due — the
+    latest on time when within 5 minutes, the others missed and to the job's policy. A queued run
+    the switch held goes to its job's policy on release when it is more than 5 minutes late, or a
+    caught-up one: a `run-on-wake` job keeps it while it is worth it, a `wait-for-me` one waits for
+    you, a `skip` one records it missed. A release is no wake: no warm-up.
+  - Machine-local: `switch.json` in Runner's state folder, written before the switch answers; it
+    survives restarts.
+  - Set from the panel (`switch.set`, Runner's frames only), by `pomade-runner pause [low|all]`
+    (`all` when left out) and `pomade-runner resume`, and the control method `switch`.
+- **Time limit**, per job (`time-limit`), none by default. A run counts from its start
+  (`ranFor`); at the limit Runner stops it, once (SIGTERM, then SIGKILL after 3 s; reason
+  `time-limit`): **failed · stopped: ran over 45 min**, red on its card, and noticed as a failure.
+  The job file as it is now sets the limit. An agent run's wait for you (E-004) is left out of
+  `ranFor`, so the limit pauses while it waits.
+- **Long-run warning**, always on, never stops a run. A run going longer than `long-run-warning`
+  (default 3h) becomes a Needs-you item *"Wiki lint has been running 3 h — still expected?"* with
+  Open (its attached tab) · Stop (stopped by you) · Dismiss (gone for this run), noticed once. Its
+  warning is kept with the run in `runs.json`: a restart neither forgets nor notices it again.
+
+## Settings
+
+The workspace's Runner settings, in `<workspace>/Apps/pomade-runner/settings.yaml` (synced with the
+workspace): plain YAML, one field per setting.
+
+```yaml
+max-low-priority-runs: 2   # low-priority runs at once; the rest wait "queued · N ahead"
+warm-up: 2m                # after login or wake, before caught-up runs
+long-run-warning: 3h       # a run going this long asks "still expected?"
+history-days: 30           # run history and output logs kept
+```
+
+| Field | Value | Default |
+|---|---|---|
+| `max-low-priority-runs` | a whole number, 1–16 | 2 |
+| `warm-up` | a duration, `0m`–`1h` | `2m` |
+| `long-run-warning` | a duration, `1m`–`24h` | `3h` |
+| `history-days` | a whole number, 1–365 | 30 |
+
+- A missing file, a field left out or an empty one means its default.
+- **Checked like a job file** (`src/scheduler/settings.ts`, with the job files' YAML reader): every
+  problem is one line, `path:line: field — problem. Fix: …`, a misspelled field gets the closest
+  one; a field with a problem counts as its default until it is fixed. `pomade-runner check` checks
+  it with the job files, or alone when it is the file named.
+- **Followed live:** the scheduler reads it on every tick, so an edit applies within a second, and
+  tells Runner's frames (`settings.changed`); `settings.get` answers what applies and the problems.
+- **Written field-only** by the scheduler (`settings.set { field, value }`: a count, a duration in
+  minutes, or `null` for the default): only the field's line changes, comments and the rest stay
+  byte for byte. A value out of range, or a file that is not readable YAML, is refused with the
+  reason. The scheduler is the one writer, with the one validator, Pomade open or closed.
 
 ## Notifications
 
 - **Notify me** per job: always · on failure · never. A run that ended is noticed as its job says:
-  `always` every run that started, `on-failure` a failed one, `never` none; a skipped run never.
+  `always` every run that started, `on-failure` a failed one, `never` none; a skipped or missed run
+  never.
   The notice names the job and the result ("Backup failed", "exit 3 · <its last line>"); its click
   opens the run's result card (`openApp`, route `run/<job>/<run>`).
 - **"Needs you" items always notify:**
@@ -424,8 +530,14 @@ log, and the last 20 lines of the output as plain text.
     is gone. Actions: Open · Run now · Dismiss.
   - **A service that gave up** after a crash loop is an item while it stays `failed`; Start, a
     fixed or disabled file, or its removal end it. It is noticed once per giving-up. Action: Start.
-  - The items, and the giving-ups already noticed, are in `needs-you.json` in Runner's state
-    folder: a restarted scheduler neither forgets an item nor notices one twice.
+  - **A missed run that waits for you** (`missed:<job>`, one per job) is an item while it waits;
+    noticed when it comes ("Inbox triage · missed Sun 03:00"), its click opening the run's card.
+    Actions: Run now · Run at… · Skip (`runs.missed`).
+  - **A long-run warning** (`long-run:<job>:<run>`) is an item while its run runs, until dismissed;
+    noticed once. Actions: Open · Stop (`runs.stop`) · Dismiss (`needsYou.dismiss`).
+  - The failed runs' items, and the giving-ups already noticed, are in `needs-you.json` in Runner's
+    state folder; the missed runs and the warnings are the runs' own, in `runs.json`: a restarted
+    scheduler neither forgets an item nor notices one twice.
 - **Posting:** the scheduler posts every notice: over its connection while Pomade runs, into
   Pomade's closed-Pomade queue (`<userData>/notices/queue/`) otherwise — and when posting over the
   connection fails.
@@ -442,21 +554,23 @@ log, and the last 20 lines of the output as plain text.
 **Side panel** (the Runner icon on the left strip):
 1. the three-position switch;
 2. **Needs you**, with actions inline;
-3. **Running now** (services and active runs: name, project, folder, uptime, status; click opens
-   the attached tab);
-4. **Next up** (the next ~5 runs);
+3. **Running now** (services and active runs: name, project, folder, uptime, status — a queued run
+   with what it waits for, "queued · 1 ahead"; click opens the attached tab);
+4. **Next up** (the next ~5 runs, Run at… ones included);
 5. **Open Runner**.
 
 **Runner tab:**
 - **Jobs:** grouped by project, workspace jobs first, "This project" chip. Each row: trigger in
   words, last result, next run, Run now · Edit · Disable · Open file.
-- **History:** every run, with time, job, result, duration and trigger type (scheduled · caught
-  up · manual · hook · chain); opens the result card or the output.
+- **History:** the runs going on top, queued ones with what they wait for; then every run, with
+  time, job, result, duration and trigger type (scheduled · caught up · manual · hook · chain);
+  opens the result card or the output.
 - **Services:** start / stop / restart, crash count, log.
-- **Settings.**
+- **Settings:** the four settings ("Settings"), each written field-only.
 
 **Routes of the Runner tab** (`parseRoute`, `src/integrations/runner-api.ts`): `""` Jobs ·
-`history` · `run/<encoded job id>/<run id>` a run's result card (what a run's notice opens) ·
+`history` · `settings` · `run/<encoded job id>/<run id>` a run's result card (what a run's notice
+opens; a missed run's card offers Run now · Run at… · Skip, a running run's Stop) ·
 `output/<encoded job id>/<run id>` its full output. The tab follows Pomade's `route.changed`.
 
 **Job form.** Creating and editing a job happens in a form, never by hand-editing md. Order: kind
@@ -470,13 +584,14 @@ example. This is a product requirement, not polish.
 | What | Where |
 |---|---|
 | Job files | `<workspace>/Apps/pomade-runner/jobs/` (synced with the workspace) |
-| Workspace settings (max heavy runs 2, warm-up 2 min, long-run warning 3h, retention 30 days) | `<workspace>/Apps/pomade-runner/settings.yaml` |
-| Run history, captured output (30 days), keeper state (`keeper/`), switch position, last-alive record | `<userData>/app-state/pomade-runner/` (machine-local) |
+| Workspace settings (max low-priority runs 2, warm-up 2 min, long-run warning 3h, history 30 days) | `<workspace>/Apps/pomade-runner/settings.yaml` |
+| Run history, captured output, keeper state (`keeper/`), the switch's position, the last alive time | `<userData>/app-state/pomade-runner/` (machine-local) |
 | Session records (job, run, output log, end) | `<userData>/app-state/pomade-runner/sessions.json` |
 | Service supervision records (holds, crash counts, a restart due) | `<userData>/app-state/pomade-runner/services.json` |
 | Run output logs | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.log` |
 | Run history (one file per day, JSON Lines) | `<userData>/app-state/pomade-runner/history/YYYY-MM-DD.jsonl` |
-| Runs going and each job's latest record | `<userData>/app-state/pomade-runner/runs.json` |
+| Runs going (missed runs waiting for you, queued, running), each job's latest record, the last alive time, the looks the switch holds | `<userData>/app-state/pomade-runner/runs.json` |
+| The switch's position | `<userData>/app-state/pomade-runner/switch.json` |
 | Needs-you items, the giving-ups noticed | `<userData>/app-state/pomade-runner/needs-you.json` |
 | Pomade's projects as last heard (for `POMADE_PROJECT_PATH`) | `<userData>/app-state/pomade-runner/projects.json` |
 | The keeper's own state (session records, exit statuses, `keeper.log`) and its stdout and stderr (`keeper.out`) | `<userData>/app-state/pomade-runner/keeper/` |
@@ -497,8 +612,9 @@ example. This is a product requirement, not polish.
   or why it was refused. A start or restart may wait for a running session to end: callers give it
   `SERVICE_ACTION_TIMEOUT_MS` (`src/integrations/runner-api.ts`).
 - **Runs**, through the broker:
-  - **`runs.list`** → `RunsReport` (`isRunsReport`): the runs going (queued and running), Next up
-    (every enabled scheduled job's next run), each run job's next and latest run, and Needs you;
+  - **`runs.list`** → `RunsReport` (`isRunsReport`): the runs going (missed runs waiting for you,
+    queued ones with what each waits for, running ones), Next up (every enabled scheduled job's
+    next run, and the Run at… ones), each run job's next and latest run, Needs you, and the switch;
     **`runs.changed`** tells Runner's frames to ask again — on every change, and when the scheduler
     connects.
   - **`history.list`** `{ job?, before?, limit? }` → `HistoryPage`; **`runs.get`** `{ job, run }` →
@@ -506,7 +622,13 @@ example. This is a product requirement, not polish.
     most 1 MiB.
   - From Runner's own frames only: **`jobs.run`** `{ job }` → `RunActionResult` (Run now) ·
     **`jobs.setEnabled`** `{ job, enabled }` → `EnableResult`: writes `enabled:` into the job's file,
-    field-only · **`needsYou.dismiss`** `{ id }` → `{ resolved }`.
+    field-only · **`needsYou.dismiss`** `{ id }` → `{ resolved }` · **`runs.missed`** `{ job, choice:
+    "run-now" | "run-at" | "skip", at? }` → `MissedChoiceResult` (when it runs, or why not) ·
+    **`runs.stop`** `{ job, run }` → `RunStopResult` · **`switch.set`** `{ position }` →
+    `SwitchState`.
+- **Settings**, through the broker: **`settings.get`** → `SettingsReport` (`isSettingsReport`);
+  from Runner's own frames only **`settings.set`** `{ field, value }` → `SettingsWriteResult`;
+  **`settings.changed`** tells Runner's frames to ask again.
 - **`jobs.forRepo`** through the broker: the jobs that target a repo. Params `RepoJobsParams`, result
   `RepoJobsResult` with `RepoJob`s (id, name, operation, schedule in words, next run, last result,
   and `route`, Runner's tab route that opens the job) — the contract is in `pomade-kit/protocol`.
@@ -586,8 +708,10 @@ unix socket, `<userData>/app-state/pomade-runner/scheduler.sock`, so it works wi
   or a service's Start — `RunStarted`) · `stop { job }` · `restart { job }` (Stop, Restart a
   service, answering its status after) · `enable { job }` · `disable { job }` (`enabled:` written
   into the job's file) · `list` (every job: `JobListing`; `pomade-runner list`) · `history { job,
-  limit }` (`HistoryPage`; `pomade-runner history`). A job is named by its id or name; what cannot
-  be done is `refused`, with the reason — "Runs" and "Services" say what.
+  limit }` (`HistoryPage`; `pomade-runner history`) · `runs` (`RunsReport`; `pomade-runner runs`) ·
+  `switch { position }` (sets the switch, or — `position: null` — reads it: `SwitchState`;
+  `pomade-runner pause`, `resume`). A job is named by its id or name; what cannot be done is
+  `refused`, with the reason — "Runs" and "Services" say what.
 - **Location:** found from `POMADE_APP_KEY_FILE` (`<userData>/app-keys/pomade-runner`), which
   Pomade gives the scheduler and the command alike — each Pomade (dev, stable, a test run) has its
   own scheduler.
@@ -601,4 +725,8 @@ unix socket, `<userData>/app-state/pomade-runner/scheduler.sock`, so it works wi
 1 s tick, and `POMADE_RUNNER_CLOCK` (an ISO date-time; without an offset, local time) starts its
 clock at another time, running `POMADE_RUNNER_CLOCK_RATE` times as fast (default 1) — so a day's
 schedule plays out in seconds. Unset, empty or invalid values mean the production ones. A tick
-due while the previous one still works is dropped.
+due while the previous one still works is dropped. A wake is simulated the way it is detected:
+the scheduler process stopped (`SIGSTOP`) while its clock runs on, then continued — its next tick
+comes after a gap. On a clock many times as fast a short stall of the machine is a gap of minutes
+too; the specs with caught-up runs, which a wake holds for the warm-up, run their clock at most 60
+times as fast.
