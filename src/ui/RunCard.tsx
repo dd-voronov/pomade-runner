@@ -3,15 +3,16 @@ import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
 import { DISMISS_METHOD, outputRoute, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute } from "../integrations/runner-api";
-import { dayTime, durationWords, plainLines, runWords, TRIGGER_WORDS, type NeedsYouItem } from "../scheduler/model";
+import { dayTime, durationWords, plainLines, runTriggerWords, runWords, type NeedsYouItem } from "../scheduler/model";
 import { MissedActions } from "./MissedActions";
 import styles from "./Runs.module.css";
 import { useAction } from "./useAction";
 import { useOutput, useRun } from "./useRunnerApi";
 
-/** A run's result: its state, exit code, when and how long, the last lines; View output. Opening a
- *  failed run that is a Needs-you item resolves the item. A missed run that waits for the person
- *  offers Run now · Run at… · Skip; a running one, Stop. A stand-in until the real result card. */
+/** A run's result: its state, what started it, exit code, when and how long, the last lines; View
+ *  output. Opening a failed run that is a Needs-you item resolves the item. A chain run opens the
+ *  run it followed. A missed run that waits for the person offers Run now · Run at… · Skip; a running
+ *  one, Stop. A stand-in until the real result card. */
 export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; job: string; run: string; needsYou: readonly NeedsYouItem[]; open: (route: string) => void }): React.JSX.Element {
   const view = useRun(host, job, run);
   const action = useAction();
@@ -32,14 +33,15 @@ export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; 
   const value = view.value;
   const failed = value.state === "failed";
   const session = value.state === "running" ? value.session : null;
+  const parent = value.cause?.kind === "chain" ? value.cause : null;
   return (
     <section className={styles.card} data-testid="run-card" data-state={value.state}>
       <h2 className={styles.cardTitle}>{value.name}</h2>
       <span className={`${styles.meta} ${failed ? styles.failed : ""}`} data-testid="run-result">
         {runWords(value)}
       </span>
-      <span className={styles.meta}>
-        {TRIGGER_WORDS[value.trigger]} · due {dayTime(value.dueAt)}
+      <span className={styles.meta} data-testid="run-trigger">
+        {runTriggerWords(value)} · due {dayTime(value.dueAt)}
         {value.startedAt !== null && ` · started ${dayTime(value.startedAt)}`}
         {"durationMs" in value && value.durationMs !== null && ` · took ${durationWords(value.durationMs)}`}
       </span>
@@ -58,6 +60,11 @@ export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; 
         {value.log !== null && (
           <button type="button" className={styles.button} onClick={() => open(outputRoute(job, run))}>
             View output
+          </button>
+        )}
+        {parent !== null && (
+          <button type="button" className={styles.button} onClick={() => open(runRoute(parent.job, parent.run))}>
+            Open {parent.name}'s run
           </button>
         )}
         {session !== null && (

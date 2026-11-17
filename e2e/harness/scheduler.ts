@@ -1,6 +1,6 @@
 // A stand-in for Runner's scheduler in the fake host: another client of the app that serves
 // Runner's API — the jobs, the services, the runs, the history, one run and its output, Run now,
-// Enable / Disable, Needs you, a missed run's choice, Stop, the switch, the settings — and
+// Enable / Disable, Needs you, a missed run's choice, Stop, the switch, Resume, the settings — and
 // announces `jobs.changed`, `services.changed`, `runs.changed` and `settings.changed`, as the real
 // scheduler does through Pomade. It reads the fake workspace's jobs folder through the Host API and
 // checks it with the real validator, so the UI specs drive it by writing files
@@ -18,6 +18,7 @@ import {
   JOBS_CHANGED_EVENT,
   JOBS_LIST_METHOD,
   MISSED_METHOD,
+  RESUME_METHOD,
   RUN_GET_METHOD,
   RUN_NOW_METHOD,
   RUN_OUTPUT_METHOD,
@@ -95,6 +96,12 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     [SERVICE_METHODS.start]: action(SERVICE_METHODS.start),
     [MISSED_METHOD]: action(MISSED_METHOD, () => ({ ok: true, at: null })),
     [RUN_STOP_METHOD]: action(RUN_STOP_METHOD),
+    [RESUME_METHOD]: action(RESUME_METHOD, (params) => {
+      const { job } = params as { job: string };
+      runs = { ...runs, report: { ...runs.report, needsYou: runs.report.needsYou.filter((item) => item.id !== `loop-paused:${job}`) } };
+      void host.events.publish(RUNS_CHANGED_EVENT);
+      return { ok: true, job, name: job };
+    }),
     [SWITCH_METHOD]: action(SWITCH_METHOD, (params) => {
       const position = (params as { position: SwitchPosition }).position;
       runs = { ...runs, report: { ...runs.report, switch: { position, since: 1 } } };

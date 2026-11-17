@@ -5,6 +5,7 @@ import { APP_ID } from "../app";
 import { RUN_NOW_METHOD, SET_ENABLED_METHOD } from "../integrations/runner-api";
 import { describeJobError } from "../jobs/format";
 import { entryId, entryPath, type Job, type JobEntry, type JobKind } from "../jobs/model";
+import { jobTriggerWords } from "../jobs/words";
 import type { ServiceStatus } from "../keeper/model";
 import { dayTime, runWords, type JobRuns } from "../scheduler/model";
 import styles from "./JobsList.module.css";
@@ -13,23 +14,11 @@ import { useAction } from "./useAction";
 
 const KIND_LABEL: Record<JobKind, string> = { service: "Service", script: "Script", agent: "Agent", git: "Git" };
 
-/** A run job's trigger in words. */
-function triggerWords(job: Exclude<Job, { kind: "service" }>): string {
-  switch (job.trigger.kind) {
-    case "schedule":
-      return job.trigger.words;
-    case "hook":
-      return `on ${job.trigger.hook.event}`;
-    case "chain":
-      return `after ${job.trigger.chain.job}`;
-  }
-}
-
 /** A run job's next and last run in words. */
 function runsWords(job: Exclude<Job, { kind: "service" }>, runs: JobRuns | undefined): string {
   const next = !job.enabled ? "disabled" : runs?.finished === true ? "finished" : runs?.next != null ? `next ${dayTime(runs.next)}` : null;
   const last = runs?.last == null ? "never ran" : `last ${runWords(runs.last)}`;
-  return [triggerWords(job), next, last].filter((part) => part !== null).join(" · ");
+  return [jobTriggerWords(job), next, last].filter((part) => part !== null).join(" · ");
 }
 
 function Row({
@@ -60,6 +49,11 @@ function Row({
         {service !== undefined && (
           <span className={`${styles.meta} ${service.state === "failed" ? styles.failed : ""}`} data-testid="service-state">
             {serviceWords(service)}
+          </span>
+        )}
+        {job.kind === "service" && job.after !== null && (
+          <span className={styles.meta} data-testid="service-chain">
+            {jobTriggerWords(job)}
           </span>
         )}
         {job.kind !== "service" && (

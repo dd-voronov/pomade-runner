@@ -1,7 +1,7 @@
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
-import { DISMISS_METHOD, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute, SERVICE_ACTION_TIMEOUT_MS, SERVICE_METHODS } from "../integrations/runner-api";
+import { DISMISS_METHOD, RESUME_METHOD, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute, SERVICE_ACTION_TIMEOUT_MS, SERVICE_METHODS } from "../integrations/runner-api";
 import { sessionIdOf } from "../keeper/ids";
 import { dayTime, type NeedsYouItem } from "../scheduler/model";
 import { MissedActions } from "./MissedActions";
@@ -19,6 +19,8 @@ function itemWords(item: NeedsYouItem): string {
       return `Missed ${dayTime(item.at)} — it waits for you to pick a time.`;
     case "long-run":
       return `Has been ${item.detail}`;
+    case "loop-paused":
+      return `Paused: ${item.detail}`;
   }
 }
 
@@ -59,6 +61,9 @@ function Item({ host, item }: { host: HostClient; item: NeedsYouItem }): React.J
       );
       break;
     }
+    case "loop-paused":
+      actions = <span className={styles.actions}>{button("Resume", call(RESUME_METHOD, { job: item.job }))}</span>;
+      break;
   }
   return (
     <li className={styles.row} data-testid="needs-you-item" data-kind={item.kind}>
@@ -66,7 +71,7 @@ function Item({ host, item }: { host: HostClient; item: NeedsYouItem }): React.J
         <span className={styles.name}>{item.name}</span>
         <span className={styles.meta}>{dayTime(item.at)}</span>
       </span>
-      <span className={`${styles.meta} ${item.kind === "run-failed" || item.kind === "service-failed" ? styles.failed : ""}`} data-testid="needs-you-words">
+      <span className={`${styles.meta} ${item.kind === "run-failed" || item.kind === "service-failed" || item.kind === "loop-paused" ? styles.failed : ""}`} data-testid="needs-you-words">
         {itemWords(item)}
       </span>
       {actions}

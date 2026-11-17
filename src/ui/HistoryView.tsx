@@ -1,7 +1,7 @@
 import type { HostClient } from "pomade-kit/sdk";
 
 import { runRoute } from "../integrations/runner-api";
-import { dayTime, durationWords, runWords, TRIGGER_WORDS } from "../scheduler/model";
+import { dayTime, durationWords, runTriggerWords, runWords } from "../scheduler/model";
 import styles from "./Runs.module.css";
 import { useHistory } from "./useRunnerApi";
 
@@ -34,7 +34,9 @@ export function HistoryView({ host, open }: { host: HostClient; open: (route: st
                 <span className={styles.name}>{record.name}</span>
                 <span className={`${styles.meta} ${record.state === "failed" ? styles.failed : ""}`}>{runWords(record)}</span>
                 <span className={styles.meta}>{record.durationMs === null ? "" : durationWords(record.durationMs)}</span>
-                <span className={styles.meta}>{TRIGGER_WORDS[record.trigger]}</span>
+                <span className={styles.meta} data-testid="history-trigger">
+                  {runTriggerWords(record)}
+                </span>
               </button>
             </li>
           ))}

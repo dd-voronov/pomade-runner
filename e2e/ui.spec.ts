@@ -176,8 +176,10 @@ test.describe("runs", () => {
     folder: "",
     run: RUN,
     trigger: "scheduled",
+    cause: null,
     dueAt: at(13, 0),
     state: "failed",
+    action: null,
     reason: null,
     startedAt: at(13, 0),
     endedAt: at(13, 0) + 3000,
@@ -303,6 +305,7 @@ test.describe("missed runs and load", () => {
     folder: "",
     run: "20261118-060000-abcdef",
     trigger: "scheduled",
+    cause: null,
     dueAt: at(7, 0),
     state: "running",
     lowPriority: true,
@@ -422,7 +425,7 @@ test.describe("missed runs and load", () => {
     await card.getByRole("button", { name: "Stop" }).click();
     await expect.poll(() => page.evaluate(() => window.runnerCalls)).toEqual([{ method: "runs.stop", params: { job: "summary", run: base.run } }]);
 
-    const stopped: RunRecord = { ...base, state: "failed", reason: "stopped: ran over 45 min", endedAt: at(7, 45), durationMs: 45 * 60_000, exitCode: null, signal: "SIGTERM", lastLines: ["still summarizing"] };
+    const stopped: RunRecord = { ...base, state: "failed", action: null, reason: "stopped: ran over 45 min", endedAt: at(7, 45), durationMs: 45 * 60_000, exitCode: null, signal: "SIGTERM", lastLines: ["still summarizing"] };
     await page.evaluate((h) => window.setRuns({ report: { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } }, history: h }), [stopped]);
     await expect(card.getByTestId("run-result")).toHaveText("failed · stopped: ran over 45 min");
     const red = await card.getByTestId("run-result").evaluate((element) => {
@@ -463,5 +466,86 @@ test.describe("missed runs and load", () => {
     ]);
     await app(page).getByTestId("nav-jobs").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+  });
+});
+
+test.describe("hooks and chains", () => {
+  test.use({ viewport: { width: 1040, height: 700 } });
+  const at = (hours: number, minutes: number): number => new Date(2026, 10, 18, hours, minutes).getTime();
+  const pull: RunRecord = {
+    job: "pull",
+    name: "Pull",
+    kind: "script",
+    project: null,
+    folder: "",
+    run: "20261118-120000-aaaaaa",
+    trigger: "scheduled",
+    cause: null,
+    dueAt: at(13, 0),
+    state: "done",
+    action: null,
+    reason: null,
+    startedAt: at(13, 0),
+    endedAt: at(13, 0) + 2000,
+    durationMs: 2000,
+    exitCode: 0,
+    signal: null,
+    log: "/ud/output/pull/a.log",
+    lastLines: ["Already up to date."],
+  };
+  const cause = { kind: "chain" as const, job: "pull", name: "Pull", run: pull.run, result: "done" as const };
+  const tests: RunRecord = { ...pull, job: "tests", name: "Tests", run: "20261118-120002-bbbbbb", trigger: "chain", cause, dueAt: pull.endedAt, startedAt: pull.endedAt, endedAt: pull.endedAt + 5000, lastLines: ["12 passed"] };
+  const web: RunRecord = { ...pull, job: "web", name: "Web", kind: "service", run: "20261118-120002-cccccc", trigger: "chain", cause, dueAt: pull.endedAt, action: "restart", startedAt: null, durationMs: null, exitCode: null, log: null, lastLines: [], endedAt: pull.endedAt + 1000 };
+  const mount: RunRecord = { ...pull, job: "mount", name: "Mount", run: "20261118-070000-dddddd", trigger: "hook", cause: { kind: "hook", event: "login", context: {} }, dueAt: at(8, 0), startedAt: at(8, 2), endedAt: at(8, 2) + 1000 };
+  const paused: NeedsYouItem = { id: "loop-paused:lint", kind: "loop-paused", job: "lint", name: "Lint", project: null, at: at(14, 0), detail: "triggered 10× in 10 min — looks like a loop" };
+  const quiet: RunsReport = { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } };
+
+  test("History says what started each run — chain: after Pull, hook: Mac login — and a service's chain action; a chain run's card opens the run it followed", async ({ page }) => {
+    await page.goto(harness({ route: "history" }));
+    await page.waitForFunction(() => typeof window.setRuns === "function");
+    await page.evaluate((h) => window.setRuns({ report: { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } }, history: h }), [tests, web, pull, mount]);
+    const rows = app(page).getByTestId("history-row");
+    await expect(rows).toHaveCount(4);
+    await expect(app(page).getByTestId("history-trigger")).toHaveText(["chain: after Pull", "chain: after Pull", "scheduled", "hook: Mac login"]);
+    await expect(rows.nth(1)).toContainText("restarted");
+    await shoot(page, "tab-history-chains");
+
+    await rows.first().click();
+    const card = app(page).getByTestId("run-card");
+    await expect(card.getByTestId("run-trigger")).toContainText("chain: after Pull · due");
+    await card.getByRole("button", { name: "Open Pull's run" }).click();
+    await expect(card.getByTestId("run-trigger")).toContainText("scheduled · due");
+    await expect(card.getByRole("button", { name: "Open Pull's run" })).toHaveCount(0);
+    await expect(card.getByTestId("run-last-lines")).toHaveText("Already up to date.");
+  });
+
+  test("a job the loop guard paused is in Needs you, with Resume", async ({ page }) => {
+    await page.setViewportSize({ width: 240, height: 640 });
+    await page.goto(harness({ surface: "panel" }));
+    // The stand-in scheduler watches the jobs folder by the time it can set a service's state.
+    await page.waitForFunction(() => typeof window.setServiceStatus === "function");
+    await writeJob(page, "lint.md", "---\nkind: script\nname: Lint\nfolder: .\ncommand: ./lint.sh\nhook: { event: project-created }\n---\n");
+    await expect(app(page).getByTestId("panel-jobs")).toBeVisible();
+    await page.evaluate((r) => window.setRuns({ report: r, history: [] }), { ...quiet, needsYou: [paused] });
+    const item = app(page).locator('[data-testid="needs-you-item"][data-kind="loop-paused"]');
+    await expect(item.getByTestId("needs-you-words")).toHaveText("Paused: triggered 10× in 10 min — looks like a loop");
+    await shoot(page, "panel-loop-paused");
+    await item.getByRole("button", { name: "Resume" }).click();
+    await expect(item).toHaveCount(0);
+    expect(await page.evaluate(() => window.runnerCalls)).toEqual([{ method: "jobs.resume", params: { job: "lint" } }]);
+  });
+
+  test("job rows say each hook and chain in words; a service says what its chain does", async ({ page }) => {
+    await page.goto(harness());
+    await page.waitForFunction(() => typeof window.setServiceStatus === "function");
+    await writeJob(page, "pull.md", "---\nkind: script\nname: Pull\nfolder: .\ncommand: ./pull.sh\nschedule:\n  daily: { at: 13:00 }\n---\n");
+    await writeJob(page, "tests.md", "---\nkind: script\nname: Tests\nfolder: .\ncommand: ./test.sh\nafter: { job: pull, result: any }\n---\n");
+    await writeJob(page, "mount.md", "---\nkind: script\nname: Mount\nfolder: .\ncommand: ./mount.sh\nhook: { event: login }\n---\n");
+    await writeJob(page, "web.md", "---\nkind: service\nname: Web\nfolder: .\ncommand: ./web.sh\nafter: { job: pull }\n---\n");
+    const runs = app(page).getByTestId("job-runs");
+    await expect(runs).toHaveCount(3);
+    await expect(runs).toContainText(["at Mac login", "daily at 13:00", "after pull finishes"]);
+    await expect(app(page).getByTestId("service-chain")).toHaveText("always on, from login; restarts after pull is done");
+    await shoot(page, "tab-jobs-chains");
   });
 });
