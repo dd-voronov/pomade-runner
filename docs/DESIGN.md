@@ -651,6 +651,9 @@ history-days: 30           # run history and output logs kept
 
 ## UI
 
+**Design source:** the approved clickable prototype, `prototype/index.html`; the real UI is built
+to it, light theme only.
+
 **Side panel** (the Runner icon on the left strip):
 1. the three-position switch;
 2. **Needs you**, with actions inline;
