@@ -22,9 +22,10 @@ export default defineConfig({
     { name: "runs", testMatch: "runs.spec.ts" },
     { name: "load", testMatch: "load.spec.ts" },
     { name: "chains", testMatch: "chains.spec.ts" },
+    { name: "git", testMatch: "git.spec.ts" },
     { name: "pomade", testMatch: "pomade.spec.ts" },
     { name: "pomade-load", testMatch: "pomade-load.spec.ts" },
-    { name: "install", testMatch: "install.spec.ts", dependencies: ["ui", "background", "keeper", "services", "runs", "load", "chains", "pomade", "pomade-load"] },
+    { name: "install", testMatch: "install.spec.ts", dependencies: ["ui", "background", "keeper", "services", "runs", "load", "chains", "git", "pomade", "pomade-load"] },
   ],
   webServer: [
     {
