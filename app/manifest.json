@@ -63,7 +63,8 @@
     "switch.set",
     "jobs.resume",
     "settings.get",
-    "settings.set"
+    "settings.set",
+    "jobs.forRepo"
   ],
   "commands": [
     {

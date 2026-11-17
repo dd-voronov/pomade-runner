@@ -13,7 +13,7 @@ import { linkPomade } from "../integrations/pomade";
 import { probeReadiness } from "../keeper/readiness";
 import { createSessions } from "../keeper/sessions";
 import { fileStore } from "../keeper/supervisor";
-import { keeperSocketPath, schedulerSocketPath, stateDir, userDataDir } from "../locations";
+import { keeperSocketPath, pomadeGitPath, schedulerSocketPath, stateDir, userDataDir } from "../locations";
 import { clockFrom, systemClock, tickMs } from "./clock";
 import { createLog } from "./log";
 import { startScheduler } from "./scheduler";
@@ -65,6 +65,7 @@ if (state === null || socketPath === null || userData === null) {
     supervision: fileStore(state, log),
     probe: probeReadiness,
     postNotice: noticePoster(userData, log),
+    pomadeGit: pomadeGitPath(process.env),
   });
   if (result.status === "already-running") {
     // A clean exit: launchd restarts a login item only after a failure.

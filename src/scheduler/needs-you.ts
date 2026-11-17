@@ -120,7 +120,8 @@ export function runNotice(record: RunRecord, notify: Notify): NoticeParams | nul
   }
   switch (record.state) {
     case "failed": {
-      const line = [...record.lastLines].reverse().find((text) => text.trim() !== "")?.trim();
+      // A git run's reason names each failed repo; its last lines say the same per repo.
+      const line = record.git === null ? [...record.lastLines].reverse().find((text) => text.trim() !== "")?.trim() : undefined;
       return { title: `${record.name} failed`, body: [failureWords(record), line].filter((part) => part !== undefined).join(" · ").slice(0, 2000), action };
     }
     case "done":

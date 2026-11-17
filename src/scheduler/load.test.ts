@@ -58,6 +58,8 @@ describe("missed runs and load", () => {
       store,
       switchStore,
       projectPath: () => null,
+      pomadeGit: "/nowhere/bin/pomade-git",
+      gitResult: (job, run) => `/nowhere/output/${job}/${run}.json`,
       serviceAction: () => Promise.reject(new Error("no services here")),
       post: (notice) => notices.push(notice),
       onStarted: () => undefined,

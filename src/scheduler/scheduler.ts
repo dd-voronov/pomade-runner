@@ -26,6 +26,7 @@ import {
   type RunStartedPayload,
 } from "../integrations/runner-api";
 import { formatJobError } from "../jobs/format";
+import { gitResultPath } from "../locations";
 import { writeEnabled } from "../jobs/folder";
 import { createJobsLoader } from "../jobs/loader";
 import { entryId, entryPath, type JobsSnapshot } from "../jobs/model";
@@ -45,6 +46,7 @@ import type { Log } from "./log";
 import type { ActiveRun, EnableResult, JobListing, RunActionResult, RunRecord, RunsReport } from "./model";
 import { createNeedsYou, fileNeedsYouStore } from "./needs-you";
 import { projectsMemory } from "./projects";
+import { repoJobs } from "./git-runs";
 import { createRuns, fileRunsStore } from "./runs";
 import { settingsFile } from "./settings-file";
 import { fileSwitchStore } from "./switch";
@@ -71,6 +73,8 @@ export interface SchedulerOptions {
   probe(ready: NetworkReadiness): Promise<boolean>;
   /** Post a notice, over the connection to Pomade when there is one. */
   postNotice: PostNotice;
+  /** The `pomade-git` command git jobs run. */
+  pomadeGit: string;
 }
 
 export interface Scheduler {
@@ -173,6 +177,8 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     switchStore: fileSwitchStore(state, log),
     post,
     serviceAction: supervisor.chainAction,
+    pomadeGit: options.pomadeGit,
+    gitResult: (job, run) => gitResultPath(state, job, run),
     projectPath: (project) => {
       const workspace = jobs.snapshot().workspace;
       const root = projects.root(project);
@@ -314,6 +320,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         },
         tabAction,
         runs: report,
+        repoJobs: (repo) => repoJobs(jobs.snapshot(), runs.jobRuns(), repo),
         history: (query) => history.page(query),
         run: (job, run) => runs.find(job, run),
         output: async (job, run) => {

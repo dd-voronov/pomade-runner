@@ -6,11 +6,11 @@
 
 process.env.TZ = "Europe/Madrid";
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ExitReason, NoticeParams } from "pomade-kit/protocol";
+import type { ExitReason, GitRunOutput, NoticeParams } from "pomade-kit/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { checkJobs } from "../jobs/check";
@@ -61,6 +61,8 @@ describe("runs", () => {
       switchStore,
       post: (notice) => notices.push(notice),
       projectPath: (project) => (project === "p1" ? "/ws/Projects/one" : null),
+      pomadeGit: join(dir, "bin", "pomade-git"),
+      gitResult: (job, run) => join(dir, "output", job, `${run}.json`),
       serviceAction: () => Promise.reject(new Error("no services here")),
       onStarted: (run) => started.push(structuredClone(run)),
       onFinished: (record) => finished.push(record),
@@ -190,6 +192,7 @@ describe("runs", () => {
         signal: null,
         log: join(dir, "20261118-120000-000001.log"),
         lastLines: ["copying", "backed up 3 files"],
+        git: null,
       };
       expect(await page()).toEqual([record]);
       expect(finished).toEqual([record]);
@@ -437,7 +440,7 @@ describe("runs", () => {
       expect(await runs.runNow("nope")).toEqual({ ok: false, reason: 'no job "nope"' });
       expect(await runs.runNow("off")).toEqual({ ok: false, reason: '"Off" is disabled in its file; enable it first' });
       expect(await runs.runNow("bad")).toMatchObject({ ok: false, reason: expect.stringContaining('the job "bad" is invalid') as string });
-      expect(await runs.runNow("agent")).toEqual({ ok: false, reason: '"Agent" is an agent job; Run now runs scripts and services' });
+      expect(await runs.runNow("agent")).toEqual({ ok: false, reason: '"Agent" is an agent job; Run now runs scripts, git jobs and services' });
       sessions.following = false;
       expect(await runs.runNow("backup")).toEqual({ ok: false, reason: "the keeper is not connected" });
       sessions.following = true;
@@ -548,5 +551,122 @@ describe("runs", () => {
     load();
     await runs.runNow("web");
     expect(sessions.spawned[0]?.command).toMatchObject({ background: false, env: { POMADE_PROJECT: "p1", POMADE_PROJECT_PATH: "/ws/Projects/one" } });
+  });
+
+  describe("git runs", () => {
+    const KNOWLEDGE = "---\nkind: git\nname: Knowledge twice daily\ngit: { operation: commit-push, repos: [Knowledge] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n";
+    const RUN = "20261118-120000-000001";
+    const ID = `run:knowledge:${RUN}`;
+    /** A run started at 12:00 local (Run now, a hook): its id is in UTC. */
+    const NOW = "20261118-110000-000001";
+    const NOW_ID = `run:knowledge:${NOW}`;
+    const result = (status: "done" | "failed", reason: string | null = null): GitRunOutput => ({
+      op: "commit-push",
+      job: "Knowledge twice daily",
+      at: "2026-11-18T12:00:01.000Z",
+      results: [
+        {
+          repo: "Knowledge",
+          path: "/ws/Knowledge",
+          op: "commit-push",
+          status,
+          reason,
+          steps: [{ step: "commit", outcome: "done", detail: "committed a1b2c3d (1 file)" }],
+          commit: status === "done" ? "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" : null,
+        },
+      ],
+    });
+    const resultFile = (run = RUN): string => join(dir, "output", "knowledge", `${run}.json`);
+
+    beforeEach(async () => {
+      await mkdir(join(dir, "bin"), { recursive: true });
+      await writeFile(join(dir, "bin", "pomade-git"), "#!/bin/sh\n", { mode: 0o755 });
+      files = { "knowledge.md": KNOWLEDGE, "backup.md": script("Backup", "after: { job: knowledge, result: failed }\n") };
+      load();
+    });
+
+    it("runs pomade-git in the workspace root at normal priority, its JSON into the run's file, and records the result per repo", async () => {
+      await at("2026-11-18T12:59:59");
+      await at("2026-11-18T13:00:00");
+      expect(sessions.spawned).toEqual([
+        {
+          owner: { kind: "run", job: "knowledge", run: RUN },
+          command: {
+            title: "Knowledge twice daily",
+            command: `'${join(dir, "bin", "pomade-git")}' 'commit-push' 'Knowledge' '--json' '--job' 'Knowledge twice daily' > '${resultFile()}'`,
+            cwd: WS,
+            env: { POMADE_JOB: "knowledge", POMADE_RUN_ID: RUN, POMADE_TRIGGER: "scheduled", POMADE_WORKSPACE: WS },
+            background: false,
+          },
+        },
+      ]);
+      expect(runs.active()).toMatchObject([{ kind: "git", folder: "", state: "running" }]);
+      expect(runs.logsInUse()).toEqual(new Set([join(dir, `${RUN}.log`), resultFile()]));
+      await writeFile(resultFile(), JSON.stringify(result("done")));
+      sessions.end(ID, "exited", 0);
+      await at("2026-11-18T13:00:03");
+      expect(await page()).toEqual([
+        expect.objectContaining({ kind: "git", state: "done", reason: null, exitCode: 0, git: result("done"), lastLines: ["Knowledge · committed a1b2c3d"] }),
+      ]);
+      await expect(access(resultFile())).rejects.toThrow();
+      // Its skip default: a missed 20:00 is missed · skipped, never caught up.
+      await at("2026-11-18T21:00:00");
+      expect(sessions.spawned).toHaveLength(1);
+      expect((await page())[0]).toMatchObject({ state: "missed", reason: "skipped", dueAt: new Date("2026-11-18T20:00:00").getTime() });
+    });
+
+    it("a failed repo fails the run with its reason, and fires the chains that follow a failure", async () => {
+      await runs.runNow("knowledge");
+      await writeFile(resultFile(NOW), JSON.stringify(result("failed", "Their changes conflict with yours in notes.md.")));
+      sessions.end(NOW_ID, "crashed", 1);
+      await runs.tick();
+      expect(finished[0]).toMatchObject({ state: "failed", reason: "Knowledge: Their changes conflict with yours in notes.md.", exitCode: 1, trigger: "manual" });
+      expect(sessions.spawned.map((spawn) => spawn.owner.job)).toEqual(["knowledge", "backup"]);
+      expect(sessions.spawned[1]?.command.env).toMatchObject({ POMADE_PARENT_JOB: "knowledge", POMADE_PARENT_RESULT: "failed" });
+    });
+
+    it("no result file is a failed run that says so, its output's last lines kept", async () => {
+      await runs.runNow("knowledge");
+      await writeFile(join(dir, `${NOW}.log`), "pomade-git: something broke\r\n");
+      sessions.end(NOW_ID, "crashed", 1);
+      await runs.tick();
+      expect(finished[0]).toMatchObject({ state: "failed", reason: "pomade-git gave no result (exit 1)", git: null, lastLines: ["pomade-git: something broke"] });
+    });
+
+    it("without pomade-git in Pomade's command folder, the run fails without starting", async () => {
+      await rm(join(dir, "bin", "pomade-git"));
+      expect(await runs.runNow("knowledge")).toEqual({ ok: false, reason: `cannot start — pomade-git is not in Pomade's command folder (${join(dir, "bin", "pomade-git")}); Pomade puts it there when it starts` });
+      expect(finished[0]).toMatchObject({ job: "knowledge", state: "failed", startedAt: null });
+      // A start that failed is a failure: the chains that follow one fire.
+      expect(sessions.spawned.map((spawn) => spawn.owner.job)).toEqual(["backup"]);
+    });
+
+    it("fires from a hook and from a chain like a script", async () => {
+      files = {
+        "knowledge.md": KNOWLEDGE.replace("schedule:\n  daily: { at: [13:00, 20:00] }", "hook: { event: login }"),
+        "push.md": "---\nkind: git\nname: Push\ngit: { operation: push, repos: [Knowledge] }\nafter: { job: knowledge }\n---\n",
+      };
+      load();
+      sessions.loggedIn = false;
+      await runs.hook({ event: "login", project: null, agent: null, status: null, context: {} });
+      expect(runs.active()).toMatchObject([{ job: "knowledge", trigger: "hook", state: "running" }]);
+      await writeFile(resultFile(NOW), JSON.stringify(result("done")));
+      sessions.end(NOW_ID, "exited", 0);
+      await runs.tick();
+      expect(runs.active()).toMatchObject([{ job: "push", trigger: "chain", kind: "git", cause: { kind: "chain", job: "knowledge", result: "done" } }]);
+    });
+
+    it("a scheduler restarted mid-run records the run once, from the result pomade-git left", async () => {
+      await runs.runNow("knowledge");
+      await runs.close();
+      await writeFile(resultFile(NOW), JSON.stringify(result("done")));
+      sessions.end(NOW_ID, "exited", 0);
+      await open();
+      await runs.tick();
+      await runs.close();
+      await open();
+      await runs.tick();
+      expect(await page()).toEqual([expect.objectContaining({ run: NOW, state: "done", git: result("done") })]);
+    });
   });
 });

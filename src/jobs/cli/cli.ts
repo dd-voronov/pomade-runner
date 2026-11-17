@@ -6,6 +6,7 @@ import { APP_VERSION } from "../../app";
 import { exitWords, type KeeperLink, type RunnerSession, type ServiceStatus } from "../../keeper/model";
 import type { ControlCallResult } from "../../scheduler/control/client";
 import type { ControlMethod, ControlMethods, ControlParams } from "../../scheduler/control/protocol";
+import { gitRepoLine } from "../../scheduler/git-runs";
 import { dayTime, durationWords, runTriggerWords, runWords, SWITCH_WORDS, type ActiveRun, type JobListing, type NeedsYouItem, type RunRecord, type SwitchPosition, type SwitchState } from "../../scheduler/model";
 import { checkSettings, SETTINGS_PATH } from "../../scheduler/settings";
 import { checkJobs, projectJobsFolder } from "../check";
@@ -53,9 +54,9 @@ Usage:
                                  sub-folder of ${JOBS_FOLDER}/ its jobs sit in (needs Pomade
                                  running)
   ${COMMAND} list                 every job: its kind, trigger in words, next run and last result
-  ${COMMAND} run <job>            run a job now, by its id or name: a script runs (or queues
-                                 behind its run going, as its overlap says); a service starts —
-                                 one stopped by you or failed too
+  ${COMMAND} run <job>            run a job now, by its id or name: a script or git job runs (or
+                                 queues behind its run going, as its overlap says); a service
+                                 starts — one stopped by you or failed too
   ${COMMAND} history [job]        the latest ${HISTORY_LIMIT} finished runs, newest first: of every job, or one
   ${COMMAND} runs                 the runs going — running, queued and what each waits for — the
                                  switch, and what needs you
@@ -291,6 +292,7 @@ async function history(job: string | null, deps: CliDeps): Promise<number> {
   if (records.length === 0) deps.out(job === null ? "No runs yet.\n" : `No runs of ${job} yet.\n`);
   for (const record of records) {
     deps.out(`${record.job}  ${record.name}  ${runTriggerWords(record)}  ${runLine(record)}${record.log === null ? "" : `  output ${record.log}`}\n`);
+    for (const result of record.git?.results ?? []) deps.out(`    ${gitRepoLine(result)}\n`);
   }
   return EXIT_OK;
 }

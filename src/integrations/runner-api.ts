@@ -114,13 +114,19 @@ export interface RunFinishedPayload extends RunStartedPayload {
 
 /** Where the Runner tab is: its route (`host.welcome.route`, `onRouteChange`, `tabs.openApp`). */
 export type RunnerRoute =
-  | { view: "jobs" }
+  /** Every job; `job` is the one the route opens (a repo row's Scheduled line), `null` for none. */
+  | { view: "jobs"; job: string | null }
   | { view: "history" }
   | { view: "settings" }
   /** A run's result card. */
   | { view: "run"; job: string; run: string }
   /** A run's full output. */
   | { view: "output"; job: string; run: string };
+
+/** The Jobs view at one job: `jobs/<encoded job id>` — what a repo row's Scheduled line opens. */
+export function jobsRoute(job: string): string {
+  return `jobs/${encodeJobId(job)}`;
+}
 
 /** A run's result card: `run/<encoded job id>/<run id>` — what a run's notice opens. */
 export function runRoute(job: string, run: string): string {
@@ -136,9 +142,11 @@ export function outputRoute(job: string, run: string): string {
 export function parseRoute(route: string): RunnerRoute {
   if (route === "history") return { view: "history" };
   if (route === "settings") return { view: "settings" };
+  const at = /^jobs\/([^/]+)$/.exec(route);
+  if (at !== null) return { view: "jobs", job: decodeJobId(at[1] ?? "") };
   const match = /^(run|output)\/([^/]+)\/([^/]+)$/.exec(route);
   const job = match === null ? null : decodeJobId(match[2] ?? "");
-  if (match === null || job === null) return { view: "jobs" };
+  if (match === null || job === null) return { view: "jobs", job: null };
   return { view: match[1] === "run" ? "run" : "output", job, run: match[3] ?? "" };
 }
 

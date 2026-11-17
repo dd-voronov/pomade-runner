@@ -6,7 +6,8 @@
 
 import { dirname, join } from "node:path";
 
-import { POMADE_ENV } from "pomade-kit/protocol";
+import { pomadeHome } from "pomade-kit/node";
+import { HOME_FILES, POMADE_ENV } from "pomade-kit/protocol";
 
 import { APP_ID } from "./app";
 import { encodeJobId } from "./keeper/ids";
@@ -37,6 +38,13 @@ export function keeperSocketPath(env: Env): string | null {
   return env[POMADE_ENV.keeperSocket] || null;
 }
 
+/** Pomade's `pomade-git` command: in the command folder of the Pomade the process belongs to
+ *  (`<POMADE_HOME>/bin/pomade-git`), where that Pomade writes it at every start. It runs with
+ *  Pomade closed. */
+export function pomadeGitPath(env: Env): string {
+  return join(pomadeHome(env), HOME_FILES.bin, "pomade-git");
+}
+
 /** Which job and run each keeper session belongs to, and the exits already reported. */
 export function sessionsRecordPath(state: string): string {
   return join(state, "sessions.json");
@@ -45,6 +53,12 @@ export function sessionsRecordPath(state: string): string {
 /** One run's full output, which the keeper appends to: `output/<encoded job id>/<run id>.log`. */
 export function outputLogPath(state: string, jobId: string, runId: string): string {
   return join(state, "output", encodeJobId(jobId), `${runId}.log`);
+}
+
+/** A git run's result, what `pomade-git --json` prints, beside its output log:
+ *  `output/<encoded job id>/<run id>.json`. It goes once the run's record holds it. */
+export function gitResultPath(state: string, jobId: string, runId: string): string {
+  return join(state, "output", encodeJobId(jobId), `${runId}.json`);
 }
 
 /** The keeper's own folder (`pomade-kit/keeper`'s state: its session records, exit statuses, log),

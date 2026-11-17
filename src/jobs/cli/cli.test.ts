@@ -347,7 +347,7 @@ describe("pomade-runner", () => {
   describe("runs", () => {
     const at = (time: string): number => Date.parse(`2026-11-17T${time}.000Z`);
     const base = { job: "backup", name: "Backup", kind: "script" as const, project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled" as const, cause: null, dueAt: at("12:00:00") };
-    const failed = { ...base, state: "failed" as const, action: null, reason: null, startedAt: at("12:00:00"), endedAt: at("12:00:03"), durationMs: 3000, exitCode: 1, signal: null, log: "/ud/output/backup/r.log", lastLines: [] };
+    const failed = { ...base, state: "failed" as const, action: null, reason: null, startedAt: at("12:00:00"), endedAt: at("12:00:03"), durationMs: 3000, exitCode: 1, signal: null, log: "/ud/output/backup/r.log", lastLines: [], git: null };
     const listing: JobListing = { job: "backup", name: "Backup", kind: "script", enabled: true, trigger: "daily at 13:00", problem: null, next: at("13:00:00"), finished: false, last: failed, service: null };
     const fresh = { lowPriority: true, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false };
 
@@ -428,7 +428,7 @@ describe("pomade-runner", () => {
       expect(await run(["list", "x"])).toMatchObject({ code: 2 });
     });
 
-    it("history prints the latest runs, of every job or one", async () => {
+    it("history prints the latest runs, of every job or one — a git run with a line per repo", async () => {
       const calls: { method: ControlMethod; params: unknown }[] = [];
       const chained = { ...failed, job: "web", name: "Web", kind: "service" as const, trigger: "chain" as const, cause: { kind: "chain" as const, job: "x", name: "X", run: "r0", result: "done" as const }, state: "done" as const, action: "restart" as const, startedAt: null, durationMs: null, exitCode: null, log: null };
       const records = [failed, { ...failed, job: "x", name: "X", trigger: "manual" as const, state: "done" as const, exitCode: 0, log: null }, chained, { ...chained, job: "mount", name: "Mount", kind: "script" as const, trigger: "hook" as const, cause: { kind: "hook" as const, event: "login" as const, context: {} }, action: null }];
@@ -443,6 +443,15 @@ describe("pomade-runner", () => {
       expect((await run(["history", "backup"], undefined, { history: { status: "ok", value: { records: [], next: null } }, calls })).out).toBe("No runs of backup yet.\n");
       expect(calls.at(-1)).toEqual({ method: "history", params: { job: "backup", limit: 20 } });
       expect((await run(["history"], undefined, { history: { status: "ok", value: { records: [], next: null } } })).out).toBe("No runs yet.\n");
+      const steps = [{ step: "commit" as const, outcome: "done" as const, detail: "committed a1b2c3d (1 file)" }, { step: "push" as const, outcome: "done" as const, detail: "pushed 1 commit" }];
+      const results = [
+        { repo: "Knowledge", path: "/ws/Knowledge", op: "commit-push" as const, status: "done" as const, reason: null, steps, commit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
+        { repo: "coda-helper", path: "/ws/Projects/coda-helper", op: "commit-push" as const, status: "skipped" as const, reason: "agent working", steps: [], commit: null },
+      ];
+      const git = { ...failed, job: "knowledge", name: "Knowledge", kind: "git" as const, state: "done" as const, exitCode: 0, log: null, git: { op: "commit-push" as const, job: "Knowledge", at: "2026-11-17T12:00:00.000Z", results } };
+      expect((await run(["history"], undefined, { history: { status: "ok", value: { records: [git], next: null } } })).out).toBe(
+        "knowledge  Knowledge  scheduled  done, 2026-11-17T12:00:03.000Z, took 3 s\n    Knowledge · committed a1b2c3d · pushed\n    coda-helper · skipped · agent working\n",
+      );
       expect(await run(["history", "a", "b"])).toMatchObject({ code: 2, err: expect.stringContaining('unexpected "b"') as string });
       expect(await run(["history"])).toMatchObject({ code: 1, err: expect.stringContaining("it keeps the history") as string });
     });

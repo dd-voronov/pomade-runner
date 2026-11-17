@@ -4,7 +4,7 @@
 // it, stops a run past its time limit, warns of a long one, and records every run that ends in the
 // history — then forgets its session. Run now does the same on a click.
 //
-// - **The look.** A tick looks at each enabled, valid script job's schedule since the previous look
+// - **The look.** A tick looks at each enabled, valid script or git job's schedule since the previous look
 //   (`dueOccurrences`): an occurrence at most `ON_TIME_MS` old runs; the others are missed and go to
 //   the job's policy (`missed.ts`): one caught-up run, a missed run that waits for the person, or a
 //   missed record. The previous look is the scheduler's last alive time, kept in `runs.json`, so a
@@ -22,16 +22,18 @@
 // - **Overlap**, when the job has a run going: `skip` records a skipped run ("previous run still
 //   going") · `parallel` queues another · `queue` holds one queued run; while one is held, a further
 //   one is skipped ("a run is already queued"). An on-time run covers a caught-up one still queued.
-// - **A run** is a keeper session `run:<job>:<run id>` in the job's folder, its command run by the
-//   login shell, with low priority as the job says and its context in the environment
-//   (`runEnv`). Its end comes from the keeper's list: exit 0 is `done`, any other end `failed`,
-//   Ctrl+C or Stop `stopped-by-you`; past its job's `time-limit` Runner stops it (`failed`, "stopped:
-//   ran over 45 min"). Going longer than the long-run warning (a setting) makes it a Needs-you
-//   item, once — it keeps running. The record keeps the last lines of the output log.
+// - **A run** is a keeper session `run:<job>:<run id>`: a script's command in the job's folder, a
+//   git job's `pomade-git` in the workspace root (`git-runs.ts`), run by the login shell, with low
+//   priority as the job says and its context in the environment (`runEnv`). Its end comes from the
+//   keeper's list: exit 0 is `done`, any other end `failed`, Ctrl+C or Stop `stopped-by-you`; a git
+//   run's is read with the result `pomade-git` wrote. Past its job's `time-limit` Runner stops it
+//   (`failed`, "stopped: ran over 45 min"). Going longer than the long-run warning (a setting) makes
+//   it a Needs-you item, once — it keeps running. The record keeps the last lines of the output log,
+//   a git run's result per repo.
 // - **Hooks and chains.** An event fires the jobs whose hook it matches (`hooks.ts`): Runner's own
 //   `login` once per login — a scheduler start that finds no keeper running — and the platform's
 //   events through `hook()`. A run that ends `done` or `failed` fires the jobs that follow it (`chains.ts`):
-//   a script runs (trigger `chain`, linked to its parent), a service gets its action through the
+//   a script or git job runs (trigger `chain`, linked to its parent), a service gets its action through the
 //   supervisor, recorded in the history. Every such firing passes the loop guard (`loop-guard.ts`)
 //   first: one too many within its window pauses the job until Resume. Hook and chain runs join the
 //   queue like any run; a hook run waits for the warm-up, a chain run does not.
@@ -45,13 +47,13 @@
 // waiting.
 
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { access, constants, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import type { NoticeParams } from "pomade-kit/protocol";
+import { isGitRunOutput, type GitRunOutput, type NoticeParams } from "pomade-kit/protocol";
 import { nextOccurrence } from "pomade-kit/schedule";
 
-import { entryId, type Job, type JobsSnapshot, type ScriptJob, type ServiceAction, type ServiceJob } from "../jobs/model";
+import { entryId, type GitJob, type Job, type JobsSnapshot, type ScriptJob, type ServiceAction, type ServiceJob } from "../jobs/model";
 import { KIND_DEFAULTS } from "../jobs/parse";
 import { newRunId, sessionIdOf } from "../keeper/ids";
 import type { ChainActionOutcome, RunnerSession } from "../keeper/model";
@@ -59,6 +61,7 @@ import { jobIdOf } from "../keeper/services";
 import type { Sessions } from "../keeper/sessions";
 import { chainCause, followers, parentResult } from "./chains";
 import type { Clock } from "./clock";
+import { gitCommandLine, gitRunEnd } from "./git-runs";
 import { lastLines, type History } from "./history";
 import { hooked, LOGIN, type HookFiring } from "./hooks";
 import type { Log } from "./log";
@@ -204,6 +207,23 @@ export function ranFor(run: ActiveRun, now: number): number {
   return run.startedAt === null ? 0 : Math.max(0, now - run.startedAt);
 }
 
+/** The jobs that run once per trigger which Runner runs now: scripts and git jobs. */
+export type RunJob = ScriptJob | GitJob;
+
+/** The working folder of a job's runs, workspace-relative: a git job's is the workspace root. */
+const runFolder = (job: RunJob): string => (job.kind === "git" ? "" : job.folder);
+
+/** What `pomade-git` wrote to a run's result file; `null` when there is no such file or it is not a
+ *  `GitRunOutput`. */
+async function readGitResult(file: string): Promise<GitRunOutput | null> {
+  try {
+    const value: unknown = JSON.parse(await readFile(file, "utf8"));
+    return isGitRunOutput(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface RunsOptions {
   sessions: Sessions;
   /** The checked jobs now. */
@@ -219,6 +239,10 @@ export interface RunsOptions {
   switchStore: SwitchStore;
   /** A project's root folder (absolute); `null` when it is not known. */
   projectPath(project: string): string | null;
+  /** The `pomade-git` command: in the command folder of the Pomade Runner belongs to. */
+  pomadeGit: string;
+  /** Where a git run's result goes (absolute): `pomade-git --json`'s output. */
+  gitResult(job: string, run: string): string;
   /** Post a notice: a missed run that waits for the person, a long-run warning, a loop-guard pause. */
   post(notice: NoticeParams): void;
   /** A chain's action on a service, through the supervisor; `why` names the chain, for its log. */
@@ -240,7 +264,7 @@ export interface Runs {
   /** Record the runs that ended, look at the schedules, enforce the limits, start what may start.
    *  A tick asked for while one is due is dropped. */
   tick(): Promise<void>;
-  /** Run a script job now (trigger `manual`), by its id or name, under its overlap policy. */
+  /** Run a script or git job now (trigger `manual`), by its id or name, under its overlap policy. */
   runNow(ref: string): Promise<RunActionResult>;
   /** An event: fire every job whose hook it matches, through the loop guard and the queue. Runner
    *  fires `login` itself, once per login; Pomade's and the agents' events come here (E-007). */
@@ -261,13 +285,13 @@ export interface Runs {
   active(): ActiveRun[];
   /** Missed runs waiting for the person, long-run warnings and the jobs the loop guard paused. */
   needsYou(): NeedsYouItem[];
-  /** Every enabled scheduled script job's next run, and the runs set with Run at…, soonest first. */
+  /** Every enabled scheduled script and git job's next run, and the runs set with Run at…, soonest first. */
   nextUp(): NextRun[];
   /** Each run job's next and latest run. */
   jobRuns(): JobRuns[];
   /** A run going or finished; `null` when there is none. */
   find(job: string, run: string): Promise<RunView | null>;
-  /** The output logs runs write now. */
+  /** The output logs and git result files runs write now. */
   logsInUse(): Set<string>;
   /** Resolves once the lane is idle, the service actions under way are recorded and the records
    *  are written. */
@@ -280,9 +304,9 @@ const MINUTE_MS = 60_000;
 /** A loop-guard pause in words. */
 export const LOOP_WORDS = `triggered ${FIRING_LIMIT}× in ${FIRING_WINDOW_MS / MINUTE_MS} min — looks like a loop`;
 
-/** The script jobs a schedule fires: valid, enabled, scheduled. */
-function scheduledScripts(snapshot: JobsSnapshot): ScriptJob[] {
-  return snapshot.jobs.flatMap((entry) => (entry.valid && entry.job.kind === "script" && entry.job.enabled && entry.job.trigger.kind === "schedule" ? [entry.job] : []));
+/** The script and git jobs a schedule fires: valid, enabled, scheduled. */
+function scheduledRuns(snapshot: JobsSnapshot): RunJob[] {
+  return snapshot.jobs.flatMap((entry) => (entry.valid && (entry.job.kind === "script" || entry.job.kind === "git") && entry.job.enabled && entry.job.trigger.kind === "schedule" ? [entry.job] : []));
 }
 
 /** How a run's session ended, as its record says it. */
@@ -378,9 +402,9 @@ export function createRuns(options: RunsOptions): Runs {
     for (const job of jobs) await triggered(job, { kind: "hook", event: firing.event, context: firing.context }, at);
   }
 
-  /** A hook or a chain fires a job: past the loop guard, a script's run joins the queue; a
-   *  service gets its chain's action. */
-  async function triggered(job: ScriptJob | ServiceJob, cause: RunCause, at: Date): Promise<void> {
+  /** A hook or a chain fires a job: past the loop guard, a script's or git job's run joins the
+   *  queue; a service gets its chain's action. */
+  async function triggered(job: RunJob | ServiceJob, cause: RunCause, at: Date): Promise<void> {
     const verdict = guard.fire(job, at.getTime());
     const why = runTriggerWords({ trigger: cause.kind, cause });
     if (verdict === "paused") {
@@ -428,6 +452,7 @@ export function createRuns(options: RunsOptions): Runs {
             signal: null,
             log: null,
             lastLines: [],
+            git: null,
           });
         }),
       );
@@ -435,13 +460,13 @@ export function createRuns(options: RunsOptions): Runs {
     void work.finally(() => acting.delete(work));
   }
 
-  function newRun(job: ScriptJob, trigger: RunTrigger, dueAt: Date, cause: RunCause | null = null): ActiveRun {
+  function newRun(job: RunJob, trigger: RunTrigger, dueAt: Date, cause: RunCause | null = null): ActiveRun {
     return {
       job: job.id,
       name: job.name,
       kind: job.kind,
       project: job.project,
-      folder: job.folder,
+      folder: runFolder(job),
       run: newRunId(dueAt, random),
       trigger,
       cause,
@@ -477,7 +502,7 @@ export function createRuns(options: RunsOptions): Runs {
 
   /** The record of a run that never started. */
   const notStarted = (run: ActiveRun, state: "failed" | "skipped" | "missed", reason: string): RunRecord =>
-    ended(run, { state, reason, startedAt: null, endedAt: now().getTime(), durationMs: null, exitCode: null, signal: null, log: null, lastLines: [] });
+    ended(run, { state, reason, startedAt: null, endedAt: now().getTime(), durationMs: null, exitCode: null, signal: null, log: null, lastLines: [], git: null });
 
   async function skip(run: ActiveRun, reason: string): Promise<void> {
     log(`run ${run.job} ${run.run}: skipped — ${reason}`);
@@ -489,27 +514,42 @@ export function createRuns(options: RunsOptions): Runs {
     await record(notStarted(run, "missed", reason));
   }
 
-  /** The valid script job `id` names now, enabled or not. */
-  function scriptOf(id: string): ScriptJob | null {
+  /** The valid script or git job `id` names now, enabled or not. */
+  function runJobOf(id: string): RunJob | null {
     const entry = options.jobs().jobs.find((candidate) => entryId(candidate) === id);
-    return entry?.valid === true && entry.job.kind === "script" ? entry.job : null;
+    return entry?.valid === true && (entry.job.kind === "script" || entry.job.kind === "git") ? entry.job : null;
   }
 
-  /** The valid script job `id` names now, or why it cannot run. */
-  function scriptJob(id: string): { job: ScriptJob; workspace: string } | string {
+  /** The valid job of `kind` that `id` names now, or why it cannot run. */
+  function runnable(id: string, kind: ActiveRun["kind"]): { job: RunJob; workspace: string } | string {
     const snapshot = options.jobs();
     const entry = snapshot.jobs.find((candidate) => entryId(candidate) === id);
     if (snapshot.workspace === null) return "no workspace is known";
     if (entry === undefined) return "its job file is gone";
     if (!entry.valid) return "its job file is invalid";
-    if (entry.job.kind !== "script") return `it is a ${entry.job.kind} job now`;
+    if (entry.job.kind !== kind || (entry.job.kind !== "script" && entry.job.kind !== "git")) return `it is ${entry.job.kind === "agent" ? "an" : "a"} ${entry.job.kind} job now`;
     if (!entry.job.enabled) return "its job is disabled";
     return { job: entry.job, workspace: snapshot.workspace };
   }
 
+  /** What a run's session runs: a script's command in its folder; for a git job, `pomade-git` in the
+   *  workspace root with its result into the run's result file — or why it cannot start. */
+  async function commandOf(job: RunJob, run: ActiveRun, workspace: string): Promise<{ command: string; cwd: string } | string> {
+    if (job.kind === "script") return { command: job.command, cwd: join(workspace, job.folder) };
+    try {
+      await access(options.pomadeGit, constants.X_OK);
+    } catch {
+      return `cannot start — pomade-git is not in Pomade's command folder (${options.pomadeGit}); Pomade puts it there when it starts`;
+    }
+    const result = options.gitResult(run.job, run.run);
+    await mkdir(dirname(result), { recursive: true });
+    await rm(result, { force: true });
+    return { command: gitCommandLine(options.pomadeGit, job, result), cwd: workspace };
+  }
+
   /** Start a queued run's session. */
   async function start(run: ActiveRun): Promise<void> {
-    const found = scriptJob(run.job);
+    const found = runnable(run.job, run.kind);
     if (typeof found === "string") {
       await skip(run, found);
       return;
@@ -520,18 +560,31 @@ export function createRuns(options: RunsOptions): Runs {
       await record(notStarted(run, "failed", "the job id is too long to name a session"));
       return;
     }
+    let what: Awaited<ReturnType<typeof commandOf>>;
+    try {
+      what = await commandOf(job, run, workspace);
+    } catch (err) {
+      what = `cannot start — ${errorText(err)}`;
+    }
+    if (typeof what === "string") {
+      log(`run ${run.job} ${run.run}: ${what}`);
+      await record(notStarted(run, "failed", what));
+      return;
+    }
     // The run is recorded as running before its session starts: a scheduler that dies in between
     // finds the session's end later.
     Object.assign(run, { state: "running", lowPriority: job.lowPriority, waits: null, startedAt: now().getTime(), session });
     save();
     try {
+      const env = runEnv(job, run.run, run.trigger, job.project === null ? null : options.projectPath(job.project), run.cause);
       const started = await sessions.spawn(
         { kind: "run", job: run.job, run: run.run },
         {
           title: job.name,
-          command: job.command,
-          cwd: join(workspace, job.folder),
-          env: runEnv(job, run.run, run.trigger, job.project === null ? null : options.projectPath(job.project), run.cause),
+          command: what.command,
+          cwd: what.cwd,
+          // `pomade-git` resolves repo names in the workspace whose jobs these are.
+          env: job.kind === "git" ? { ...env, POMADE_WORKSPACE: workspace } : env,
           background: job.lowPriority,
         },
       );
@@ -549,7 +602,7 @@ export function createRuns(options: RunsOptions): Runs {
 
   /** A run is due: queue it, or apply the job's overlap policy. The run, whatever became of it. An
    *  on-time run covers a caught-up run of its job still queued. */
-  async function fire(job: ScriptJob, trigger: RunTrigger, dueAt: Date, deadline: number | null = null, cause: RunCause | null = null): Promise<ActiveRun> {
+  async function fire(job: RunJob, trigger: RunTrigger, dueAt: Date, deadline: number | null = null, cause: RunCause | null = null): Promise<ActiveRun> {
     const run = newRun(job, trigger, dueAt, cause);
     run.deadline = deadline;
     if (trigger === "scheduled") {
@@ -589,7 +642,7 @@ export function createRuns(options: RunsOptions): Runs {
   /** Caught-up runs still queued past their deadline are missed. */
   async function expire(at: number): Promise<void> {
     for (const run of active.filter((candidate) => candidate.state === "queued" && candidate.deadline !== null && at >= candidate.deadline)) {
-      const job = scriptOf(run.job);
+      const job = runJobOf(run.job);
       await miss(run, job === null ? "skipped · past its worth-until" : pastWords({ missed: job.missed, worthUntil: job.worthUntil, schedule: null }));
     }
   }
@@ -599,7 +652,7 @@ export function createRuns(options: RunsOptions): Runs {
     const at = now().getTime();
     await expire(at);
     const snapshot = options.jobs();
-    const overlap = (job: string): ScriptJob["overlap"] | undefined => {
+    const overlap = (job: string): RunJob["overlap"] | undefined => {
       const entry = snapshot.jobs.find((candidate) => entryId(candidate) === job);
       return entry?.valid === true && entry.job.kind !== "service" ? entry.job.overlap : undefined;
     };
@@ -631,7 +684,7 @@ export function createRuns(options: RunsOptions): Runs {
   }
 
   /** A missed run of a `wait-for-me` job waits for the person: one per job, at its latest missed time. */
-  function waitForMe(job: ScriptJob, dueAt: Date, run: ActiveRun | null = null): void {
+  function waitForMe(job: RunJob, dueAt: Date, run: ActiveRun | null = null): void {
     const waiting = active.find((candidate) => candidate.job === job.id && candidate.state === "missed-waiting");
     if (waiting !== undefined) {
       waiting.dueAt = Math.max(waiting.dueAt, dueAt.getTime());
@@ -651,7 +704,7 @@ export function createRuns(options: RunsOptions): Runs {
   }
 
   /** Apply a job's missed-run decision; `run` is a held queued run it is about, when there is one. */
-  async function applyMissed(job: ScriptJob, decision: MissedDecision, run: ActiveRun | null): Promise<void> {
+  async function applyMissed(job: RunJob, decision: MissedDecision, run: ActiveRun | null): Promise<void> {
     switch (decision.action) {
       case "catch-up":
         if (run !== null) {
@@ -679,7 +732,7 @@ export function createRuns(options: RunsOptions): Runs {
     const since = lookedAt;
     lookedAt = at.getTime();
     let handled = false;
-    const jobs = scheduledScripts(options.jobs());
+    const jobs = scheduledRuns(options.jobs());
     for (const job of jobs) {
       if (job.trigger.kind !== "schedule") continue;
       if (holds(switchState.position, { trigger: "scheduled", lowPriority: job.lowPriority })) {
@@ -718,7 +771,7 @@ export function createRuns(options: RunsOptions): Runs {
     const warnAfter = options.settings().longRunWarningMinutes * MINUTE_MS;
     for (const run of active.filter((candidate) => candidate.state === "running")) {
       const ran = ranFor(run, at);
-      const limit = scriptOf(run.job)?.timeLimitMinutes ?? null;
+      const limit = runJobOf(run.job)?.timeLimitMinutes ?? null;
       if (limit !== null && run.limitHit === null && run.session !== null && ran >= limit * MINUTE_MS) {
         run.limitHit = limit;
         save();
@@ -752,8 +805,12 @@ export function createRuns(options: RunsOptions): Runs {
       const endedAt = durationMs !== null && run.startedAt !== null ? run.startedAt + durationMs : now().getTime();
       const output = run.log ?? session?.log ?? null;
       const lines = output === null ? [] : await lastLines(output);
-      log(`run ${run.job} ${run.run}: ${end.state}${end.exitCode === null ? "" : ` — exit ${end.exitCode}`}${end.reason === null ? "" : ` — ${end.reason}`}`);
-      await record(ended(run, { ...end, startedAt: run.startedAt, endedAt, durationMs, log: output, lastLines: lines }));
+      const result = run.kind === "git" ? options.gitResult(run.job, run.run) : null;
+      const how = result === null ? { ...end, git: null, lastLines: lines } : gitRunEnd(end, await readGitResult(result), lines);
+      log(`run ${run.job} ${run.run}: ${how.state}${how.exitCode === null ? "" : ` — exit ${how.exitCode}`}${how.reason === null ? "" : ` — ${how.reason}`}`);
+      await record(ended(run, { ...how, startedAt: run.startedAt, endedAt, durationMs, log: output }));
+      // The record holds the result now.
+      if (result !== null) await rm(result, { force: true });
       if (session !== undefined) await forget(session.id);
     }
     for (const session of sessions.list()) {
@@ -808,7 +865,7 @@ export function createRuns(options: RunsOptions): Runs {
   /** A missed run waiting for the person whose job is gone, invalid or disabled waits no longer. */
   async function settleOrphans(): Promise<void> {
     for (const run of active.filter((candidate) => candidate.state === "missed-waiting")) {
-      const found = scriptJob(run.job);
+      const found = runnable(run.job, run.kind);
       if (typeof found === "string") await miss(run, `skipped · ${found}`);
     }
   }
@@ -821,7 +878,7 @@ export function createRuns(options: RunsOptions): Runs {
     if (entry === undefined) return { ok: false, reason: `no job "${ref}"` };
     if (!entry.valid) return { ok: false, reason: `the job "${entryId(entry)}" is invalid: ${entry.invalid.errors[0]?.problem ?? "see pomade-runner check"}` };
     const { job } = entry;
-    if (job.kind !== "script") return { ok: false, reason: `"${job.name}" is ${job.kind === "agent" ? "an" : "a"} ${job.kind} job; Run now runs scripts and services` };
+    if (job.kind === "agent" || job.kind === "service") return { ok: false, reason: `"${job.name}" is ${job.kind === "agent" ? "an" : "a"} ${job.kind} job; Run now runs scripts, git jobs and services` };
     if (!job.enabled) return { ok: false, reason: `"${job.name}" is disabled in its file; enable it first` };
     if (!sessions.followed()) return { ok: false, reason: "the keeper is not connected" };
     const going = active.filter((run) => run.job === job.id && run.state !== "missed-waiting");
@@ -956,7 +1013,7 @@ export function createRuns(options: RunsOptions): Runs {
         for (const run of active.filter((candidate) => candidate.state === "queued" && (candidate.runAt === null || candidate.runAt <= at))) {
           if (!holds(previous, run) || holds(position, run)) continue;
           if (run.trigger !== "caught-up" && at - (run.runAt ?? run.dueAt) <= ON_TIME_MS) continue;
-          const job = scriptOf(run.job);
+          const job = runJobOf(run.job);
           if (job === null || job.trigger.kind !== "schedule") continue;
           const decision = decideMissed({ missed: job.missed, worthUntil: job.worthUntil, schedule: job.trigger.schedule }, [new Date(run.dueAt)], new Date(at));
           log(`run ${run.job} ${run.run}: held by the switch — ${decisionWords(decision)}`);
@@ -989,7 +1046,7 @@ export function createRuns(options: RunsOptions): Runs {
     nextUp() {
       const at = now();
       const next: NextRun[] = [];
-      for (const job of scheduledScripts(options.jobs())) {
+      for (const job of scheduledRuns(options.jobs())) {
         if (job.trigger.kind !== "schedule") continue;
         const when = nextOccurrence(job.trigger.schedule, at);
         if (when !== null) next.push({ job: job.id, name: job.name, project: job.project, at: when.getTime() });
@@ -1004,7 +1061,7 @@ export function createRuns(options: RunsOptions): Runs {
         if (!entry.valid || entry.job.kind === "service") return [];
         const { job } = entry;
         const ahead = job.trigger.kind === "schedule" ? nextOccurrence(job.trigger.schedule, at) : null;
-        const next = job.enabled && job.kind === "script" ? ahead : null;
+        const next = job.enabled && job.kind !== "agent" ? ahead : null;
         return [{ job: job.id, next: next?.getTime() ?? null, finished: job.trigger.kind === "schedule" && ahead === null, last: last.get(job.id) ?? null }];
       });
     },
@@ -1018,7 +1075,7 @@ export function createRuns(options: RunsOptions): Runs {
     },
 
     logsInUse() {
-      return new Set(active.flatMap((run) => (run.log === null ? [] : [run.log])));
+      return new Set(active.flatMap((run) => [...(run.log === null ? [] : [run.log]), ...(run.kind === "git" && run.state === "running" ? [options.gitResult(run.job, run.run)] : [])]));
     },
 
     async close() {

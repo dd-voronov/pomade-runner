@@ -28,6 +28,7 @@ const record = (state: RunRecord["state"], extra: Partial<RunRecord> = {}): RunR
   signal: null,
   log: null,
   lastLines: [],
+  git: null,
   ...extra,
 });
 
@@ -78,7 +79,7 @@ describe("chains", () => {
     expect(followers(snapshot, record("done", { job: "nobody-follows" }))).toEqual([]);
   });
 
-  it("services follow with their action; disabled and invalid followers, and agent and git jobs, do not fire", () => {
+  it("services follow with their action, git jobs run; disabled and invalid followers and agent jobs do not fire", () => {
     const snapshot = jobs({
       "pull.md": script("Pull", "hook: { event: project-created }\n"),
       "web.md": service("Web", "after: { job: pull }\n"),
@@ -93,6 +94,7 @@ describe("chains", () => {
     const fired = followers(snapshot, record("done"));
     expect(fired.map((job) => [job.id, job.kind === "service" ? job.after?.action : job.kind])).toEqual([
       ["api", "stop"],
+      ["push", "git"],
       ["web", "restart"],
     ]);
     expect(followers(snapshot, record("failed")).map((job) => job.id)).toEqual(["api"]);

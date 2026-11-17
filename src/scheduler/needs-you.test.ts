@@ -37,6 +37,7 @@ function record(state: RunRecord["state"], extra: Partial<RunRecord> = {}): RunR
     signal: null,
     log: null,
     lastLines: state === "failed" ? ["copying", "rsync: connection refused", ""] : [],
+    git: null,
     ...extra,
   };
 }

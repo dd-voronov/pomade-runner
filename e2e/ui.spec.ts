@@ -188,6 +188,7 @@ test.describe("runs", () => {
     signal: null,
     log: "/ud/output/backup/r.log",
     lastLines: ["copying", "rsync: connection refused"],
+    git: null,
   };
   const item: NeedsYouItem = { id: "run-failed:backup", kind: "run-failed", job: "backup", name: "Backup", project: null, run: RUN, at: failed.endedAt, count: 2, detail: "exit 2" };
   const report = (now: number): RunsReport => ({
@@ -425,7 +426,7 @@ test.describe("missed runs and load", () => {
     await card.getByRole("button", { name: "Stop" }).click();
     await expect.poll(() => page.evaluate(() => window.runnerCalls)).toEqual([{ method: "runs.stop", params: { job: "summary", run: base.run } }]);
 
-    const stopped: RunRecord = { ...base, state: "failed", action: null, reason: "stopped: ran over 45 min", endedAt: at(7, 45), durationMs: 45 * 60_000, exitCode: null, signal: "SIGTERM", lastLines: ["still summarizing"] };
+    const stopped: RunRecord = { ...base, state: "failed", action: null, reason: "stopped: ran over 45 min", endedAt: at(7, 45), durationMs: 45 * 60_000, exitCode: null, signal: "SIGTERM", lastLines: ["still summarizing"], git: null };
     await page.evaluate((h) => window.setRuns({ report: { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } }, history: h }), [stopped]);
     await expect(card.getByTestId("run-result")).toHaveText("failed · stopped: ran over 45 min");
     const red = await card.getByTestId("run-result").evaluate((element) => {
@@ -492,6 +493,7 @@ test.describe("hooks and chains", () => {
     signal: null,
     log: "/ud/output/pull/a.log",
     lastLines: ["Already up to date."],
+    git: null,
   };
   const cause = { kind: "chain" as const, job: "pull", name: "Pull", run: pull.run, result: "done" as const };
   const tests: RunRecord = { ...pull, job: "tests", name: "Tests", run: "20261118-120002-bbbbbb", trigger: "chain", cause, dueAt: pull.endedAt, startedAt: pull.endedAt, endedAt: pull.endedAt + 5000, lastLines: ["12 passed"] };

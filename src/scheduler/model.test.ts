@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { outputRoute, parseRoute, runRoute } from "../integrations/runner-api";
+import { jobsRoute, outputRoute, parseRoute, runRoute } from "../integrations/runner-api";
 import { clockTime, dayTime, durationWords, isActiveRun, isRunsReport, runWords, type ActiveRun, type RunRecord } from "./model";
 
 const base = { job: "coda/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/coda", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1 };
@@ -19,7 +19,7 @@ const active: ActiveRun = {
   warningDismissed: false,
 };
 const queued: ActiveRun = { ...active, state: "queued", startedAt: null, session: null, log: null };
-const record: RunRecord = { ...base, state: "failed", action: null, reason: null, startedAt: 1, endedAt: 2, durationMs: 1, exitCode: 1, signal: null, log: "/o.log", lastLines: [] };
+const record: RunRecord = { ...base, state: "failed", action: null, reason: null, startedAt: 1, endedAt: 2, durationMs: 1, exitCode: 1, signal: null, log: "/o.log", lastLines: [], git: null };
 
 describe("runs in words", () => {
   it("says each state", () => {
@@ -85,7 +85,10 @@ describe("routes", () => {
     expect(parseRoute(outputRoute("Café", "r1"))).toEqual({ view: "output", job: "Café", run: "r1" });
     expect(parseRoute("history")).toEqual({ view: "history" });
     expect(parseRoute("settings")).toEqual({ view: "settings" });
-    for (const route of ["", "jobs", "run/x", "run/a_zz/r", "run//r", "nope/a/b"]) expect(parseRoute(route)).toEqual({ view: "jobs" });
+    for (const route of ["", "jobs", "run/x", "run/a_zz/r", "run//r", "nope/a/b", "jobs/a/b"]) expect(parseRoute(route)).toEqual({ view: "jobs", job: null });
+    expect(jobsRoute("coda/knowledge")).toBe("jobs/coda.knowledge");
+    expect(parseRoute(jobsRoute("coda/knowledge"))).toEqual({ view: "jobs", job: "coda/knowledge" });
+    expect(parseRoute("jobs/a_zz")).toEqual({ view: "jobs", job: null });
   });
 });
 

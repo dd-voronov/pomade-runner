@@ -69,6 +69,8 @@ describe("hooks and chains", () => {
       store,
       switchStore,
       projectPath: () => null,
+      pomadeGit: "/nowhere/bin/pomade-git",
+      gitResult: (job, run) => `/nowhere/output/${job}/${run}.json`,
       post: (notice) => notices.push(notice),
       serviceAction: (job, action, why) => {
         actions.push({ job, action, why });

@@ -4,7 +4,7 @@
 // on attached tabs of Runner's sessions, and sets the badge once Pomade is ready.
 
 import { stayConnected } from "pomade-kit/node";
-import type { AttachedTabActionPayload, JsonValue } from "pomade-kit/protocol";
+import { REPO_JOBS_METHOD, type AttachedTabActionPayload, type JsonValue, type RepoJob, type RepoJobsParams, type RepoJobsResult } from "pomade-kit/protocol";
 import { HostError, type HostClient } from "pomade-kit/sdk";
 
 import type { JobsSnapshot, ProjectRecord } from "../jobs/model";
@@ -96,6 +96,8 @@ export interface RunnerOffer {
   tabAction(payload: AttachedTabActionPayload): void;
   /** The runs going, next up, each job's latest run and Needs you. */
   runs(): RunsReport;
+  /** The git jobs that target a repo (`jobs.forRepo`). */
+  repoJobs(repo: RepoJobsParams["repo"]): RepoJob[];
   /** A page of history. */
   history(query: { job: string | null; before: string | null; limit: number }): Promise<HistoryPage>;
   /** One run, going or finished. */
@@ -161,6 +163,14 @@ function runParams(method: string, params: JsonValue): { job: string; run: strin
   return { job: text(method, given, "job", RUN_TAKES), run: text(method, given, "run", RUN_TAKES) };
 }
 
+/** `jobs.forRepo`'s `{ repo: { name, path } }`. */
+function repoParams(params: JsonValue): RepoJobsParams["repo"] {
+  const takes = "{ repo: { name: <the repo's name in the Git panel>, path: <its real path> } }";
+  const repo = paramsOf(REPO_JOBS_METHOD, params, takes).repo;
+  if (typeof repo !== "object" || repo === null || Array.isArray(repo)) throw new HostError("invalid-params", `${REPO_JOBS_METHOD} takes ${takes}`);
+  return { name: text(REPO_JOBS_METHOD, repo, "name", takes), path: text(REPO_JOBS_METHOD, repo, "path", takes) };
+}
+
 /** `history.list`'s `{ job?, before?, limit? }`. */
 function historyParams(params: JsonValue): { job: string | null; before: string | null; limit: number } {
   const takes = "{ job?: <a job's id>, before?: <a page's next>, limit?: <1–200> }";
@@ -173,8 +183,8 @@ function historyParams(params: JsonValue): { job: string | null; before: string 
 }
 
 /**
- * On a new connection: serve Runner's API — the jobs, the services and their Start, Stop and
- * Restart, the runs, the history, Run now, Enable / Disable, Needs you and a missed run's choice,
+ * On a new connection: serve Runner's API — the jobs, the git jobs that target a repo (to Pomade),
+ * the services and their Start, Stop and Restart, the runs, the history, Run now, Enable / Disable, Needs you and a missed run's choice,
  * Stop on a run, the switch, Resume on a job the loop guard paused, the settings — follow the projects, hear tab actions and
  * `pomade.ready`, and announce the jobs, the services, the runs and the settings: a frame that
  * found no scheduler before asks again when it hears `jobs.changed`, `services.changed`,
@@ -192,6 +202,11 @@ export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise
       [SERVICE_METHODS.stop]: serviceHandler(offer, "stop"),
       [SERVICE_METHODS.restart]: serviceHandler(offer, "restart"),
       [RUNS_LIST_METHOD]: () => asJson(offer.runs()),
+      // Pomade's repo rows ask, as the caller `pomade` (PLATFORM rule 7).
+      [REPO_JOBS_METHOD]: (params) => {
+        const result: RepoJobsResult = { jobs: offer.repoJobs(repoParams(params)) };
+        return asJson(result);
+      },
       [HISTORY_LIST_METHOD]: async (params) => asJson(await offer.history(historyParams(params))),
       [RUN_GET_METHOD]: async (params) => {
         const { job, run } = runParams(RUN_GET_METHOD, params);

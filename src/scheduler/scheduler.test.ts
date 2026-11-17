@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { createFakeHost, type FakeHost } from "pomade-kit/fake-host";
 import { connect, type HostClient } from "pomade-kit/sdk";
-import type { NoticeParams, Surface } from "pomade-kit/protocol";
+import { checkRepoJobs, REPO_JOBS_APP_ID, REPO_JOBS_METHOD, type NoticeParams, type RepoJobsParams, type Surface } from "pomade-kit/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import manifest from "../../app/manifest.json" with { type: "json" };
@@ -196,6 +196,7 @@ describe("scheduler", () => {
       ...supervision,
       state: join(dir, "state"),
       postNotice,
+      pomadeGit: "/nowhere/bin/pomade-git",
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -269,6 +270,7 @@ describe("scheduler", () => {
       ...supervision,
       state: join(dir, "state"),
       postNotice,
+      pomadeGit: "/nowhere/bin/pomade-git",
     });
     expect(result).toEqual({ status: "already-running" });
     expect(second.refreshes).toBe(0);
@@ -330,7 +332,7 @@ describe("scheduler", () => {
 
   it("refuses a socket path macOS cannot bind", async () => {
     socketPath = join(dir, "x".repeat(120), "scheduler.sock");
-    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: () => null, sessions, ...supervision, state: join(dir, "state"), postNotice });
+    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: () => null, sessions, ...supervision, state: join(dir, "state"), postNotice, pomadeGit: "/nowhere/bin/pomade-git" });
     expect(result.status).toBe("failed");
   });
 
@@ -374,6 +376,7 @@ describe("scheduler and the job files", () => {
       ...supervision,
       state: join(dir, "state"),
       postNotice,
+      pomadeGit: "/nowhere/bin/pomade-git",
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -431,6 +434,30 @@ describe("scheduler and the job files", () => {
     expect(await ui.apps.call("pomade-runner", JOBS_LIST_METHOD)).toMatchObject({
       jobs: [{ valid: true }, { valid: false, invalid: { errors: [{ field: "project", fix: "write project: alpha (Alpha)" }] } }],
     });
+  });
+
+  it("serves jobs.forRepo: the git jobs that target a repo, in the kit's shape, well within Pomade's 1.5 s", async () => {
+    const fake = createFakeHost({ manifest });
+    const ui = await frame(fake);
+    await writeFile(
+      join(dir, "ws/Apps/pomade-runner/jobs/knowledge.md"),
+      "---\nkind: git\nname: Knowledge twice daily\ngit: { operation: commit-push, repos: [Knowledge] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n",
+    );
+    await writeFile(join(dir, "ws/Apps/pomade-runner/jobs/a.md"), job("A"));
+    await start();
+    link?.connected(await frame(fake, "backend"));
+    const params = { repo: { name: "Knowledge", path: join(dir, "ws/Knowledge") } } satisfies RepoJobsParams;
+    await vi.waitFor(async () => expect(await ui.apps.call(REPO_JOBS_APP_ID, REPO_JOBS_METHOD, params)).toBeTruthy());
+    const asked = performance.now();
+    const answer = await ui.apps.call(REPO_JOBS_APP_ID, REPO_JOBS_METHOD, params);
+    expect(performance.now() - asked).toBeLessThan(150);
+    const jobs = checkRepoJobs(answer);
+    expect(answer).toEqual({ jobs });
+    expect(jobs).toEqual([{ id: "knowledge", name: "Knowledge twice daily", operation: "commit-push", schedule: "daily at 13:00 and 20:00", nextRun: expect.any(String) as string, lastResult: null, route: "jobs/knowledge" }]);
+    expect(await ui.apps.call(REPO_JOBS_APP_ID, REPO_JOBS_METHOD, { repo: { name: "Pomade", path: join(dir, "ws/Projects/Pomade") } })).toEqual({ jobs: [] });
+    for (const bad of [null, {}, { repo: "Knowledge" }, { repo: { name: "Knowledge" } }, { repo: { name: "", path: "/x" } }]) {
+      await expect(ui.apps.call(REPO_JOBS_APP_ID, REPO_JOBS_METHOD, bad)).rejects.toMatchObject({ code: "invalid-params" });
+    }
   });
 
   it("supervises the services: starts the ones due at its start, answers services, and starts, stops and restarts one on request", async () => {
@@ -552,6 +579,7 @@ describe("scheduler and runs", () => {
       sessions,
       ...supervision,
       postNotice: noticePoster(join(dir, "ud"), log),
+      pomadeGit: "/nowhere/bin/pomade-git",
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);

@@ -35,6 +35,7 @@ function record(job: string, run: string, endedAt: number, extra: Partial<RunRec
     signal: null,
     log: null,
     lastLines: [],
+    git: null,
     ...extra,
   };
 }

@@ -21,6 +21,7 @@ const snapshot = checkJobs(
     "status-done-codex.md": script("Status done codex", "{ event: session-status, status: done, agent: codex }"),
     "scheduled.md": "---\nkind: script\nname: Scheduled\nfolder: .\ncommand: ./x.sh\nschedule:\n  daily: { at: 7:00 }\n---\n",
     "agent.md": "---\nkind: agent\nname: Agent\nfolder: .\nagent: claude\nhook: { event: login }\n---\nGo.\n",
+    "pull.md": "---\nkind: git\nname: Pull\ngit: { operation: pull, repos: [Knowledge] }\nhook: { event: login }\n---\n",
   }).map(([path, text]) => ({ path, text })),
   { workspace: "/ws", projects: [{ id: "p1", name: "One", root: "Projects/one" }] },
 );
@@ -32,8 +33,8 @@ describe("hooks", () => {
     expect(snapshot.jobs.filter((entry) => !entry.valid)).toEqual([]);
   });
 
-  it("login fires the enabled scripts on login, and nothing else", () => {
-    expect(hooked(snapshot, LOGIN).map((job) => job.id)).toEqual(["login"]);
+  it("login fires the enabled scripts and git jobs on login, and nothing else — agent jobs come with their epic", () => {
+    expect(hooked(snapshot, LOGIN).map((job) => job.id)).toEqual(["login", "pull"]);
     expect(LOGIN).toEqual({ event: "login", project: null, agent: null, status: null, context: {} });
   });
 

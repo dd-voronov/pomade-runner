@@ -4,6 +4,8 @@
 // runs next, the switch, and what needs the person. Plain JSON. Pure: shared by the scheduler, the
 // control protocol, the command and the UI.
 
+import { isGitRunOutput, type GitRunOutput } from "pomade-kit/protocol";
+
 import { HOOK_EVENTS, JOB_KINDS, SERVICE_ACTIONS, type HookEvent, type JobKind, type ServiceAction } from "../jobs/model";
 import { isServiceStatus, type ServiceStatus } from "../keeper/model";
 
@@ -127,8 +129,12 @@ export interface RunRecord extends RunBase {
   signal: string | null;
   /** The full output (absolute); `null` for a run that never started. */
   log: string | null;
-  /** The last lines of the output, plain text (escape sequences removed), at most `LAST_LINES`. */
+  /** The last lines of the output, plain text (escape sequences removed), at most `LAST_LINES`; a git
+   *  run's are one line per repo when `pomade-git` gave its result. */
   lastLines: string[];
+  /** A git run's result as `pomade-git --json` printed it, one result per repo; `null` for any other
+   *  run, and for a git run that gave none. */
+  git: GitRunOutput | null;
 }
 
 export type RunView = ActiveRun | RunRecord;
@@ -393,7 +399,7 @@ export function isSwitchState(value: unknown): value is SwitchState {
 
 export function isRunRecord(value: unknown): value is RunRecord {
   if (!isRecord(value) || !isRunBase(value)) return false;
-  const { state, action, reason, startedAt, endedAt, durationMs, exitCode, signal, log, lastLines } = value;
+  const { state, action, reason, startedAt, endedAt, durationMs, exitCode, signal, log, lastLines, git } = value;
   return (
     typeof state === "string" &&
     RESULTS.includes(state) &&
@@ -406,14 +412,15 @@ export function isRunRecord(value: unknown): value is RunRecord {
     nullableString(signal) &&
     nullableString(log) &&
     Array.isArray(lastLines) &&
-    lastLines.every((line) => typeof line === "string")
+    lastLines.every((line) => typeof line === "string") &&
+    (git === null || isGitRunOutput(git))
   );
 }
 
 /** A history record as a file keeps it; a field a record of an older build lacks gets its default. */
 export function parseRunRecord(value: unknown): RunRecord | null {
   if (!isRecord(value)) return null;
-  const record = { cause: null, action: null, ...value };
+  const record = { cause: null, action: null, git: null, ...value };
   return isRunRecord(record) ? record : null;
 }
 

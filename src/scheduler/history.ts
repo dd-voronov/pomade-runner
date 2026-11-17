@@ -30,7 +30,9 @@ const LINE_MAX = 400;
 
 const DAY_MS = 86_400_000;
 const DAY_FILE_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
-const RUN_LOG_RE = /^(\d{4})(\d{2})(\d{2})-\d{6}-[0-9a-f]{6}\.log$/;
+/** A run's output log, or a git run's result its record never took (a scheduler that stopped in
+ *  between). */
+const RUN_FILE_RE = /^(\d{4})(\d{2})(\d{2})-\d{6}-[0-9a-f]{6}\.(?:log|json)$/;
 
 export interface History {
   /** Write a finished run's record. Appends happen in order and never overlap. */
@@ -181,7 +183,7 @@ export function createHistory(state: string, log: Log): History {
         }
         let left = logs.length;
         for (const name of logs) {
-          const match = RUN_LOG_RE.exec(name);
+          const match = RUN_FILE_RE.exec(name);
           const file = join(output, job, name);
           if (match === null || `${match[1]}-${match[2]}-${match[3]}` >= cutoff || inUse.has(file)) continue;
           await rm(file, { force: true });
