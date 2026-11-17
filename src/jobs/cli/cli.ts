@@ -6,7 +6,8 @@ import { APP_VERSION } from "../../app";
 import { exitWords, type KeeperLink, type RunnerSession, type ServiceStatus } from "../../keeper/model";
 import type { ControlCallResult } from "../../scheduler/control/client";
 import type { ControlMethod, ControlMethods, ControlParams } from "../../scheduler/control/protocol";
-import { durationWords, runWords, type JobListing, type RunRecord } from "../../scheduler/model";
+import { dayTime, durationWords, runWords, SWITCH_WORDS, type ActiveRun, type JobListing, type NeedsYouItem, type RunRecord, type SwitchPosition, type SwitchState } from "../../scheduler/model";
+import { checkSettings, SETTINGS_PATH } from "../../scheduler/settings";
 import { checkJobs, projectJobsFolder } from "../check";
 import { formatJobError } from "../format";
 import { entryPath, JOBS_FOLDER, type ProjectRecord } from "../model";
@@ -36,6 +37,8 @@ export interface CliDeps {
   realPath(path: string): string;
   /** The job files under an absolute jobs folder; `null` when it does not exist. */
   readJobFiles(folder: string): Promise<JobFileInput[] | null>;
+  /** The settings file's text in a workspace; `null` when it does not exist. */
+  readSettings(workspace: string): Promise<string | null>;
   /** Pomade's projects; `null` when Pomade is not running (or this is not run through its shim). */
   projects(): Promise<ProjectRecord[] | null>;
 }
@@ -43,9 +46,9 @@ export interface CliDeps {
 export const USAGE = `${COMMAND} ${APP_VERSION} — Runner from the command line
 
 Usage:
-  ${COMMAND} check [file…]        check job files: every one in the workspace, or the files
-                                 given; prints path:line: field — problem. Fix: … per problem;
-                                 exit 1 on any
+  ${COMMAND} check [file…]        check job files and the settings file: every one in the
+                                 workspace, or the files given; prints
+                                 path:line: field — problem. Fix: … per problem; exit 1 on any
   ${COMMAND} projects             Pomade's projects: the id a project job's project: takes and the
                                  sub-folder of ${JOBS_FOLDER}/ its jobs sit in (needs Pomade
                                  running)
@@ -54,6 +57,11 @@ Usage:
                                  behind its run going, as its overlap says); a service starts —
                                  one stopped by you or failed too
   ${COMMAND} history [job]        the latest ${HISTORY_LIMIT} finished runs, newest first: of every job, or one
+  ${COMMAND} runs                 the runs going — running, queued and what each waits for — the
+                                 switch, and what needs you
+  ${COMMAND} pause [low|all]      hold scheduled runs: of low-priority jobs, or all (the default);
+                                 Run now still runs, services keep running
+  ${COMMAND} resume               let held runs go: the late ones follow their missed-run policy
   ${COMMAND} enable <job>         write enabled: true into a job's file
   ${COMMAND} disable <job>        write enabled: false into a job's file; a running service stops
   ${COMMAND} services             every service: its state, restarts and last crash
@@ -92,10 +100,14 @@ async function check(files: readonly string[], deps: CliDeps): Promise<number> {
 
   const wanted = new Set<string>();
   const problems: string[] = [];
+  const settingsFile = join(workspace, SETTINGS_PATH);
+  let settings = files.length === 0;
   for (const file of files) {
     const absolute = deps.realPath(resolve(deps.cwd, file));
     const inside = relative(folder, absolute);
-    if (inside.startsWith("..") || isAbsolute(inside) || !absolute.endsWith(".md")) {
+    if (absolute === deps.realPath(settingsFile)) {
+      settings = true;
+    } else if (inside.startsWith("..") || isAbsolute(inside) || !absolute.endsWith(".md")) {
       problems.push(`${file}: not a job file — Runner reads job files only from ${folder}. Fix: move it there (a project job into its project's sub-folder), as <slug>.md.`);
     } else {
       wanted.add(inside.split(sep).join("/"));
@@ -108,18 +120,25 @@ async function check(files: readonly string[], deps: CliDeps): Promise<number> {
   for (const path of wanted) {
     if (!present.has(path)) problems.push(`${show(join(folder, path))}: no such job file. Fix: check the path, or write the file first.`);
   }
-  const checked = snapshot.jobs.filter((entry) => wanted.size === 0 || wanted.has(entryPath(entry).slice(JOBS_FOLDER.length + 1)));
+  const checked = files.length === 0 || wanted.size > 0 ? snapshot.jobs.filter((entry) => wanted.size === 0 || wanted.has(entryPath(entry).slice(JOBS_FOLDER.length + 1))) : [];
   let invalid = 0;
   for (const entry of checked) {
     if (entry.valid) continue;
     invalid++;
     for (const error of entry.invalid.errors) problems.push(formatJobError(error, show(join(workspace, error.path))));
   }
+  const settingsText = settings ? await deps.readSettings(workspace) : null;
+  const settingsErrors = settingsText === null ? [] : checkSettings(settingsText).errors;
+  for (const error of settingsErrors) problems.push(formatJobError(error, show(settingsFile)));
 
   for (const line of problems) deps.out(`${line}\n`);
-  const scope = wanted.size === 0 ? `${plural(checked.length, "job file")} in ${show(folder)}` : plural(checked.length, "job file");
+  const jobsScope = wanted.size === 0 && files.length === 0 ? `${plural(checked.length, "job file")} in ${show(folder)}` : plural(checked.length, "job file");
+  const scope = settingsText === null ? jobsScope : `${jobsScope} and ${show(settingsFile)}`;
   if (problems.length === 0) deps.out(`${scope}: no problems.\n`);
-  else deps.out(`${plural(problems.length, "problem")}${invalid > 0 ? ` in ${invalid} of ${scope}` : ""}.\n`);
+  else {
+    const where = [invalid > 0 ? `${invalid} of ${jobsScope}` : null, settingsErrors.length > 0 ? show(settingsFile) : null].filter((part) => part !== null);
+    deps.out(`${plural(problems.length, "problem")}${where.length > 0 ? ` in ${where.join(" and ")}` : ""}.\n`);
+  }
   if (!snapshot.projectsChecked) deps.out("Project ids were not checked: Pomade is closed. Run it again with Pomade open to check them too.\n");
   return problems.length === 0 ? EXIT_OK : EXIT_PROBLEMS;
 }
@@ -275,11 +294,57 @@ async function history(job: string | null, deps: CliDeps): Promise<number> {
   return EXIT_OK;
 }
 
+/** A run going in one line: `backup  Backup  run 20261118-…  queued · 1 ahead`. */
+function activeLine(run: ActiveRun): string {
+  const since = run.state === "running" && run.startedAt !== null ? `, since ${iso(run.startedAt)}` : run.state === "missed-waiting" ? `, due ${iso(run.dueAt)}` : "";
+  return `${run.job}  ${run.name}  run ${run.run}  ${runWords(run)}${since}`;
+}
+
+/** A Needs-you item in one line. */
+function needsYouLine(item: NeedsYouItem): string {
+  switch (item.kind) {
+    case "run-failed":
+      return `needs you: ${item.name} — failed: ${item.detail}${item.count > 1 ? ` · ${item.count}×` : ""}, ${dayTime(item.at)}`;
+    case "service-failed":
+      return `needs you: ${item.name} — gave up: ${item.detail}`;
+    case "missed":
+      return `needs you: ${item.name} — ${item.detail}; it waits for you: Run now, Run at… or Skip in Runner`;
+    case "long-run":
+      return `needs you: ${item.name} — ${item.detail}`;
+  }
+}
+
+function switchLine({ position, since }: SwitchState): string {
+  const what = position === "running" ? "scheduled runs run" : position === "pause-low" ? "runs of low-priority jobs are held" : "every scheduled run is held";
+  return `switch: ${SWITCH_WORDS[position]} — ${what}${position === "running" ? "" : "; Run now still runs, services keep running"}${since === null ? "" : ` (since ${iso(since)})`}`;
+}
+
+async function runsCommand(deps: CliDeps): Promise<number> {
+  const answer = answerOf(await deps.ask("runs", null), "runs the jobs");
+  if (!answer.ok) {
+    deps.err(`${COMMAND} runs: ${answer.why}.\n`);
+    return EXIT_PROBLEMS;
+  }
+  const { active, needsYou, switch: position } = answer.value;
+  deps.out(`${switchLine(position)}\n`);
+  if (active.length === 0) deps.out("No runs going.\n");
+  for (const run of active) deps.out(`${activeLine(run)}\n`);
+  for (const item of needsYou) deps.out(`${needsYouLine(item)}\n`);
+  return EXIT_OK;
+}
+
+async function switchCommand(name: "pause" | "resume", position: SwitchPosition, deps: CliDeps): Promise<number> {
+  const answer = answerOf(await deps.ask("switch", { position }), "holds the switch");
+  if (!answer.ok) return refused(name, answer.why, deps);
+  deps.out(`${switchLine(answer.value)}\n`);
+  return EXIT_OK;
+}
+
 /** What `run` started, in a line. */
 function startedLine(value: ControlMethods["run"]): string {
   if ("service" in value) return serviceLine(value.service);
   const { run } = value;
-  const where = run.state === "queued" ? "queued after the run going" : `running${run.log === null ? "" : `, output ${run.log}`}`;
+  const where = run.state === "running" ? `running${run.log === null ? "" : `, output ${run.log}`}` : runWords(run);
   return `${run.job}  ${run.name}  run ${run.run}  ${where}`;
 }
 
@@ -328,7 +393,16 @@ export async function runCli(args: readonly string[], deps: CliDeps): Promise<nu
     deps.out(`${COMMAND} ${APP_VERSION}\n${schedulerLine(await deps.ask("status", null))}\n`);
     return EXIT_OK;
   }
-  if (first === "check" || first === "projects" || first === "sessions" || first === "services" || first === "list" || first === "history") {
+  if (first === "pause" || first === "resume") {
+    const [which, ...extra] = rest;
+    const position: SwitchPosition | null = first === "resume" ? (which === undefined ? "running" : null) : which === undefined || which === "all" ? "pause-all" : which === "low" ? "pause-low" : null;
+    if (position === null || extra.length > 0) {
+      deps.err(`${COMMAND} ${first}: unexpected "${extra[0] ?? which ?? ""}". Usage: ${first === "pause" ? `${COMMAND} pause [low|all]` : `${COMMAND} resume`}.\n`);
+      return EXIT_USAGE;
+    }
+    return switchCommand(first, position, deps);
+  }
+  if (first === "check" || first === "projects" || first === "sessions" || first === "services" || first === "list" || first === "history" || first === "runs") {
     const option = rest.find((arg) => arg.startsWith("-"));
     const most = first === "check" ? Infinity : first === "history" ? 1 : 0;
     if (option !== undefined || rest.length > most) {
@@ -348,6 +422,8 @@ export async function runCli(args: readonly string[], deps: CliDeps): Promise<nu
         return list(deps);
       case "history":
         return history(rest[0] ?? null, deps);
+      case "runs":
+        return runsCommand(deps);
     }
   }
   if (Object.hasOwn(JOB_COMMANDS, first)) {

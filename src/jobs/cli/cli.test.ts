@@ -4,7 +4,7 @@ import { APP_VERSION } from "../../app";
 import type { RunnerSession, ServicesReport, ServiceStatus, SessionsReport } from "../../keeper/model";
 import type { ControlCallResult } from "../../scheduler/control/client";
 import type { ControlMethod, ControlMethods, JobEnabled, RunStarted, SchedulerStatus } from "../../scheduler/control/protocol";
-import type { HistoryPage, JobListing } from "../../scheduler/model";
+import type { ActiveRun, HistoryPage, JobListing, RunsReport, SwitchState } from "../../scheduler/model";
 import type { ProjectRecord } from "../model";
 import { runCli, USAGE } from "./cli";
 
@@ -26,6 +26,10 @@ interface World {
   history?: ControlCallResult<HistoryPage> | null;
   /** The answer to an enable or disable. */
   enabled?: ControlCallResult<JobEnabled> | null;
+  runs?: ControlCallResult<RunsReport> | null;
+  switch?: ControlCallResult<SwitchState> | null;
+  /** The settings file's text; `null` (the default) = none. */
+  settings?: string | null;
   /** The params of every call. */
   calls?: { method: ControlMethod; params: unknown }[];
 }
@@ -65,6 +69,10 @@ async function run(args: string[], status: StatusResult = { status: "not-running
           case "restart":
             world.actions?.push({ verb: method, job: (params as { job: string }).job });
             return world.action;
+          case "runs":
+            return world.runs;
+          case "switch":
+            return world.switch;
         }
       };
       const given = answer();
@@ -76,6 +84,10 @@ async function run(args: string[], status: StatusResult = { status: "not-running
     readJobFiles: (folder) => {
       expect(folder).toBe(JOBS);
       return Promise.resolve(files === null ? null : Object.entries(files).map(([path, text]) => ({ path, text })));
+    },
+    readSettings: (workspace) => {
+      expect(workspace).toBe(WS);
+      return Promise.resolve(world.settings ?? null);
     },
     projects: () => Promise.resolve(world.projects === undefined ? null : world.projects),
   });
@@ -178,6 +190,24 @@ describe("pomade-runner", () => {
     expect(named).toMatchObject({ code: 0, out: "1 job file: no problems.\n" });
     const missing = await run(["check", "/ws/Apps/pomade-runner/jobs/zz.md"], undefined, { files, projects: [] });
     expect(missing).toMatchObject({ code: 1, out: "Apps/pomade-runner/jobs/zz.md: no such job file. Fix: check the path, or write the file first.\n1 problem.\n" });
+  });
+
+  it("check checks the settings file too, alone when it is the file given", async () => {
+    const settings = "warm-up: 2\nhistory-days: 30\n";
+    expect(await run(["check"], undefined, { files: { "a.md": job("A") }, projects: [], settings })).toMatchObject({
+      code: 1,
+      out: "Apps/pomade-runner/settings.yaml:1: warm-up — 2 has no unit. Fix: add one: warm-up: 2m (minutes) or 2h (hours).\n1 problem in Apps/pomade-runner/settings.yaml.\n",
+    });
+    expect(await run(["check"], undefined, { files: { "a.md": job("A") }, projects: [], settings: "warm-up: 5m\n" })).toMatchObject({
+      code: 0,
+      out: "1 job file in Apps/pomade-runner/jobs and Apps/pomade-runner/settings.yaml: no problems.\n",
+    });
+    expect(await run(["check", "Apps/pomade-runner/settings.yaml"], undefined, { files: { "b.md": job("B", "\nnotify: loud") }, projects: [], settings })).toMatchObject({
+      code: 1,
+      out: "Apps/pomade-runner/settings.yaml:1: warm-up — 2 has no unit. Fix: add one: warm-up: 2m (minutes) or 2h (hours).\n1 problem in Apps/pomade-runner/settings.yaml.\n",
+    });
+    const both = await run(["check"], undefined, { files: { "b.md": job("B", "\nnotify: loud") }, projects: [], settings });
+    expect(both.out).toMatch(/\n2 problems in 1 of 1 job file in Apps\/pomade-runner\/jobs and Apps\/pomade-runner\/settings\.yaml\.\n$/);
   });
 
   it("check without a workspace, or with an option, cannot run: exit 2", async () => {
@@ -314,6 +344,55 @@ describe("pomade-runner", () => {
     const base = { job: "backup", name: "Backup", kind: "script" as const, project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled" as const, dueAt: at("12:00:00") };
     const failed = { ...base, state: "failed" as const, reason: null, startedAt: at("12:00:00"), endedAt: at("12:00:03"), durationMs: 3000, exitCode: 1, signal: null, log: "/ud/output/backup/r.log", lastLines: [] };
     const listing: JobListing = { job: "backup", name: "Backup", kind: "script", enabled: true, trigger: "daily at 13:00", problem: null, next: at("13:00:00"), finished: false, last: failed, service: null };
+    const fresh = { lowPriority: true, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false };
+
+    it("runs prints the switch, the runs going with what each waits for, and what needs you", async () => {
+      const going: ActiveRun = { ...base, ...fresh, state: "running", startedAt: at("12:00:00"), session: "run:backup:r", log: "/o.log" };
+      const report: RunsReport = {
+        active: [
+          going,
+          { ...going, job: "c", name: "C", run: "r2", state: "queued", startedAt: null, session: null, log: null, waits: { kind: "slot", ahead: 1 } },
+          { ...going, job: "w", name: "Weekly", run: "r3", state: "missed-waiting", startedAt: null, session: null, log: null, dueAt: at("02:00:00") },
+        ],
+        nextUp: [],
+        jobs: [],
+        needsYou: [
+          { id: "missed:w", kind: "missed", job: "w", name: "Weekly", project: null, run: "r3", at: at("02:00:00"), detail: "missed Tue 03:00" },
+          { id: "long-run:backup:r", kind: "long-run", job: "backup", name: "Backup", project: null, run: "r", at: at("15:00:00"), startedAt: at("12:00:00"), detail: "running 3 h — still expected?" },
+        ],
+        switch: { position: "pause-low", since: at("11:00:00") },
+      };
+      expect(await run(["runs"], undefined, { runs: { status: "ok", value: report } })).toMatchObject({
+        code: 0,
+        out:
+          "switch: Pause low-priority — runs of low-priority jobs are held; Run now still runs, services keep running (since 2026-11-17T11:00:00.000Z)\n" +
+          "backup  Backup  run 20261117-120000-abcdef  running, since 2026-11-17T12:00:00.000Z\n" +
+          "c  C  run r2  queued · 1 ahead\n" +
+          "w  Weekly  run r3  missed · waiting for you, due 2026-11-17T02:00:00.000Z\n" +
+          "needs you: Weekly — missed Tue 03:00; it waits for you: Run now, Run at… or Skip in Runner\n" +
+          "needs you: Backup — running 3 h — still expected?\n",
+      });
+      const quiet = { ...report, active: [], needsYou: [], switch: { position: "running" as const, since: null } };
+      expect((await run(["runs"], undefined, { runs: { status: "ok", value: quiet } })).out).toBe("switch: Running — scheduled runs run\nNo runs going.\n");
+      expect(await run(["runs"])).toMatchObject({ code: 1, err: expect.stringContaining("it runs the jobs") as string });
+      expect(await run(["runs", "x"])).toMatchObject({ code: 2 });
+    });
+
+    it("pause and resume set the switch", async () => {
+      const calls: { method: ControlMethod; params: unknown }[] = [];
+      const since = at("11:00:00");
+      expect((await run(["pause"], undefined, { switch: { status: "ok", value: { position: "pause-all", since } }, calls })).out).toBe(
+        "switch: Pause all — every scheduled run is held; Run now still runs, services keep running (since 2026-11-17T11:00:00.000Z)\n",
+      );
+      await run(["pause", "all"], undefined, { switch: { status: "ok", value: { position: "pause-all", since } }, calls });
+      await run(["pause", "low"], undefined, { switch: { status: "ok", value: { position: "pause-low", since } }, calls });
+      expect((await run(["resume"], undefined, { switch: { status: "ok", value: { position: "running", since } }, calls })).out).toBe("switch: Running — scheduled runs run (since 2026-11-17T11:00:00.000Z)\n");
+      expect(calls.map((call) => call.params)).toEqual([{ position: "pause-all" }, { position: "pause-all" }, { position: "pause-low" }, { position: "running" }]);
+      expect(await run(["pause", "some"])).toMatchObject({ code: 2, err: 'pomade-runner pause: unexpected "some". Usage: pomade-runner pause [low|all].\n' });
+      expect(await run(["resume", "now"])).toMatchObject({ code: 2, err: 'pomade-runner resume: unexpected "now". Usage: pomade-runner resume.\n' });
+      expect(await run(["pause", "low", "x"])).toMatchObject({ code: 2 });
+      expect(await run(["resume"])).toMatchObject({ code: 1, err: expect.stringContaining("it holds the switch") as string });
+    });
 
     it("list prints every job: kind, trigger in words, next run and last result; a service's state; an invalid file's problem", async () => {
       const info = { id: "svc:web", title: "Web", command: "./w", cwd: "/ws", pid: 7, startedAt: at("08:00:00"), cols: 80, rows: 24, state: "running" as const, exit: null, clients: 0, actions: [] };
@@ -355,11 +434,13 @@ describe("pomade-runner", () => {
     });
 
     it("run starts a script's run, or queues it, and prints it", async () => {
-      const going = { ...base, trigger: "manual" as const, state: "running" as const, startedAt: 1, session: "run:backup:r", log: "/ud/output/backup/r.log" };
+      const going: ActiveRun = { ...base, ...fresh, trigger: "manual", state: "running", startedAt: 1, session: "run:backup:r", log: "/ud/output/backup/r.log" };
       expect((await run(["run", "backup"], undefined, { action: { status: "ok", value: { run: going } } })).out).toBe("backup  Backup  run 20261117-120000-abcdef  running, output /ud/output/backup/r.log\n");
-      expect((await run(["run", "backup"], undefined, { action: { status: "ok", value: { run: { ...going, state: "queued", startedAt: null, session: null, log: null } } } })).out).toBe(
-        "backup  Backup  run 20261117-120000-abcdef  queued after the run going\n",
+      const queued: ActiveRun = { ...going, state: "queued", startedAt: null, session: null, log: null };
+      expect((await run(["run", "backup"], undefined, { action: { status: "ok", value: { run: { ...queued, waits: { kind: "previous-run" } } } } })).out).toBe(
+        "backup  Backup  run 20261117-120000-abcdef  queued · after the previous run\n",
       );
+      expect((await run(["run", "backup"], undefined, { action: { status: "ok", value: { run: { ...queued, waits: { kind: "slot", ahead: 2 } } } } })).out).toBe("backup  Backup  run 20261117-120000-abcdef  queued · 2 ahead\n");
       expect(await run(["run", "backup"], undefined, { action: { status: "failed", code: "refused", message: 'cannot run "backup": "Backup" is running, and its overlap is skip' } })).toMatchObject({
         code: 1,
         err: 'pomade-runner run: cannot run "backup": "Backup" is running, and its overlap is skip.\n',

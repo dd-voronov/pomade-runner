@@ -52,8 +52,33 @@ export const RUN_NOW_METHOD = "jobs.run";
 export const SET_ENABLED_METHOD = "jobs.setEnabled";
 
 /** `{ id }` → `{ resolved: boolean }`: resolve a Needs-you item — a failed run's, once its result
- *  is opened or it is dismissed. Runner's own frames only. */
+ *  is opened or it is dismissed; a long-run warning's, dismissed. Runner's own frames only. */
 export const DISMISS_METHOD = "needsYou.dismiss";
+
+/** `{ job, choice: "run-now" | "run-at" | "skip", at? }` → `MissedChoiceResult`
+ *  (`isMissedChoiceResult`): the person's choice for a missed run that waits for them; `at` is
+ *  Run at…'s time as typed (`23:00`, `tomorrow 9:00`, `2026-11-20T23:00`). Runner's own frames only. */
+export const MISSED_METHOD = "runs.missed";
+
+/** `{ job, run }` → `RunStopResult` (`isRunStopResult`): stop a running run as stopped by you.
+ *  Runner's own frames only. */
+export const RUN_STOP_METHOD = "runs.stop";
+
+/** `{ position: "running" | "pause-low" | "pause-all" }` → `SwitchState` (`isSwitchState`): set the
+ *  global switch. Runner's own frames only; the position is in `runs.list`. */
+export const SWITCH_METHOD = "switch.set";
+
+/** `settings.get` → `SettingsReport` (`isSettingsReport`): the workspace settings that apply, and the
+ *  settings file's problems. */
+export const SETTINGS_GET_METHOD = "settings.get";
+
+/** `{ field, value }` → `SettingsWriteResult` (`isSettingsWriteResult`): write one field of the
+ *  settings file, field-only — a count, a duration in minutes, or `null` for its default. Runner's
+ *  own frames only. */
+export const SETTINGS_SET_METHOD = "settings.set";
+
+/** Published by the scheduler when the settings change, and when it (re)connects to Pomade. */
+export const SETTINGS_CHANGED_EVENT = "settings.changed";
 
 /** Published on the bus when a run's session starts: `RunStartedPayload`. */
 export const RUN_STARTED_EVENT = "run.started";
@@ -87,6 +112,7 @@ export interface RunFinishedPayload extends RunStartedPayload {
 export type RunnerRoute =
   | { view: "jobs" }
   | { view: "history" }
+  | { view: "settings" }
   /** A run's result card. */
   | { view: "run"; job: string; run: string }
   /** A run's full output. */
@@ -105,6 +131,7 @@ export function outputRoute(job: string, run: string): string {
 /** The view a route names; an unknown route is the Jobs view. */
 export function parseRoute(route: string): RunnerRoute {
   if (route === "history") return { view: "history" };
+  if (route === "settings") return { view: "settings" };
   const match = /^(run|output)\/([^/]+)\/([^/]+)$/.exec(route);
   const job = match === null ? null : decodeJobId(match[2] ?? "");
   if (match === null || job === null) return { view: "jobs" };

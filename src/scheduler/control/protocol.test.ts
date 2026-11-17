@@ -49,11 +49,23 @@ describe("control protocol", () => {
     expect(PARAMS_PARSERS.history({ job: null, limit: 20 })).toEqual({ job: null, limit: 20 });
     expect(PARAMS_PARSERS.history({ job: "backup", limit: 1, extra: true })).toEqual({ job: "backup", limit: 1 });
     for (const bad of [null, {}, { job: null }, { job: "", limit: 5 }, { job: null, limit: 0 }, { job: null, limit: 2.5 }, { job: 3, limit: 5 }]) expect(PARAMS_PARSERS.history(bad)).toBeUndefined();
+    expect(PARAMS_PARSERS.runs(null)).toBeNull();
+    for (const position of ["running", "pause-low", "pause-all", null]) expect(PARAMS_PARSERS.switch({ position, extra: 1 })).toEqual({ position });
+    for (const bad of [null, {}, { position: "paused" }, { position: 1 }]) expect(PARAMS_PARSERS.switch(bad)).toBeUndefined();
+  });
+
+  it("checks the switch's and the runs report's answers", () => {
+    expect(RESULT_GUARDS.switch({ position: "pause-all", since: 5 })).toBe(true);
+    expect(RESULT_GUARDS.switch({ position: "running", since: null })).toBe(true);
+    for (const bad of [{}, { position: "off", since: null }, { position: "running" }]) expect(RESULT_GUARDS.switch(bad)).toBe(false);
+    expect(RESULT_GUARDS.runs({ active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } })).toBe(true);
+    expect(RESULT_GUARDS.runs({ active: [], nextUp: [], jobs: [], needsYou: [] })).toBe(false);
   });
 
   it("checks the runs' answers' shapes", () => {
     const base = { job: "backup", name: "Backup", kind: "script", project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled", dueAt: 1 };
-    const active = { ...base, state: "running", startedAt: 2, session: "run:backup:20261117-120000-abcdef", log: "/s/o.log" };
+    const going = { lowPriority: true, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false };
+    const active = { ...base, ...going, state: "running", startedAt: 2, session: "run:backup:20261117-120000-abcdef", log: "/s/o.log" };
     const record = { ...base, state: "failed", reason: null, startedAt: 2, endedAt: 3, durationMs: 1, exitCode: 1, signal: null, log: "/s/o.log", lastLines: ["boom"] };
     expect(RESULT_GUARDS.run({ run: active })).toBe(true);
     expect(RESULT_GUARDS.run({ run: { ...active, state: "queued", startedAt: null, session: null, log: null } })).toBe(true);
@@ -115,7 +127,7 @@ describe("control protocol", () => {
   it("knows its methods", () => {
     expect(isControlMethod("status")).toBe(true);
     expect(isControlMethod("sessions")).toBe(true);
-    for (const method of ["services", "run", "stop", "restart", "enable", "disable", "list", "history"]) expect(isControlMethod(method)).toBe(true);
+    for (const method of ["services", "run", "stop", "restart", "enable", "disable", "list", "history", "runs", "switch"]) expect(isControlMethod(method)).toBe(true);
     expect(isControlMethod("start")).toBe(false);
     expect(isControlMethod("toString")).toBe(false);
   });

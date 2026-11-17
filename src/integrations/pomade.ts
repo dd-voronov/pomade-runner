@@ -10,21 +10,41 @@ import { HostError, type HostClient } from "pomade-kit/sdk";
 import type { JobsSnapshot, ProjectRecord } from "../jobs/model";
 import { APP_ID } from "../app";
 import type { ServiceActionResult, ServicesReport } from "../keeper/model";
-import type { EnableResult, HistoryPage, RunActionResult, RunOutput, RunsReport, RunView } from "../scheduler/model";
+import {
+  SWITCH_POSITIONS,
+  type EnableResult,
+  type HistoryPage,
+  type MissedChoice,
+  type MissedChoiceResult,
+  type RunActionResult,
+  type RunOutput,
+  type RunsReport,
+  type RunStopResult,
+  type RunView,
+  type SwitchPosition,
+  type SwitchState,
+} from "../scheduler/model";
+import { isSettingsField, type SettingsField, type SettingsReport, type SettingsValue, type SettingsWriteResult } from "../scheduler/settings";
 import {
   DISMISS_METHOD,
   HISTORY_LIST_METHOD,
   JOBS_CHANGED_EVENT,
   JOBS_LIST_METHOD,
+  MISSED_METHOD,
   RUN_GET_METHOD,
   RUN_NOW_METHOD,
   RUN_OUTPUT_METHOD,
+  RUN_STOP_METHOD,
   RUNS_CHANGED_EVENT,
   RUNS_LIST_METHOD,
   SERVICE_METHODS,
   SERVICES_CHANGED_EVENT,
   SERVICES_LIST_METHOD,
   SET_ENABLED_METHOD,
+  SETTINGS_CHANGED_EVENT,
+  SETTINGS_GET_METHOD,
+  SETTINGS_SET_METHOD,
+  SWITCH_METHOD,
   type ServiceVerb,
 } from "./runner-api";
 
@@ -86,6 +106,16 @@ export interface RunnerOffer {
   setEnabled(job: string, enabled: boolean): Promise<EnableResult>;
   /** Resolve a Needs-you item. */
   dismiss(id: string): boolean;
+  /** The person's choice for a missed run that waits for them. */
+  missed(job: string, choice: MissedChoice): Promise<MissedChoiceResult>;
+  /** Stop a running run as stopped by you. */
+  stopRun(job: string, run: string): Promise<RunStopResult>;
+  /** Set the global switch. */
+  setSwitch(position: SwitchPosition): Promise<SwitchState>;
+  /** The workspace settings. */
+  settings(): SettingsReport;
+  /** Write one setting. */
+  setSetting(field: SettingsField, value: SettingsValue): Promise<SettingsWriteResult>;
   /** Pomade restored its tabs (`pomade.ready`, sticky: heard at once when it already did). */
   ready(): void;
   log(message: string): void;
@@ -140,10 +170,11 @@ function historyParams(params: JsonValue): { job: string | null; before: string 
 
 /**
  * On a new connection: serve Runner's API — the jobs, the services and their Start, Stop and
- * Restart, the runs, the history, Run now, Enable / Disable, Needs you — follow the projects, hear
- * tab actions and `pomade.ready`, and announce the jobs, the services and the runs: a frame that
- * found no scheduler before asks again when it hears `jobs.changed`, `services.changed` or
- * `runs.changed`.
+ * Restart, the runs, the history, Run now, Enable / Disable, Needs you and a missed run's choice,
+ * Stop on a run, the switch, the settings — follow the projects, hear tab actions and
+ * `pomade.ready`, and announce the jobs, the services, the runs and the settings: a frame that
+ * found no scheduler before asks again when it hears `jobs.changed`, `services.changed`,
+ * `runs.changed` or `settings.changed`.
  */
 export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise<void> {
   const reloadProjects = (): void => {
@@ -180,6 +211,33 @@ export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise
         const takes = "{ id: <a Needs-you item's id> }";
         return { resolved: offer.dismiss(text(DISMISS_METHOD, paramsOf(DISMISS_METHOD, params, takes), "id", takes)) };
       }),
+      [MISSED_METHOD]: own(MISSED_METHOD, (params) => {
+        const takes = '{ job: <a job\'s id>, choice: "run-now" | "run-at" | "skip", at?: <a time> }';
+        const given = paramsOf(MISSED_METHOD, params, takes);
+        const job = text(MISSED_METHOD, given, "job", takes);
+        const { choice } = given;
+        if (choice === "run-now" || choice === "skip") return offer.missed(job, { kind: choice });
+        if (choice === "run-at") return offer.missed(job, { kind: "run-at", at: text(MISSED_METHOD, given, "at", takes) });
+        throw new HostError("invalid-params", `${MISSED_METHOD} takes ${takes}`);
+      }),
+      [RUN_STOP_METHOD]: own(RUN_STOP_METHOD, (params) => {
+        const { job, run } = runParams(RUN_STOP_METHOD, params);
+        return offer.stopRun(job, run);
+      }),
+      [SWITCH_METHOD]: own(SWITCH_METHOD, (params) => {
+        const takes = '{ position: "running" | "pause-low" | "pause-all" }';
+        const position = paramsOf(SWITCH_METHOD, params, takes).position;
+        if (typeof position !== "string" || !(SWITCH_POSITIONS as readonly string[]).includes(position)) throw new HostError("invalid-params", `${SWITCH_METHOD} takes ${takes}`);
+        return offer.setSwitch(position as SwitchPosition);
+      }),
+      [SETTINGS_GET_METHOD]: () => asJson(offer.settings()),
+      [SETTINGS_SET_METHOD]: own(SETTINGS_SET_METHOD, (params) => {
+        const takes = "{ field: <a setting>, value: <a number, or null for its default> }";
+        const given = paramsOf(SETTINGS_SET_METHOD, params, takes);
+        const { field, value } = given;
+        if (typeof field !== "string" || !isSettingsField(field) || (value !== null && typeof value !== "number")) throw new HostError("invalid-params", `${SETTINGS_SET_METHOD} takes ${takes}`);
+        return offer.setSetting(field, value);
+      }),
     });
     await host.events.subscribe("project.created", reloadProjects);
     await host.events.subscribe("project.renamed", reloadProjects);
@@ -189,13 +247,14 @@ export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise
     await host.events.publish(JOBS_CHANGED_EVENT);
     await host.events.publish(SERVICES_CHANGED_EVENT);
     await host.events.publish(RUNS_CHANGED_EVENT);
+    await host.events.publish(SETTINGS_CHANGED_EVENT);
   } catch (err) {
     offer.log(`cannot offer Runner's API to Pomade: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
 /** Publish one of Runner's events: a change its frames ask again on (`jobs.changed`,
- *  `services.changed`, `runs.changed`), or a run's start or end with its payload. */
+ *  `services.changed`, `runs.changed`, `settings.changed`), or a run's start or end with its payload. */
 export function announce(host: HostClient, event: string, log: (message: string) => void, payload?: unknown): void {
   host.events.publish(event, payload === undefined ? null : asJson(payload)).catch((err: unknown) => log(`cannot publish ${event}: ${String(err)}`));
 }

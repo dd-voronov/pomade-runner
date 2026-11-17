@@ -18,17 +18,23 @@ import {
   isJobsSnapshot,
   JOBS_CHANGED_EVENT,
   JOBS_LIST_METHOD,
+  MISSED_METHOD,
   RUN_FINISHED_EVENT,
   RUN_GET_METHOD,
   RUN_NOW_METHOD,
   RUN_OUTPUT_METHOD,
   RUN_STARTED_EVENT,
+  RUN_STOP_METHOD,
   RUNS_CHANGED_EVENT,
   RUNS_LIST_METHOD,
   SERVICE_METHODS,
   SERVICES_CHANGED_EVENT,
   SERVICES_LIST_METHOD,
   SET_ENABLED_METHOD,
+  SETTINGS_CHANGED_EVENT,
+  SETTINGS_GET_METHOD,
+  SETTINGS_SET_METHOD,
+  SWITCH_METHOD,
 } from "../integrations/runner-api";
 import { noticePoster, type PostNotice } from "../integrations/notices";
 import type { PomadeLinkHandlers } from "../integrations/pomade";
@@ -39,6 +45,7 @@ import type { SupervisionStore } from "../keeper/supervisor";
 import { callScheduler } from "./control/client";
 import { CONTROL_PROTOCOL } from "./control/protocol";
 import { isHistoryPage, isRunActionResult, isRunsReport } from "./model";
+import { isSettingsReport } from "./settings";
 import { startScheduler, type Scheduler } from "./scheduler";
 
 /** One raw line to the socket, and the first line that comes back. */
@@ -669,5 +676,64 @@ describe("scheduler and runs", () => {
       ],
     });
     expect(await callScheduler(socketPath(), "run", { job: "web" })).toMatchObject({ status: "failed", code: "refused", message: 'cannot run "web": "Web" is running' });
+  });
+
+  it("sets the switch through Pomade and the control socket, keeps it across a restart, and reports it with the runs", async () => {
+    await start();
+    await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", RUNS_LIST_METHOD)).toMatchObject({ switch: { position: "running", since: null } }));
+    expect(await ui.apps.call("pomade-runner", SWITCH_METHOD, { position: "pause-low" })).toMatchObject({ position: "pause-low" });
+    expect(await callScheduler(socketPath(), "switch", { position: null })).toMatchObject({ status: "ok", value: { position: "pause-low" } });
+    expect(await callScheduler(socketPath(), "switch", { position: "pause-all" })).toMatchObject({ status: "ok", value: { position: "pause-all" } });
+    expect(JSON.parse(await readFile(join(dir, "state/switch.json"), "utf8"))).toMatchObject({ position: "pause-all" });
+    const runs = await callScheduler(socketPath(), "runs", null);
+    expect(runs).toMatchObject({ status: "ok", value: { active: [], switch: { position: "pause-all" } } });
+    // Run now still runs; it shows as a run going.
+    expect(await ui.apps.call("pomade-runner", RUN_NOW_METHOD, { job: "backup" })).toMatchObject({ ok: true, run: { state: "running" } });
+    expect(await callScheduler(socketPath(), "runs", null)).toMatchObject({ status: "ok", value: { active: [{ job: "backup", state: "running" }] } });
+    for (const scheduler of running.splice(0)) await scheduler.stop();
+    await start(false);
+    expect(await callScheduler(socketPath(), "switch", { position: null })).toMatchObject({ status: "ok", value: { position: "pause-all" } });
+    expect(lines).toContain("switch: Pause all");
+  });
+
+  it("serves the settings through Pomade, writes one field into the file, and tells Runner's frames", async () => {
+    const heard: unknown[] = [];
+    await ui.events.subscribe(`pomade-runner:${SETTINGS_CHANGED_EVENT}`, (payload) => heard.push(payload));
+    await start();
+    await vi.waitFor(() => expect(heard.length).toBeGreaterThan(0));
+    const read = await ui.apps.call("pomade-runner", SETTINGS_GET_METHOD);
+    expect(isSettingsReport(read)).toBe(true);
+    expect(read).toMatchObject({ exists: false, settings: { maxLowPriorityRuns: 2, historyDays: 30 } });
+    const heardBefore = heard.length;
+    expect(await ui.apps.call("pomade-runner", SETTINGS_SET_METHOD, { field: "max-low-priority-runs", value: 3 })).toMatchObject({ ok: true, settings: { exists: true, settings: { maxLowPriorityRuns: 3 } } });
+    expect(await readFile(join(dir, "ws/Apps/pomade-runner/settings.yaml"), "utf8")).toBe("max-low-priority-runs: 3\n");
+    await vi.waitFor(() => expect(heard.length).toBeGreaterThan(heardBefore));
+    expect(await ui.apps.call("pomade-runner", SETTINGS_SET_METHOD, { field: "history-days", value: 0 })).toMatchObject({ ok: false, reason: expect.stringContaining("out of range") as string });
+    // An edit by hand applies within a tick.
+    await writeFile(join(dir, "ws/Apps/pomade-runner/settings.yaml"), "history-days: 7\n");
+    await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", SETTINGS_GET_METHOD)).toMatchObject({ settings: { maxLowPriorityRuns: 2, historyDays: 7 } }));
+  });
+
+  it("answers a missed run's choice, Stop and a long-run warning's Dismiss through Pomade, and refuses bad params", async () => {
+    await start();
+    await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", RUNS_LIST_METHOD)).toBeTruthy());
+    expect(await ui.apps.call("pomade-runner", MISSED_METHOD, { job: "backup", choice: "skip" })).toEqual({ ok: false, reason: 'no missed run of "backup" waits for you' });
+    expect(await ui.apps.call("pomade-runner", RUN_STOP_METHOD, { job: "backup", run: "20000101-000000-000000" })).toEqual({ ok: false, reason: 'run 20000101-000000-000000 of "backup" is not running' });
+    await ui.apps.call("pomade-runner", RUN_NOW_METHOD, { job: "backup" });
+    const run = lastRun();
+    expect(await ui.apps.call("pomade-runner", RUN_STOP_METHOD, { job: "backup", run: run.run })).toEqual({ ok: true });
+    expect(sessions.stopped).toEqual([{ id: run.id, reason: "stopped-by-you" }]);
+    expect(await ui.apps.call("pomade-runner", DISMISS_METHOD, { id: `long-run:backup:${run.run ?? ""}` })).toEqual({ resolved: false });
+    for (const [method, params] of [
+      [MISSED_METHOD, { job: "backup", choice: "later" }],
+      [MISSED_METHOD, { job: "backup", choice: "run-at" }],
+      [MISSED_METHOD, { choice: "skip" }],
+      [RUN_STOP_METHOD, { job: "backup" }],
+      [SWITCH_METHOD, { position: "off" }],
+      [SETTINGS_SET_METHOD, { field: "colour", value: 1 }],
+      [SETTINGS_SET_METHOD, { field: "warm-up", value: "2m" }],
+    ] as const) {
+      await expect(ui.apps.call("pomade-runner", method, params)).rejects.toMatchObject({ code: "invalid-params" });
+    }
   });
 });

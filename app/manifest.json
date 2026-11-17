@@ -25,6 +25,7 @@
       "jobs.changed",
       "services.changed",
       "runs.changed",
+      "settings.changed",
       "run.started",
       "run.finished"
     ],
@@ -32,6 +33,7 @@
       "pomade-runner:jobs.changed",
       "pomade-runner:services.changed",
       "pomade-runner:runs.changed",
+      "pomade-runner:settings.changed",
       "pomade.ready",
       "project.created",
       "project.renamed",
@@ -55,7 +57,12 @@
     "history.list",
     "jobs.run",
     "jobs.setEnabled",
-    "needsYou.dismiss"
+    "needsYou.dismiss",
+    "runs.missed",
+    "runs.stop",
+    "switch.set",
+    "settings.get",
+    "settings.set"
   ],
   "commands": [
     {

@@ -1,9 +1,10 @@
 // The scheduler: Runner's always-on background part. It serves the control protocol to the
 // `pomade-runner` command, keeps a connection to Pomade while Pomade runs, ticks on its clock,
-// holds the checked job files of the current workspace — served to Runner's frames through
-// Pomade's broker — owns the keeper's sessions, following them on every tick, and after each
-// supervises the services, runs what is due and records what ended, keeps Needs you, notices and
-// the badge, and publishes Runner's events.
+// holds the checked job files and the settings of the current workspace — served to Runner's
+// frames through Pomade's broker — owns the keeper's sessions, following them on every tick, and
+// after each supervises the services, runs what is due — through the missed-run policies, the
+// switch, the warm-up and the queue — and records what ended, keeps Needs you, notices and the
+// badge, and publishes Runner's events.
 
 import { join } from "node:path";
 
@@ -14,7 +15,16 @@ import { APP_ID, APP_VERSION } from "../app";
 import type { PostNotice } from "../integrations/notices";
 import { setBadge } from "../integrations/notices";
 import { announce, offerRunner, type LinkPomade } from "../integrations/pomade";
-import { JOBS_CHANGED_EVENT, RUN_FINISHED_EVENT, RUN_STARTED_EVENT, RUNS_CHANGED_EVENT, SERVICES_CHANGED_EVENT, type RunFinishedPayload, type RunStartedPayload } from "../integrations/runner-api";
+import {
+  JOBS_CHANGED_EVENT,
+  RUN_FINISHED_EVENT,
+  RUN_STARTED_EVENT,
+  RUNS_CHANGED_EVENT,
+  SERVICES_CHANGED_EVENT,
+  SETTINGS_CHANGED_EVENT,
+  type RunFinishedPayload,
+  type RunStartedPayload,
+} from "../integrations/runner-api";
 import { formatJobError } from "../jobs/format";
 import { writeEnabled } from "../jobs/folder";
 import { createJobsLoader } from "../jobs/loader";
@@ -35,14 +45,16 @@ import type { ActiveRun, EnableResult, JobListing, RunActionResult, RunRecord, R
 import { createNeedsYou, fileNeedsYouStore } from "./needs-you";
 import { projectsMemory } from "./projects";
 import { createRuns, fileRunsStore } from "./runs";
+import { settingsFile } from "./settings-file";
+import { fileSwitchStore } from "./switch";
 
-/** How often history and output logs older than the retention are pruned. */
+/** How often history and output logs older than the settings keep are pruned. */
 const PRUNE_EVERY_MS = 60 * 60_000;
 
 export interface SchedulerOptions {
   /** Where the control protocol is served. */
   socketPath: string;
-  /** Runner's state folder: runs, history, Needs you, the projects heard. */
+  /** Runner's state folder: runs, history, Needs you, the switch, the projects heard. */
   state: string;
   clock: Clock;
   tickMs: number;
@@ -113,6 +125,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     if (host !== null) announce(host, event, log, payload);
   };
   const jobs = createJobsLoader({ workspace: options.workspace, log, onChange: () => publish(JOBS_CHANGED_EVENT) });
+  const settings = settingsFile({ workspace: options.workspace, log, onChange: () => publish(SETTINGS_CHANGED_EVENT) });
   const supervisor = createSupervisor({
     sessions,
     jobs: jobs.snapshot,
@@ -134,7 +147,13 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
 
   let reported = "";
   let badged: number | null = null;
-  const report = (): RunsReport => ({ active: runs.active(), nextUp: runs.nextUp(), jobs: runs.jobRuns(), needsYou: needsYou.items() });
+  const report = (): RunsReport => ({
+    active: runs.active(),
+    nextUp: runs.nextUp(),
+    jobs: runs.jobRuns(),
+    needsYou: [...needsYou.items(), ...runs.needsYou()].sort((a, b) => b.at - a.at || a.id.localeCompare(b.id)),
+    switch: runs.switch(),
+  });
   /** Tell the frames when the runs report changed, and keep the badge on the Needs-you count. */
   const publishRuns = (): void => {
     const next = report();
@@ -159,10 +178,14 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
   const runs = createRuns({
     sessions,
     jobs: jobs.snapshot,
+    settings: () => settings.report().settings,
+    servicesSettled: supervisor.settled,
     clock,
     log,
     history,
     store: fileRunsStore(state, log),
+    switchStore: fileSwitchStore(state, log),
+    post,
     projectPath: (project) => {
       const workspace = jobs.snapshot().workspace;
       const root = projects.root(project);
@@ -191,6 +214,12 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     const entry = snapshot.jobs.find((candidate) => entryId(candidate) === jobIdOf(snapshot, ref));
     if (entry?.valid === true && entry.job.kind === "service") return supervisor.start(ref);
     return runs.runNow(ref);
+  };
+
+  /** Resolve a Needs-you item: a long-run warning is the run's, the others Needs you's own. */
+  const dismiss = (id: string): boolean => {
+    const warning = /^long-run:(.+):([^:]+)$/.exec(id);
+    return warning === null ? needsYou.dismiss(id) : runs.dismissWarning(warning[1] ?? "", warning[2] ?? "");
   };
 
   /** Enable or Disable: `enabled:` written into the job's file, which applies within a tick. */
@@ -248,6 +277,8 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     disable: ({ job }) => enabledAnswer(job, false),
     list: listings,
     history: ({ job, limit }) => history.page({ job: job === null ? null : (jobIdOf(jobs.snapshot(), job) ?? job), before: null, limit }),
+    runs: report,
+    switch: ({ position }) => (position === null ? runs.switch() : runs.setSwitch(position)),
   });
   async function enabledAnswer(job: string, enabled: boolean): Promise<JobEnabled> {
     const result = await setEnabled(job, enabled);
@@ -258,6 +289,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
   }
   if (control.status !== "listening") return control;
   await jobs.refresh();
+  await settings.refresh();
 
   const unwatchExits = sessions.onExit(({ id, info }) => log(`session ${id}: ended${info.exit === null ? "" : `: ${exitWords(info.exit)}`}`));
   const tabAction = (payload: AttachedTabActionPayload): void => {
@@ -298,7 +330,12 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         },
         runNow,
         setEnabled,
-        dismiss: needsYou.dismiss,
+        dismiss,
+        missed: runs.missed,
+        stopRun: runs.stop,
+        setSwitch: runs.setSwitch,
+        settings: settings.report,
+        setSetting: settings.write,
         ready: () => showBadge(needsYou.items().length),
         log,
       });
@@ -316,14 +353,15 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
   });
 
   let prunedAt = Number.NEGATIVE_INFINITY;
-  /** Drop history and output logs past the retention, at most once an hour; never a log in use. */
+  /** Drop history and output logs past what the settings keep, at most once an hour; never a log in
+   *  use. */
   const prune = async (): Promise<void> => {
     const now = clock.now();
     if (now.getTime() - prunedAt < PRUNE_EVERY_MS) return;
     prunedAt = now.getTime();
     const inUse = runs.logsInUse();
     for (const session of sessions.list()) if (session.log !== null) inUse.add(session.log);
-    await history.prune(now, inUse);
+    await history.prune(now, settings.report().settings.historyDays, inUse);
   };
 
   /** Follow the keeper, then supervise, run and record on what it says. */
@@ -347,6 +385,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
   const ticker = setInterval(() => {
     lastTickAt = clock.now().toISOString();
     void jobs.refresh();
+    void settings.refresh();
     tick();
   }, options.tickMs);
   log(`scheduler ${APP_VERSION} started (pid ${process.pid}, tick ${options.tickMs} ms)`);

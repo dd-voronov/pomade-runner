@@ -7,7 +7,7 @@
 // `unknown-method` by an older scheduler.
 
 import { isServicesReport, isServiceStatus, isSessionsReport, type ServicesReport, type ServiceStatus, type SessionsReport } from "../../keeper/model";
-import { isActiveRun, isHistoryPage, isJobListings, type ActiveRun, type HistoryPage, type JobListing } from "../model";
+import { isActiveRun, isHistoryPage, isJobListings, isRunsReport, isSwitchState, SWITCH_POSITIONS, type ActiveRun, type HistoryPage, type JobListing, type RunsReport, type SwitchPosition, type SwitchState } from "../model";
 
 export const CONTROL_PROTOCOL = 1;
 
@@ -46,6 +46,10 @@ export interface ControlMethods {
   list: JobListing[];
   /** Finished runs, newest first. */
   history: HistoryPage;
+  /** The runs going and what each waits for, Next up, each job's runs, Needs you and the switch. */
+  runs: RunsReport;
+  /** Set the global switch, or — `position: null` — read it. */
+  switch: SwitchState;
 }
 
 /** What Run now started: a script's run, or a service. */
@@ -74,6 +78,8 @@ export interface ControlParams {
   list: null;
   /** `job`: one job's id or name, or `null` for every job's runs; `limit`: at most this many records. */
   history: { job: string | null; limit: number };
+  runs: null;
+  switch: { position: SwitchPosition | null };
 }
 
 export type ControlMethod = keyof ControlMethods;
@@ -164,6 +170,8 @@ export const RESULT_GUARDS: { [M in ControlMethod]: (value: unknown) => value is
   disable: isJobEnabled,
   list: isJobListings,
   history: isHistoryPage,
+  runs: isRunsReport,
+  switch: isSwitchState,
 };
 
 const noParams = (params: unknown): null | undefined => (params === null ? null : undefined);
@@ -187,6 +195,13 @@ export const PARAMS_PARSERS: { [M in ControlMethod]: (params: unknown) => Contro
   disable: jobParams,
   list: noParams,
   history: historyParams,
+  runs: noParams,
+  switch: (params) => {
+    if (!isRecord(params)) return undefined;
+    const { position } = params;
+    if (position === null) return { position };
+    return typeof position === "string" && (SWITCH_POSITIONS as readonly string[]).includes(position) ? { position: position as SwitchPosition } : undefined;
+  },
 };
 
 /** What each method's params look like, for the error that refuses others. */
@@ -201,6 +216,8 @@ export const PARAMS_SHAPES: { [M in ControlMethod]: string } = {
   disable: "{ job: <a job's id or name> }",
   list: "none",
   history: "{ job: <a job's id or name> | null, limit: <a whole number ≥ 1> }",
+  runs: "none",
+  switch: '{ position: "running" | "pause-low" | "pause-all" | null }',
 };
 
 export function isControlMethod(method: string): method is ControlMethod {

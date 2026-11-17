@@ -8,6 +8,7 @@ import { connectSocket, resolveWorkspace } from "pomade-kit/node";
 
 import { schedulerSocketPath } from "../../locations";
 import { callScheduler } from "../../scheduler/control/client";
+import { readSettingsText } from "../../scheduler/settings-file";
 import { readJobFiles } from "../folder";
 import type { ProjectRecord } from "../model";
 import { runCli } from "./cli";
@@ -15,7 +16,7 @@ import { runCli } from "./cli";
 const socketPath = schedulerSocketPath(process.env);
 
 /** The methods that may wait on a session or a tick. */
-const SLOW: ReadonlySet<string> = new Set(["run", "stop", "restart", "enable", "disable"]);
+const SLOW: ReadonlySet<string> = new Set(["run", "stop", "restart", "enable", "disable", "switch"]);
 
 /** Pomade's projects over its socket; `null` when it is closed or this is not run through its shim. */
 async function projects(): Promise<ProjectRecord[] | null> {
@@ -59,5 +60,6 @@ process.exitCode = await runCli(process.argv.slice(2), {
   workspace,
   realPath,
   readJobFiles,
+  readSettings: readSettingsText,
   projects,
 });
