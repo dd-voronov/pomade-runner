@@ -1,9 +1,9 @@
 // Reading the jobs folder from disk (Node): every `.md` file in it and in its sub-folders, as the
 // validator takes them. Works with Pomade closed — the scheduler and the command read the folder
-// directly. Hidden files (`.x.md`, editors' `.#x.md`) and other files are not job files. And the one
-// write the scheduler makes to a job file: Enable / Disable.
+// directly. Hidden files (`.x.md`, editors' `.#x.md`) and other files are not job files. And the
+// scheduler's writes into the workspace: Enable / Disable into a job file, a field of the settings.
 
-import { readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import { setJobFields } from "./edit";
@@ -54,16 +54,26 @@ export async function readJobFiles(folder: string): Promise<JobFileInput[] | nul
 }
 
 /** Write `enabled:` into the job file at `path` (workspace-relative), field-only: the rest of the
- *  file stays byte for byte. The file — a link's target, for a linked one — is replaced whole
- *  through a hidden file beside it, which the loader never reads as a job. */
+ *  file stays byte for byte. */
 export async function writeEnabled(workspace: string, path: string, enabled: boolean): Promise<void> {
   const file = await realpath(join(workspace, path));
   const result = setJobFields(await readFile(file, "utf8"), { enabled });
   if (!result.ok) throw new Error(result.message);
-  if (!result.changed) return;
+  if (result.changed) await replaceFile(file, result.text);
+}
+
+/** Replace a file whole — a link's target, for a linked one — through a hidden file beside it,
+ *  which the job loader never reads as a job; its folder is made when missing. */
+export async function replaceFile(path: string, text: string): Promise<void> {
+  let file = path;
+  try {
+    file = await realpath(path);
+  } catch {
+    await mkdir(dirname(path), { recursive: true });
+  }
   const temp = join(dirname(file), `.${basename(file)}.tmp`);
   try {
-    await writeFile(temp, result.text);
+    await writeFile(temp, text);
     await rename(temp, file);
   } catch (err) {
     await rm(temp, { force: true });
