@@ -2,10 +2,11 @@ import { defineConfig, devices } from "@playwright/test";
 
 import { APP_PORT, HARNESS_PORT } from "./e2e/support/ports";
 
-// Six projects over the built app folder `dist/` (the first web server builds it before any test
+// Seven projects over the built app folder `dist/` (the first web server builds it before any test
 // runs): the UI in pomade-kit's fake host · the scheduler and the command as processes · the keeper
-// and its sessions as processes · service supervision as processes · Runner hosted by a real Pomade
-// (`POMADE_REPO`) · the install script, which rebuilds `dist/` and so runs after the others.
+// and its sessions as processes · service supervision as processes · scheduled scripts as
+// processes · Runner hosted by a real Pomade (`POMADE_REPO`) · the install script, which rebuilds
+// `dist/` and so runs after the others.
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,

@@ -201,6 +201,13 @@ The script gets POMADE_PROJECT and POMADE_PROJECT_PATH.
 Run `pomade-runner check` (all files) or `pomade-runner check <file>` and fix what it prints. With
 Pomade closed it checks everything but project ids, and says so.
 
+A scheduled script runs at its times, in its folder, by the login shell, with `POMADE_JOB` (its
+id), `POMADE_RUN_ID`, `POMADE_TRIGGER` (`scheduled` or `manual`) and, for a project job,
+`POMADE_PROJECT` and `POMADE_PROJECT_PATH` in its environment; exit 0 is done, anything else
+failed. `pomade-runner list` prints every job with its trigger in words, next run and last result;
+`pomade-runner run <job>` runs one now; `pomade-runner history [job]` prints the latest runs with
+their output log; `pomade-runner enable|disable <job>` writes `enabled:` into its file.
+
 A valid, enabled `start: login` service starts within seconds of being written (services start one
 at a time). `pomade-runner services` shows every service and where it stands — running,
 restarting, failed after a crash loop, stopped by you; `pomade-runner run|stop|restart <service>`
