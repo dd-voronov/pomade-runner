@@ -5,6 +5,7 @@
 import { normalizeWorkspacePath, isPomadeFolderPath } from "pomade-kit/protocol";
 import { describeSchedule, parseSchedule, parseTime, type Schedule } from "pomade-kit/schedule";
 
+import { encodeJobId, jobIdFits, MAX_ENCODED_JOB_ID } from "../keeper/ids";
 import { fieldName, readJobDocument, type FieldPath, type JobDocument } from "./document";
 import {
   CHAIN_RESULTS,
@@ -501,6 +502,16 @@ function locate(path: string): { id: string; folder: string | null; problem: { p
       id,
       folder,
       problem: { problem: `the file name is the job's slug, and ${show(slug)} is not one`, fix: `rename the file to ${suggested}.md — lower-case letters, digits and dashes` },
+    };
+  }
+  if (!jobIdFits(id)) {
+    return {
+      id,
+      folder,
+      problem: {
+        problem: `the job's id ${show(id)} is too long to name its terminal session (${encodeJobId(id).length} characters; ${MAX_ENCODED_JOB_ID} at most, a character other than a letter, a digit or - counting 3 or more)`,
+        fix: folder === null ? "rename the file to a shorter slug" : "rename the file to a shorter slug, or the project's folder to a shorter name",
+      },
     };
   }
   return { id, folder, problem: null };

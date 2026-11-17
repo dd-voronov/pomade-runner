@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { POMADE_ENV } from "pomade-kit/protocol";
 
 import { APP_ID } from "./app";
+import { encodeJobId } from "./keeper/ids";
 
 export type Env = Readonly<Record<string, string | undefined>>;
 
@@ -23,4 +24,26 @@ export function stateDir(env: Env): string | null {
 export function schedulerSocketPath(env: Env): string | null {
   const dir = stateDir(env);
   return dir === null ? null : join(dir, "scheduler.sock");
+}
+
+/** Where the scheduler finds the keeper: `POMADE_KEEPER_SOCKET`, which Pomade gives its backend
+ *  (`<userData>/run/keepers/pomade-runner.sock`); `null` when it is not set. */
+export function keeperSocketPath(env: Env): string | null {
+  return env[POMADE_ENV.keeperSocket] || null;
+}
+
+/** Which job and run each keeper session belongs to, and the exits already reported. */
+export function sessionsRecordPath(state: string): string {
+  return join(state, "sessions.json");
+}
+
+/** One run's full output, which the keeper appends to: `output/<encoded job id>/<run id>.log`. */
+export function outputLogPath(state: string, jobId: string, runId: string): string {
+  return join(state, "output", encodeJobId(jobId), `${runId}.log`);
+}
+
+/** The keeper's own folder (`pomade-kit/keeper`'s state: its session records, exit statuses, log),
+ *  where its stdout and stderr go too: `keeper/keeper.out`. */
+export function keeperOutPath(state: string): string {
+  return join(state, "keeper", "keeper.out");
 }

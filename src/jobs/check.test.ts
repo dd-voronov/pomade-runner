@@ -267,6 +267,17 @@ describe("where a file sits", () => {
     expect(error).toMatchObject({ path: "Apps/pomade-runner/jobs/My Backup.md", line: 1, field: "", problem: 'the file name is the job\'s slug, and "My Backup" is not one', fix: "rename the file to my-backup.md — lower-case letters, digits and dashes" });
   });
 
+  it("a job id too long to name its terminal session", () => {
+    const longest = "a".repeat(101);
+    expect(valid(`${longest}.md`, file(SCRIPT)).id).toBe(longest);
+    expect(only({ [`${longest}b.md`]: file(SCRIPT) })).toMatchObject({
+      line: 1,
+      field: "",
+      problem: `the job's id "${longest}b" is too long to name its terminal session (102 characters; 101 at most, a character other than a letter, a digit or - counting 3 or more)`,
+      fix: "rename the file to a shorter slug",
+    });
+  });
+
   it("a file two sub-folders deep", () => {
     const error = only({ "coda-helper/old/web.md": file(SERVICE) }, null);
     expect(error).toMatchObject({ line: 1, problem: /one sub-folder deep/, fix: "move it to Apps/pomade-runner/jobs/coda-helper/web.md" });
