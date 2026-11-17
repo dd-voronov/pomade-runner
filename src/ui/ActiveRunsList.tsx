@@ -23,9 +23,11 @@ export function ActiveRunsList({ host, runs, open }: { host: HostClient; runs: r
         <ul className={styles.list}>
           {going.map((run) => (
             <li key={`${run.job}/${run.run}`}>
-              <button type="button" className={styles.rowButton} data-testid="active-run" data-state={run.state} onClick={() => show(run)}>
-                <span className={styles.when}>{dayTime(run.startedAt ?? run.dueAt)}</span>
-                <span className={styles.name}>{run.name}</span>
+              <button type="button" className={`${styles.rowButton} ${styles.stacked}`} data-testid="active-run" data-state={run.state} onClick={() => show(run)}>
+                <span className={styles.line}>
+                  <span className={styles.name}>{run.name}</span>
+                  <span className={styles.meta}>{dayTime(run.startedAt ?? run.dueAt)}</span>
+                </span>
                 <span className={styles.meta}>{runWords(run)}</span>
               </button>
             </li>

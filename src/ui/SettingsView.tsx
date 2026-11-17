@@ -42,7 +42,7 @@ function Field({ host, name, value }: { host: HostClient; name: SettingsField; v
       }}
     >
       <label className={styles.meta} htmlFor={`setting-${name}-input`}>
-        {LABELS[name]} <code>{name}</code>
+        {LABELS[name]} <code className={styles.key}>{name}</code>
       </label>
       <span className={styles.fieldLine}>
         <input id={`setting-${name}-input`} className={styles.input} value={text} onChange={(event) => setText(event.target.value)} />
@@ -76,7 +76,7 @@ export function SettingsView({ host }: { host: HostClient }): React.JSX.Element 
   }
   const { path, exists, errors } = settings.value;
   return (
-    <section className={styles.section} data-testid="settings">
+    <section className={`${styles.section} ${styles.settings}`} data-testid="settings">
       <p className={styles.note}>
         {path}
         {exists ? "" : " — no file yet: every setting is its default"}

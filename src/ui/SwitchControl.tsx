@@ -2,9 +2,12 @@ import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
 import { SWITCH_METHOD } from "../integrations/runner-api";
-import { SWITCH_POSITIONS, SWITCH_WORDS, type SwitchState } from "../scheduler/model";
+import { SWITCH_POSITIONS, SWITCH_WORDS, type SwitchPosition, type SwitchState } from "../scheduler/model";
 import styles from "./Runs.module.css";
 import { useAction } from "./useAction";
+
+/** The positions as the panel's narrow switch shows them; the full words name each button. */
+const SHORT: Record<SwitchPosition, string> = { running: "Running", "pause-low": "Pause low", "pause-all": "Pause all" };
 
 /** The global switch: Running · Pause low-priority · Pause all. A stand-in until the panel's real
  *  three-position switch. */
@@ -19,10 +22,12 @@ export function SwitchControl({ host, state }: { host: HostClient; state: Switch
             type="button"
             className={styles.switchButton}
             aria-pressed={state.position === position}
+            aria-label={SWITCH_WORDS[position]}
+            title={SWITCH_WORDS[position]}
             data-testid={`switch-${position}`}
             onClick={() => action.run(() => host.apps.call(APP_ID, SWITCH_METHOD, { position }))}
           >
-            {SWITCH_WORDS[position]}
+            {SHORT[position]}
           </button>
         ))}
       </div>

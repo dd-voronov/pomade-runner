@@ -459,6 +459,9 @@ export function dayTime(epochMs: number): string {
   return `${WEEKDAYS[new Date(epochMs).getDay()] ?? ""} ${clockTime(epochMs)}`;
 }
 
+/** What started a run, in words: "scheduled", "caught up", "manual". */
+export const TRIGGER_WORDS: Record<RunTrigger, string> = { scheduled: "scheduled", "caught-up": "caught up", manual: "manual" };
+
 /** The switch's position in words. */
 export const SWITCH_WORDS: Record<SwitchPosition, string> = { running: "Running", "pause-low": "Pause low-priority", "pause-all": "Pause all" };
 

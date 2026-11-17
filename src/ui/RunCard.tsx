@@ -3,7 +3,7 @@ import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
 import { DISMISS_METHOD, outputRoute, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute } from "../integrations/runner-api";
-import { dayTime, durationWords, plainLines, runWords, type NeedsYouItem } from "../scheduler/model";
+import { dayTime, durationWords, plainLines, runWords, TRIGGER_WORDS, type NeedsYouItem } from "../scheduler/model";
 import { MissedActions } from "./MissedActions";
 import styles from "./Runs.module.css";
 import { useAction } from "./useAction";
@@ -39,7 +39,7 @@ export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; 
         {runWords(value)}
       </span>
       <span className={styles.meta}>
-        {value.trigger} · due {dayTime(value.dueAt)}
+        {TRIGGER_WORDS[value.trigger]} · due {dayTime(value.dueAt)}
         {value.startedAt !== null && ` · started ${dayTime(value.startedAt)}`}
         {"durationMs" in value && value.durationMs !== null && ` · took ${durationWords(value.durationMs)}`}
       </span>
