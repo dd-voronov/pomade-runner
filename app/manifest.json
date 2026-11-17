@@ -22,10 +22,12 @@
   ],
   "events": {
     "publish": [
-      "jobs.changed"
+      "jobs.changed",
+      "services.changed"
     ],
     "subscribe": [
       "pomade-runner:jobs.changed",
+      "pomade-runner:services.changed",
       "project.created",
       "project.renamed",
       "attachedTab.action"
@@ -37,7 +39,11 @@
     "restartOnUpdate": true
   },
   "api": [
-    "jobs.list"
+    "jobs.list",
+    "services.list",
+    "services.start",
+    "services.stop",
+    "services.restart"
   ],
   "commands": [
     {

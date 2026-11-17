@@ -45,8 +45,10 @@ describe("sessions", () => {
 
   async function connected(key = KEY): Promise<{ sessions: Sessions; ended: RunnerSession[] }> {
     const s = open(key);
+    expect(s.sessions.followed()).toBe(false);
     await s.sessions.refresh();
     expect(s.sessions.keeper()).toEqual({ state: "connected", version: VERSION, pid: process.pid });
+    expect(s.sessions.followed()).toBe(true);
     return s;
   }
 
@@ -218,6 +220,7 @@ describe("sessions", () => {
     const { sessions } = open("wrong-key");
     await sessions.refresh();
     expect(sessions.keeper()).toEqual({ state: "rejected", reason: `not the owner of ${APP_ID}'s keeper` });
+    expect(sessions.followed()).toBe(false);
     await expect(sessions.spawn({ kind: "service", job: "web" }, command("true"))).rejects.toThrow(`the keeper is not connected (not the owner of ${APP_ID}'s keeper)`);
     expect(lines).toContain(`keeper: refused the scheduler — not the owner of ${APP_ID}'s keeper`);
   });
@@ -227,7 +230,9 @@ describe("sessions", () => {
     await keeper.close();
     keeper = await runKeeper({ app: APP_ID, socketPath, stateDir: join(state, "keeper"), ownerKey: KEY, version: VERSION, env: { ...process.env, SHELL: "/bin/sh", HOME: dir }, log: () => undefined });
     await vi.waitFor(() => expect(lines).toContain("keeper: connection closed; reconnecting"));
+    expect(sessions.followed()).toBe(false);
     await sessions.refresh();
+    expect(sessions.followed()).toBe(true);
     expect(sessions.keeper()).toMatchObject({ state: "connected" });
   });
 });

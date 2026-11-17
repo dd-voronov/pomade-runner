@@ -1,6 +1,6 @@
-// Runner's view of the keeper and its sessions: what the scheduler holds and serves to the
-// `pomade-runner` command. Plain JSON. Pure: shared by the scheduler, the control protocol and the
-// command.
+// Runner's view of the keeper, its sessions and the services it supervises: what the scheduler
+// holds and serves to the `pomade-runner` command and to Runner's frames. Plain JSON. Pure: shared
+// by the scheduler, the control protocol, the command and the UI.
 
 import { EXIT_REASONS, type SessionExit, type SessionInfo } from "pomade-kit/protocol";
 
@@ -92,4 +92,81 @@ function isKeeperLink(value: unknown): value is KeeperLink {
 
 export function isSessionsReport(value: unknown): value is SessionsReport {
   return isRecord(value) && isKeeperLink(value.keeper) && Array.isArray(value.sessions) && value.sessions.every(isRunnerSession);
+}
+
+/** Where a service stands (docs/DESIGN.md "Services"):
+ *  - `queued`: due to start, waiting its turn in the staged start;
+ *  - `starting`: runs, not up yet (its readiness check);
+ *  - `running`: up;
+ *  - `restarting`: ended on its own; starts again after its back-off (`retryAt`);
+ *  - `failed`: 5 crashes within a minute; no restarts until Start;
+ *  - `stopped-by-you`: Ctrl+C in its tab, or Stop; stays stopped until Start;
+ *  - `waiting`: `start: project-first-open`, not started — Start runs it;
+ *  - `disabled`: `enabled: false` in its file;
+ *  - `invalid`: its file has errors — nothing starts or stops it until the file is fixed;
+ *  - `removed`: its file is gone; its session is stopped, and the service leaves the list once it ends. */
+export const SERVICE_STATES = ["queued", "starting", "running", "restarting", "failed", "stopped-by-you", "waiting", "disabled", "invalid", "removed"] as const;
+export type ServiceState = (typeof SERVICE_STATES)[number];
+
+/** One service as supervision sees it. */
+export interface ServiceStatus {
+  /** The job's id (`coda-helper/coda-web`). */
+  job: string;
+  /** The job's name; for a service whose file is invalid or gone, its session's title or the id. */
+  name: string;
+  /** The stable project id; `null` for a workspace job or when the file does not say. */
+  project: string | null;
+  state: ServiceState;
+  /** Its session: the running one, or the last that ended; `null` when it never ran. */
+  session: RunnerSession | null;
+  /** Restarts after a crash since the count last reset (10 minutes of uptime, or Start). */
+  restarts: number;
+  /** When it last crashed (epoch ms); `null` since the count last reset. */
+  lastCrashAt: number | null;
+  /** `restarting`: when it starts again (epoch ms); else `null`. */
+  retryAt: number | null;
+  /** It runs with a command or folder other than its file's now: a restart applies the file. */
+  needsRestart: boolean;
+  /** Why its last start failed (the keeper refused it), or `null`. */
+  problem: string | null;
+}
+
+/** What the services view, `pomade-runner services` and the control methods show. */
+export interface ServicesReport {
+  keeper: KeeperLink;
+  /** In start order: workspace jobs first, then by project, each by id. */
+  services: ServiceStatus[];
+}
+
+const STATES: readonly string[] = SERVICE_STATES;
+const nullableNumber = (value: unknown): boolean => value === null || typeof value === "number";
+
+export function isServiceStatus(value: unknown): value is ServiceStatus {
+  if (!isRecord(value)) return false;
+  const { job, name, project, state, session, restarts, lastCrashAt, retryAt, needsRestart, problem } = value;
+  return (
+    typeof job === "string" &&
+    typeof name === "string" &&
+    nullableString(project) &&
+    typeof state === "string" &&
+    STATES.includes(state) &&
+    (session === null || isRunnerSession(session)) &&
+    typeof restarts === "number" &&
+    nullableNumber(lastCrashAt) &&
+    nullableNumber(retryAt) &&
+    typeof needsRestart === "boolean" &&
+    nullableString(problem)
+  );
+}
+
+/** The answer to Start, Stop or Restart: where the service stands after it, or why it was refused. */
+export type ServiceActionResult = { ok: true; service: ServiceStatus } | { ok: false; reason: string };
+
+export function isServiceActionResult(value: unknown): value is ServiceActionResult {
+  if (!isRecord(value)) return false;
+  return value.ok === true ? isServiceStatus(value.service) : value.ok === false && typeof value.reason === "string";
+}
+
+export function isServicesReport(value: unknown): value is ServicesReport {
+  return isRecord(value) && isKeeperLink(value.keeper) && Array.isArray(value.services) && value.services.every(isServiceStatus);
 }

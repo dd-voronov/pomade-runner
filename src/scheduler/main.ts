@@ -9,7 +9,9 @@ import { resolveWorkspace } from "pomade-kit/node";
 import { POMADE_ENV } from "pomade-kit/protocol";
 
 import { linkPomade } from "../integrations/pomade";
+import { probeReadiness } from "../keeper/readiness";
 import { createSessions } from "../keeper/sessions";
+import { fileStore } from "../keeper/supervisor";
 import { keeperSocketPath, schedulerSocketPath, stateDir } from "../locations";
 import { systemClock, tickMs } from "./clock";
 import { createLog } from "./log";
@@ -48,7 +50,17 @@ if (state === null || socketPath === null) {
   process.exitCode = 1;
 } else {
   const sessions = createSessions({ socketPath: keeperSocket, key, keeper: { entry: KEEPER_ENTRY, version: KEEPER_VERSION }, state, clock: systemClock, log });
-  const result = await startScheduler({ socketPath, clock: systemClock, tickMs: tickMs(process.env), log, linkPomade, workspace: () => resolveWorkspace(), sessions });
+  const result = await startScheduler({
+    socketPath,
+    clock: systemClock,
+    tickMs: tickMs(process.env),
+    log,
+    linkPomade,
+    workspace: () => resolveWorkspace(),
+    sessions,
+    supervision: fileStore(state, log),
+    probe: probeReadiness,
+  });
   if (result.status === "already-running") {
     // A clean exit: launchd restarts a login item only after a failure.
     log("another scheduler is running; this one exits");

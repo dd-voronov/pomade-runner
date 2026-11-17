@@ -6,7 +6,7 @@
 // with a message instead of misreading each other. A method added later is answered
 // `unknown-method` by an older scheduler.
 
-import { isRunnerSession, isSessionsReport, type RunnerSession, type SessionsReport } from "../../keeper/model";
+import { isServicesReport, isServiceStatus, isSessionsReport, type ServicesReport, type ServiceStatus, type SessionsReport } from "../../keeper/model";
 
 export const CONTROL_PROTOCOL = 1;
 
@@ -29,16 +29,25 @@ export interface ControlMethods {
   status: SchedulerStatus;
   /** The keeper and its sessions. */
   sessions: SessionsReport;
-  /** Start a service's session now. */
-  start: RunnerSession;
+  /** Every service and where it stands. */
+  services: ServicesReport;
+  /** Start a service now. */
+  start: ServiceStatus;
+  /** Stop a service as stopped by you. */
+  stop: ServiceStatus;
+  /** Restart a service (start it when it does not run). */
+  restart: ServiceStatus;
 }
 
 /** Every method's params. */
 export interface ControlParams {
   status: null;
   sessions: null;
-  /** `job`: a service job's id. */
+  services: null;
+  /** `job`: a service job's id or name. */
   start: { job: string };
+  stop: { job: string };
+  restart: { job: string };
 }
 
 export type ControlMethod = keyof ControlMethods;
@@ -113,23 +122,33 @@ export function isSchedulerStatus(value: unknown): value is SchedulerStatus {
 export const RESULT_GUARDS: { [M in ControlMethod]: (value: unknown) => value is ControlMethods[M] } = {
   status: isSchedulerStatus,
   sessions: isSessionsReport,
-  start: isRunnerSession,
+  services: isServicesReport,
+  start: isServiceStatus,
+  stop: isServiceStatus,
+  restart: isServiceStatus,
 };
 
 const noParams = (params: unknown): null | undefined => (params === null ? null : undefined);
+const jobParams = (params: unknown): { job: string } | undefined => (isRecord(params) && typeof params.job === "string" && params.job !== "" ? { job: params.job } : undefined);
 
 /** Each method's params check: the params, or `undefined` when they are not the method's. */
 export const PARAMS_PARSERS: { [M in ControlMethod]: (params: unknown) => ControlParams[M] | undefined } = {
   status: noParams,
   sessions: noParams,
-  start: (params) => (isRecord(params) && typeof params.job === "string" && params.job !== "" ? { job: params.job } : undefined),
+  services: noParams,
+  start: jobParams,
+  stop: jobParams,
+  restart: jobParams,
 };
 
 /** What each method's params look like, for the error that refuses others. */
 export const PARAMS_SHAPES: { [M in ControlMethod]: string } = {
   status: "none",
   sessions: "none",
-  start: "{ job: <a service job's id> }",
+  services: "none",
+  start: "{ job: <a service's id or name> }",
+  stop: "{ job: <a service's id or name> }",
+  restart: "{ job: <a service's id or name> }",
 };
 
 export function isControlMethod(method: string): method is ControlMethod {

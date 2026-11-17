@@ -5,10 +5,12 @@
 
 import { stayConnected } from "pomade-kit/node";
 import type { AttachedTabActionPayload, JsonValue } from "pomade-kit/protocol";
-import type { HostClient } from "pomade-kit/sdk";
+import { HostError, type HostClient } from "pomade-kit/sdk";
 
 import type { JobsSnapshot, ProjectRecord } from "../jobs/model";
-import { JOBS_CHANGED_EVENT, JOBS_LIST_METHOD } from "./runner-api";
+import { APP_ID } from "../app";
+import type { ServiceActionResult, ServicesReport } from "../keeper/model";
+import { JOBS_CHANGED_EVENT, JOBS_LIST_METHOD, SERVICE_METHODS, SERVICES_CHANGED_EVENT, SERVICES_LIST_METHOD, type ServiceVerb } from "./runner-api";
 
 export interface PomadeLinkHandlers {
   connected(host: HostClient): void;
@@ -31,8 +33,8 @@ export const linkPomade: LinkPomade = (handlers) =>
     },
   );
 
-function asJson(snapshot: JobsSnapshot): JsonValue {
-  return JSON.parse(JSON.stringify(snapshot)) as JsonValue;
+function asJson(value: JobsSnapshot | ServicesReport | ServiceActionResult): JsonValue {
+  return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
 
 /** Pomade's projects as the job checks need them. */
@@ -44,6 +46,10 @@ async function readProjects(host: HostClient): Promise<ProjectRecord[]> {
 export interface RunnerOffer {
   /** The checked jobs now. */
   jobs(): JobsSnapshot;
+  /** The services now. */
+  services(): ServicesReport;
+  /** Start, Stop or Restart a service (by its id or name). */
+  serviceAction(verb: ServiceVerb, job: string): Promise<ServiceActionResult>;
   /** Pomade's projects, read on connect and again when one is created or renamed. */
   projects(projects: ProjectRecord[]): void;
   /** A header action clicked on an attached tab of one of Runner's sessions (`attachedTab.action`,
@@ -52,27 +58,45 @@ export interface RunnerOffer {
   log(message: string): void;
 }
 
+/** A Start, Stop or Restart handler: for Runner's own frames, with `{ job }`. */
+function serviceHandler(offer: RunnerOffer, verb: ServiceVerb) {
+  return async (params: JsonValue, { from }: { from: string }): Promise<JsonValue> => {
+    if (from !== APP_ID) throw new HostError("capability-denied", `${SERVICE_METHODS[verb]} is Runner's own`);
+    const job = typeof params === "object" && params !== null && !Array.isArray(params) ? params.job : undefined;
+    if (typeof job !== "string" || job === "") throw new HostError("invalid-params", `${SERVICE_METHODS[verb]} takes { job: <a service's id or name> }`);
+    return asJson(await offer.serviceAction(verb, job));
+  };
+}
+
 /**
- * On a new connection: serve `jobs.list`, follow the projects, hear tab actions, and announce the
- * jobs — a frame that found no scheduler before asks again when it hears `jobs.changed`.
+ * On a new connection: serve `jobs.list`, `services.list` and the services' Start, Stop and
+ * Restart, follow the projects, hear tab actions, and announce the jobs and the services — a frame
+ * that found no scheduler before asks again when it hears `jobs.changed` or `services.changed`.
  */
 export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise<void> {
   const reloadProjects = (): void => {
     readProjects(host).then(offer.projects, (err: unknown) => offer.log(`cannot read Pomade's projects: ${String(err)}`));
   };
   try {
-    await host.api.serve({ [JOBS_LIST_METHOD]: () => asJson(offer.jobs()) });
+    await host.api.serve({
+      [JOBS_LIST_METHOD]: () => asJson(offer.jobs()),
+      [SERVICES_LIST_METHOD]: () => asJson(offer.services()),
+      [SERVICE_METHODS.start]: serviceHandler(offer, "start"),
+      [SERVICE_METHODS.stop]: serviceHandler(offer, "stop"),
+      [SERVICE_METHODS.restart]: serviceHandler(offer, "restart"),
+    });
     await host.events.subscribe("project.created", reloadProjects);
     await host.events.subscribe("project.renamed", reloadProjects);
     await host.events.subscribe("attachedTab.action", offer.tabAction);
     offer.projects(await readProjects(host));
     await host.events.publish(JOBS_CHANGED_EVENT);
+    await host.events.publish(SERVICES_CHANGED_EVENT);
   } catch (err) {
     offer.log(`cannot offer Runner's API to Pomade: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
-/** Tell Runner's frames the jobs changed. */
-export function announceJobs(host: HostClient, log: (message: string) => void): void {
-  host.events.publish(JOBS_CHANGED_EVENT).catch((err: unknown) => log(`cannot publish ${JOBS_CHANGED_EVENT}: ${String(err)}`));
+/** Tell Runner's frames the jobs (`jobs.changed`) or the services (`services.changed`) changed. */
+export function announce(host: HostClient, event: typeof JOBS_CHANGED_EVENT | typeof SERVICES_CHANGED_EVENT, log: (message: string) => void): void {
+  host.events.publish(event).catch((err: unknown) => log(`cannot publish ${event}: ${String(err)}`));
 }

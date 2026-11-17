@@ -1,18 +1,23 @@
 // The scheduler: Runner's always-on background part. It serves the control protocol to the
 // `pomade-runner` command, keeps a connection to Pomade while Pomade runs, ticks on its clock,
 // holds the checked job files of the current workspace — served to Runner's frames through
-// Pomade's broker — and owns the keeper's sessions, following them on every tick.
+// Pomade's broker — owns the keeper's sessions, following them on every tick, and supervises the
+// services after each.
 
 import type { AttachedTabActionPayload } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID, APP_VERSION } from "../app";
-import { announceJobs, offerRunner, type LinkPomade } from "../integrations/pomade";
+import { announce, offerRunner, type LinkPomade } from "../integrations/pomade";
+import { JOBS_CHANGED_EVENT, SERVICES_CHANGED_EVENT } from "../integrations/runner-api";
 import { createJobsLoader } from "../jobs/loader";
 import type { JobsSnapshot } from "../jobs/model";
-import { exitWords } from "../keeper/model";
-import { RESTART_ACTION, restartServiceSession, startService } from "../keeper/services";
+import { sessionOwner } from "../keeper/ids";
+import { exitWords, type ServiceActionResult, type ServiceStatus } from "../keeper/model";
+import type { NetworkReadiness } from "../keeper/readiness";
+import { RESTART_ACTION } from "../keeper/services";
 import type { Sessions } from "../keeper/sessions";
+import { createSupervisor, type SupervisionStore } from "../keeper/supervisor";
 import type { Clock } from "./clock";
 import type { PomadeLinkState, SchedulerStatus } from "./control/protocol";
 import { ControlRefused, serveControl } from "./control/server";
@@ -29,6 +34,10 @@ export interface SchedulerOptions {
   workspace(): string | null;
   /** The keeper's sessions; the scheduler refreshes them on every tick and closes them on stop. */
   sessions: Sessions;
+  /** Where service supervision keeps its records. */
+  supervision: SupervisionStore;
+  /** A service's port or URL readiness check. */
+  probe(ready: NetworkReadiness): Promise<boolean>;
 }
 
 export interface Scheduler {
@@ -59,18 +68,33 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     workspace: options.workspace,
     log,
     onChange: () => {
-      if (host !== null) announceJobs(host, log);
+      if (host !== null) announce(host, JOBS_CHANGED_EVENT, log);
     },
   });
+  const supervisor = createSupervisor({
+    sessions,
+    jobs: jobs.snapshot,
+    clock,
+    log,
+    store: options.supervision,
+    probe: options.probe,
+    onChange: () => {
+      if (host !== null) announce(host, SERVICES_CHANGED_EVENT, log);
+    },
+  });
+  await supervisor.load();
+  const answer = (verb: string, job: string, result: ServiceActionResult): ServiceStatus => {
+    if (!result.ok) throw new ControlRefused(`cannot ${verb} "${job}": ${result.reason}`);
+    return result.service;
+  };
 
   const control = await serveControl(options.socketPath, {
     status,
     sessions: () => sessions.report(),
-    async start({ job }) {
-      const started = await startService(sessions, jobs.snapshot(), job);
-      if (!started.ok) throw new ControlRefused(`cannot start "${job}": ${started.reason}`);
-      return started.session;
-    },
+    services: () => supervisor.report(),
+    start: async ({ job }) => answer("start", job, await supervisor.start(job)),
+    stop: async ({ job }) => answer("stop", job, await supervisor.stop(job)),
+    restart: async ({ job }) => answer("restart", job, await supervisor.restart(job)),
   });
   if (control.status !== "listening") return control;
   await jobs.refresh();
@@ -80,7 +104,12 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     const { session, action } = payload;
     if (session.app !== APP_ID || action !== RESTART_ACTION.id) return;
     log(`session ${session.session}: Restart from its tab`);
-    void restartServiceSession(sessions, jobs.snapshot(), session.session).then((restarted) => {
+    const owner = sessionOwner(session.session);
+    if (owner?.kind !== "service") {
+      log(`session ${session.session}: cannot restart — not a service's session`);
+      return;
+    }
+    void supervisor.restart(owner.job).then((restarted) => {
       if (!restarted.ok) log(`session ${session.session}: cannot restart — ${restarted.reason}`);
     });
   };
@@ -90,7 +119,14 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
       host = client;
       pomade = "connected";
       log("connected to Pomade");
-      void offerRunner(client, { jobs: jobs.snapshot, projects: jobs.setProjects, tabAction, log });
+      void offerRunner(client, {
+        jobs: jobs.snapshot,
+        services: supervisor.report,
+        serviceAction: (verb, job) => supervisor[verb](job),
+        projects: jobs.setProjects,
+        tabAction,
+        log,
+      });
     },
     disconnected() {
       host = null;
@@ -102,13 +138,18 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
       log(`Pomade refused the connection: ${reason}`);
     },
   });
+  /** Follow the keeper, then supervise on what it says. */
+  const follow = async (): Promise<void> => {
+    await sessions.refresh();
+    await supervisor.tick();
+  };
   const ticker = setInterval(() => {
     lastTickAt = clock.now().toISOString();
     void jobs.refresh();
-    void sessions.refresh();
+    void follow();
   }, options.tickMs);
   log(`scheduler ${APP_VERSION} started (pid ${process.pid}, tick ${options.tickMs} ms)`);
-  void sessions.refresh();
+  void follow();
 
   return {
     status: "started",
@@ -120,6 +161,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         jobs.stop();
         link.stop();
         unwatchExits();
+        await supervisor.close();
         await sessions.close();
         await control.close();
         log("scheduler stopped");

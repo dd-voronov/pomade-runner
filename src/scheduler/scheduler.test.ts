@@ -12,10 +12,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import manifest from "../../app/manifest.json" with { type: "json" };
 import { APP_VERSION } from "../app";
-import { isJobsSnapshot, JOBS_CHANGED_EVENT, JOBS_LIST_METHOD } from "../integrations/runner-api";
+import { isJobsSnapshot, JOBS_CHANGED_EVENT, JOBS_LIST_METHOD, SERVICE_METHODS, SERVICES_CHANGED_EVENT, SERVICES_LIST_METHOD } from "../integrations/runner-api";
 import type { PomadeLinkHandlers } from "../integrations/pomade";
-import type { RunnerSession } from "../keeper/model";
+import { isServiceActionResult, isServicesReport, type RunnerSession } from "../keeper/model";
 import type { SessionCommand, Sessions } from "../keeper/sessions";
+import type { SupervisionStore } from "../keeper/supervisor";
 import { callScheduler } from "./control/client";
 import { CONTROL_PROTOCOL } from "./control/protocol";
 import { startScheduler, type Scheduler } from "./scheduler";
@@ -38,46 +39,57 @@ function exchange(socketPath: string, line: string): Promise<unknown> {
   });
 }
 
-/** Sessions without a keeper: they record what the scheduler asks of them. */
+/** Sessions without a keeper: they hold what the scheduler starts and record what it asks of them. */
 interface StubSessions extends Sessions {
   refreshes: number;
   closed: boolean;
   spawned: { job: string; command: SessionCommand }[];
   restarted: { job: string; command: SessionCommand }[];
+  stopped: { id: string; reason: string }[];
   /** Report an exit, as a refresh that sees one does. */
   end(session: RunnerSession): void;
 }
 
 function stubSessions(): StubSessions {
   const listeners = new Set<(session: RunnerSession) => void>();
+  const held = new Map<string, RunnerSession>();
   const session = (job: string, command: SessionCommand): RunnerSession => ({
     id: `svc:${job}`,
     job,
     kind: "service",
     run: "20261117-080000-abcdef",
     log: `/state/output/${job}/20261117-080000-abcdef.log`,
-    info: { id: `svc:${job}`, title: command.title, command: command.command, cwd: command.cwd, pid: 7, startedAt: 1, cols: 80, rows: 24, state: "running", exit: null, clients: 0, actions: command.actions ?? [] },
+    info: { id: `svc:${job}`, title: command.title, command: command.command, cwd: command.cwd, pid: 7, startedAt: Date.now(), cols: 80, rows: 24, state: "running", exit: null, clients: 0, actions: command.actions ?? [] },
   });
   const stub: StubSessions = {
     refreshes: 0,
     closed: false,
     spawned: [],
     restarted: [],
+    stopped: [],
     keeper: () => ({ state: "connected", version: "v1", pid: 9 }),
-    list: () => [],
-    report: () => ({ keeper: stub.keeper(), sessions: [] }),
+    list: () => [...held.values()],
+    followed: () => true,
+    report: () => ({ keeper: stub.keeper(), sessions: [...held.values()] }),
     refresh() {
       stub.refreshes++;
       return Promise.resolve();
     },
     spawn(owner, command) {
       stub.spawned.push({ job: owner.job, command });
-      return Promise.resolve(session(owner.job, command));
+      const started = session(owner.job, command);
+      held.set(started.id, started);
+      return Promise.resolve(started);
     },
-    stop: () => Promise.resolve(),
+    stop(id, reason) {
+      stub.stopped.push({ id, reason });
+      return Promise.resolve();
+    },
     restartService(job, command) {
       stub.restarted.push({ job, command });
-      return Promise.resolve(session(job, command));
+      const started = session(job, command);
+      held.set(started.id, started);
+      return Promise.resolve(started);
     },
     forget: () => Promise.resolve(),
     onExit(listener) {
@@ -94,6 +106,10 @@ function stubSessions(): StubSessions {
   };
   return stub;
 }
+
+/** Supervision records kept nowhere. */
+const noStore: SupervisionStore = { load: () => Promise.resolve(new Map()), save: () => undefined, flush: () => Promise.resolve() };
+const supervision = { supervision: noStore, probe: () => Promise.resolve(false) };
 
 /** A client of the fake host: a frame of Runner, or its backend. */
 async function frame(fake: FakeHost, surface: Surface = "tab"): Promise<HostClient> {
@@ -124,6 +140,7 @@ describe("scheduler", () => {
       },
       workspace: () => null,
       sessions,
+      ...supervision,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -194,6 +211,7 @@ describe("scheduler", () => {
       },
       workspace: () => null,
       sessions: second,
+      ...supervision,
     });
     expect(result).toEqual({ status: "already-running" });
     expect(second.refreshes).toBe(0);
@@ -248,7 +266,7 @@ describe("scheduler", () => {
 
   it("refuses a socket path macOS cannot bind", async () => {
     socketPath = join(dir, "x".repeat(120), "scheduler.sock");
-    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: () => null, sessions });
+    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: () => null, sessions, ...supervision });
     expect(result.status).toBe("failed");
   });
 
@@ -289,6 +307,7 @@ describe("scheduler and the job files", () => {
       },
       workspace: () => workspace,
       sessions,
+      ...supervision,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -348,30 +367,77 @@ describe("scheduler and the job files", () => {
     });
   });
 
-  it("answers sessions, and starts a service on start — refusing a job that is not a valid service", async () => {
+  it("supervises the services: starts the ones due at its start, answers services, and starts, stops and restarts one on request", async () => {
     const jobs = join(dir, "ws/Apps/pomade-runner/jobs");
     await mkdir(join(jobs, "coda"));
-    await writeFile(join(jobs, "coda/web.md"), "---\nkind: service\nname: Coda web\nproject: p1\nfolder: Projects/coda\ncommand: ./start.sh\nlow-priority: true\n---\n");
+    await writeFile(join(jobs, "coda/web.md"), "---\nkind: service\nname: Coda web\nproject: p1\nfolder: Projects/coda\ncommand: ./start.sh\nstart: project-first-open\nlow-priority: true\n---\n");
+    await writeFile(join(jobs, "api.md"), "---\nkind: service\nname: Api\nfolder: .\ncommand: ./api.sh\n---\n");
     await writeFile(join(jobs, "a.md"), job("A"));
     await writeFile(join(jobs, "broken.md"), "---\nkind: service\n---\n");
     await start();
     const socketPath = join(dir, "state", "scheduler.sock");
 
-    expect(await callScheduler(socketPath, "sessions", null)).toEqual({ status: "ok", value: { keeper: { state: "connected", version: "v1", pid: 9 }, sessions: [] } });
-    const started = await callScheduler(socketPath, "start", { job: "coda/web" });
-    expect(started).toMatchObject({ status: "ok", value: { id: "svc:coda/web", job: "coda/web" } });
-    expect(sessions.spawned).toEqual([
-      {
-        job: "coda/web",
-        command: { title: "Coda web", command: "./start.sh", cwd: join(dir, "ws/Projects/coda"), background: true, actions: [{ id: "restart", title: "Restart" }] },
+    await vi.waitFor(() => expect(sessions.spawned.map((spawned) => spawned.job)).toEqual(["api"]));
+    expect(await callScheduler(socketPath, "sessions", null)).toMatchObject({ status: "ok", value: { keeper: { state: "connected", version: "v1", pid: 9 }, sessions: [{ id: "svc:api" }] } });
+    const services = await callScheduler(socketPath, "services", null);
+    expect(services).toMatchObject({
+      status: "ok",
+      value: {
+        keeper: { state: "connected" },
+        services: [
+          { job: "api", state: "starting" },
+          { job: "broken", state: "invalid" },
+          { job: "coda/web", name: "Coda web", project: "p1", state: "waiting", session: null },
+        ],
       },
-    ]);
-    expect(await callScheduler(socketPath, "start", { job: "a" })).toEqual({ status: "failed", code: "refused", message: 'cannot start "a": "a" is a script job, not a service' });
-    expect(await callScheduler(socketPath, "start", { job: "nope" })).toEqual({ status: "failed", code: "refused", message: 'cannot start "nope": no job "nope"' });
-    expect(await callScheduler(socketPath, "start", { job: "broken" })).toMatchObject({ status: "failed", code: "refused", message: expect.stringContaining('the job "broken" is invalid') as string });
-    expect(await exchange(socketPath, `${JSON.stringify({ protocol: CONTROL_PROTOCOL, id: "p", method: "start" })}\n`)).toMatchObject({
-      error: { code: "invalid-params", message: '"start" takes params: { job: <a service job\'s id> }' },
     });
+
+    expect(await callScheduler(socketPath, "start", { job: "Coda web" })).toMatchObject({ status: "ok", value: { job: "coda/web", state: "starting", session: { id: "svc:coda/web" } } });
+    expect(sessions.spawned[1]).toEqual({
+      job: "coda/web",
+      command: { title: "Coda web", command: "./start.sh", cwd: join(dir, "ws/Projects/coda"), background: true, actions: [{ id: "restart", title: "Restart" }] },
+    });
+    expect(await callScheduler(socketPath, "stop", { job: "coda/web" })).toMatchObject({ status: "ok", value: { job: "coda/web", state: "stopped-by-you" } });
+    expect(sessions.stopped).toEqual([{ id: "svc:coda/web", reason: "stopped-by-you" }]);
+    expect(await callScheduler(socketPath, "restart", { job: "api" })).toMatchObject({ status: "ok", value: { job: "api" } });
+    expect(sessions.restarted.map((restarted) => restarted.job)).toEqual(["api"]);
+
+    expect(await callScheduler(socketPath, "start", { job: "a" })).toEqual({ status: "failed", code: "refused", message: 'cannot start "a": "a" is a script job, not a service' });
+    expect(await callScheduler(socketPath, "restart", { job: "nope" })).toEqual({ status: "failed", code: "refused", message: 'cannot restart "nope": no job "nope"' });
+    expect(await callScheduler(socketPath, "stop", { job: "nope" })).toEqual({ status: "failed", code: "refused", message: 'cannot stop "nope": no service "nope"' });
+    expect(await callScheduler(socketPath, "start", { job: "broken" })).toMatchObject({ status: "failed", code: "refused", message: expect.stringContaining('the job "broken" is invalid') as string });
+    expect(await exchange(socketPath, `${JSON.stringify({ protocol: CONTROL_PROTOCOL, id: "p", method: "stop" })}\n`)).toMatchObject({
+      error: { code: "invalid-params", message: '"stop" takes params: { job: <a service\'s id or name> }' },
+    });
+  });
+
+  it("serves services.list, Start, Stop and Restart through Pomade, and tells Runner's frames when a service changes", async () => {
+    const jobs = join(dir, "ws/Apps/pomade-runner/jobs");
+    const fake = createFakeHost({ manifest });
+    const ui = await frame(fake);
+    const heard: unknown[] = [];
+    await ui.events.subscribe(`pomade-runner:${SERVICES_CHANGED_EVENT}`, (payload) => heard.push(payload));
+    await start();
+    link?.connected(await frame(fake, "backend"));
+    await vi.waitFor(() => expect(heard.length).toBeGreaterThan(0));
+    expect(await ui.apps.call("pomade-runner", SERVICES_LIST_METHOD)).toMatchObject({ services: [] });
+
+    const before = heard.length;
+    await writeFile(join(jobs, "web.md"), "---\nkind: service\nname: Web\nfolder: .\ncommand: ./web.sh\n---\n");
+    await vi.waitFor(() => expect(heard.length).toBeGreaterThan(before));
+    const listed = await ui.apps.call("pomade-runner", SERVICES_LIST_METHOD);
+    expect(isServicesReport(listed)).toBe(true);
+    await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", SERVICES_LIST_METHOD)).toMatchObject({ services: [{ job: "web", session: { id: "svc:web" } }] }));
+
+    // Start, Stop and Restart for Runner's frames.
+    const stopped = await ui.apps.call("pomade-runner", SERVICE_METHODS.stop, { job: "Web" });
+    expect(isServiceActionResult(stopped)).toBe(true);
+    expect(stopped).toMatchObject({ ok: true, service: { job: "web", state: "stopped-by-you" } });
+    expect(sessions.stopped).toEqual([{ id: "svc:web", reason: "stopped-by-you" }]);
+    expect(await ui.apps.call("pomade-runner", SERVICE_METHODS.restart, { job: "web" })).toMatchObject({ ok: true, service: { job: "web" } });
+    expect(sessions.restarted.map((restarted) => restarted.job)).toEqual(["web"]);
+    expect(await ui.apps.call("pomade-runner", SERVICE_METHODS.start, { job: "web" })).toEqual({ ok: false, reason: '"Web" is running' });
+    await expect(ui.apps.call("pomade-runner", SERVICE_METHODS.start, { name: "web" })).rejects.toMatchObject({ code: "invalid-params" });
   });
 
   it("restarts a service when Restart is clicked on its attached tab, and ignores other actions", async () => {
@@ -384,6 +450,7 @@ describe("scheduler and the job files", () => {
     link?.connected(await frame(fake, "backend"));
     // Runner's offer subscribes to the tab actions before it announces the jobs.
     await vi.waitFor(() => expect(heard.length).toBeGreaterThan(0));
+    await vi.waitFor(() => expect(sessions.spawned).toHaveLength(1));
 
     fake.emitEvent("attachedTab.action", { session: { app: "pomade-runner", session: "svc:web" }, action: "stop-all", projectId: "__workspace__" });
     fake.emitEvent("attachedTab.action", { session: { app: "pomade-runner", session: "svc:web" }, action: "restart", projectId: "__workspace__" });

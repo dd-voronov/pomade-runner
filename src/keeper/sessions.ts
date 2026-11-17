@@ -61,6 +61,8 @@ export interface Sessions {
   keeper(): KeeperLink;
   /** Every session the keeper holds, as of the latest refresh. */
   list(): RunnerSession[];
+  /** Whether `list()` is the keeper's: the latest refresh read the keeper's list. */
+  followed(): boolean;
   report(): SessionsReport;
   /** Make sure the keeper runs and the connection to it is up, and follow its sessions; reports
    *  exits. Refreshes never overlap. */
@@ -144,6 +146,7 @@ export function createSessions(options: SessionsOptions): Sessions {
   const updatesTried = new Set<string>();
   const exitListeners = new Set<(session: RunnerSession) => void>();
   let refreshing: Promise<void> | null = null;
+  let following = false;
   let writing: Promise<void> = Promise.resolve();
   let closed = false;
 
@@ -310,9 +313,11 @@ export function createSessions(options: SessionsOptions): Sessions {
     try {
       infos = await keeper.list();
     } catch {
+      following = false;
       return;
     }
     observe(known, infos);
+    following = true;
   }
 
   function connected(): KeeperClient {
@@ -324,6 +329,7 @@ export function createSessions(options: SessionsOptions): Sessions {
   const sessions: Sessions = {
     keeper: () => link,
     list: () => [...view.values()],
+    followed: () => following && client !== null,
     report: () => ({ keeper: link, sessions: [...view.values()] }),
 
     refresh() {
@@ -331,8 +337,10 @@ export function createSessions(options: SessionsOptions): Sessions {
       refreshing ??= (async () => {
         try {
           const keeper = await connect();
-          if (keeper !== null) await follow(keeper);
+          if (keeper === null) following = false;
+          else await follow(keeper);
         } catch (err) {
+          following = false;
           log(`keeper: ${errorText(err)}`);
         } finally {
           refreshing = null;

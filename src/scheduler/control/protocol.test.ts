@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { isServiceActionResult } from "../../keeper/model";
 import { isControlMethod, isSchedulerStatus, PARAMS_PARSERS, parseControlRequest, parseControlResponse, RESULT_GUARDS } from "./protocol";
 
 const status = { version: "0.1.0", pid: 7, startedAt: "2026-11-17T08:00:00.000Z", lastTickAt: null, pomade: "disconnected" };
@@ -39,8 +40,11 @@ describe("control protocol", () => {
   it("checks each method's params", () => {
     expect(PARAMS_PARSERS.status(null)).toBeNull();
     expect(PARAMS_PARSERS.sessions({})).toBeUndefined();
-    expect(PARAMS_PARSERS.start({ job: "coda/web", extra: 1 })).toEqual({ job: "coda/web" });
-    for (const bad of [null, {}, { job: "" }, { job: 3 }, "web"]) expect(PARAMS_PARSERS.start(bad)).toBeUndefined();
+    expect(PARAMS_PARSERS.services(null)).toBeNull();
+    for (const method of ["start", "stop", "restart"] as const) {
+      expect(PARAMS_PARSERS[method]({ job: "coda/web", extra: 1 })).toEqual({ job: "coda/web" });
+      for (const bad of [null, {}, { job: "" }, { job: 3 }, "web"]) expect(PARAMS_PARSERS[method](bad)).toBeUndefined();
+    }
   });
 
   it("checks a sessions answer's shape", () => {
@@ -50,7 +54,6 @@ describe("control protocol", () => {
     for (const keeper of [{ state: "connecting" }, { state: "connected", version: "v", pid: 1 }, { state: "unreachable", reason: "r" }, { state: "rejected", reason: "r" }]) {
       expect(RESULT_GUARDS.sessions({ keeper, sessions: [session, ended] })).toBe(true);
     }
-    expect(RESULT_GUARDS.start(session)).toBe(true);
     for (const bad of [
       { keeper: { state: "up" }, sessions: [] },
       { keeper: { state: "connected", version: "v" }, sessions: [] },
@@ -63,10 +66,35 @@ describe("control protocol", () => {
     }
   });
 
+  it("checks a services answer's shape", () => {
+    const info = { id: "svc:web", title: "Web", command: "./w", cwd: "/ws", pid: 3, startedAt: 1, cols: 80, rows: 24, state: "running", exit: null, clients: 0, actions: [] };
+    const session = { id: "svc:web", job: "web", kind: "service", run: null, log: null, info };
+    const service = { job: "web", name: "Web", project: null, state: "running", session, restarts: 2, lastCrashAt: 5, retryAt: null, needsRestart: false, problem: null };
+    const report = { keeper: { state: "connected", version: "v", pid: 1 }, services: [service, { ...service, job: "b", state: "waiting", session: null, project: "p", lastCrashAt: null }] };
+    expect(RESULT_GUARDS.services(report)).toBe(true);
+    for (const method of ["start", "stop", "restart"] as const) expect(RESULT_GUARDS[method](service)).toBe(true);
+    for (const bad of [
+      { ...service, state: "sleeping" },
+      { ...service, session: { ...session, kind: "job" } },
+      { ...service, restarts: "2" },
+      { ...service, lastCrashAt: "14:02" },
+      { ...service, needsRestart: null },
+      { ...service, problem: 1 },
+      { ...service, project: undefined },
+    ]) {
+      expect(RESULT_GUARDS.start(bad)).toBe(false);
+      expect(RESULT_GUARDS.services({ ...report, services: [bad] })).toBe(false);
+    }
+    expect(RESULT_GUARDS.services({ keeper: { state: "connecting" } })).toBe(false);
+    expect(isServiceActionResult({ ok: true, service })).toBe(true);
+    expect(isServiceActionResult({ ok: false, reason: "r" })).toBe(true);
+    for (const bad of [null, { ok: true, service: {} }, { ok: false }, { ok: "yes", reason: "r" }]) expect(isServiceActionResult(bad)).toBe(false);
+  });
+
   it("knows its methods", () => {
     expect(isControlMethod("status")).toBe(true);
     expect(isControlMethod("sessions")).toBe(true);
-    expect(isControlMethod("start")).toBe(true);
+    for (const method of ["services", "start", "stop", "restart"]) expect(isControlMethod(method)).toBe(true);
     expect(isControlMethod("toString")).toBe(false);
   });
 });
