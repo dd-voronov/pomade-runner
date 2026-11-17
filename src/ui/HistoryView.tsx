@@ -33,7 +33,7 @@ export function HistoryView({ host, open }: { host: HostClient; open: (route: st
                 <span className={styles.when}>{dayTime(record.endedAt)}</span>
                 <span className={styles.name}>{record.name}</span>
                 <span className={`${styles.meta} ${record.state === "failed" ? styles.failed : ""}`}>{runWords(record)}</span>
-                <span className={styles.meta}>{record.durationMs === null ? "" : durationWords(record.durationMs)}</span>
+                {record.durationMs !== null && <span className={styles.meta}>{durationWords(record.durationMs)}</span>}
                 <span className={styles.meta} data-testid="history-trigger">
                   {runTriggerWords(record)}
                 </span>
