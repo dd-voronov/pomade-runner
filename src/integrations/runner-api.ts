@@ -1,9 +1,11 @@
-// Runner's own API through Pomade's broker, and its events: what the scheduler serves and the UI
-// calls. The scheduler holds the checked jobs and supervises the services; a frame asks for either
-// with `apps.call` to Runner itself and hears `jobs.changed` or `services.changed` when they change.
+// Runner's own API through Pomade's broker, its events, and the routes of its tab: what the
+// scheduler serves and publishes and the UI calls and renders. The scheduler holds the checked
+// jobs, supervises the services and runs the rest; a frame asks with `apps.call` to Runner itself
+// and hears `jobs.changed`, `services.changed` or `runs.changed` when the answer would change.
 // Pure: shared by the scheduler and the UI.
 
 import type { JobsSnapshot } from "../jobs/model";
+import { decodeJobId, encodeJobId } from "../keeper/ids";
 
 /** `apps.call("pomade-runner", JOBS_LIST_METHOD)` → `JobsSnapshot`. */
 export const JOBS_LIST_METHOD = "jobs.list";
@@ -24,6 +26,90 @@ export const SERVICES_CHANGED_EVENT = "services.changed";
 export const SERVICE_METHODS = { start: "services.start", stop: "services.stop", restart: "services.restart" } as const;
 export type ServiceVerb = keyof typeof SERVICE_METHODS;
 export const SERVICE_ACTION_TIMEOUT_MS = 15_000;
+
+/** `apps.call("pomade-runner", RUNS_LIST_METHOD)` → `RunsReport` (`isRunsReport`): the runs going,
+ *  what runs next, each job's latest run, and Needs you. */
+export const RUNS_LIST_METHOD = "runs.list";
+
+/** Published by the scheduler when the runs report changes, and when it (re)connects to Pomade. */
+export const RUNS_CHANGED_EVENT = "runs.changed";
+
+/** `{ job?, before?, limit? }` → `HistoryPage` (`isHistoryPage`): finished runs, newest first. */
+export const HISTORY_LIST_METHOD = "history.list";
+
+/** `{ job, run }` → `RunView | null` (`isRunView`): one run, going or finished. */
+export const RUN_GET_METHOD = "runs.get";
+
+/** `{ job, run }` → `RunOutput` (`isRunOutput`): the end of a run's output log. */
+export const RUN_OUTPUT_METHOD = "runs.output";
+
+/** `{ job }` → `RunActionResult` (`isRunActionResult`): Run now — a script runs (or is queued), a
+ *  service starts. Runner's own frames only. */
+export const RUN_NOW_METHOD = "jobs.run";
+
+/** `{ job, enabled }` → `EnableResult` (`isEnableResult`): writes `enabled:` into the job's file.
+ *  Runner's own frames only. */
+export const SET_ENABLED_METHOD = "jobs.setEnabled";
+
+/** `{ id }` → `{ resolved: boolean }`: resolve a Needs-you item — a failed run's, once its result
+ *  is opened or it is dismissed. Runner's own frames only. */
+export const DISMISS_METHOD = "needsYou.dismiss";
+
+/** Published on the bus when a run's session starts: `RunStartedPayload`. */
+export const RUN_STARTED_EVENT = "run.started";
+
+/** Published on the bus when a run that started ends: `RunFinishedPayload`. */
+export const RUN_FINISHED_EVENT = "run.finished";
+
+/** `run.started`'s payload (docs/DESIGN.md "Interfaces"). */
+export interface RunStartedPayload {
+  /** The job's id. */
+  job: string;
+  /** The job's name. */
+  name: string;
+  run: string;
+  kind: string;
+  /** Workspace-relative. */
+  folder: string;
+  /** The stable project id; `null` for a workspace job. */
+  project: string | null;
+  trigger: string;
+}
+
+/** `run.finished`'s payload: `run.started`'s and how it ended. */
+export interface RunFinishedPayload extends RunStartedPayload {
+  /** `done` · `failed` · `stopped-by-you`. */
+  result: string;
+  exitCode: number | null;
+}
+
+/** Where the Runner tab is: its route (`host.welcome.route`, `onRouteChange`, `tabs.openApp`). */
+export type RunnerRoute =
+  | { view: "jobs" }
+  | { view: "history" }
+  /** A run's result card. */
+  | { view: "run"; job: string; run: string }
+  /** A run's full output. */
+  | { view: "output"; job: string; run: string };
+
+/** A run's result card: `run/<encoded job id>/<run id>` — what a run's notice opens. */
+export function runRoute(job: string, run: string): string {
+  return `run/${encodeJobId(job)}/${run}`;
+}
+
+/** A run's full output: `output/<encoded job id>/<run id>`. */
+export function outputRoute(job: string, run: string): string {
+  return `output/${encodeJobId(job)}/${run}`;
+}
+
+/** The view a route names; an unknown route is the Jobs view. */
+export function parseRoute(route: string): RunnerRoute {
+  if (route === "history") return { view: "history" };
+  const match = /^(run|output)\/([^/]+)\/([^/]+)$/.exec(route);
+  const job = match === null ? null : decodeJobId(match[2] ?? "");
+  if (match === null || job === null) return { view: "jobs" };
+  return { view: match[1] === "run" ? "run" : "output", job, run: match[3] ?? "" };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

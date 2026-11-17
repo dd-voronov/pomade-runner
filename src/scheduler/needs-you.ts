@@ -1,0 +1,256 @@
+// "Needs you" and notices (docs/DESIGN.md "Notifications"): what Runner tells the person, and what
+// stays in front of them until they deal with it.
+//
+// - **A run that ends** is noticed as its job's `notify` says: `always` every run that started,
+//   `on-failure` a failed one, `never` none. A skipped run is never noticed.
+// - **A failed run** makes its job's Needs-you item (one per job: the latest failure and how many
+//   since the item came) unless the job says `notify: never`. The item goes when the person opens
+//   the run's result or dismisses it, when a run of the job is done, or when the job's file is gone.
+// - **A service that gave up** after a crash loop is an item while it stays `failed` (Start, a fixed
+//   or disabled file, or its removal end it), and is noticed once — Needs-you items always notify.
+//
+// The items live in `needs-you.json` in Runner's state folder, with the giving-ups already noticed,
+// so a restarted scheduler neither forgets an item nor notices one twice.
+
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+
+import type { NoticeParams } from "pomade-kit/protocol";
+
+import { runRoute } from "../integrations/runner-api";
+import { entryId, type JobsSnapshot, type Notify } from "../jobs/model";
+import type { ServicesReport, ServiceStatus } from "../keeper/model";
+import type { Log } from "./log";
+import { durationWords, failureWords, type NeedsYouItem, type RunRecord } from "./model";
+
+/** A failed-run item as it is kept. */
+interface Failure {
+  name: string;
+  project: string | null;
+  run: string;
+  at: number;
+  count: number;
+  detail: string;
+}
+
+/** What `needs-you.json` keeps. Plain JSON. */
+export interface NeedsYouRecords {
+  /** Each job's failed-run item, by job id. */
+  failures: Record<string, Failure>;
+  /** Services whose giving-up was noticed: job id → the last crash it gave up on (epoch ms). */
+  gaveUp: Record<string, number>;
+}
+
+export interface NeedsYouStore {
+  load(): Promise<NeedsYouRecords>;
+  save(records: NeedsYouRecords): void;
+  flush(): Promise<void>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseFailure(value: unknown): Failure | null {
+  if (!isRecord(value)) return null;
+  const { name, project, run, at, count, detail } = value;
+  if (typeof name !== "string" || (project !== null && typeof project !== "string") || typeof run !== "string" || typeof detail !== "string") return null;
+  if (typeof at !== "number" || !Number.isFinite(at) || typeof count !== "number" || !Number.isSafeInteger(count) || count < 1) return null;
+  return { name, project, run, at, count, detail };
+}
+
+/** The records in `<state>/needs-you.json`, replaced whole on every save. */
+export function fileNeedsYouStore(state: string, log: Log): NeedsYouStore {
+  const file = join(state, "needs-you.json");
+  let writing: Promise<void> = Promise.resolve();
+  return {
+    async load() {
+      const records: NeedsYouRecords = { failures: {}, gaveUp: {} };
+      let text: string;
+      try {
+        text = await readFile(file, "utf8");
+      } catch {
+        return records;
+      }
+      let data: unknown;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        log(`needs you: ${file} is not readable JSON; starting with no items`);
+        return records;
+      }
+      if (!isRecord(data)) return records;
+      if (isRecord(data.failures)) {
+        for (const [job, value] of Object.entries(data.failures)) {
+          const failure = parseFailure(value);
+          if (failure !== null) records.failures[job] = failure;
+        }
+      }
+      if (isRecord(data.gaveUp)) {
+        for (const [job, at] of Object.entries(data.gaveUp)) if (typeof at === "number" && Number.isFinite(at)) records.gaveUp[job] = at;
+      }
+      return records;
+    },
+    save(records) {
+      const data = `${JSON.stringify(records, null, 2)}\n`;
+      writing = writing
+        .then(async () => {
+          await mkdir(dirname(file), { recursive: true });
+          await writeFile(`${file}.tmp`, data);
+          await rename(`${file}.tmp`, file);
+        })
+        .catch((err: unknown) => log(`needs you: cannot write ${file}: ${err instanceof Error ? err.message : String(err)}`));
+    },
+    flush: () => writing,
+  };
+}
+
+/** The notice for a run that ended, as its job's `notify` asks; `null` for none. */
+export function runNotice(record: RunRecord, notify: Notify): NoticeParams | null {
+  if (record.state === "skipped" || notify === "never") return null;
+  if (record.state !== "failed" && notify !== "always") return null;
+  const action = { kind: "openApp" as const, route: runRoute(record.job, record.run) };
+  const took = record.durationMs === null ? null : `took ${durationWords(record.durationMs)}`;
+  switch (record.state) {
+    case "failed": {
+      const line = [...record.lastLines].reverse().find((text) => text.trim() !== "")?.trim();
+      return { title: `${record.name} failed`, body: [failureWords(record), line].filter((part) => part !== undefined).join(" · ").slice(0, 2000), action };
+    }
+    case "done":
+      return { title: `${record.name} done`, ...(took === null ? {} : { body: took }), action };
+    case "stopped-by-you":
+      return { title: `${record.name} stopped by you`, ...(took === null ? {} : { body: took }), action };
+  }
+}
+
+/** The notice for a service that gave up after a crash loop. */
+export function gaveUpNotice(service: ServiceStatus): NoticeParams {
+  return {
+    title: `${service.name} gave up`,
+    body: "It crashed 5 times within a minute, so Runner stopped restarting it. Start runs it again.",
+    action: { kind: "openApp", route: "" },
+  };
+}
+
+export interface NeedsYouOptions {
+  store: NeedsYouStore;
+  log: Log;
+  /** Post a notice. */
+  post(notice: NoticeParams): void;
+  /** The items changed. */
+  onChange(): void;
+}
+
+export interface NeedsYou {
+  load(): Promise<void>;
+  /** A run's record landed: notice it, and add or resolve its job's item. */
+  runFinished(record: RunRecord, notify: Notify): void;
+  /** Follow the services: a crash loop that gave up is an item, noticed once. */
+  services(report: ServicesReport): void;
+  /** Follow the job files: a gone job's item goes. */
+  jobs(snapshot: JobsSnapshot): void;
+  /** Resolve an item by its id (opened or dismissed); whether there was one. A service's item
+   *  stays until the service leaves `failed`. */
+  dismiss(id: string): boolean;
+  /** Newest first. */
+  items(): NeedsYouItem[];
+  close(): Promise<void>;
+}
+
+const failedId = (job: string): string => `run-failed:${job}`;
+const serviceId = (job: string): string => `service-failed:${job}`;
+
+export function createNeedsYou(options: NeedsYouOptions): NeedsYou {
+  const { store, log } = options;
+  let failures = new Map<string, Failure>();
+  let gaveUp = new Map<string, number>();
+  let failed: ServiceStatus[] = [];
+
+  const save = (): void => store.save({ failures: Object.fromEntries(failures), gaveUp: Object.fromEntries(gaveUp) });
+  const changed = (): void => {
+    save();
+    options.onChange();
+  };
+
+  return {
+    async load() {
+      const records = await store.load();
+      failures = new Map(Object.entries(records.failures));
+      gaveUp = new Map(Object.entries(records.gaveUp));
+    },
+
+    runFinished(record, notify) {
+      const notice = runNotice(record, notify);
+      if (notice !== null) options.post(notice);
+      if (record.state === "failed" && notify !== "never") {
+        const count = (failures.get(record.job)?.count ?? 0) + 1;
+        failures.set(record.job, { name: record.name, project: record.project, run: record.run, at: record.endedAt, count, detail: failureWords(record) });
+        log(`needs you: ${record.job} failed (${count}×)`);
+        changed();
+      } else if (record.state === "done" && failures.delete(record.job)) {
+        log(`needs you: ${record.job} done; its failure is resolved`);
+        changed();
+      }
+    },
+
+    services(report) {
+      const now = report.services.filter((service) => service.state === "failed");
+      let dirty = JSON.stringify(now.map((s) => [s.job, s.name, s.project, s.lastCrashAt])) !== JSON.stringify(failed.map((s) => [s.job, s.name, s.project, s.lastCrashAt]));
+      failed = now;
+      for (const service of now) {
+        const at = service.lastCrashAt ?? 0;
+        if (gaveUp.get(service.job) === at) continue;
+        gaveUp.set(service.job, at);
+        log(`needs you: service ${service.job} gave up`);
+        options.post(gaveUpNotice(service));
+        dirty = true;
+      }
+      for (const job of [...gaveUp.keys()]) {
+        if (now.some((service) => service.job === job)) continue;
+        gaveUp.delete(job);
+        dirty = true;
+      }
+      if (dirty) changed();
+    },
+
+    jobs(snapshot) {
+      if (snapshot.workspace === null) return;
+      const present = new Set(snapshot.jobs.map(entryId));
+      let dirty = false;
+      for (const job of [...failures.keys()]) {
+        if (present.has(job)) continue;
+        failures.delete(job);
+        dirty = true;
+      }
+      if (dirty) changed();
+    },
+
+    dismiss(id) {
+      const job = id.startsWith("run-failed:") ? id.slice("run-failed:".length) : null;
+      if (job === null || !failures.delete(job)) return false;
+      log(`needs you: ${job} resolved`);
+      changed();
+      return true;
+    },
+
+    items() {
+      const items: NeedsYouItem[] = [
+        ...[...failures].map(([job, failure]): NeedsYouItem => ({ id: failedId(job), kind: "run-failed", job, ...failure })),
+        ...failed.map(
+          (service): NeedsYouItem => ({
+            id: serviceId(service.job),
+            kind: "service-failed",
+            job: service.job,
+            name: service.name,
+            project: service.project,
+            at: service.lastCrashAt ?? 0,
+            detail: "crashed 5 times within a minute",
+          }),
+        ),
+      ];
+      return items.sort((a, b) => b.at - a.at || a.id.localeCompare(b.id));
+    },
+
+    close: () => store.flush(),
+  };
+}
