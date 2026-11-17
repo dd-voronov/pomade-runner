@@ -53,6 +53,9 @@ describe("sessions", () => {
   }
 
   const command = (line: string, extra: Partial<SessionCommand> = {}): SessionCommand => ({ title: "Web", command: line, cwd: dir, background: false, ...extra });
+  let runs = 0;
+  /** One run of `job`, under a run id of its own. */
+  const runOf = (job: string): { kind: "run"; job: string; run: string } => ({ kind: "run", job, run: `20261117-080000-${String(++runs).padStart(6, "0")}` });
 
   /** Refresh until `probe` holds. */
   async function until(sessions: Sessions, probe: () => boolean): Promise<void> {
@@ -106,8 +109,9 @@ describe("sessions", () => {
       }),
     );
     await expect(sessions.spawn({ kind: "service", job: "coda/web" }, command("true"))).rejects.toThrow("session svc:coda.web is running");
-    const run = await sessions.spawn({ kind: "run", job: "coda/web" }, command("exit 0"));
-    expect(run.id).toBe(`run:coda.web:${run.run ?? ""}`);
+    const owner = runOf("coda/web");
+    const run = await sessions.spawn(owner, command("exit 0"));
+    expect(run).toMatchObject({ id: `run:coda.web:${owner.run}`, run: owner.run, log: join(state, "output", "coda.web", `${owner.run}.log`) });
     expect(lines).toContain(`session svc:coda.web: started — pid ${web.info.pid ?? ""}, in ${dir}`);
   });
 
@@ -119,7 +123,7 @@ describe("sessions", () => {
 
   it("reports each end once, with the keeper's reason: exited, crashed (kill -9), stopped, time-limit, stopped-by-you", async () => {
     const { sessions, ended } = await connected();
-    await sessions.spawn({ kind: "run", job: "done" }, command("exit 0"));
+    await sessions.spawn(runOf("done"), command("exit 0"));
     const crash = await sessions.spawn({ kind: "service", job: "crash" }, command("exec sleep 30"));
     const stop = await sessions.spawn({ kind: "service", job: "stop" }, command("exec sleep 30"));
     const limit = await sessions.spawn({ kind: "service", job: "limit" }, command("trap '' TERM; while :; do sleep 0.05; done"));
@@ -197,7 +201,7 @@ describe("sessions", () => {
 
   it("forgets an ended session in the keeper and in its records; refuses to forget a running one", async () => {
     const { sessions, ended } = await connected();
-    const done = await sessions.spawn({ kind: "run", job: "once" }, command("exit 0"));
+    const done = await sessions.spawn(runOf("once"), command("exit 0"));
     const running = await sessions.spawn({ kind: "service", job: "web" }, command("exec sleep 30"));
     await until(sessions, () => ended.length === 1);
     await sessions.forget(done.id);
@@ -209,7 +213,7 @@ describe("sessions", () => {
 
   it("keeps a run's whole output in its log, past the keeper's scrollback", async () => {
     const { sessions, ended } = await connected();
-    const loud = await sessions.spawn({ kind: "run", job: "loud" }, command("i=1; while [ $i -le 3000 ]; do echo line $i; i=$((i+1)); done"));
+    const loud = await sessions.spawn(runOf("loud"), command("i=1; while [ $i -le 3000 ]; do echo line $i; i=$((i+1)); done"));
     await until(sessions, () => ended.length === 1);
     const lines = (await readFile(loud.log ?? "", "utf8")).split(/\r?\n/).filter((line) => line.startsWith("line "));
     expect(lines).toHaveLength(3000);

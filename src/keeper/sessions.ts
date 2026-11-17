@@ -20,7 +20,7 @@ import { APP_ID } from "../app";
 import { keeperOutPath, outputLogPath, sessionsRecordPath } from "../locations";
 import type { Clock } from "../scheduler/clock";
 import type { Log } from "../scheduler/log";
-import { newRunId, sessionIdOf, sessionOwner } from "./ids";
+import { newRunId, sessionIdOf, sessionOwner, type SessionOwner } from "./ids";
 import type { KeeperLink, RunnerSession, SessionsReport } from "./model";
 import { keeperNeedsUpdate } from "./version";
 
@@ -67,8 +67,9 @@ export interface Sessions {
   /** Make sure the keeper runs and the connection to it is up, and follow its sessions; reports
    *  exits. Refreshes never overlap. */
   refresh(): Promise<void>;
-  /** Start a session: a service's (`svc:<job>`, refused while it runs) or one run's (`run:<job>:<run>`). */
-  spawn(owner: { kind: "service" | "run"; job: string }, command: SessionCommand): Promise<RunnerSession>;
+  /** Start a session: a service's (`svc:<job>`, refused while it runs; a new run id each start)
+   *  or one run's (`run:<job>:<run>`, the run id its caller made with `newRunId`). */
+  spawn(owner: SessionOwner, command: SessionCommand): Promise<RunnerSession>;
   /** SIGTERM, then SIGKILL after `graceMs` (default the keeper's 3 s). */
   stop(id: string, reason: StopReason, graceMs?: number): Promise<void>;
   /** Stop a service's session (reason `stopped`) when it runs, wait for its end, and start it again
@@ -351,8 +352,8 @@ export function createSessions(options: SessionsOptions): Sessions {
 
     async spawn(owner, command) {
       const keeper = connected();
-      const run = newRunId(clock.now(), () => randomBytes(3).toString("hex"));
-      const id = sessionIdOf(owner.kind === "service" ? { kind: "service", job: owner.job } : { kind: "run", job: owner.job, run });
+      const run = owner.kind === "run" ? owner.run : newRunId(clock.now(), () => randomBytes(3).toString("hex"));
+      const id = sessionIdOf(owner.kind === "service" ? owner : { kind: "run", job: owner.job, run });
       if (id === null) throw new Error(`the job id "${owner.job}" is too long to name a session`);
       const output = outputLogPath(options.state, owner.job, run);
       const info = await keeper.spawn({
