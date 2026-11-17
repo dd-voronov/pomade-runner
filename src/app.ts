@@ -1,7 +1,7 @@
 // Runner's identity, read from the manifest it ships: one source for the UI, the scheduler and the
 // command.
 
-import manifest from "../app/manifest.json";
+import manifest from "../app/manifest.json" with { type: "json" };
 
 export const APP_ID = manifest.id;
 export const APP_NAME = manifest.name;

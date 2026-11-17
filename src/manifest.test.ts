@@ -1,8 +1,8 @@
 import { parseManifest } from "pomade-kit/protocol";
 import { describe, expect, it } from "vitest";
 
-import manifest from "../app/manifest.json";
-import pkg from "../package.json";
+import manifest from "../app/manifest.json" with { type: "json" };
+import pkg from "../package.json" with { type: "json" };
 import { APP_ID, STRIP_ICON } from "./app";
 
 describe("manifest.json", () => {

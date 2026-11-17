@@ -1,0 +1,20 @@
+#!/bin/sh
+# Builds Runner and installs it into Pomade: the first install and every update are this one step.
+#
+#   ./install            into the dev Pomade
+#   ./install --stable   into the stable Pomade — only on Daniil's explicit word
+#
+# POMADE_REPO is the Pomade checkout whose `pomade` command does the install (default ../Pomade).
+set -eu
+
+cd "$(dirname "$0")"
+
+pomade="${POMADE_REPO:-../Pomade}/bin/pomade"
+if [ ! -x "$pomade" ]; then
+  echo "install: no pomade command at $pomade — point POMADE_REPO at a Pomade checkout" >&2
+  exit 1
+fi
+
+[ -d node_modules ] || npm ci
+npm run build
+"$pomade" apps install "$@" dist

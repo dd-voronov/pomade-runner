@@ -6,7 +6,7 @@
 
 import { createFakeHost, mountApp } from "pomade-kit/fake-host";
 
-import manifest from "../../app/manifest.json";
+import manifest from "../../app/manifest.json" with { type: "json" };
 import { STRIP_ICON } from "../../src/app";
 
 const query = new URLSearchParams(location.search);
