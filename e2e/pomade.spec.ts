@@ -3,17 +3,23 @@
 // (`POMADE_DEV_APPS`). A test Pomade installs no login items, so the scheduler is started here the
 // way the login item would start it: the same entry, Pomade's runtime, the environment HOST-API §2
 // "Backends" names; it finds the workspace through the pointer the test Pomade writes in its home.
-// `RUNNER_SHOTS=<dir>` saves screenshots of the panel and the tab.
+// Its keeper runs on Pomade's runtime too; Pomade's attached tabs attach to it directly. Teardown
+// stops the keeper with its sessions. `RUNNER_SHOTS=<dir>` saves screenshots of the panel, the tab
+// and an attached tab.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { connectSocket } from "pomade-kit/node";
+import { WORKSPACE_PROJECT_ID } from "pomade-kit/protocol";
+import type { HostClient } from "pomade-kit/sdk";
 
 import manifest from "../app/manifest.json" with { type: "json" };
 import { STRIP_ICON } from "../src/app";
 import { callScheduler } from "../src/scheduler/control/client";
 import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
+import { sessionInfo, startService, stopKeeper } from "./support/keeper";
 import { pomadeCheckout, pomadeEnv, type PomadeFolders } from "./support/pomade";
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
 
@@ -36,6 +42,9 @@ test.describe("Runner in Pomade", () => {
   let app: ElectronApplication | null = null;
   let page: Page;
   let scheduler: SchedulerProcess | null = null;
+  let keeperSocket: string;
+  /** Processes the keeper ran: killed in teardown should one outlive its keeper. */
+  const pids: number[] = [];
 
   /** `pomade-runner`, through the shim Pomade wrote into its command folder. */
   function command(...args: string[]) {
@@ -45,7 +54,9 @@ test.describe("Runner in Pomade", () => {
   test.beforeAll(async () => {
     tmp = await tempDir();
     folders = { workspace: join(tmp, "ws"), userData: join(tmp, "ud"), home: join(tmp, "home") };
+    keeperSocket = join(folders.userData, "run", "keepers", `${manifest.id}.sock`);
     await mkdir(join(folders.workspace, "Projects"), { recursive: true });
+    await mkdir(join(tmp, "user"));
     app = await electron.launch({
       executablePath: pomade.runtime,
       args: [pomade.main],
@@ -59,6 +70,7 @@ test.describe("Runner in Pomade", () => {
   test.afterAll(async () => {
     await scheduler?.kill();
     await app?.close();
+    await stopKeeper(keeperSocket, pids);
     await removeDir(tmp);
   });
 
@@ -70,8 +82,9 @@ test.describe("Runner in Pomade", () => {
     return page.frameLocator(`[data-testid="panel-frame-${STRIP_KEY}"]`);
   }
 
-  /** The scheduler, started the way the login item starts it: Pomade's runtime, the backend environment. */
-  async function startTheScheduler(): Promise<SchedulerProcess> {
+  /** The scheduler, started the way the login item starts it: Pomade's runtime, the backend
+   *  environment; it connects to Pomade unless `pomade: false` says Pomade is closed. */
+  async function startTheScheduler(options: { pomade: boolean } = { pomade: true }): Promise<SchedulerProcess> {
     const host = JSON.parse(await readFile(join(folders.home, "host.json"), "utf8")) as { socket: string };
     const started = startSchedulerProcess(
       pomade.runtime,
@@ -82,12 +95,15 @@ test.describe("Runner in Pomade", () => {
         POMADE_APP_KEY_FILE: join(folders.userData, "app-keys", manifest.id),
         POMADE_CLIENT: "backend",
         POMADE_SOCKET: host.socket,
-        POMADE_KEEPER_SOCKET: join(folders.userData, "run", "keepers", `${manifest.id}.sock`),
+        POMADE_KEEPER_SOCKET: keeperSocket,
         POMADE_HOME: folders.home,
+        // Sessions run `/bin/sh` as the login shell in a temp home: no user profile is read.
+        HOME: join(tmp, "user"),
+        SHELL: "/bin/sh",
       }),
     );
     scheduler = started;
-    await expect.poll(() => started.output()).toContain("connected to Pomade");
+    if (options.pomade) await expect.poll(() => started.output()).toContain("connected to Pomade");
     return started;
   }
 
@@ -143,15 +159,121 @@ test.describe("Runner in Pomade", () => {
     expect(await command("frobnicate")).toMatchObject({ code: 2, stdout: "" });
   });
 
-  test("the scheduler outlives Pomade", async () => {
+  const TICKER = 'i=0; while :; do i=$((i+1)); echo "tick $i"; if read -t 1 line; then echo "got: $line"; fi; done';
+
+  function schedulerSocket(): string {
+    return join(folders.userData, "app-state", manifest.id, "scheduler.sock");
+  }
+
+  /** A connection to Pomade as Runner's backend — what opens Runner's attached tabs here. */
+  async function connectAsRunner(): Promise<HostClient> {
+    const host = JSON.parse(await readFile(join(folders.home, "host.json"), "utf8")) as { socket: string };
+    const result = await connectSocket({ socketPath: host.socket, appId: manifest.id, keyFile: join(folders.userData, "app-keys", manifest.id), role: "backend" });
+    if (result.status !== "connected") throw new Error(`Runner's connection to Pomade: ${result.status}`);
+    return result.host;
+  }
+
+  /** The attached tabs in the Workspace scope, by id. */
+  function attachedTabIds(): Promise<string[]> {
+    return page.evaluate((project) => {
+      const stores = (window as unknown as { __pomadeStores: { useTabsStore: { getState(): { tabsByProject: Record<string, { id: string; kind: string }[] | undefined> } } } }).__pomadeStores;
+      return (stores.useTabsStore.getState().tabsByProject[project] ?? []).filter((tab) => tab.kind === "attached").map((tab) => tab.id);
+    }, WORKSPACE_PROJECT_ID);
+  }
+
+  /** Open the session's attached tab; its id. */
+  async function openTab(runner: HostClient, session: string): Promise<string> {
+    await runner.tabs.openAttached({ session: { app: manifest.id, session } });
+    await expect.poll(() => attachedTabIds()).toHaveLength(1);
+    const [id] = await attachedTabIds();
+    return id ?? "";
+  }
+
+  /** An attached tab's whole terminal buffer as text. */
+  function buffer(id: string): Promise<string> {
+    return page.evaluate((tab) => (window as unknown as { __pomadeAttachedBuffer?: Record<string, () => string> }).__pomadeAttachedBuffer?.[tab]?.() ?? "", id);
+  }
+
+  async function lastTick(id: string): Promise<number> {
+    return Math.max(0, ...[...(await buffer(id)).matchAll(/tick (\d+)/g)].map((m) => Number(m[1])));
+  }
+
+  test("a service's session opens as an attached tab: earlier and live output, Restart from its header, closing leaves it running, Ctrl+C stops it as stopped by you", async () => {
     const running = scheduler ?? (await startTheScheduler());
+    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/ticker.md"), `---\nkind: service\nname: Ticker\nfolder: .\ncommand: ${JSON.stringify(TICKER)}\n---\n`);
+    // The scheduler loads the new file within a second.
+    await expect.poll(() => running.output()).toContain("jobs: 2 job files, 0 invalid\n");
+    const started = await startService(schedulerSocket(), "ticker");
+    pids.push(started.info.pid ?? 0);
+    await expect.poll(() => readFile(started.log ?? "", "utf8").catch(() => "")).toContain("tick 2");
+    const runner = await connectAsRunner();
+
+    try {
+      const id = await openTab(runner, "svc:ticker");
+      await expect(page.getByTestId(`tab-title-${id}`)).toHaveText("Ticker · Runner");
+      await expect(page.getByTestId(`attached-status-${id}`)).toHaveText("Running");
+      // The earlier output, then the live output.
+      await expect.poll(() => buffer(id)).toContain("tick 1");
+      const seen = await lastTick(id);
+      expect(seen).toBeGreaterThanOrEqual(2);
+      await expect.poll(() => lastTick(id)).toBeGreaterThan(seen);
+      await page.getByTestId(`attached-xterm-${id}`).click();
+      await page.keyboard.type("before restart");
+      await page.keyboard.press("Enter");
+      await expect.poll(() => buffer(id)).toContain("got: before restart");
+      await shoot(page, "pomade-attached");
+
+      // Restart from the header: the same id, a new process; the tab shows the new session.
+      await page.getByTestId(`attached-${id}`).getByTestId("attached-action-restart").click();
+      await expect.poll(() => running.output()).toContain("session svc:ticker: Restart from its tab\n");
+      await expect.poll(() => running.output()).toContain("session svc:ticker: ended: stopped");
+      await expect.poll(async () => (await sessionInfo(schedulerSocket(), "svc:ticker"))?.pid).not.toBe(started.info.pid);
+      const restarted = await sessionInfo(schedulerSocket(), "svc:ticker");
+      pids.push(restarted?.pid ?? 0);
+      expect(restarted).toMatchObject({ state: "running" });
+      await expect.poll(() => buffer(id)).not.toContain("got: before restart");
+      await expect.poll(() => buffer(id)).toContain("tick 1");
+      await expect(page.getByTestId(`attached-status-${id}`)).toHaveText("Running");
+
+      // Closing the tab only detaches.
+      await page.getByTestId(`close-${id}`).click();
+      await expect.poll(() => attachedTabIds()).toHaveLength(0);
+      await expect.poll(async () => (await sessionInfo(schedulerSocket(), "svc:ticker"))?.clients).toBe(0);
+      expect(await sessionInfo(schedulerSocket(), "svc:ticker")).toMatchObject({ state: "running", pid: restarted?.pid });
+
+      // Ctrl+C typed in a tab ends it as stopped by you.
+      const again = await openTab(runner, "svc:ticker");
+      await expect.poll(() => buffer(again)).toContain("tick");
+      await page.getByTestId(`attached-xterm-${again}`).click();
+      await page.keyboard.press("Control+C");
+      await expect(page.getByTestId(`attached-status-${again}`)).toHaveText("Stopped by you");
+      await expect.poll(() => running.output()).toContain("session svc:ticker: ended: stopped-by-you — code 130, SIGINT\n");
+      expect((await command("sessions")).stdout).toContain("svc:ticker  job ticker  ended: stopped-by-you — code 130, SIGINT, at ");
+      await page.getByTestId(`close-${again}`).click();
+    } finally {
+      runner.close();
+    }
+  });
+
+  test("the scheduler and the services' sessions outlive Pomade; a restarted scheduler lists them with their jobs", async () => {
+    const running = scheduler ?? (await startTheScheduler());
+    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/stay.md"), `---\nkind: service\nname: Stay\nfolder: .\ncommand: ${JSON.stringify(TICKER)}\n---\n`);
+    await expect.poll(() => running.output()).toContain("jobs: 3 job files, 0 invalid\n");
+    const stay = await startService(schedulerSocket(), "stay");
+    pids.push(stay.info.pid ?? 0);
+
     await app?.close();
     app = null;
     await expect.poll(() => running.output()).toContain("Pomade went away; reconnecting");
-    const socketPath = join(folders.userData, "app-state", manifest.id, "scheduler.sock");
-    expect(await callScheduler(socketPath, "status")).toMatchObject({ status: "ok", value: { pid: running.child.pid, pomade: "disconnected" } });
+    expect(await callScheduler(schedulerSocket(), "status", null)).toMatchObject({ status: "ok", value: { pid: running.child.pid, pomade: "disconnected" } });
+    const ticks = (await readFile(stay.log ?? "", "utf8")).length;
+    await expect.poll(async () => (await readFile(stay.log ?? "", "utf8")).length).toBeGreaterThan(ticks);
 
     running.child.kill("SIGTERM");
     expect(await running.exited).toBe(0);
+    const restarted = await startTheScheduler({ pomade: false });
+    await expect.poll(() => restarted.output()).toContain("keeper: connected");
+    expect(await sessionInfo(schedulerSocket(), "svc:stay")).toMatchObject({ state: "running", pid: stay.info.pid, startedAt: stay.info.startedAt });
+    expect((await command("sessions")).stdout).toContain(`svc:stay  job stay  running, pid ${stay.info.pid ?? ""}, `);
   });
 });

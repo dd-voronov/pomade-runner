@@ -1,7 +1,8 @@
 // The install and uninstall scripts, into a temp user data, workspace and home: install builds and
 // installs, links the agent skill and drops the skills-map note; a second run updates; the
-// installed copy — a folder with no `node_modules` — runs on Pomade's runtime; uninstall removes
-// the links and the app. It rebuilds `dist/`, so the project runs after every other one.
+// installed copy — a folder with no `node_modules` but what the build ships for the keeper — runs
+// on Pomade's runtime, keeper and sessions included; uninstall removes the links and the app. It
+// rebuilds `dist/`, so the project runs after every other one.
 
 import { mkdir, readFile, readdir, readlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -12,6 +13,7 @@ import { expect, test } from "@playwright/test";
 import manifest from "../app/manifest.json" with { type: "json" };
 import { REPO, cleanEnv, removeDir, run, tempDir } from "./support/env";
 import { pomadeCheckout, pomadeEnv } from "./support/pomade";
+import { startService, stopKeeper } from "./support/keeper";
 import { startSchedulerProcess } from "./support/scheduler";
 
 test("./install builds Runner, installs it and links its skill; run again, it updates; the installed copy runs; ./uninstall removes it", async () => {
@@ -27,12 +29,18 @@ test("./install builds Runner, installs it and links its skill; run again, it up
   await mkdir(join(folders.workspace, "Knowledge/00-Inbox"), { recursive: true });
   await mkdir(userHome);
   const installed = join(folders.userData, "apps", manifest.id);
+  const keeperSocket = join(folders.userData, "run", "keepers", `${manifest.id}.sock`);
   const runtimeEnv = cleanEnv({
     ELECTRON_RUN_AS_NODE: "1",
     POMADE_APP_ID: manifest.id,
     POMADE_APP_KEY_FILE: join(folders.userData, "app-keys", manifest.id),
+    POMADE_KEEPER_SOCKET: keeperSocket,
     POMADE_HOME: folders.home,
+    POMADE_WORKSPACE: folders.workspace,
+    HOME: userHome,
+    SHELL: "/bin/sh",
   });
+  const pids: number[] = [];
   const scheduler = { current: null as ReturnType<typeof startSchedulerProcess> | null };
 
   try {
@@ -40,7 +48,7 @@ test("./install builds Runner, installs it and links its skill; run again, it up
     expect(first.stderr + first.stdout).toContain(`Installed into ${installed}`);
     expect(first.code).toBe(0);
     expect(JSON.parse(await readFile(join(installed, "manifest.json"), "utf8"))).toEqual(manifest);
-    expect((await readdir(installed)).sort()).toEqual(["assets", "backend", "cli", "icon.svg", "index.html", "manifest.json", "skills"]);
+    expect((await readdir(installed)).sort()).toEqual(["assets", "backend", "cli", "icon.svg", "index.html", "manifest.json", "node_modules", "skills"]);
     const skill = join(installed, "skills/pomade-runner-jobs");
     const links = [join(userHome, ".claude/skills/pomade-runner-jobs"), join(folders.workspace, "Agents/claude-coder/skills/pomade-runner-jobs")];
     for (const link of links) {
@@ -67,6 +75,17 @@ test("./install builds Runner, installs it and links its skill; run again, it up
       cwd: tmp,
     });
     expect(version.stdout).toContain(`pomade-runner ${manifest.version}\nscheduler: running — ${manifest.version}, pid ${running.child.pid},`);
+
+    // The installed keeper runs a service.
+    const jobs = join(folders.workspace, "Apps/pomade-runner/jobs");
+    await mkdir(jobs, { recursive: true });
+    await writeFile(join(jobs, "echo.md"), '---\nkind: service\nname: Echo\nfolder: .\ncommand: "echo installed keeper; exec sleep 600"\n---\n');
+    await expect.poll(() => running.output()).toContain("jobs: 1 job file, 0 invalid\n");
+    const started = await startService(join(folders.userData, "app-state", manifest.id, "scheduler.sock"), "echo");
+    pids.push(started.info.pid ?? 0);
+    await expect.poll(() => readFile(started.log ?? "", "utf8").catch(() => "")).toContain("installed keeper");
+    const sessions = await run(pomade.runtime, [join(installed, "cli/pomade-runner.mjs"), "sessions"], { env: { ...runtimeEnv, POMADE_CLIENT: "command" }, cwd: tmp });
+    expect(sessions.stdout).toMatch(new RegExp(`^keeper: running — version \\w+, pid \\d+\nsvc:echo  job echo  running, pid ${started.info.pid ?? ""}, `));
     running.child.kill("SIGTERM");
     expect(await running.exited).toBe(0);
 
@@ -79,6 +98,7 @@ test("./install builds Runner, installs it and links its skill; run again, it up
     expect(existsSync(installed)).toBe(false);
   } finally {
     await scheduler.current?.kill();
+    await stopKeeper(keeperSocket, pids);
     await removeDir(tmp);
   }
 });
