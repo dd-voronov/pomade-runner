@@ -49,7 +49,7 @@ async function writeSettings(world: RunnerWorld, text: string): Promise<void> {
 
 /** When the latest warm-up the scheduler logged ends, on its clock (to the minute it names). */
 function warmUpEnd(scheduler: SchedulerProcess): number {
-  const time = [...scheduler.output().matchAll(/warm-up: the services are up; caught-up runs wait until (\d\d:\d\d)\n/g)].at(-1)?.[1];
+  const time = [...scheduler.output().matchAll(/warm-up: the services are up; caught-up and hook runs wait until (\d\d:\d\d)\n/g)].at(-1)?.[1];
   if (time === undefined) throw new Error("no warm-up in the log");
   return madrid(`2026-11-18T${time}:00`);
 }
@@ -79,7 +79,7 @@ test.describe("missed runs and load", () => {
     scheduler.child.kill("SIGSTOP");
     await new Promise((resolve) => setTimeout(resolve, 8000));
     scheduler.child.kill("SIGCONT");
-    await expect.poll(() => scheduler.output()).toMatch(/wake: \d+ min( \d+ s)? since the previous tick; caught-up runs wait for the warm-up\n/);
+    await expect.poll(() => scheduler.output()).toMatch(/wake: \d+ min( \d+ s)? since the previous tick; caught-up and hook runs wait for the warm-up\n/);
     expect(await schedulerTime(world)).toBeGreaterThan(madrid("2026-11-18T07:05:00"));
 
     await expect.poll(() => world.history("summary"), { timeout: 15_000 }).toEqual([expect.objectContaining({ trigger: "caught-up", state: "done", dueAt: madrid("2026-11-18T07:00:00"), lastLines: ["summary caught-up"] }) as RunRecord]);
@@ -166,7 +166,7 @@ test.describe("missed runs and load", () => {
   });
 
   test("6 · a 1-minute time limit stops a long script: failed, stopped: ran over 1 min, and a notice", async () => {
-    await world.writeJob("long.md", scriptFile("Long", "echo working; sleep 600", "hook: { event: login }\ntime-limit: 1m\n"));
+    await world.writeJob("long.md", scriptFile("Long", "echo working; sleep 600", "hook: { event: project-created }\ntime-limit: 1m\n"));
     const scheduler = world.startScheduler(clock("2026-11-18T10:00:00"));
     await world.ready(scheduler);
     expect((await world.command("run", "long")).code).toBe(0);
@@ -177,7 +177,7 @@ test.describe("missed runs and load", () => {
 
   test("7 · with the long-run warning at 1 minute, the warning appears, and the run keeps going", async () => {
     await writeSettings(world, "long-run-warning: 1m\n");
-    await world.writeJob("long.md", scriptFile("Long", "sleep 600", "hook: { event: login }\n"));
+    await world.writeJob("long.md", scriptFile("Long", "sleep 600", "hook: { event: project-created }\n"));
     const scheduler = world.startScheduler(clock("2026-11-18T10:00:00"));
     await world.ready(scheduler);
     await expect.poll(() => scheduler.output()).toContain("settings: Apps/pomade-runner/settings.yaml — max low-priority runs 2, warm-up 2 min, long-run warning 1 min, history 30 days\n");

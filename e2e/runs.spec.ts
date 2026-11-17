@@ -123,8 +123,8 @@ test.describe("scheduled scripts", () => {
   });
 
   test("7 · pomade-runner run starts a run visible in History; list and history print the jobs and the runs; a running run is attachable and Ctrl+C stops it as stopped by you", async () => {
-    await world.writeJob("backup.md", scriptFile("Backup", "echo copying; sleep 0.3; echo copied", "hook: { event: login }\n"));
-    await world.writeJob("ticker.md", scriptFile("Ticker", 'i=0; while :; do i=$((i+1)); echo "tick $i"; sleep 0.2; done', "hook: { event: login }\n"));
+    await world.writeJob("backup.md", scriptFile("Backup", "echo copying; sleep 0.3; echo copied", "hook: { event: project-created }\n"));
+    await world.writeJob("ticker.md", scriptFile("Ticker", 'i=0; while :; do i=$((i+1)); echo "tick $i"; sleep 0.2; done', "hook: { event: project-created }\n"));
     const scheduler = world.startScheduler(ZONE);
     await world.ready(scheduler);
 
@@ -133,7 +133,7 @@ test.describe("scheduled scripts", () => {
     expect(ran.stdout).toMatch(/^backup {2}Backup {2}run \d{8}-\d{6}-[0-9a-f]{6} {2}running, output \S+\.log\n$/);
     await expect.poll(() => world.history("backup")).toEqual([expect.objectContaining({ trigger: "manual", state: "done", lastLines: ["copying", "copied"] }) as RunRecord]);
     expect((await world.command("history")).stdout).toMatch(/^backup {2}Backup {2}manual {2}done, \S+, took [\d.]+ m?s {2}output \S+\.log\n$/);
-    expect((await world.command("list")).stdout).toMatch(/^backup {2}Backup {2}script {2}on login {2}no next run · last done, [^\n]+\nticker {2}Ticker {2}script {2}on login {2}no next run · never ran\n$/);
+    expect((await world.command("list")).stdout).toMatch(/^backup {2}Backup {2}script {2}when a project is created {2}no next run · last done, [^\n]+\nticker {2}Ticker {2}script {2}when a project is created {2}no next run · never ran\n$/);
 
     const ticker = await world.command("run", "ticker");
     expect(ticker.code).toBe(0);

@@ -161,7 +161,7 @@ test.describe("Runner in Pomade", () => {
   });
 
   /** A script job file, run on demand. */
-  const scriptFile = (name: string, command: string): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ${JSON.stringify(command)}\nhook: { event: login }\n---\n`;
+  const scriptFile = (name: string, command: string): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ${JSON.stringify(command)}\nhook: { event: project-created }\n---\n`;
 
   /** The runs of `job` the scheduler recorded, newest first. */
   async function history(job: string): Promise<RunRecord[]> {

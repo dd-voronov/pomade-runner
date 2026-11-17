@@ -169,7 +169,7 @@ test.describe("service supervision", () => {
 
   test("pomade-runner restart restarts a service under the same session; stop leaves it stopped by you; both refuse a job that is no service", async () => {
     await world.writeJob("web.md", serviceFile("Web", SLEEPER));
-    await world.writeJob("backup.md", "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\nhook: { event: login }\n---\n");
+    await world.writeJob("backup.md", "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\nhook: { event: project-created }\n---\n");
     const scheduler = world.startScheduler();
     await world.ready(scheduler);
     const web = await world.running("svc:web");
