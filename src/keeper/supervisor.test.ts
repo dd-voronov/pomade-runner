@@ -56,6 +56,7 @@ class FakeSessions implements Sessions {
   keeper = (): KeeperLink => this.link;
   list = (): RunnerSession[] => [...this.sessions.values()];
   followed = (): boolean => this.following;
+  startedKeeper = (): boolean => false;
   report = () => ({ keeper: this.link, sessions: this.list() });
 
   refresh(): Promise<void> {

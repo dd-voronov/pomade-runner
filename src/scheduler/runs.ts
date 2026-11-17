@@ -11,7 +11,7 @@
 //   scheduler started after the Mac was off — or after any stop — sees what it missed. Nothing is
 //   due while the keeper is not followed: the look waits for it.
 // - **Wake** is a gap between two ticks longer than `WAKE_GAP_MS` on the scheduler's clock: the Mac
-//   slept (or the clock jumped ahead). It, like the scheduler's start, begins the staged start:
+//   slept (or the clock jumped ahead). It, like a login, begins the staged start:
 //   once the services are up (`servicesSettled`), a warm-up (a setting) before caught-up runs start.
 //   On-time runs never wait for it.
 // - **The switch** holds a job's schedule while it holds the job: its look stays where it was, so
@@ -29,8 +29,8 @@
 //   ran over 45 min"). Going longer than the long-run warning (a setting) makes it a Needs-you
 //   item, once — it keeps running. The record keeps the last lines of the output log.
 // - **Hooks and chains.** An event fires the jobs whose hook it matches (`hooks.ts`): Runner's own
-//   `login` once per scheduler start — the scheduler is the login item — and the platform's events
-//   through `hook()`. A run that ends `done` or `failed` fires the jobs that follow it (`chains.ts`):
+//   `login` once per login — a scheduler start that finds no keeper running — and the platform's
+//   events through `hook()`. A run that ends `done` or `failed` fires the jobs that follow it (`chains.ts`):
 //   a script runs (trigger `chain`, linked to its parent), a service gets its action through the
 //   supervisor, recorded in the history. Every such firing passes the loop guard (`loop-guard.ts`)
 //   first: one too many within its window pauses the job until Resume. Hook and chain runs join the
@@ -234,7 +234,8 @@ export interface RunsOptions {
 }
 
 export interface Runs {
-  /** Read the records and the switch; the staged start begins. */
+  /** Read the records and the switch. Whether this start is a login is decided once the keeper is
+   *  followed. */
   load(): Promise<void>;
   /** Record the runs that ended, look at the schedules, enforce the limits, start what may start.
    *  A tick asked for while one is due is dropped. */
@@ -242,7 +243,7 @@ export interface Runs {
   /** Run a script job now (trigger `manual`), by its id or name, under its overlap policy. */
   runNow(ref: string): Promise<RunActionResult>;
   /** An event: fire every job whose hook it matches, through the loop guard and the queue. Runner
-   *  fires `login` itself, once per start; Pomade's and the agents' events come here (E-007). */
+   *  fires `login` itself, once per login; Pomade's and the agents' events come here (E-007). */
   hook(firing: HookFiring): Promise<void>;
   /** Lift the loop guard's pause of a job, by its id or name. */
   resume(ref: string): Promise<ResumeResult>;
@@ -320,13 +321,15 @@ export function createRuns(options: RunsOptions): Runs {
   let savedAt = Number.NEGATIVE_INFINITY;
   /** The previous tick (epoch ms); `null` before the first. */
   let tickedAt: number | null = null;
-  /** The staged start after the scheduler's start or a wake: when the services were up; `null`
-   *  while they still start. `null` as a whole once the warm-up is over. */
+  /** The staged start after a login or a wake: when the services were up; `null` while they still
+   *  start. `null` as a whole when there is none, or once the warm-up is over. */
   let stage: { settledAt: number | null } | null = null;
   let lane: Promise<unknown> = Promise.resolve();
   let tickQueued = false;
   let guard = createLoopGuard();
-  /** The scheduler started — a login: its hooks fire on the first reconcile that can run them. */
+  /** Whether this start is a login is decided once the keeper is followed. */
+  let startDecided = false;
+  /** A login: its hooks fire on the first reconcile that can run them. */
   let login = false;
   /** Chain actions on services under way: each records its outcome in the lane when it answers. */
   const acting = new Set<Promise<void>>();
@@ -567,8 +570,8 @@ export function createRuns(options: RunsOptions): Runs {
     return run;
   }
 
-  /** The staged start: over, or what it waits for. Begun at the scheduler's start and on wake: it
-   *  waits for the services, then the warm-up. */
+  /** The staged start: over, or what it waits for. Begun at a login and on wake: it waits for the
+   *  services, then the warm-up. */
   function warmUp(at: number): { over: true } | { over: false; until: number | null } {
     if (stage === null) return { over: true };
     if (stage.settledAt === null) {
@@ -766,8 +769,24 @@ export function createRuns(options: RunsOptions): Runs {
     }
   }
 
+  /** A start is a login when the scheduler found no keeper running: the user's processes ended —
+   *  a log-out, a shutdown — so the user's session begins. An update or a restart of the scheduler
+   *  finds the keeper alive and is no login: no staged start, no login hooks. */
+  function decideStart(): void {
+    if (startDecided) return;
+    startDecided = true;
+    if (sessions.startedKeeper()) {
+      log("login: no keeper was running — the staged start begins; the login hooks run after the warm-up");
+      stage = { settledAt: null };
+      login = true;
+    } else {
+      log("start: the keeper was running — no login: no warm-up, no login hooks");
+    }
+  }
+
   async function reconcile(): Promise<void> {
     if (!sessions.followed()) return;
+    decideStart();
     await collect();
     if (options.jobs().workspace === null) return;
     const at = now();
@@ -829,8 +848,6 @@ export function createRuns(options: RunsOptions): Runs {
       guard = createLoopGuard(loaded.guard);
       switchState = await options.switchStore.load();
       for (const run of active) recovered.add(key(run.job, run.run));
-      stage = { settledAt: null };
-      login = true;
       if (loaded.lookedAt !== null && at - loaded.lookedAt > WAKE_GAP_MS) log(`runs: last alive ${new Date(loaded.lookedAt).toISOString()}; what was missed since goes to its policy`);
       if (switchState.position !== "running") log(`switch: ${SWITCH_WORDS[switchState.position]}`);
     },

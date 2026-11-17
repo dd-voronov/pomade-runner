@@ -25,6 +25,8 @@ export class FakeSessions implements Sessions {
   readonly forgotten: string[] = [];
   refuse: string | null = null;
   following = true;
+  /** Whether the scheduler found no keeper and started it: a login. */
+  loggedIn = true;
   link: KeeperLink = { state: "connected", version: "v1", pid: 1 };
 
   constructor(
@@ -35,6 +37,7 @@ export class FakeSessions implements Sessions {
   keeper = (): KeeperLink => this.link;
   list = (): RunnerSession[] => [...this.sessions.values()];
   followed = (): boolean => this.following;
+  startedKeeper = (): boolean => this.loggedIn;
   report = () => ({ keeper: this.link, sessions: this.list() });
   refresh = (): Promise<void> => Promise.resolve();
 

@@ -229,6 +229,14 @@ describe("sessions", () => {
     expect(lines).toContain(`keeper: refused the scheduler — not the owner of ${APP_ID}'s keeper`);
   });
 
+  it("a keeper found running means no login: the scheduler did not start it", async () => {
+    const s = open();
+    expect(s.sessions.startedKeeper()).toBe(false);
+    await s.sessions.refresh();
+    expect(s.sessions.startedKeeper()).toBe(false);
+    expect(lines.some((line) => line.startsWith("keeper: started"))).toBe(false);
+  });
+
   it("reconnects when the connection to the keeper ends", async () => {
     const { sessions } = await connected();
     await keeper.close();

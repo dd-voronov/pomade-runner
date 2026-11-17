@@ -106,6 +106,7 @@ function stubSessions(): StubSessions {
     keeper: () => ({ state: "connected", version: "v1", pid: 9 }),
     list: () => [...held.values()],
     followed: () => true,
+    startedKeeper: () => true,
     report: () => ({ keeper: stub.keeper(), sessions: [...held.values()] }),
     refresh() {
       stub.refreshes++;
@@ -224,7 +225,7 @@ describe("scheduler", () => {
       status: "ok",
       value: { version: APP_VERSION, pid: process.pid, startedAt: "2026-11-17T08:00:00.000Z", lastTickAt: null, pomade: "disconnected" },
     });
-    expect(lines).toEqual([`scheduler ${APP_VERSION} started (pid ${process.pid}, tick 1000 ms)`]);
+    expect(lines).toEqual([`scheduler ${APP_VERSION} started (pid ${process.pid}, tick 1000 ms)`, "login: no keeper was running — the staged start begins; the login hooks run after the warm-up"]);
     expect((await stat(socketPath)).mode & 0o777).toBe(0o600);
   });
 
@@ -248,7 +249,7 @@ describe("scheduler", () => {
     expect(scheduler.status().pomade).toBe("disconnected");
     link?.rejected("unauthorized");
     expect(scheduler.status().pomade).toBe("rejected");
-    expect(lines.slice(1, 2)).toEqual(["connected to Pomade"]);
+    expect(lines).toContain("connected to Pomade");
     expect(lines.slice(-2)).toEqual(["Pomade went away; reconnecting", "Pomade refused the connection: unauthorized"]);
   });
 

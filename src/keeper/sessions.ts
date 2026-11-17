@@ -63,6 +63,11 @@ export interface Sessions {
   list(): RunnerSession[];
   /** Whether `list()` is the keeper's: the latest refresh read the keeper's list. */
   followed(): boolean;
+  /** Whether this scheduler found no keeper running and started it before it first connected:
+   *  the user's processes ended — a log-out, a shutdown — so this start is a Mac login. `false`
+   *  when a keeper was running (an update or a restart of the scheduler) and before the first
+   *  connection. */
+  startedKeeper(): boolean;
   report(): SessionsReport;
   /** Make sure the keeper runs and the connection to it is up, and follow its sessions; reports
    *  exits. Refreshes never overlap. */
@@ -147,6 +152,10 @@ export function createSessions(options: SessionsOptions): Sessions {
   const updatesTried = new Set<string>();
   const exitListeners = new Set<(session: RunnerSession) => void>();
   let refreshing: Promise<void> | null = null;
+  /** Whether a keeper start of this scheduler's came before its first connection; `null` until it
+   *  first connects. */
+  let startedFirst: boolean | null = null;
+  let startedOne = false;
   let following = false;
   let writing: Promise<void> = Promise.resolve();
   let closed = false;
@@ -235,6 +244,7 @@ export function createSessions(options: SessionsOptions): Sessions {
 
   function adopt(keeper: KeeperClient): void {
     client = keeper;
+    startedFirst ??= startedOne;
     // A keeper answers: any hand-off is over, and a keeper that dies from now on is started again.
     handoffUntil = 0;
     setLink({ state: "connected", version: keeper.keeper.version, pid: keeper.keeper.pid });
@@ -269,7 +279,10 @@ export function createSessions(options: SessionsOptions): Sessions {
         setLink({ state: "unreachable", reason: started.reason });
         return null;
       }
-      if (started.started) log(`keeper: started — pid ${started.pid}`);
+      if (started.started) {
+        startedOne = true;
+        log(`keeper: started — pid ${started.pid}`);
+      }
     }
     const result = await connectKeeper({ socketPath: options.socketPath, app: APP_ID, role: "owner", key: options.key });
     if (closed) {
@@ -331,6 +344,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     keeper: () => link,
     list: () => [...view.values()],
     followed: () => following && client !== null,
+    startedKeeper: () => startedFirst === true,
     report: () => ({ keeper: link, sessions: [...view.values()] }),
 
     refresh() {

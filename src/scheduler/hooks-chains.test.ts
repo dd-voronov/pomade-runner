@@ -1,8 +1,9 @@
 // Hooks, chains and the loop guard in the run lifecycle, on a clock the tests set, against the
 // stand-in keeper (`runs-fixture.ts`) and a real history on a temp folder: what fires a chain and
 // what does not, fan-out, parent links in the runs, records and environment, chains through the
-// queue and the switch, a chain's action on a service, the Mac login hook after the warm-up, an
-// event through `hook()`, and the loop guard's pause, its persistence and Resume.
+// queue and the switch, a chain's action on a service, the Mac login hook after the warm-up — a
+// login is a start that found no keeper running — an event through `hook()`, and the loop guard's
+// pause, its persistence and Resume.
 
 process.env.TZ = "Europe/Madrid";
 
@@ -391,6 +392,35 @@ describe("hooks and chains", () => {
       expect(going("mount")).toEqual([]);
       sessions.following = true;
       await awake("2026-11-18T14:08:00", 60_000);
+      expect(spawned()).toEqual(["mount hook", "mount hook"]);
+    });
+
+    it("a start that finds the keeper running — an update, a crash-restart of the scheduler — is no login: no login hooks, and caught-up runs need no warm-up", async () => {
+      await settle();
+      files = { ...files, "report.md": script("Report", `schedule:\n  daily: { at: 13:30 }\n${free}`) };
+      load();
+      sessions.loggedIn = false;
+      await restart("2026-11-18T14:00:00");
+      expect(lines).toContain("start: the keeper was running — no login: no warm-up, no login hooks");
+      expect(going("mount")).toEqual([]);
+      // Down across 13:30: one caught-up run, at once.
+      expect(going("report")).toEqual([expect.objectContaining({ state: "running", trigger: "caught-up" }) as ActiveRun]);
+      await awake("2026-11-18T14:10:00", 60_000);
+      expect(spawned()).toEqual(["mount hook", "report caught-up"]);
+    });
+
+    it("decides only once the keeper is followed, and once per start", async () => {
+      await settle();
+      const logins = (): number => lines.filter((line) => line.startsWith("login:")).length;
+      const before = logins();
+      sessions.following = false;
+      await restart("2026-11-18T14:00:00");
+      expect(logins()).toBe(before);
+      sessions.following = true;
+      await at("2026-11-18T14:00:01");
+      expect(logins()).toBe(before + 1);
+      await awake("2026-11-18T14:10:00", 60_000);
+      expect(logins()).toBe(before + 1);
       expect(spawned()).toEqual(["mount hook", "mount hook"]);
     });
 
