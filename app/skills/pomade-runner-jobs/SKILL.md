@@ -48,7 +48,7 @@ By kind:
 | `ready` | service | `{ port: 5173 }` or `{ url: http://localhost:5173/ }`; default: up = alive after 5 s |
 | `agent` | agent (required) | the agent's id, e.g. `claude` |
 | `mode` | agent | one of the agent's modes; default `normal` (`full-autonomy` skips every approval) |
-| `git` | git (required) | `{ operation: commit-push \| pull \| push \| fetch, repos: [Knowledge, …] }` — repos by the name Pomade's Git panel shows |
+| `git` | git (required) | `{ operation: commit-push \| pull \| push \| fetch, repos: [Knowledge, …] }` — repos by the name Pomade's Git panel shows; a git job's `name` is at most 100 characters (its commits carry it) |
 
 An agent job's **body is its prompt** — it must not be empty.
 
@@ -141,6 +141,19 @@ schedule:
 ---
 ```
 
+A **git** job — commit and push the Knowledge repo at 13:00 and 20:00.
+File: `Apps/pomade-runner/jobs/knowledge-commit.md`
+
+```markdown
+---
+kind: git
+name: Knowledge twice daily
+git: { operation: commit-push, repos: [Knowledge] }
+schedule:
+  daily: { at: [13:00, 20:00] }
+---
+```
+
 A **script** — a daily backup with a time limit.
 File: `Apps/pomade-runner/jobs/photo-backup.md`
 
@@ -225,7 +238,11 @@ A script runs in its folder, by the login shell, with `POMADE_JOB` (its id), `PO
 `POMADE_TRIGGER` (`scheduled`, `caught-up` for a missed run run late, `manual`, `hook` or `chain`)
 and, for a project job, `POMADE_PROJECT` and `POMADE_PROJECT_PATH` in its environment; a chain's
 run also gets `POMADE_PARENT_JOB`, `POMADE_PARENT_RUN_ID` and `POMADE_PARENT_RESULT` (`done` or
-`failed`). Exit 0 is done, anything else failed. A `login` hook runs once after each Mac login,
+`failed`). Exit 0 is done, anything else failed. A git job runs Pomade's `pomade-git` on its repos,
+with Pomade open or closed: a commit it makes reads `Committed automatically · job "<name>" · <date
+time>`, with a `Pomade-Job:` trailer; a repo where an agent is working is skipped; a conflict is aborted and the
+run fails, the repo left as it was. `pomade-runner history` prints a git run's result per repo.
+A `login` hook runs once after each Mac login,
 after a short warm-up; an update or restart of Runner is no login. `pomade-runner list` prints every job with its trigger in
 words, next run and last result; `pomade-runner run <job>` runs one now; `pomade-runner history
 [job]` prints the latest runs with their output log; `pomade-runner runs` prints the runs going,

@@ -20,7 +20,7 @@ workspace-level app: one list of every job, filterable to the current project.
 | **UI** | the Runner side panel and the Runner tab, in Pomade (`pomade-app://pomade-runner/`) | hidden-not-unmounted, like every pane |
 | **Scheduler** | the always-on backend: loads job files; supervises the services; evaluates triggers; applies missed-run, queue and load policies; starts the keeper and starts runs through it as its owner; writes history; posts notices; publishes events; serves Runner's API | a login item (launchd) that keeps running when Pomade quits; updated and restarted freely; reconnects to the keeper and its running sessions on restart |
 | **Keeper** | `pomade-kit/keeper`, run as Runner's own detached process (`backend/keeper.mjs`): holds every service's and run's terminal session (PTY); serves the attach protocol Pomade tabs use; reports exits | started by the scheduler (`startKeeper`), and started again when it dies; does not notice a scheduler restart or update; a keeper update hands the open PTYs to the new keeper process, so sessions keep running |
-| **`pomade-runner` command** | `check [file…]` validates job files and the settings file · `projects` lists the project ids and jobs sub-folders · `list` prints every job with its kind, trigger in words, next run and last result · `run <job>` runs a job now — a script's run, a service's Start · `history [job]` prints the latest runs · `runs` prints the switch, the runs going with what each queued one waits for, and Needs you · `pause [low\|all]` · `resume` set the switch · `resume-job <job>` lifts the loop guard's pause of a job · `enable <job>` · `disable <job>` · `services` shows every service and where it stands · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions | on `PATH` via `~/.pomade/bin`; reads the job files and the settings and talks to the scheduler directly, so it works with Pomade closed |
+| **`pomade-runner` command** | `check [file…]` validates job files and the settings file · `projects` lists the project ids and jobs sub-folders · `list` prints every job with its kind, trigger in words, next run and last result · `run <job>` runs a job now — a script's or git job's run, a service's Start · `history [job]` prints the latest runs · `runs` prints the switch, the runs going with what each queued one waits for, and Needs you · `pause [low\|all]` · `resume` set the switch · `resume-job <job>` lifts the loop guard's pause of a job · `enable <job>` · `disable <job>` · `services` shows every service and where it stands · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions | on `PATH` via `~/.pomade/bin`; reads the job files and the settings and talks to the scheduler directly, so it works with Pomade closed |
 | **Skill** | `pomade-runner-jobs` teaches agents the job format and location | master in `app/skills/pomade-runner-jobs/SKILL.md`, shipped in the build at `skills/pomade-runner-jobs` (the manifest's `skills`); `./install` links the installed copy into agents' skill folders |
 
 **What Runner tracks:** only jobs created in Runner. A terminal opened by hand, inside Pomade or
@@ -82,7 +82,7 @@ Notes for humans and agents.
 | Field | Kinds | Values (default first) |
 |---|---|---|
 | `kind` | all | `service` · `script` · `agent` · `git`; required |
-| `name` | all | required; unique across the workspace, ignoring case — History, notices, `pomade-runner run` and git's commit wording name jobs by it |
+| `name` | all | required; unique across the workspace, ignoring case — History, notices, `pomade-runner run` and git's commit wording name jobs by it; a git job's at most 100 characters, as `pomade-git --job` takes it |
 | `project` | all | the stable project id; required in a project's sub-folder, absent at the top level |
 | `enabled` | all | `true` · `false` |
 | `folder` | service · script · agent | required; workspace-relative, `.` is the root; never outside the workspace or in `.pomade` |
@@ -93,7 +93,7 @@ Notes for humans and agents.
 | `hook` | script · agent · git | `{ event, …filters }` (see Triggers) |
 | `after` | script · agent · git · service | `{ job: <id>, result: done \| failed \| any }` (chains); a service also takes `action: restart \| start \| stop` |
 | `agent`, `mode` | agent | `agent` (required): a roster id from `pomade-agents`; `mode`: one of that agent's modes, default `normal`; the file **body is the prompt** and must not be empty |
-| `git` | git | required: `{ operation: commit-push \| pull \| push \| fetch, repos: [...] }`; repos by the name `pomade-git` accepts, each once; one repo may be written without the list |
+| `git` | git | required: `{ operation: commit-push \| pull \| push \| fetch, repos: [...] }`; repos by the name `pomade-git` accepts, each once, none starting with `-` (the command would read it as an option); one repo may be written without the list |
 | `missed` | scheduled jobs only | `run-on-wake` (agent, script) · `wait-for-me` · `skip` (git) — what a missed run becomes ("Missed runs and load") |
 | `worth-until` | with `missed: run-on-wake` | `next-run` (default) or a time of day (`12:00`): until when a caught-up run is worth starting |
 | `overlap` | non-service jobs | `skip` · `parallel` · `queue` |
@@ -166,8 +166,8 @@ disk.
   - while the keeper is not followed nothing is due: the look waits for it, so a short keeper
     outage delays a run instead of losing it.
 - **Once at** runs once; after its time it has no next run and shows as **finished**.
-- Script jobs fire on schedules, hooks and chains; Pomade's and the agents' hook events (E-007),
-  agent and git jobs (E-004, E-006) come with their epics.
+- Script and git jobs fire on schedules, hooks and chains; Pomade's and the agents' hook events
+  (E-007) and agent jobs (E-004) come with their epics.
 
 **Hooks:**
 
@@ -182,7 +182,7 @@ disk.
 | Another job finished (done / failed / any) | `after: { job, result }` | Runner | a **chain** |
 
 **Firing hooks** (`src/scheduler/hooks.ts`, `runs.ts`):
-- An event fires every valid, enabled script whose `hook` names it and whose filters it passes; a
+- An event fires every valid, enabled script and git job whose `hook` names it and whose filters it passes; a
   filter left out takes any value. Every event comes through one firing path, `hook()`, with the
   context its runs get in their environment; E-007 brings Pomade's and the agents' events to it.
 - **Mac login** is a scheduler start that finds no keeper running (`startedKeeper` in
@@ -201,7 +201,7 @@ disk.
   and takes its result (`any` takes both). Failed is any failure: an exit code, a signal, a time
   limit, a start the keeper refused, a lost session. A run stopped by you, skipped or missed fires
   nothing: the person stepped in, or nothing ran.
-- Every follower fires, in id order. A script's run has trigger `chain` and its parent in `cause` —
+- Every follower fires, in id order. A script's or git job's run has trigger `chain` and its parent in `cause` —
   the parent's job, name, run and result — so History shows "chain: after Pull" and its card opens
   the parent's run; `POMADE_PARENT_*` are in its environment. It joins the queue like any run: its
   overlap applies, the switch holds it and it runs late on release, and it never waits for the
@@ -220,7 +220,7 @@ disk.
     `run.started` or `run.finished`, and fires no chain.
 - A run that ended while the scheduler was down fires its chains when the next scheduler records
   it. A record already in the history fired them then, and fires nothing again.
-- Agent and git jobs fire on hooks and chains with their epics (E-004, E-006).
+- Agent jobs fire on hooks and chains with their epic (E-004).
 
 **Context for scripts.** Scripts receive the context as environment variables:
 - `POMADE_JOB` (the job's id: `backup`, `coda-helper/nightly`), `POMADE_RUN_ID`, `POMADE_TRIGGER`
@@ -232,6 +232,8 @@ disk.
   `POMADE_SESSION_STATUS` as its event gives them (E-007; none for `login`)
 - `POMADE_PARENT_JOB` (the parent's id), `POMADE_PARENT_RUN_ID`, `POMADE_PARENT_RESULT` (`done` ·
   `failed`) (chains)
+- a git run gets the same, and `POMADE_WORKSPACE`: `pomade-git` resolves repo names in the
+  workspace whose jobs these are
 
 **Loop guards** (`src/jobs/check.ts`, `src/scheduler/loop-guard.ts`):
 - **Cycle refusal.** The validator refuses a chain that leads back to itself on every job in the
@@ -256,8 +258,9 @@ disk.
 you`. A run that never started is `skipped` or `missed`, with a reason ("missed · skipped").
 
 **Execution:**
-- Every run and every service is a keeper session, in the job's folder, in the user's login-shell
-  environment (same PATH and keys as Daniil's terminals).
+- Every run and every service is a keeper session, in the job's folder — a git run's in the
+  workspace root — in the user's login-shell environment (same PATH and keys as Daniil's
+  terminals).
 - Low-priority runs start with macOS background priority (`taskpolicy -b`).
 
 **A script's run** (`src/scheduler/runs.ts`, the model in `model.ts`):
@@ -278,9 +281,9 @@ you`. A run that never started is `skipped` or `missed`, with a reason ("missed 
   run is already queued**. A queued run whose job meanwhile is disabled, invalid or gone is skipped
   when its turn comes. An on-time run covers a caught-up run of its job still queued: that one is
   **missed · skipped · the 09:00 run covers it**.
-- **Run now** runs a script now, trigger `manual`, under the same overlap: refused with `skip`
+- **Run now** runs a script or git job now, trigger `manual`, under the same overlap: refused with `skip`
   while a run goes and with `queue` while one is held, as it is for a disabled, invalid or unknown
-  job and for agent and git jobs. The switch never holds it; it takes a low-priority slot like any
+  job and for agent jobs. The switch never holds it; it takes a low-priority slot like any
   run, so it may wait as `queued · 1 ahead`. For a service it is Start.
 - **Attach.** A running run opens as an attached tab like a service
   (`tabs.openAttached({ session: { app: "pomade-runner", session: "run:…" } })`).
@@ -412,12 +415,43 @@ the keeper reports updates the service's record.
 - **Finish:** when the agent's turn completes and it sits idle with no pending prompt, Runner ends
   the session cleanly → `done`.
 
-**Git runs** call `pomade-git <operation> <repo…> --json --job "<job name>"` and record its
-structured result, a `GitRunOutput` (type and check `isGitRunOutput` from `pomade-kit/protocol`)
-with one `GitRunResult` per repo:
-- done / skipped / failed + reason
-- the steps
-- the commit hash
+**Git runs** (`src/scheduler/git-runs.ts`, `runs.ts`) run Pomade's `pomade-git` and keep its
+structured result. Everything else about the run is a script run's: run id, queue (a git job is
+not low priority by default, so it neither takes nor waits for a slot), overlap, switch, time
+limit, Run now, hooks, chains, History, notices and Needs you.
+- **The command** is `<POMADE_HOME>/bin/pomade-git`: the shim the Pomade Runner belongs to writes
+  into its command folder at every start (`pomadeGitPath`, `src/locations.ts`; the always-on
+  scheduler gets `POMADE_HOME`). It runs with Pomade closed. Missing there, the run fails without
+  starting: "cannot start — pomade-git is not in Pomade's command folder (…)".
+- **Execution: a keeper session, its JSON into a file.** The session runs, by the login shell in
+  the workspace root, `pomade-git <operation> <repo…> --json --job "<job name>" > <run id>.json`
+  (every word shell-quoted), with `POMADE_WORKSPACE` set. The command's standard output — the
+  `GitRunOutput` — goes to a file beside the run's output log
+  (`output/<encoded job id>/<run id>.json`) and never through the terminal, so nothing a terminal
+  does to text (a profile's greeting, escape sequences, line wrapping, CRLF) can garble it; its
+  standard error stays the run's output log. The keeper holds the run like any other: a scheduler
+  restarted or updated mid-run (`restartOnUpdate`) finds the session in the keeper's list, reads the
+  result file when it ends and records the run once, as for scripts — a child process of the
+  scheduler would die with it, and could leave a rebase half done. A run is attachable and
+  stoppable like a script's.
+- **The end.** The keeper's end, read with the result file (`isGitRunOutput` from
+  `pomade-kit/protocol`):
+
+  | Session ends | Result file | Run |
+  |---|---|---|
+  | exit 0 | a `GitRunOutput` | **done** — every repo done or skipped |
+  | exit 1 | a `GitRunOutput` | **failed**, reason each failed repo's: "Knowledge: Their changes conflict with yours in notes.md. …" |
+  | exit 2 | — | **failed**: "the command line was wrong — <what the command said>"; nothing ran |
+  | any other exit, a signal, or exit 0 / 1 | missing or not a `GitRunOutput` | **failed**: "pomade-git gave no result (exit 127)" |
+  | Stop, time limit, a lost session | either | as for a script |
+
+- **The record** keeps the `GitRunOutput` whole (`git`): per repo done / skipped / failed and the
+  reason, the steps, the commit hash. Its last lines are one line per repo: "Knowledge · committed
+  a1b2c3d · pulled · pushed", "Knowledge · skipped · agent working", "Knowledge · failed · <the
+  reason>"; without a result, the output log's last lines. The result file goes once the record
+  holds it. The run's folder is the workspace root (`""`).
+- A failed run is noticed by Runner as its job's `notify` says (default on failure), the notice's
+  body the reason, and is its job's Needs-you item.
 
 The command decides the "agent working" skip and appends every run to Pomade's git run log, which
 the Git panel's failure mark reads. It posts no notice: Runner notifies about a failed run.
@@ -430,13 +464,14 @@ the Git panel's failure mark reads. It posts no notice: Runner notifies about a 
 | Agent | the agent's last message, **Open session** |
 | Git | per-repo steps and the commit hash |
 
-Every card has **View output** (the full captured log).
+Every card has **View output** (the full captured log; a git run's holds what `pomade-git` wrote
+to its standard error — nothing, when all went well).
 
 **History** (`src/scheduler/history.ts`). One record per run that ended or never started
 (`RunRecord`), and per chain's action on a service: the job's id, name and kind, project, folder,
 run id, trigger and — a hook or chain run — its cause, a service's chain `action`, when it was due,
 started and ended, how long it ran, the result and its reason, exit code and signal, the output
-log, and the last 20 lines of the output as plain text. A record of an older build reads with the
+log, the last 20 lines of the output as plain text, and a git run's result (`git`). A record of an older build reads with the
 fields it lacks at their defaults.
 - **Format:** append-only JSON Lines, one file per day of the runs' ends (UTC):
   `history/YYYY-MM-DD.jsonl`. A record is one line, written once, when the run ends; nothing is
@@ -447,7 +482,8 @@ fields it lacks at their defaults.
   (`<day>:<line>`) the next page starts before, valid while new runs land.
 - **Retention:** whole days, as many as the settings keep (`history-days`, default 30): a day's file
   and the output logs of the runs that started that day go once the day is that many days behind,
-  checked at the scheduler's start and every hour; a log a session still writes stays.
+  checked at the scheduler's start and every hour; a log a session still writes stays, and so does
+  a git result a running run still writes.
 
 ## Missed runs and load
 
@@ -634,7 +670,8 @@ history-days: 30           # run history and output logs kept
 - **Settings:** the four settings ("Settings"), each written field-only.
 
 **Routes of the Runner tab** (`parseRoute`, `src/integrations/runner-api.ts`): `""` Jobs ·
-`history` · `settings` · `run/<encoded job id>/<run id>` a run's result card (what a run's notice
+`jobs/<encoded job id>` Jobs at one job, its row marked and scrolled to (what a repo row's Scheduled
+line opens) · `history` · `settings` · `run/<encoded job id>/<run id>` a run's result card (what a run's notice
 opens; a missed run's card offers Run now · Run at… · Skip, a running run's Stop) ·
 `output/<encoded job id>/<run id>` its full output. The tab follows Pomade's `route.changed`.
 
@@ -654,6 +691,7 @@ example. This is a product requirement, not polish.
 | Session records (job, run, output log, end) | `<userData>/app-state/pomade-runner/sessions.json` |
 | Service supervision records (holds, crash counts, a restart due) | `<userData>/app-state/pomade-runner/services.json` |
 | Run output logs | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.log` |
+| A git run's result while it runs (`pomade-git --json`'s output) | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.json` |
 | Run history (one file per day, JSON Lines) | `<userData>/app-state/pomade-runner/history/YYYY-MM-DD.jsonl` |
 | Runs going (missed runs waiting for you, queued, running), each job's latest record, the last alive time, the looks the switch holds, the loop guard's firings and pauses | `<userData>/app-state/pomade-runner/runs.json` |
 | The switch's position | `<userData>/app-state/pomade-runner/switch.json` |
@@ -695,10 +733,16 @@ example. This is a product requirement, not polish.
 - **Settings**, through the broker: **`settings.get`** → `SettingsReport` (`isSettingsReport`);
   from Runner's own frames only **`settings.set`** `{ field, value }` → `SettingsWriteResult`;
   **`settings.changed`** tells Runner's frames to ask again.
-- **`jobs.forRepo`** through the broker: the jobs that target a repo. Params `RepoJobsParams`, result
-  `RepoJobsResult` with `RepoJob`s (id, name, operation, schedule in words, next run, last result,
-  and `route`, Runner's tab route that opens the job) — the contract is in `pomade-kit/protocol`.
-  Pomade's git repo row reads it (PLATFORM rule 7).
+- **`jobs.forRepo`** through the broker, to any caller — Pomade's Git panel asks as `pomade`
+  (PLATFORM rule 7): the jobs that target a repo (`repoJobs`, `src/scheduler/git-runs.ts`). The
+  contract is `pomade-kit/protocol`'s (`REPO_JOBS_METHOD`, `RepoJobsParams`, `RepoJobsResult`,
+  `RepoJob`). Params `{ repo: { name, path } }`; a job targets the repo when one of its `repos` is
+  the name, or the absolute path. The answer, by id: every valid, enabled git job that targets it,
+  with its operation, `schedule` — its trigger in words, as the Jobs view shows it ("daily at 13:00
+  and 20:00", "at Mac login") — `nextRun` (ISO 8601, or `null`), `lastResult` (the repo's own
+  result in the latest run when it has one, else the run's: a missed run is `skipped`, one stopped
+  by you `failed`; `at` its end) and `route` (`jobs/<encoded job id>`). Answered from the snapshot
+  in memory, in milliseconds.
 - **Events** on the platform bus: **`run.started`** when a run's session starts, **`run.finished`**
   when a run that started ends (a skipped run, or one that never started, publishes neither). Live
   only: published while the scheduler is connected to Pomade.
@@ -717,7 +761,7 @@ example. This is a product requirement, not polish.
 | Platform (`pomade:E-027`) | app hosting |
 | Platform (`pomade:E-028`) | always-on backend, commands, broker, launching Pomade |
 | Platform (`pomade:E-029`) | side panel and badge |
-| Platform (`pomade:E-030`) | projects, stable ids, repos, open file, folder picker |
+| Platform (`pomade:E-030`) | projects, stable ids, repos (`git.read`: the names git jobs take), open file, folder picker |
 | Platform (`pomade:E-031`) | events |
 | Platform (`pomade:E-032`) | notices and the closed-Pomade queue |
 | Platform (`pomade:E-033`) | Open session |

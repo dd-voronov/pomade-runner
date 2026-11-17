@@ -12,7 +12,7 @@ backlog `docs/BACKLOG.md`.
 | Part | What it is | Source |
 |---|---|---|
 | UI | the Runner side panel and the Runner tab inside Pomade | `src/ui/` |
-| Scheduler | the always-on background part: a login item that keeps running when Pomade quits. It runs the scheduled scripts — catching up what the Mac slept through as each job's missed-run policy says, a few low-priority runs at a time, held by the switch, stopped at their time limit — and the scripts on hooks and chains: once after each Mac login, and when another job is done or fails, restarting a service after it too; it pauses a job that fires in a runaway loop. It keeps their history and output, and posts the notices | `src/scheduler/` |
+| Scheduler | the always-on background part: a login item that keeps running when Pomade quits. It runs the scheduled scripts and git jobs — catching up what the Mac slept through as each job's missed-run policy says, a few low-priority runs at a time, held by the switch, stopped at their time limit — and those on hooks and chains: once after each Mac login, and when another job is done or fails, restarting a service after it too; it pauses a job that fires in a runaway loop. A git job runs Pomade's `pomade-git` and keeps its result per repo. It keeps their history and output, posts the notices, and tells Pomade's Git panel which jobs target a repo | `src/scheduler/` |
 | Keeper | holds every service's terminal session, so it outlives Pomade and the scheduler; Pomade's tabs attach to it. The scheduler starts and owns it, and supervises the services in it: starts them at login one by one, restarts a crashed one, gives up on a crash loop, leaves one you stopped stopped | `src/keeper/` |
 | `pomade-runner` | the command line, on `PATH` through Pomade's command folder: `check` job files and the settings, list `projects`, `list` the jobs, `run` one now, show its `history`, show the `runs` going, `pause` and `resume`, `resume-job` one the loop guard paused, `enable` or `disable` one, show `services` and `stop` or `restart` one, show `sessions` | `src/jobs/cli/` |
 | Skill `pomade-runner-jobs` | teaches agents to write job files | `app/skills/pomade-runner-jobs/` |
@@ -53,16 +53,19 @@ npm run gate       # lint, typecheck, unit tests, e2e
 | Unit | `npm run test:unit` | vitest: the logic, with every edge case |
 | E2E | `npm run test:e2e` | Playwright, on the built `dist/` |
 
-The e2e has ten parts: the UI in `pomade-kit`'s fake host · the scheduler and the command as
+The e2e has twelve parts: the UI in `pomade-kit`'s fake host · the scheduler and the command as
 processes · the keeper and its sessions as processes · service supervision as processes ·
 scheduled scripts as processes, on a set clock · missed runs and load as processes, on a set clock
 (sleep simulated by stopping the scheduler process while its clock runs on) · chains and login
-hooks as processes (a login simulated by starting the scheduler again) · Runner hosted by a real
-Pomade, attached tabs, notices and the badge included · a missed run that waits for you in a real
-Pomade · the install and uninstall scripts.
+hooks as processes (a login simulated by starting the scheduler again) · git jobs as processes,
+through the Pomade checkout's real `pomade-git` with Pomade closed, on throwaway repos (a bare
+remote and its clones, their own git configuration; an agent at work simulated by a program named
+`claude` running in the repo) · Runner hosted by a real Pomade, attached tabs, notices and the
+badge included · a missed run that waits for you in a real Pomade · git jobs in a real Pomade,
+the Git panel's Scheduled line included · the install and uninstall scripts.
 
-The last three need a Pomade checkout with its dependencies installed and `npm run build` done:
-`POMADE_REPO`, default `../Pomade`.
+The git jobs and the last four need a Pomade checkout with its dependencies installed and `npm run
+build` done: `POMADE_REPO`, default `../Pomade`.
 
 ```sh
 POMADE_REPO=/path/to/Pomade npm run gate
@@ -97,7 +100,7 @@ After it:
   the update ships one.
 - `pomade-runner --version` prints the version and whether the scheduler is running;
   `pomade-runner check` checks the job files and the settings; `pomade-runner list` prints every
-  job with its trigger, next run and last result; `pomade-runner run <job>` runs a script now (or
+  job with its trigger, next run and last result; `pomade-runner run <job>` runs a script or git job now (or
   starts a service), `pomade-runner history [job]` prints the latest runs, `pomade-runner runs`
   the runs going — queued ones with what they wait for — the switch and what needs you,
   `pomade-runner pause [low|all]` and `pomade-runner resume` set the switch, `pomade-runner
