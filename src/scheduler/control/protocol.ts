@@ -3,7 +3,10 @@
 // socket (`schedulerSocketPath`); a request names the protocol version it speaks, and every
 // response carries the scheduler's, so a command and a scheduler of different builds — an update
 // replaces the command at once and the running scheduler a moment later — tell each other apart
-// with a message instead of misreading each other.
+// with a message instead of misreading each other. A method added later is answered
+// `unknown-method` by an older scheduler.
+
+import { isRunnerSession, isSessionsReport, type RunnerSession, type SessionsReport } from "../../keeper/model";
 
 export const CONTROL_PROTOCOL = 1;
 
@@ -24,17 +27,32 @@ export interface SchedulerStatus {
 /** Every method, with the value it answers. */
 export interface ControlMethods {
   status: SchedulerStatus;
+  /** The keeper and its sessions. */
+  sessions: SessionsReport;
+  /** Start a service's session now. */
+  start: RunnerSession;
+}
+
+/** Every method's params. */
+export interface ControlParams {
+  status: null;
+  sessions: null;
+  /** `job`: a service job's id. */
+  start: { job: string };
 }
 
 export type ControlMethod = keyof ControlMethods;
 
-export type ControlErrorCode = "invalid-request" | "protocol-mismatch" | "unknown-method";
+/** `refused`: the method could not do what was asked (the message says why). */
+export type ControlErrorCode = "invalid-request" | "protocol-mismatch" | "unknown-method" | "invalid-params" | "refused";
 
 export interface ControlRequest {
   protocol: number;
   /** Chosen by the caller; the response repeats it. */
   id: string;
   method: string;
+  /** The method's params; `null` for a method that takes none. */
+  params: unknown;
 }
 
 export interface ControlError {
@@ -50,7 +68,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const ERROR_CODES: readonly string[] = ["invalid-request", "protocol-mismatch", "unknown-method"] satisfies ControlErrorCode[];
+const ERROR_CODES: readonly string[] = ["invalid-request", "protocol-mismatch", "unknown-method", "invalid-params", "refused"] satisfies ControlErrorCode[];
 const LINK_STATES: readonly string[] = ["connected", "disconnected", "rejected"] satisfies PomadeLinkState[];
 
 export function parseControlRequest(data: unknown): ControlRequest | null {
@@ -58,7 +76,7 @@ export function parseControlRequest(data: unknown): ControlRequest | null {
   const { protocol, id, method } = data;
   if (typeof protocol !== "number" || !Number.isInteger(protocol)) return null;
   if (typeof id !== "string" || typeof method !== "string") return null;
-  return { protocol, id, method };
+  return { protocol, id, method, params: data.params ?? null };
 }
 
 function parseControlError(data: unknown): ControlError | null {
@@ -94,6 +112,24 @@ export function isSchedulerStatus(value: unknown): value is SchedulerStatus {
 /** The check a caller runs on each method's answer before trusting its shape. */
 export const RESULT_GUARDS: { [M in ControlMethod]: (value: unknown) => value is ControlMethods[M] } = {
   status: isSchedulerStatus,
+  sessions: isSessionsReport,
+  start: isRunnerSession,
+};
+
+const noParams = (params: unknown): null | undefined => (params === null ? null : undefined);
+
+/** Each method's params check: the params, or `undefined` when they are not the method's. */
+export const PARAMS_PARSERS: { [M in ControlMethod]: (params: unknown) => ControlParams[M] | undefined } = {
+  status: noParams,
+  sessions: noParams,
+  start: (params) => (isRecord(params) && typeof params.job === "string" && params.job !== "" ? { job: params.job } : undefined),
+};
+
+/** What each method's params look like, for the error that refuses others. */
+export const PARAMS_SHAPES: { [M in ControlMethod]: string } = {
+  status: "none",
+  sessions: "none",
+  start: "{ job: <a service job's id> }",
 };
 
 export function isControlMethod(method: string): method is ControlMethod {

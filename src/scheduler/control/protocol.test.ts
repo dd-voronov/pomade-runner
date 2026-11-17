@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { isControlMethod, isSchedulerStatus, parseControlRequest, parseControlResponse } from "./protocol";
+import { isControlMethod, isSchedulerStatus, PARAMS_PARSERS, parseControlRequest, parseControlResponse, RESULT_GUARDS } from "./protocol";
 
 const status = { version: "0.1.0", pid: 7, startedAt: "2026-11-17T08:00:00.000Z", lastTickAt: null, pomade: "disconnected" };
 
 describe("control protocol", () => {
   it("reads a request, ignoring keys it does not know", () => {
-    expect(parseControlRequest({ protocol: 1, id: "a", method: "status", extra: true })).toEqual({ protocol: 1, id: "a", method: "status" });
+    expect(parseControlRequest({ protocol: 1, id: "a", method: "status", extra: true })).toEqual({ protocol: 1, id: "a", method: "status", params: null });
+    expect(parseControlRequest({ protocol: 1, id: "a", method: "start", params: { job: "web" } })).toEqual({ protocol: 1, id: "a", method: "start", params: { job: "web" } });
   });
 
   it("refuses what is not a request", () => {
@@ -35,8 +36,37 @@ describe("control protocol", () => {
     }
   });
 
+  it("checks each method's params", () => {
+    expect(PARAMS_PARSERS.status(null)).toBeNull();
+    expect(PARAMS_PARSERS.sessions({})).toBeUndefined();
+    expect(PARAMS_PARSERS.start({ job: "coda/web", extra: 1 })).toEqual({ job: "coda/web" });
+    for (const bad of [null, {}, { job: "" }, { job: 3 }, "web"]) expect(PARAMS_PARSERS.start(bad)).toBeUndefined();
+  });
+
+  it("checks a sessions answer's shape", () => {
+    const info = { id: "svc:web", title: "Web", command: "./w", cwd: "/ws", pid: 3, startedAt: 1, cols: 80, rows: 24, state: "running", exit: null, clients: 0, actions: [] };
+    const session = { id: "svc:web", job: "web", kind: "service", run: null, log: null, info };
+    const ended = { ...session, info: { ...info, pid: null, state: "exited", exit: { code: null, signal: "SIGHUP", reason: "lost-in-keeper-crash", at: 2 } } };
+    for (const keeper of [{ state: "connecting" }, { state: "connected", version: "v", pid: 1 }, { state: "unreachable", reason: "r" }, { state: "rejected", reason: "r" }]) {
+      expect(RESULT_GUARDS.sessions({ keeper, sessions: [session, ended] })).toBe(true);
+    }
+    expect(RESULT_GUARDS.start(session)).toBe(true);
+    for (const bad of [
+      { keeper: { state: "up" }, sessions: [] },
+      { keeper: { state: "connected", version: "v" }, sessions: [] },
+      { keeper: { state: "connecting" }, sessions: [{ ...session, kind: "job" }] },
+      { keeper: { state: "connecting" }, sessions: [{ ...session, info: { ...info, state: "gone" } }] },
+      { keeper: { state: "connecting" }, sessions: [{ ...ended, info: { ...ended.info, exit: { ...ended.info.exit, reason: "boom" } } }] },
+      { keeper: { state: "connecting" } },
+    ]) {
+      expect(RESULT_GUARDS.sessions(bad)).toBe(false);
+    }
+  });
+
   it("knows its methods", () => {
     expect(isControlMethod("status")).toBe(true);
+    expect(isControlMethod("sessions")).toBe(true);
+    expect(isControlMethod("start")).toBe(true);
     expect(isControlMethod("toString")).toBe(false);
   });
 });

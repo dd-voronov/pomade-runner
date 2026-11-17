@@ -12,6 +12,7 @@ import {
   type ControlErrorCode,
   type ControlMethod,
   type ControlMethods,
+  type ControlParams,
   type ControlRequest,
 } from "./protocol";
 
@@ -34,14 +35,16 @@ export interface ControlCallOptions {
   timeoutMs?: number;
 }
 
+/** Call `method` with its params — `null` for a method that takes none. */
 export function callScheduler<M extends ControlMethod>(
   socketPath: string,
   method: M,
+  params: ControlParams[M],
   options: ControlCallOptions = {},
 ): Promise<ControlCallResult<ControlMethods[M]>> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return new Promise((resolve) => {
-    const request: ControlRequest = { protocol: CONTROL_PROTOCOL, id: randomUUID(), method };
+    const request: ControlRequest = { protocol: CONTROL_PROTOCOL, id: randomUUID(), method, params };
     const socket = createConnection(socketPath);
     const decoder = createLineDecoder();
     let settled = false;

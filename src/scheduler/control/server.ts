@@ -9,9 +9,38 @@ import { dirname } from "node:path";
 import { createLineDecoder, encodeLine, socketPathProblem } from "pomade-kit/protocol";
 
 import { callScheduler } from "./client";
-import { CONTROL_PROTOCOL, isControlMethod, parseControlRequest, type ControlMethods, type ControlResponse } from "./protocol";
+import {
+  CONTROL_PROTOCOL,
+  PARAMS_PARSERS,
+  PARAMS_SHAPES,
+  isControlMethod,
+  parseControlRequest,
+  type ControlMethod,
+  type ControlMethods,
+  type ControlParams,
+  type ControlResponse,
+} from "./protocol";
 
-export type ControlHandlers = { [M in keyof ControlMethods]: () => ControlMethods[M] };
+export type ControlHandlers = { [M in ControlMethod]: (params: ControlParams[M]) => ControlMethods[M] | Promise<ControlMethods[M]> };
+
+/** Thrown by a handler that cannot do what was asked: answered as `refused` with its message. */
+export class ControlRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ControlRefused";
+  }
+}
+
+async function call<M extends ControlMethod>(handlers: ControlHandlers, method: M, params: unknown): Promise<{ ok: true; value: unknown } | { ok: false; code: "invalid-params" | "refused"; message: string }> {
+  const parsed = PARAMS_PARSERS[method](params);
+  if (parsed === undefined) return { ok: false, code: "invalid-params", message: `"${method}" takes params: ${PARAMS_SHAPES[method]}` };
+  try {
+    return { ok: true, value: await handlers[method](parsed) };
+  } catch (err) {
+    if (err instanceof ControlRefused) return { ok: false, code: "refused", message: err.message };
+    throw err;
+  }
+}
 
 export type ServeResult =
   | { status: "listening"; close(): Promise<void> }
@@ -20,7 +49,7 @@ export type ServeResult =
   | { status: "failed"; reason: string };
 
 /** The response to one received message. */
-export function answerControl(data: unknown, handlers: ControlHandlers): ControlResponse {
+export async function answerControl(data: unknown, handlers: ControlHandlers): Promise<ControlResponse> {
   const request = parseControlRequest(data);
   if (request === null) {
     return {
@@ -45,7 +74,10 @@ export function answerControl(data: unknown, handlers: ControlHandlers): Control
   if (!isControlMethod(method)) {
     return { protocol: CONTROL_PROTOCOL, id, ok: false, error: { code: "unknown-method", message: `no method "${method}"` } };
   }
-  return { protocol: CONTROL_PROTOCOL, id, ok: true, value: handlers[method]() };
+  const result = await call(handlers, method, request.params);
+  return result.ok
+    ? { protocol: CONTROL_PROTOCOL, id, ok: true, value: result.value }
+    : { protocol: CONTROL_PROTOCOL, id, ok: false, error: { code: result.code, message: result.message } };
 }
 
 function listen(server: Server, socketPath: string): Promise<"listening" | "in-use"> {
@@ -79,7 +111,14 @@ export async function serveControl(socketPath: string, handlers: ControlHandlers
         socket.destroy();
         return;
       }
-      for (const message of messages) socket.write(encodeLine(answerControl(message, handlers)));
+      for (const message of messages) {
+        answerControl(message, handlers).then(
+          (response) => {
+            if (!socket.destroyed) socket.write(encodeLine(response));
+          },
+          () => socket.destroy(),
+        );
+      }
     });
     socket.on("error", () => socket.destroy());
     socket.on("close", () => open.delete(socket));
@@ -88,7 +127,7 @@ export async function serveControl(socketPath: string, handlers: ControlHandlers
   try {
     await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
     if ((await listen(server, socketPath)) === "in-use") {
-      const probe = await callScheduler(socketPath, "status");
+      const probe = await callScheduler(socketPath, "status", null);
       if (probe.status !== "not-running") return { status: "already-running" };
       // The file is what a scheduler that was killed left behind.
       await rm(socketPath, { force: true });

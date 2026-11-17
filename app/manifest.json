@@ -27,7 +27,8 @@
     "subscribe": [
       "pomade-runner:jobs.changed",
       "project.created",
-      "project.renamed"
+      "project.renamed",
+      "attachedTab.action"
     ]
   },
   "backend": {
