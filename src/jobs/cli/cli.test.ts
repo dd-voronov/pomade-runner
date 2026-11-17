@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { APP_VERSION } from "../../app";
+import type { RunnerSession, SessionsReport } from "../../keeper/model";
 import type { ControlCallResult } from "../../scheduler/control/client";
 import type { SchedulerStatus } from "../../scheduler/control/protocol";
 import type { ProjectRecord } from "../model";
@@ -15,6 +16,7 @@ interface World {
   /** Job files by path inside the jobs folder; `null` = no jobs folder. */
   files?: Record<string, string> | null;
   projects?: ProjectRecord[] | null;
+  sessions?: ControlCallResult<SessionsReport> | null;
 }
 
 const WS = "/ws";
@@ -41,6 +43,7 @@ async function run(args: string[], status: StatusResult = { status: "not-running
       return Promise.resolve(files === null ? null : Object.entries(files).map(([path, text]) => ({ path, text })));
     },
     projects: () => Promise.resolve(world.projects === undefined ? null : world.projects),
+    sessions: () => Promise.resolve(world.sessions === undefined ? { status: "not-running" } : world.sessions),
   });
   return { code, out, err, asked };
 }
@@ -157,5 +160,44 @@ describe("pomade-runner", () => {
     expect(await run(["projects"], undefined, { projects: [] })).toMatchObject({ code: 0, out: "Pomade has no projects.\n" });
     expect(await run(["projects"])).toMatchObject({ code: 1, err: expect.stringContaining("Pomade is not running") as string });
     expect(await run(["projects", "x"])).toMatchObject({ code: 2 });
+  });
+
+  it("sessions lists the keeper and each session with its job, state and output log", async () => {
+    const info = { title: "Coda web", command: "./start.sh", cwd: "/ws/Projects/coda", pid: 501, startedAt: Date.parse("2026-11-17T08:00:00.000Z"), cols: 80, rows: 24, state: "running" as const, exit: null, clients: 1, actions: [] };
+    const web: RunnerSession = { id: "svc:coda.web", job: "coda/web", kind: "service", run: "20261117-080000-abcdef", log: "/ud/output/coda.web/20261117-080000-abcdef.log", info: { ...info, id: "svc:coda.web" } };
+    const ended: RunnerSession = {
+      id: "svc:api",
+      job: "api",
+      kind: "service",
+      run: null,
+      log: null,
+      info: { ...info, id: "svc:api", pid: null, state: "exited", exit: { code: 137, signal: "SIGKILL", reason: "crashed", at: Date.parse("2026-11-17T08:01:00.000Z") } },
+    };
+    const r = await run(["sessions"], undefined, { sessions: { status: "ok", value: { keeper: { state: "connected", version: "3ec9b16fc34c", pid: 77 }, sessions: [web, ended] } } });
+    expect(r).toEqual({
+      code: 0,
+      out:
+        "keeper: running — version 3ec9b16fc34c, pid 77\n" +
+        "svc:api  job api  ended: crashed — code 137, SIGKILL, at 2026-11-17T08:01:00.000Z\n" +
+        "svc:coda.web  job coda/web  running, pid 501, since 2026-11-17T08:00:00.000Z  output /ud/output/coda.web/20261117-080000-abcdef.log\n",
+      err: "",
+      asked: 0,
+    });
+    const empty = await run(["sessions"], undefined, { sessions: { status: "ok", value: { keeper: { state: "unreachable", reason: "ENOENT" }, sessions: [] } } });
+    expect(empty.out).toBe("keeper: not reachable — ENOENT\nNo sessions.\n");
+    const refused = await run(["sessions"], undefined, { sessions: { status: "ok", value: { keeper: { state: "rejected", reason: "not the owner" }, sessions: [] } } });
+    expect(refused.out).toContain("keeper: refused the scheduler — not the owner\n");
+    const connecting = await run(["sessions"], undefined, { sessions: { status: "ok", value: { keeper: { state: "connecting" }, sessions: [] } } });
+    expect(connecting.out).toContain("keeper: connecting\n");
+  });
+
+  it("sessions needs the scheduler: exit 1 when it is not running or does not answer; exit 2 on an argument", async () => {
+    expect(await run(["sessions"])).toMatchObject({ code: 1, out: "", err: "pomade-runner sessions: the scheduler is not running — it holds the sessions; Pomade runs it as Runner's background part.\n" });
+    expect(await run(["sessions"], undefined, { sessions: { status: "failed", code: "unknown-method", message: 'no method "sessions"' } })).toMatchObject({
+      code: 1,
+      err: 'pomade-runner sessions: the scheduler did not answer — no method "sessions".\n',
+    });
+    expect(await run(["sessions"], undefined, { sessions: null })).toMatchObject({ code: 1, err: expect.stringContaining("not started through Pomade's command folder") as string });
+    expect(await run(["sessions", "x"])).toMatchObject({ code: 2 });
   });
 });

@@ -3,6 +3,7 @@
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { APP_VERSION } from "../../app";
+import { exitWords, type KeeperLink, type RunnerSession, type SessionsReport } from "../../keeper/model";
 import type { ControlCallResult } from "../../scheduler/control/client";
 import type { SchedulerStatus } from "../../scheduler/control/protocol";
 import { checkJobs, projectJobsFolder } from "../check";
@@ -25,6 +26,8 @@ export interface CliDeps {
   /** Asks the scheduler for its status; `null` when the command does not run under Pomade's shim,
    *  so there is no scheduler to find. */
   schedulerStatus(): Promise<ControlCallResult<SchedulerStatus> | null>;
+  /** Asks the scheduler for the keeper's sessions; `null` as for `schedulerStatus`. */
+  sessions(): Promise<ControlCallResult<SessionsReport> | null>;
   /** The workspace root (absolute, by its real path), with Pomade open or closed; `null` when none is recorded. */
   workspace(): string | null;
   /** An absolute path by its real path (symlinks resolved), as far as it exists. */
@@ -42,6 +45,8 @@ Usage:
                             prints path:line: field — problem. Fix: … per problem; exit 1 on any
   ${COMMAND} projects        Pomade's projects: the id a project job's project: takes and the
                             sub-folder of ${JOBS_FOLDER}/ its jobs sit in (needs Pomade running)
+  ${COMMAND} sessions        the keeper and its sessions: each one's job, state and output log
+                            (needs the scheduler running)
   ${COMMAND} --version       print the version and whether the scheduler is running
   ${COMMAND} --help          print this help
 `;
@@ -120,6 +125,46 @@ async function projects(deps: CliDeps): Promise<number> {
   return EXIT_OK;
 }
 
+function keeperLine(keeper: KeeperLink): string {
+  switch (keeper.state) {
+    case "connected":
+      return `keeper: running — version ${keeper.version}, pid ${keeper.pid}`;
+    case "connecting":
+      return "keeper: connecting";
+    case "unreachable":
+      return `keeper: not reachable — ${keeper.reason}`;
+    case "rejected":
+      return `keeper: refused the scheduler — ${keeper.reason}`;
+  }
+}
+
+function sessionLine({ id, job, log, info }: RunnerSession): string {
+  const state =
+    info.exit === null
+      ? `running, pid ${info.pid ?? "?"}, since ${new Date(info.startedAt).toISOString()}`
+      : `ended: ${exitWords(info.exit)}, at ${new Date(info.exit.at).toISOString()}`;
+  return `${id}  job ${job}  ${state}${log === null ? "" : `  output ${log}`}`;
+}
+
+async function sessions(deps: CliDeps): Promise<number> {
+  const result = await deps.sessions();
+  if (result === null || result.status !== "ok") {
+    const why =
+      result === null
+        ? `there is no scheduler to ask — ${COMMAND} was not started through Pomade's command folder`
+        : result.status === "not-running"
+          ? "the scheduler is not running — it holds the sessions; Pomade runs it as Runner's background part"
+          : `the scheduler did not answer — ${result.message}`;
+    deps.err(`${COMMAND} sessions: ${why}.\n`);
+    return EXIT_PROBLEMS;
+  }
+  const { keeper, sessions: list } = result.value;
+  deps.out(`${keeperLine(keeper)}\n`);
+  if (list.length === 0) deps.out("No sessions.\n");
+  for (const session of [...list].sort((a, b) => a.id.localeCompare(b.id))) deps.out(`${sessionLine(session)}\n`);
+  return EXIT_OK;
+}
+
 export async function runCli(args: readonly string[], deps: CliDeps): Promise<number> {
   const [first, ...rest] = args;
   if (first === undefined || first === "--help" || first === "-h") {
@@ -130,13 +175,14 @@ export async function runCli(args: readonly string[], deps: CliDeps): Promise<nu
     deps.out(`${COMMAND} ${APP_VERSION}\n${schedulerLine(await deps.schedulerStatus())}\n`);
     return EXIT_OK;
   }
-  if (first === "check" || first === "projects") {
+  if (first === "check" || first === "projects" || first === "sessions") {
     const option = rest.find((arg) => arg.startsWith("-"));
-    if (option !== undefined || (first === "projects" && rest.length > 0)) {
+    if (option !== undefined || (first !== "check" && rest.length > 0)) {
       deps.err(`${COMMAND} ${first}: unexpected "${option ?? rest[0] ?? ""}". Run \`${COMMAND} --help\` for what it takes.\n`);
       return EXIT_USAGE;
     }
-    return first === "check" ? check(rest, deps) : projects(deps);
+    if (first === "check") return check(rest, deps);
+    return first === "projects" ? projects(deps) : sessions(deps);
   }
   const what = first.startsWith("-") ? "option" : "command";
   deps.err(`${COMMAND}: unknown ${what} "${first}". Run \`${COMMAND} --help\` for what it takes.\n`);
