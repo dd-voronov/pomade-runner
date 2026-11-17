@@ -1,16 +1,18 @@
 import { useState } from "react";
 import type { HostClient } from "pomade-kit/sdk";
 
+import { ActiveRunsList } from "./ActiveRunsList";
 import { EmptyState } from "./EmptyState";
 import { JobsList } from "./JobsList";
 import { NeedsYouList } from "./NeedsYouList";
 import { NextUpList } from "./NextUpList";
 import styles from "./Panel.module.css";
 import { JobsProblem } from "./JobsProblem";
+import { SwitchControl } from "./SwitchControl";
 import { useJobs, useRuns, useServices } from "./useRunnerApi";
 
-/** The side panel: what needs the user, what runs next and every job, with the way into the Runner
- *  tab. */
+/** The side panel: the switch, what needs the user, what runs now and next and every job, with the
+ *  way into the Runner tab. */
 export function Panel({ host }: { host: HostClient }): React.JSX.Element {
   const jobs = useJobs(host);
   const services = useServices(host);
@@ -48,7 +50,9 @@ export function Panel({ host }: { host: HostClient }): React.JSX.Element {
     <main className={styles.root} data-testid="panel-jobs">
       {report !== null && (
         <>
+          <SwitchControl host={host} state={report.switch} />
           <NeedsYouList host={host} items={report.needsYou} />
+          <ActiveRunsList host={host} runs={report.active} />
           <NextUpList next={report.nextUp} now={Date.now()} />
         </>
       )}

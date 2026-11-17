@@ -2,15 +2,16 @@ import { useEffect } from "react";
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
-import { DISMISS_METHOD, outputRoute, RUN_NOW_METHOD, runRoute } from "../integrations/runner-api";
-import { durationWords, plainLines, runWords, type NeedsYouItem } from "../scheduler/model";
+import { DISMISS_METHOD, outputRoute, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute } from "../integrations/runner-api";
+import { dayTime, durationWords, plainLines, runWords, type NeedsYouItem } from "../scheduler/model";
+import { MissedActions } from "./MissedActions";
 import styles from "./Runs.module.css";
-import { dayTime } from "./runWords";
 import { useAction } from "./useAction";
 import { useOutput, useRun } from "./useRunnerApi";
 
 /** A run's result: its state, exit code, when and how long, the last lines; View output. Opening a
- *  failed run that is a Needs-you item resolves the item. A stand-in until the real result card. */
+ *  failed run that is a Needs-you item resolves the item. A missed run that waits for the person
+ *  offers Run now · Run at… · Skip; a running one, Stop. A stand-in until the real result card. */
 export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; job: string; run: string; needsYou: readonly NeedsYouItem[]; open: (route: string) => void }): React.JSX.Element {
   const view = useRun(host, job, run);
   const action = useAction();
@@ -52,6 +53,7 @@ export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; 
           {value.lastLines.join("\n")}
         </pre>
       )}
+      {value.state === "missed-waiting" && <MissedActions host={host} job={job} />}
       <span className={styles.actions}>
         {value.log !== null && (
           <button type="button" className={styles.button} onClick={() => open(outputRoute(job, run))}>
@@ -63,7 +65,12 @@ export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; 
             Open session
           </button>
         )}
-        {value.kind === "script" && (
+        {session !== null && (
+          <button type="button" className={styles.button} onClick={() => action.run(() => host.apps.call(APP_ID, RUN_STOP_METHOD, { job, run }))}>
+            Stop
+          </button>
+        )}
+        {value.kind === "script" && value.state !== "missed-waiting" && (
           <button type="button" className={styles.button} onClick={() => action.run(() => host.apps.call(APP_ID, RUN_NOW_METHOD, { job }))}>
             Run now
           </button>

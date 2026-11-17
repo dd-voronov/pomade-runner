@@ -14,6 +14,8 @@ declare global {
     setServiceStatus(job: string, status: Partial<ServiceStatus>): void;
     /** Set what the stand-in scheduler says of the runs: the report, the history, any run's output. */
     setRuns(runs: Partial<{ report: RunsReport; history: RunRecord[]; output: string }>): void;
+    /** Set what the stand-in scheduler says of the settings: the settings file's text, `null` for none. */
+    setSettings(text: string | null): void;
     /** The actions the UI asked of the stand-in scheduler, in order. */
     runnerCalls: { method: string; params: JsonValue }[];
   }

@@ -1,18 +1,86 @@
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
-import { DISMISS_METHOD, RUN_NOW_METHOD, runRoute, SERVICE_ACTION_TIMEOUT_MS, SERVICE_METHODS } from "../integrations/runner-api";
-import type { NeedsYouItem } from "../scheduler/model";
+import { DISMISS_METHOD, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute, SERVICE_ACTION_TIMEOUT_MS, SERVICE_METHODS } from "../integrations/runner-api";
+import { sessionIdOf } from "../keeper/ids";
+import { dayTime, type NeedsYouItem } from "../scheduler/model";
+import { MissedActions } from "./MissedActions";
 import styles from "./Runs.module.css";
-import { dayTime } from "./runWords";
 import { useAction } from "./useAction";
 
-/** Needs you: each item with its actions inline. A stand-in until the panel's real design. */
-export function NeedsYouList({ host, items }: { host: HostClient; items: readonly NeedsYouItem[] }): React.JSX.Element {
+/** An item's line under its name. */
+function itemWords(item: NeedsYouItem): string {
+  switch (item.kind) {
+    case "run-failed":
+      return `Failed: ${item.detail}${item.count > 1 ? ` · ${item.count}×` : ""}`;
+    case "service-failed":
+      return `Gave up: ${item.detail}`;
+    case "missed":
+      return `Missed ${dayTime(item.at)} — it waits for you to pick a time.`;
+    case "long-run":
+      return `Has been ${item.detail}`;
+  }
+}
+
+function Item({ host, item }: { host: HostClient; item: NeedsYouItem }): React.JSX.Element {
   const action = useAction();
   const call = (method: string, params: Record<string, string>, timeoutMs?: number) => () =>
     action.run(() => host.apps.call(APP_ID, method, params, timeoutMs === undefined ? {} : { timeoutMs }));
+  const button = (label: string, onClick: () => void): React.JSX.Element => (
+    <button type="button" className={styles.button} onClick={onClick}>
+      {label}
+    </button>
+  );
+  let actions: React.JSX.Element;
+  switch (item.kind) {
+    case "run-failed":
+      actions = (
+        <span className={styles.actions}>
+          {button("Open", () => action.run(() => host.tabs.openApp({ route: runRoute(item.job, item.run) })))}
+          {button("Run now", call(RUN_NOW_METHOD, { job: item.job }))}
+          {button("Dismiss", call(DISMISS_METHOD, { id: item.id }))}
+        </span>
+      );
+      break;
+    case "service-failed":
+      actions = <span className={styles.actions}>{button("Start", call(SERVICE_METHODS.start, { job: item.job }, SERVICE_ACTION_TIMEOUT_MS))}</span>;
+      break;
+    case "missed":
+      actions = <MissedActions host={host} job={item.job} />;
+      break;
+    case "long-run": {
+      const session = sessionIdOf({ kind: "run", job: item.job, run: item.run }) ?? "";
+      actions = (
+        <span className={styles.actions}>
+          {button("Open", () => action.run(() => host.tabs.openAttached({ session: { app: APP_ID, session }, title: item.name })))}
+          {button("Stop", call(RUN_STOP_METHOD, { job: item.job, run: item.run }))}
+          {button("Dismiss", call(DISMISS_METHOD, { id: item.id }))}
+        </span>
+      );
+      break;
+    }
+  }
+  return (
+    <li className={styles.row} data-testid="needs-you-item" data-kind={item.kind}>
+      <span className={styles.line}>
+        <span className={styles.name}>{item.name}</span>
+        <span className={styles.meta}>{dayTime(item.at)}</span>
+      </span>
+      <span className={`${styles.meta} ${item.kind === "run-failed" || item.kind === "service-failed" ? styles.failed : ""}`} data-testid="needs-you-words">
+        {itemWords(item)}
+      </span>
+      {actions}
+      {action.error !== null && (
+        <p className={styles.error} role="alert">
+          {action.error}
+        </p>
+      )}
+    </li>
+  );
+}
 
+/** Needs you: each item with its actions inline. A stand-in until the panel's real design. */
+export function NeedsYouList({ host, items }: { host: HostClient; items: readonly NeedsYouItem[] }): React.JSX.Element {
   return (
     <section className={styles.section} data-testid="needs-you">
       <h2 className={styles.heading}>Needs you</h2>
@@ -21,41 +89,9 @@ export function NeedsYouList({ host, items }: { host: HostClient; items: readonl
       ) : (
         <ul className={styles.list}>
           {items.map((item) => (
-            <li key={item.id} className={styles.row} data-testid="needs-you-item" data-kind={item.kind}>
-              <span className={styles.line}>
-                <span className={styles.name}>{item.name}</span>
-                <span className={styles.meta}>{dayTime(item.at)}</span>
-              </span>
-              <span className={`${styles.meta} ${styles.failed}`}>
-                {item.kind === "run-failed" ? `Failed: ${item.detail}${item.count > 1 ? ` · ${item.count}×` : ""}` : `Gave up: ${item.detail}`}
-              </span>
-              <span className={styles.actions}>
-                {item.kind === "run-failed" ? (
-                  <>
-                    <button type="button" className={styles.button} onClick={() => action.run(() => host.tabs.openApp({ route: runRoute(item.job, item.run) }))}>
-                      Open
-                    </button>
-                    <button type="button" className={styles.button} onClick={call(RUN_NOW_METHOD, { job: item.job })}>
-                      Run now
-                    </button>
-                    <button type="button" className={styles.button} onClick={call(DISMISS_METHOD, { id: item.id })}>
-                      Dismiss
-                    </button>
-                  </>
-                ) : (
-                  <button type="button" className={styles.button} onClick={call(SERVICE_METHODS.start, { job: item.job }, SERVICE_ACTION_TIMEOUT_MS)}>
-                    Start
-                  </button>
-                )}
-              </span>
-            </li>
+            <Item key={item.id} host={host} item={item} />
           ))}
         </ul>
-      )}
-      {action.error !== null && (
-        <p className={styles.error} role="alert">
-          {action.error}
-        </p>
       )}
     </section>
   );

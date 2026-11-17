@@ -1,11 +1,12 @@
 // A stand-in for Runner's scheduler in the fake host: another client of the app that serves
 // Runner's API — the jobs, the services, the runs, the history, one run and its output, Run now,
-// Enable / Disable, Needs you — and announces `jobs.changed`, `services.changed` and
-// `runs.changed`, as the real scheduler does through Pomade. It reads the fake workspace's jobs
-// folder through the Host API and checks it with the real validator, so the UI specs drive it by
-// writing files (`fakeHost.writeFile`). Every valid service runs; a spec sets another state with
-// `window.setServiceStatus`, the runs with `window.setRuns`, and reads the actions the UI asked
-// for in `window.runnerCalls`.
+// Enable / Disable, Needs you, a missed run's choice, Stop, the switch, the settings — and
+// announces `jobs.changed`, `services.changed`, `runs.changed` and `settings.changed`, as the real
+// scheduler does through Pomade. It reads the fake workspace's jobs folder through the Host API and
+// checks it with the real validator, so the UI specs drive it by writing files
+// (`fakeHost.writeFile`). Every valid service runs; a spec sets another state with
+// `window.setServiceStatus`, the runs with `window.setRuns`, the settings with
+// `window.setSettings`, and reads the actions the UI asked for in `window.runnerCalls`.
 
 import type { FakeHost } from "pomade-kit/fake-host";
 import type { JsonValue } from "pomade-kit/protocol";
@@ -16,20 +17,27 @@ import {
   HISTORY_LIST_METHOD,
   JOBS_CHANGED_EVENT,
   JOBS_LIST_METHOD,
+  MISSED_METHOD,
   RUN_GET_METHOD,
   RUN_NOW_METHOD,
   RUN_OUTPUT_METHOD,
+  RUN_STOP_METHOD,
   RUNS_CHANGED_EVENT,
   RUNS_LIST_METHOD,
   SERVICE_METHODS,
   SERVICES_CHANGED_EVENT,
   SERVICES_LIST_METHOD,
   SET_ENABLED_METHOD,
+  SETTINGS_CHANGED_EVENT,
+  SETTINGS_GET_METHOD,
+  SETTINGS_SET_METHOD,
+  SWITCH_METHOD,
 } from "../../src/integrations/runner-api";
 import { checkJobs } from "../../src/jobs/check";
 import { JOBS_FOLDER, type JobsSnapshot } from "../../src/jobs/model";
 import type { ServicesReport, ServiceStatus } from "../../src/keeper/model";
-import type { RunRecord, RunsReport } from "../../src/scheduler/model";
+import type { RunRecord, RunsReport, RunView, SwitchPosition } from "../../src/scheduler/model";
+import { checkSettings, type SettingsReport } from "../../src/scheduler/settings";
 
 export async function startFakeScheduler(fake: FakeHost): Promise<void> {
   const result = await connect({ transport: fake.createTransport({ surface: "backend" }), keySource: null });
@@ -56,7 +64,12 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
   });
 
   let snapshot = await read();
-  let runs: { report: RunsReport; history: RunRecord[]; output: string } = { report: { active: [], nextUp: [], jobs: [], needsYou: [] }, history: [], output: "" };
+  let runs: { report: RunsReport; history: RunRecord[]; output: string } = {
+    report: { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } },
+    history: [],
+    output: "",
+  };
+  let settings: SettingsReport = checkSettings(null);
   const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
   /** An action the UI asked for: recorded, answered `answer`. */
   const action =
@@ -65,9 +78,9 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
       window.runnerCalls.push({ method, params });
       return json(answer(params));
     };
-  const find = (params: JsonValue): RunRecord | undefined => {
+  const find = (params: JsonValue): RunView | undefined => {
     const { job, run } = params as { job: string; run: string };
-    return runs.history.find((record) => record.job === job && record.run === run);
+    return [...runs.report.active, ...runs.history].find((view) => view.job === job && view.run === run);
   };
   window.runnerCalls = [];
   await host.api.serve({
@@ -80,6 +93,16 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     [RUN_NOW_METHOD]: action(RUN_NOW_METHOD),
     [SET_ENABLED_METHOD]: action(SET_ENABLED_METHOD),
     [SERVICE_METHODS.start]: action(SERVICE_METHODS.start),
+    [MISSED_METHOD]: action(MISSED_METHOD, () => ({ ok: true, at: null })),
+    [RUN_STOP_METHOD]: action(RUN_STOP_METHOD),
+    [SWITCH_METHOD]: action(SWITCH_METHOD, (params) => {
+      const position = (params as { position: SwitchPosition }).position;
+      runs = { ...runs, report: { ...runs.report, switch: { position, since: 1 } } };
+      void host.events.publish(RUNS_CHANGED_EVENT);
+      return runs.report.switch;
+    }),
+    [SETTINGS_GET_METHOD]: () => json(settings),
+    [SETTINGS_SET_METHOD]: action(SETTINGS_SET_METHOD, () => ({ ok: true, settings })),
     [DISMISS_METHOD]: action(DISMISS_METHOD, (params) => {
       const { id } = params as { id: string };
       runs = { ...runs, report: { ...runs.report, needsYou: runs.report.needsYou.filter((item) => item.id !== id) } };
@@ -90,6 +113,10 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
   window.setRuns = (next) => {
     runs = { ...runs, ...next };
     void host.events.publish(RUNS_CHANGED_EVENT);
+  };
+  window.setSettings = (text) => {
+    settings = checkSettings(text);
+    void host.events.publish(SETTINGS_CHANGED_EVENT);
   };
   await host.files.watch({ path: "", recursive: true }, () => {
     void read().then(async (next) => {
@@ -105,4 +132,5 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
   await host.events.publish(JOBS_CHANGED_EVENT);
   await host.events.publish(SERVICES_CHANGED_EVENT);
   await host.events.publish(RUNS_CHANGED_EVENT);
+  await host.events.publish(SETTINGS_CHANGED_EVENT);
 }

@@ -1,9 +1,10 @@
 // Runner's own API, live: the checked jobs (`jobs.list`), the services (`services.list`), the runs
 // (`runs.list`), the history (`history.list`), one run (`runs.get`) and its output (`runs.output`),
-// asked of Runner's scheduler through Pomade's broker and asked again whenever the scheduler
-// announces a change (`jobs.changed`, `services.changed`, `runs.changed`) — on every change, and
-// when it connects to Pomade, so a frame that found no scheduler catches up. And Runner's own tab
-// route, which Pomade sets when it opens or navigates the tab.
+// the settings (`settings.get`), asked of Runner's scheduler through Pomade's broker and asked again
+// whenever the scheduler announces a change (`jobs.changed`, `services.changed`, `runs.changed`,
+// `settings.changed`) — on every change, and when it connects to Pomade, so a frame that found no
+// scheduler catches up. And Runner's own tab route, which Pomade sets when it opens or navigates
+// the tab.
 
 import { useEffect, useState } from "react";
 import type { JsonValue } from "pomade-kit/protocol";
@@ -21,10 +22,13 @@ import {
   RUNS_LIST_METHOD,
   SERVICES_CHANGED_EVENT,
   SERVICES_LIST_METHOD,
+  SETTINGS_CHANGED_EVENT,
+  SETTINGS_GET_METHOD,
 } from "../integrations/runner-api";
 import type { JobsSnapshot } from "../jobs/model";
 import { isServicesReport, type ServicesReport } from "../keeper/model";
 import { isHistoryPage, isRunOutput, isRunsReport, isRunView, type HistoryPage, type RunOutput, type RunsReport, type RunView } from "../scheduler/model";
+import { isSettingsReport, type SettingsReport } from "../scheduler/settings";
 
 export type LiveState<T> =
   | { status: "loading" }
@@ -95,6 +99,11 @@ export function useRun(host: HostClient, job: string, run: string): LiveState<Ru
 /** The end of a run's output, asked again as runs change. */
 export function useOutput(host: HostClient, job: string, run: string): LiveState<RunOutput> {
   return useLive(host, RUN_OUTPUT_METHOD, RUNS_CHANGED_EVENT, isRunOutput, "a run's output", { job, run });
+}
+
+/** The workspace settings that apply, and the settings file's problems. */
+export function useSettings(host: HostClient): LiveState<SettingsReport> {
+  return useLive(host, SETTINGS_GET_METHOD, SETTINGS_CHANGED_EVENT, isSettingsReport, "the settings");
 }
 
 /** The tab's route: the one it opened with, then each one Pomade navigates it to. */

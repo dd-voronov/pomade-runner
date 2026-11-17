@@ -7,8 +7,8 @@ import { join } from "node:path";
 import { expect, test, type FrameLocator, type Page } from "@playwright/test";
 
 import manifest from "../app/manifest.json" with { type: "json" };
-import type { NeedsYouItem, RunRecord, RunsReport } from "../src/scheduler/model";
-import { clockTime } from "../src/ui/serviceWords";
+import type { ActiveRun, NeedsYouItem, RunRecord, RunsReport } from "../src/scheduler/model";
+import { clockTime } from "../src/scheduler/model";
 import { APP_PORT, HARNESS_PORT } from "./support/ports";
 
 const APP = `http://localhost:${APP_PORT}/`;
@@ -193,6 +193,7 @@ test.describe("runs", () => {
     nextUp: [{ job: "backup", name: "Backup", project: null, at: now + 40 * 60_000 + 30_000 }],
     jobs: [{ job: "backup", next: now + 40 * 60_000, finished: false, last: failed }],
     needsYou: [item, { id: "service-failed:web", kind: "service-failed", job: "web", name: "Web", project: null, at: at(12, 0), detail: "crashed 5 times within a minute" }],
+    switch: { position: "running", since: null },
   });
 
   async function setRuns(page: Page, history: RunRecord[]): Promise<void> {
@@ -288,5 +289,179 @@ test.describe("runs", () => {
     await expect(app(page).getByTestId("history-row")).toHaveCount(1);
     await page.evaluate((route) => window.mounted.navigate(route), "run/backup/20000101-000000-000000");
     await expect(app(page).getByTestId("run-missing")).toHaveText("This run is not in the history any more.");
+  });
+});
+
+test.describe("missed runs and load", () => {
+  const SCRIPT = "---\nkind: script\nname: Summary\nfolder: .\ncommand: ./summary.sh\nschedule:\n  daily: { at: 7:00 }\n---\n";
+  const at = (hours: number, minutes: number): number => new Date(2026, 10, 18, hours, minutes).getTime();
+  const base: ActiveRun = {
+    job: "summary",
+    name: "Summary",
+    kind: "script",
+    project: null,
+    folder: "",
+    run: "20261118-060000-abcdef",
+    trigger: "scheduled",
+    dueAt: at(7, 0),
+    state: "running",
+    lowPriority: true,
+    runAt: null,
+    deadline: null,
+    waits: null,
+    startedAt: at(7, 0),
+    session: "run:summary:20261118-060000-abcdef",
+    log: "/ud/output/summary/r.log",
+    limitHit: null,
+    warnedAt: null,
+    warningDismissed: false,
+  };
+  const weekly: ActiveRun = { ...base, job: "weekly", name: "Weekly", run: "20261122-020000-aaaaaa", dueAt: new Date(2026, 10, 22, 3, 0).getTime(), state: "missed-waiting", startedAt: null, session: null, log: null };
+  const missed: NeedsYouItem = { id: "missed:weekly", kind: "missed", job: "weekly", name: "Weekly", project: null, run: weekly.run, at: weekly.dueAt, detail: "missed Sun 03:00" };
+  const longRun: NeedsYouItem = { id: `long-run:summary:${base.run}`, kind: "long-run", job: "summary", name: "Summary", project: null, run: base.run, at: at(10, 0), startedAt: at(7, 0), detail: "running 3 h — still expected?" };
+  const report: RunsReport = {
+    active: [
+      base,
+      { ...base, job: "lint", name: "Lint", run: "20261118-060000-bbbbbb", state: "queued", startedAt: null, session: null, log: null, waits: { kind: "slot", ahead: 1 } },
+      { ...base, job: "late", name: "Late", run: "20261118-060000-cccccc", trigger: "caught-up", state: "queued", startedAt: null, session: null, log: null, waits: { kind: "warm-up", until: at(8, 32) } },
+      weekly,
+    ],
+    nextUp: [],
+    jobs: [],
+    needsYou: [longRun, missed],
+    switch: { position: "running", since: null },
+  };
+
+  async function open(page: Page, query: Record<string, string> = {}): Promise<void> {
+    await page.goto(harness(query));
+    // The stand-in scheduler watches the jobs folder by the time it can set a service's state.
+    await page.waitForFunction(() => typeof window.setServiceStatus === "function");
+    await writeJob(page, "summary.md", SCRIPT);
+    await page.evaluate((r) => window.setRuns({ report: r, history: [] }), report);
+    if (query.surface === "panel") await expect(app(page).getByTestId("panel-jobs")).toBeVisible();
+  }
+
+  test.use({ viewport: { width: 240, height: 900 } });
+
+  test("the panel's switch: Running · Pause low-priority · Pause all", async ({ page }) => {
+    await open(page, { surface: "panel" });
+    const control = app(page).getByTestId("switch");
+    await expect(control).toHaveAttribute("data-position", "running");
+    await expect(control.getByRole("button", { name: "Running" })).toHaveAttribute("aria-pressed", "true");
+    await shoot(page, "panel-load");
+    await control.getByRole("button", { name: "Pause low-priority" }).click();
+    await expect(control).toHaveAttribute("data-position", "pause-low");
+    await expect(app(page).getByTestId("switch-note")).toHaveText("Low-priority runs are held. Services keep running; held runs follow their missed-run policy on resume.");
+    await control.getByRole("button", { name: "Pause all" }).click();
+    await expect(app(page).getByTestId("switch-note")).toContainText("Every scheduled run is held.");
+    await shoot(page, "panel-paused");
+    await control.getByRole("button", { name: "Running" }).click();
+    await expect(app(page).getByTestId("switch-note")).toHaveCount(0);
+    expect((await page.evaluate(() => window.runnerCalls)).map((call) => call.params)).toEqual([{ position: "pause-low" }, { position: "pause-all" }, { position: "running" }]);
+  });
+
+  test("a missed run waits for you: Run now · Run at… · Skip", async ({ page }) => {
+    await open(page, { surface: "panel" });
+    const item = app(page).locator('[data-testid="needs-you-item"][data-kind="missed"]');
+    await expect(item.getByTestId("needs-you-words")).toHaveText("Missed Sun 03:00 — it waits for you to pick a time.");
+    await item.getByRole("button", { name: "Run at…" }).click();
+    await item.getByRole("textbox", { name: "Run at" }).fill("23:00");
+    await shoot(page, "panel-missed");
+    await item.getByRole("button", { name: "Set" }).click();
+    await item.getByRole("button", { name: "Run now" }).click();
+    await item.getByRole("button", { name: "Skip" }).click();
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toEqual([
+      { method: "runs.missed", params: { job: "weekly", choice: "run-at", at: "23:00" } },
+      { method: "runs.missed", params: { job: "weekly", choice: "run-now" } },
+      { method: "runs.missed", params: { job: "weekly", choice: "skip" } },
+    ]);
+  });
+
+  test("a long run asks whether it is still expected: Open · Stop · Dismiss", async ({ page }) => {
+    await open(page, { surface: "panel" });
+    const item = app(page).locator('[data-testid="needs-you-item"][data-kind="long-run"]');
+    await expect(item.getByTestId("needs-you-words")).toHaveText("Has been running 3 h — still expected?");
+    await item.getByRole("button", { name: "Open" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: base.session }, title: "Summary" }]);
+    await item.getByRole("button", { name: "Stop" }).click();
+    await item.getByRole("button", { name: "Dismiss" }).click();
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toEqual([
+      { method: "runs.stop", params: { job: "summary", run: base.run } },
+      { method: "needsYou.dismiss", params: { id: longRun.id } },
+    ]);
+  });
+
+  test("Running now shows what each queued run waits for, in the panel and above History", async ({ page }) => {
+    await open(page, { surface: "panel" });
+    const rows = app(page).getByTestId("active-run");
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0)).toContainText("running");
+    await expect(rows.nth(1)).toContainText("Lint");
+    await expect(rows.nth(1)).toContainText("queued · 1 ahead");
+    await expect(rows.nth(2)).toContainText("queued · warm-up until 08:32");
+    await rows.nth(1).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "app", projectId: "alpha", route: "run/lint/20261118-060000-bbbbbb" }]);
+
+    await page.setViewportSize({ width: 1040, height: 700 });
+    await open(page, { route: "history" });
+    await expect(app(page).getByTestId("active-runs").getByTestId("active-run")).toHaveCount(3);
+    await expect(app(page).getByTestId("active-runs")).toContainText("queued · 1 ahead");
+    await shoot(page, "tab-history-queued");
+  });
+
+  test("a missed run's card offers its choices; a running run's card, Stop; a run stopped at its time limit is red", async ({ page }) => {
+    await page.setViewportSize({ width: 1040, height: 700 });
+    await open(page, { route: `run/weekly/${weekly.run}` });
+    const card = app(page).getByTestId("run-card");
+    await expect(card).toHaveAttribute("data-state", "missed-waiting");
+    await expect(card.getByTestId("run-result")).toHaveText("missed · waiting for you");
+    await expect(card.getByRole("button", { name: "Run at…" })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Run now" })).toHaveCount(1);
+    await shoot(page, "tab-run-missed");
+    await page.evaluate((route) => window.mounted.navigate(route), `run/summary/${base.run}`);
+    await card.getByRole("button", { name: "Stop" }).click();
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toEqual([{ method: "runs.stop", params: { job: "summary", run: base.run } }]);
+
+    const stopped: RunRecord = { ...base, state: "failed", reason: "stopped: ran over 45 min", endedAt: at(7, 45), durationMs: 45 * 60_000, exitCode: null, signal: "SIGTERM", lastLines: ["still summarizing"] };
+    await page.evaluate((h) => window.setRuns({ report: { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } }, history: h }), [stopped]);
+    await expect(card.getByTestId("run-result")).toHaveText("failed · stopped: ran over 45 min");
+    const red = await card.getByTestId("run-result").evaluate((element) => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--danger)";
+      document.body.append(probe);
+      const danger = getComputedStyle(probe).color;
+      probe.remove();
+      return getComputedStyle(element).color === danger;
+    });
+    expect(red).toBe(true);
+    await shoot(page, "tab-run-time-limit");
+  });
+
+  test("the Settings view shows the settings and writes one field at a time", async ({ page }) => {
+    await page.setViewportSize({ width: 1040, height: 700 });
+    await open(page, { route: "settings" });
+    const view = app(page).getByTestId("settings");
+    await expect(view).toContainText("Apps/pomade-runner/settings.yaml — no file yet: every setting is its default");
+    await expect(view.getByLabel("Low-priority runs at once")).toHaveValue("2");
+    await expect(view.getByLabel("Warm-up after login or wake")).toHaveValue("2m");
+    await expect(view.getByLabel("Long-run warning after")).toHaveValue("3h");
+    await expect(view.getByLabel("Keep history (days)")).toHaveValue("30");
+    await shoot(page, "tab-settings");
+
+    await page.evaluate(() => window.setSettings("max-low-priority-runs: 3\nwarm-up: soon\n"));
+    await expect(view.getByLabel("Low-priority runs at once")).toHaveValue("3");
+    await expect(view.getByTestId("settings-error")).toHaveText('Line 2: warm-up — "soon" is not a duration. Fix: write minutes or hours from 0m to 1h, e.g. warm-up: 2m.');
+    await view.getByLabel("Long-run warning after").fill("1h30m");
+    await view.getByTestId("setting-long-run-warning").getByRole("button", { name: "Save" }).click();
+    await view.getByTestId("setting-max-low-priority-runs").getByRole("button", { name: "Default (2)" }).click();
+    await view.getByLabel("Keep history (days)").fill("a week");
+    await view.getByTestId("setting-history-days").getByRole("button", { name: "Save" }).click();
+    await expect(view.getByTestId("setting-history-days").getByRole("alert")).toHaveText("write a whole number, e.g. 30");
+    expect(await page.evaluate(() => window.runnerCalls)).toEqual([
+      { method: "settings.set", params: { field: "long-run-warning", value: 90 } },
+      { method: "settings.set", params: { field: "max-low-priority-runs", value: null } },
+    ]);
+    await app(page).getByTestId("nav-jobs").click();
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
   });
 });
