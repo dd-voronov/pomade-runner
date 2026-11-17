@@ -52,6 +52,9 @@ process.exitCode = await runCli(process.argv.slice(2), {
   cwd: process.cwd(),
   schedulerStatus: () => (socketPath === null ? Promise.resolve(null) : callScheduler(socketPath, "status", null)),
   sessions: () => (socketPath === null ? Promise.resolve(null) : callScheduler(socketPath, "sessions", null)),
+  services: () => (socketPath === null ? Promise.resolve(null) : callScheduler(socketPath, "services", null)),
+  // A start or restart waits for a running session to end first: up to the keeper's grace and more.
+  serviceAction: (action, job) => (socketPath === null ? Promise.resolve(null) : callScheduler(socketPath, action, { job }, { timeoutMs: 15_000 })),
   workspace,
   realPath,
   readJobFiles,

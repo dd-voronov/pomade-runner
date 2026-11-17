@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { APP_VERSION } from "../../app";
-import type { RunnerSession, SessionsReport } from "../../keeper/model";
+import type { RunnerSession, ServicesReport, ServiceStatus, SessionsReport } from "../../keeper/model";
 import type { ControlCallResult } from "../../scheduler/control/client";
 import type { SchedulerStatus } from "../../scheduler/control/protocol";
 import type { ProjectRecord } from "../model";
+import type { ServiceVerb } from "../../integrations/runner-api";
 import { runCli, USAGE } from "./cli";
 
 type StatusResult = ControlCallResult<SchedulerStatus> | null;
@@ -17,6 +18,10 @@ interface World {
   files?: Record<string, string> | null;
   projects?: ProjectRecord[] | null;
   sessions?: ControlCallResult<SessionsReport> | null;
+  services?: ControlCallResult<ServicesReport> | null;
+  /** The answer to a start, stop or restart; the calls made are collected in `actions`. */
+  action?: ControlCallResult<ServiceStatus> | null;
+  actions?: { verb: ServiceVerb; job: string }[];
 }
 
 const WS = "/ws";
@@ -44,6 +49,11 @@ async function run(args: string[], status: StatusResult = { status: "not-running
     },
     projects: () => Promise.resolve(world.projects === undefined ? null : world.projects),
     sessions: () => Promise.resolve(world.sessions === undefined ? { status: "not-running" } : world.sessions),
+    services: () => Promise.resolve(world.services === undefined ? { status: "not-running" } : world.services),
+    serviceAction: (verb, job) => {
+      world.actions?.push({ verb, job });
+      return Promise.resolve(world.action === undefined ? { status: "not-running" } : world.action);
+    },
   });
   return { code, out, err, asked };
 }
@@ -199,5 +209,77 @@ describe("pomade-runner", () => {
     });
     expect(await run(["sessions"], undefined, { sessions: null })).toMatchObject({ code: 1, err: expect.stringContaining("not started through Pomade's command folder") as string });
     expect(await run(["sessions", "x"])).toMatchObject({ code: 2 });
+  });
+
+  describe("services", () => {
+    const info = { title: "Coda web", command: "./start.sh", cwd: "/ws/Projects/coda", pid: 501, startedAt: Date.parse("2026-11-17T08:00:00.000Z"), cols: 80, rows: 24, state: "running" as const, exit: null, clients: 0, actions: [] };
+    const session: RunnerSession = { id: "svc:coda.web", job: "coda/web", kind: "service", run: null, log: null, info: { ...info, id: "svc:coda.web" } };
+    const base: ServiceStatus = { job: "coda/web", name: "Coda web", project: "p1", state: "running", session, restarts: 0, lastCrashAt: null, retryAt: null, needsRestart: false, problem: null };
+    const at = (time: string): number => Date.parse(`2026-11-17T${time}.000Z`);
+
+    it("lists every service with its state, restarts and last crash", async () => {
+      const services: ServiceStatus[] = [
+        { ...base, restarts: 2, lastCrashAt: at("07:59:00"), needsRestart: true },
+        { ...base, job: "a", name: "A", state: "starting" },
+        { ...base, job: "b", name: "B", state: "queued", session: null },
+        { ...base, job: "c", name: "C", state: "restarting", session: null, retryAt: at("08:00:05"), restarts: 1, lastCrashAt: at("08:00:04") },
+        { ...base, job: "d", name: "D", state: "failed", session: null, restarts: 4, lastCrashAt: at("08:00:30"), problem: "no such folder" },
+        { ...base, job: "e", name: "E", state: "stopped-by-you", session: null },
+        { ...base, job: "f", name: "F", state: "waiting", session: null },
+        { ...base, job: "g", name: "G", state: "disabled", session: null },
+        { ...base, job: "h", name: "h", state: "invalid" },
+        { ...base, job: "i", name: "i", state: "invalid", session: null },
+        { ...base, job: "j", name: "J", state: "removed" },
+      ];
+      const r = await run(["services"], undefined, { services: { status: "ok", value: { keeper: { state: "connected", version: "v9", pid: 77 }, services } } });
+      expect(r.code).toBe(0);
+      expect(r.out.split("\n")).toEqual([
+        "keeper: running — version v9, pid 77",
+        "coda/web  Coda web  running, pid 501, since 2026-11-17T08:00:00.000Z · restarted 2× · last crash 2026-11-17T07:59:00.000Z · its job file changed: restart to apply it",
+        "a  A  starting, pid 501, since 2026-11-17T08:00:00.000Z",
+        "b  B  queued to start",
+        "c  C  restarting at 2026-11-17T08:00:05.000Z · restarted 1× · last crash 2026-11-17T08:00:04.000Z",
+        "d  D  failed: 5 crashes within a minute · restarted 4× · last crash 2026-11-17T08:00:30.000Z · last start failed: no such folder",
+        "e  E  stopped by you",
+        "f  F  waits for its project to open",
+        "g  G  disabled in its file",
+        "h  h  its job file is invalid — see pomade-runner check; still running, pid 501, since 2026-11-17T08:00:00.000Z",
+        "i  i  its job file is invalid — see pomade-runner check",
+        "j  J  its job file is gone; stopping",
+        "",
+      ]);
+      expect((await run(["services"], undefined, { services: { status: "ok", value: { keeper: { state: "connecting" }, services: [] } } })).out).toBe("keeper: connecting\nNo services.\n");
+    });
+
+    it("needs the scheduler: exit 1 when it is not running or does not answer; exit 2 on an argument", async () => {
+      expect(await run(["services"])).toMatchObject({ code: 1, err: "pomade-runner services: the scheduler is not running — it supervises the services; Pomade runs it as Runner's background part.\n" });
+      expect(await run(["services"], undefined, { services: { status: "failed", code: "unknown-method", message: 'no method "services"' } })).toMatchObject({
+        code: 1,
+        err: 'pomade-runner services: the scheduler did not answer — no method "services".\n',
+      });
+      expect(await run(["services"], undefined, { services: null })).toMatchObject({ code: 1, err: expect.stringContaining("not started through Pomade's command folder") as string });
+      expect(await run(["services", "web"])).toMatchObject({ code: 2 });
+    });
+
+    it("run, stop and restart ask the scheduler and print where the service stands", async () => {
+      const actions: { verb: ServiceVerb; job: string }[] = [];
+      for (const [command, verb] of [["run", "start"], ["stop", "stop"], ["restart", "restart"]] as const) {
+        const r = await run([command, "Coda web"], undefined, { action: { status: "ok", value: { ...base, state: "starting" } }, actions });
+        expect(r).toEqual({ code: 0, out: "coda/web  Coda web  starting, pid 501, since 2026-11-17T08:00:00.000Z\n", err: "", asked: 0 });
+        expect(actions.at(-1)).toEqual({ verb, job: "Coda web" });
+      }
+    });
+
+    it("run, stop and restart say why the scheduler refused, and need a service named", async () => {
+      expect(await run(["run", "web"], undefined, { action: { status: "failed", code: "refused", message: 'cannot start "web": "Web" is running' } })).toMatchObject({
+        code: 1,
+        out: "",
+        err: 'pomade-runner run: cannot start "web": "Web" is running.\n',
+      });
+      expect(await run(["stop", "web"])).toMatchObject({ code: 1, err: expect.stringContaining("pomade-runner stop: the scheduler is not running") as string });
+      expect(await run(["restart"])).toMatchObject({ code: 2, err: "pomade-runner restart: names no service. Usage: pomade-runner restart <service> — its id or its name.\n" });
+      expect(await run(["run", "--now"])).toMatchObject({ code: 2, err: expect.stringContaining('pomade-runner run: unexpected "--now"') as string });
+      expect(await run(["stop", "a", "b"])).toMatchObject({ code: 2, err: expect.stringContaining('pomade-runner stop: unexpected "b"') as string });
+    });
   });
 });
