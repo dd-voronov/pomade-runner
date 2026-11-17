@@ -1,0 +1,164 @@
+// Scheduled scripts as processes: the scheduler of a copy of the built app folder runs the scripts
+// of a temp workspace as sessions of a real keeper, with Pomade closed (`support/runner.ts`), on a
+// clock set through POMADE_RUNNER_CLOCK in Madrid's time zone — so a day's schedule plays out in
+// seconds. Every rule's edge is in the unit tests (`src/scheduler/*.test.ts`); these show E-002's
+// acceptance on real processes: the runs, their history and output, overlap, the command, and the
+// notices that wait in Pomade's queue while it is closed.
+
+import { readFile } from "node:fs/promises";
+
+import { expect, test } from "@playwright/test";
+import { followSession } from "pomade-kit/node";
+
+import { callScheduler } from "../src/scheduler/control/client";
+import type { RunRecord } from "../src/scheduler/model";
+import { createRunnerWorld, type RunnerWorld } from "./support/runner";
+
+const ZONE = { TZ: "Europe/Madrid" };
+
+/** A scheduler clock that starts at `local` (Madrid) and runs `rate` times as fast. */
+const clock = (local: string, rate = 1): Record<string, string> => ({ ...ZONE, POMADE_RUNNER_CLOCK: `${local}+01:00`, POMADE_RUNNER_CLOCK_RATE: String(rate) });
+
+/** A script job file. */
+const scriptFile = (name: string, command: string, extra: string): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ${JSON.stringify(command)}\n${extra}---\n`;
+
+/** The scheduler's clock at its latest tick (epoch ms); 0 before one. */
+async function schedulerTime(world: RunnerWorld): Promise<number> {
+  const status = await callScheduler(world.socketPath, "status", null);
+  return status.status === "ok" && status.value.lastTickAt !== null ? Date.parse(status.value.lastTickAt) : 0;
+}
+
+test.describe("scheduled scripts", () => {
+  let world: RunnerWorld;
+
+  test.beforeEach(async () => {
+    world = await createRunnerWorld();
+  });
+
+  test.afterEach(async () => {
+    await world.dispose();
+  });
+
+  test("1 · a daily 13:00 script runs at 13:00 in its folder with its context, and lands in History with its output", async () => {
+    await world.writeJob("backup.md", scriptFile("Backup", 'echo "backed up as $POMADE_JOB $POMADE_TRIGGER $POMADE_RUN_ID in $PWD"', "schedule:\n  daily: { at: 13:00 }\n"));
+    const scheduler = world.startScheduler(clock("2026-11-18T12:59:58"));
+    await world.ready(scheduler);
+    await expect.poll(() => world.history(), { timeout: 10_000 }).toHaveLength(1);
+    const [record] = await world.history();
+    expect(record).toMatchObject({ job: "backup", name: "Backup", trigger: "scheduled", state: "done", exitCode: 0, dueAt: Date.parse("2026-11-18T13:00:00+01:00") });
+    expect(record?.run).toMatch(/^20261118-120000-[0-9a-f]{6}$/);
+    expect(record?.lastLines).toEqual([`backed up as backup scheduled ${record?.run ?? ""} in ${world.tmp}/ws`]);
+    expect(await readFile(record?.log ?? "", "utf8")).toContain("backed up as backup scheduled");
+    expect(scheduler.output()).toContain(`run backup ${record?.run ?? ""}: started (scheduled)\n`);
+    // Recorded, its session is forgotten.
+    await expect.poll(async () => (await world.sessions()).sessions.filter((session) => session.kind === "run")).toEqual([]);
+    expect((await world.command("list")).stdout).toMatch(/^backup {2}Backup {2}script {2}daily at 13:00 {2}next 2026-11-19T12:00:00\.000Z · last done, \S+, took \d+ ms\n$/);
+  });
+
+  test("2 · every 30 min, 9–19, weekdays only: runs on a Wednesday at 9:00 and 9:30", async () => {
+    await world.writeJob("check.md", scriptFile("Check", "true", "schedule:\n  every: { minutes: 30, from: 9:00, to: 19:00 }\n  only: weekdays\n"));
+    const scheduler = world.startScheduler(clock("2026-11-18T08:59:56", 180));
+    await world.ready(scheduler);
+    await expect.poll(async () => (await world.history()).map((record) => record.dueAt), { timeout: 20_000 }).toEqual([Date.parse("2026-11-18T09:30:00+01:00"), Date.parse("2026-11-18T09:00:00+01:00")]);
+    expect((await world.history()).map((record) => record.state)).toEqual(["done", "done"]);
+  });
+
+  test("2 · every 30 min, 9–19, weekdays only: no runs on a Saturday", async () => {
+    await world.writeJob("check.md", scriptFile("Check", "true", "schedule:\n  every: { minutes: 30, from: 9:00, to: 19:00 }\n  only: weekdays\n"));
+    const scheduler = world.startScheduler(clock("2026-11-21T08:59:56", 180));
+    await world.ready(scheduler);
+    await expect.poll(() => schedulerTime(world), { timeout: 20_000 }).toBeGreaterThan(Date.parse("2026-11-21T09:31:00+01:00"));
+    expect(await world.history()).toEqual([]);
+    expect(scheduler.output()).not.toContain("run check");
+    expect((await world.command("list")).stdout).toContain("check  Check  script  every 30 min on weekdays, 9:00–19:00  next 2026-11-23T08:00:00.000Z · never ran\n");
+  });
+
+  test("3 · once at 23:00 runs once, then shows as finished", async () => {
+    await world.writeJob("tonight.md", scriptFile("Tonight", "echo once", "schedule:\n  once: 2026-11-18 23:00\n"));
+    const scheduler = world.startScheduler(clock("2026-11-18T22:59:58", 30));
+    await world.ready(scheduler);
+    await expect.poll(() => world.history(), { timeout: 10_000 }).toHaveLength(1);
+    await expect.poll(() => schedulerTime(world)).toBeGreaterThan(Date.parse("2026-11-18T23:02:00+01:00"));
+    expect(await world.history()).toEqual([expect.objectContaining({ job: "tonight", state: "done", lastLines: ["once"] }) as RunRecord]);
+    expect((await world.command("list")).stdout).toMatch(/^tonight {2}Tonight {2}script {2}once on Nov 18, 2026 at 23:00 {2}finished · last done, /);
+  });
+
+  test("4, 5, 8 · with Pomade closed, a failing script's one notice waits in Pomade's queue, a click opens its result; a success with on-failure makes none", async () => {
+    await world.writeJob("fail.md", scriptFile("Fail", "echo working; echo boom >&2; exit 3", "schedule:\n  daily: { at: 13:00 }\n"));
+    await world.writeJob("fine.md", scriptFile("Fine", "echo fine", "schedule:\n  daily: { at: 13:00 }\nnotify: on-failure\n"));
+    const scheduler = world.startScheduler(clock("2026-11-18T12:59:58"));
+    await world.ready(scheduler);
+    await expect.poll(() => world.history(), { timeout: 10_000 }).toHaveLength(2);
+    const failed = (await world.history("fail"))[0];
+    expect(failed).toMatchObject({ state: "failed", exitCode: 3, lastLines: ["working", "boom"] });
+    await expect.poll(() => world.queuedNotices()).toHaveLength(1);
+    expect(await world.queuedNotices()).toMatchObject([{ source: "pomade-runner", title: "Fail failed", body: "exit 3 · boom", action: { kind: "openApp", route: `run/fail/${failed?.run ?? ""}` } }]);
+    expect(scheduler.output()).toContain('notice "Fail failed": queued for Pomade\'s next launch\n');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(await world.queuedNotices()).toHaveLength(1);
+  });
+
+  test("6 · overlap: a run still going at the next one is skipped · previous run still going", async () => {
+    await world.writeJob("slow.md", scriptFile("Slow", "sleep 3", "schedule:\n  every: { minutes: 1 }\n"));
+    const scheduler = world.startScheduler(clock("2026-11-18T12:59:59", 60));
+    await world.ready(scheduler);
+    await expect.poll(async () => (await world.history()).find((record) => record.state === "skipped"), { timeout: 10_000 }).toMatchObject({ reason: "previous run still going", startedAt: null });
+    expect((await world.sessions()).sessions.filter((session) => session.kind === "run" && session.info.state === "running")).toHaveLength(1);
+  });
+
+  test("6 · overlap queue: a run due while one goes waits, and runs after it", async () => {
+    await world.writeJob("slow.md", scriptFile("Slow", 'echo "start $POMADE_RUN_ID"; sleep 2', "schedule:\n  every: { minutes: 1 }\noverlap: queue\n"));
+    const scheduler = world.startScheduler(clock("2026-11-18T12:59:59", 60));
+    await world.ready(scheduler);
+    await expect.poll(() => scheduler.output(), { timeout: 10_000 }).toMatch(/run slow \S+: queued after the previous run\n/);
+    const queued = /run slow (\S+): queued after the previous run\n/.exec(scheduler.output())?.[1] ?? "";
+    await expect.poll(async () => (await world.history("slow")).find((record) => record.run === queued), { timeout: 15_000 }).toMatchObject({ state: "done", lastLines: [`start ${queued}`] });
+    const done = (await world.history("slow")).filter((record) => record.state === "done");
+    const first = done.at(-1);
+    const second = done.find((record) => record.run === queued);
+    expect(first?.run).not.toBe(queued);
+    expect(second?.startedAt ?? 0).toBeGreaterThan(first?.startedAt ?? Infinity);
+    const log = scheduler.output();
+    expect(log.indexOf(`run slow ${queued}: started`)).toBeGreaterThan(log.indexOf(`run slow ${first?.run ?? ""}: done`));
+  });
+
+  test("7 · pomade-runner run starts a run visible in History; list and history print the jobs and the runs; a running run is attachable and Ctrl+C stops it as stopped by you", async () => {
+    await world.writeJob("backup.md", scriptFile("Backup", "echo copying; sleep 0.3; echo copied", "hook: { event: login }\n"));
+    await world.writeJob("ticker.md", scriptFile("Ticker", 'i=0; while :; do i=$((i+1)); echo "tick $i"; sleep 0.2; done', "hook: { event: login }\n"));
+    const scheduler = world.startScheduler(ZONE);
+    await world.ready(scheduler);
+
+    const ran = await world.command("run", "backup");
+    expect(ran).toMatchObject({ code: 0, stderr: "" });
+    expect(ran.stdout).toMatch(/^backup {2}Backup {2}run \d{8}-\d{6}-[0-9a-f]{6} {2}running, output \S+\.log\n$/);
+    await expect.poll(() => world.history("backup")).toEqual([expect.objectContaining({ trigger: "manual", state: "done", lastLines: ["copying", "copied"] }) as RunRecord]);
+    expect((await world.command("history")).stdout).toMatch(/^backup {2}Backup {2}manual {2}done, \S+, took [\d.]+ m?s {2}output \S+\.log\n$/);
+    expect((await world.command("list")).stdout).toMatch(/^backup {2}Backup {2}script {2}on login {2}no next run · last done, [^\n]+\nticker {2}Ticker {2}script {2}on login {2}no next run · never ran\n$/);
+
+    const ticker = await world.command("run", "ticker");
+    expect(ticker.code).toBe(0);
+    const session = `run:ticker:${/ run (\S+) /.exec(ticker.stdout)?.[1] ?? ""}`;
+    let output = "";
+    const tab = followSession({ socketPath: world.keeperSocket, app: "pomade", session, cols: 80, rows: 24 }, { onSnapshot: (data) => (output += data), onOutput: (data) => (output += data) });
+    try {
+      await expect.poll(() => output).toContain("tick 2");
+      tab.input("\x03");
+      await expect.poll(() => world.history("ticker")).toEqual([expect.objectContaining({ state: "stopped-by-you", trigger: "manual" }) as RunRecord]);
+    } finally {
+      tab.close();
+    }
+    expect(await world.queuedNotices()).toEqual([]);
+  });
+
+  test("Enable and Disable write the job's file; a disabled job does not run", async () => {
+    await world.writeJob("backup.md", scriptFile("Backup", "true", "schedule:\n  daily: { at: 13:00 }\n"));
+    const scheduler = world.startScheduler(clock("2026-11-18T12:59:57"));
+    await world.ready(scheduler);
+    expect(await world.command("disable", "Backup")).toEqual({ code: 0, stdout: "backup  Backup  disabled\n", stderr: "" });
+    expect(await readFile(`${world.jobs}/backup.md`, "utf8")).toContain("enabled: false\n");
+    await expect.poll(() => schedulerTime(world), { timeout: 10_000 }).toBeGreaterThan(Date.parse("2026-11-18T13:00:01+01:00"));
+    expect(await world.history()).toEqual([]);
+    expect((await world.command("run", "backup")).stderr).toBe('pomade-runner run: cannot run "backup": "Backup" is disabled in its file; enable it first.\n');
+    expect(await world.command("enable", "backup")).toMatchObject({ code: 0, stdout: "backup  Backup  enabled\n" });
+  });
+});

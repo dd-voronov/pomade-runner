@@ -10,7 +10,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import { connectSocket } from "pomade-kit/node";
 import { WORKSPACE_PROJECT_ID } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
@@ -18,6 +18,7 @@ import type { HostClient } from "pomade-kit/sdk";
 import manifest from "../app/manifest.json" with { type: "json" };
 import { STRIP_ICON } from "../src/app";
 import { callScheduler } from "../src/scheduler/control/client";
+import type { RunRecord } from "../src/scheduler/model";
 import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
 import { runningSession, sessionInfo, stopKeeper } from "./support/keeper";
 import { pomadeCheckout, pomadeEnv, type PomadeFolders } from "./support/pomade";
@@ -159,6 +160,51 @@ test.describe("Runner in Pomade", () => {
     expect(await command("frobnicate")).toMatchObject({ code: 2, stdout: "" });
   });
 
+  /** A script job file, run on demand. */
+  const scriptFile = (name: string, command: string): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ${JSON.stringify(command)}\nhook: { event: login }\n---\n`;
+
+  /** The runs of `job` the scheduler recorded, newest first. */
+  async function history(job: string): Promise<RunRecord[]> {
+    const result = await callScheduler(schedulerSocket(), "history", { job, limit: 50 });
+    return result.status === "ok" ? result.value.records : [];
+  }
+
+  /** Runner's notices in Pomade's Notices panel, newest first. */
+  async function runnerNotices(): Promise<string[]> {
+    if (!(await page.getByTestId("notices-panel").isVisible())) await page.getByTestId("strip-notices").click();
+    return page.getByTestId("notices-panel").locator('[data-testid="notice-row"][data-source="pomade-runner"] [data-testid="notice-row-title"]').allTextContents();
+  }
+
+  const badge = (): Locator => page.getByTestId(`strip-badge-${STRIP_KEY}`);
+
+  test("a failing script makes one notice and the Runner badge; a click opens the red result card with the exit code and the last lines, which resolves it; a success with on-failure makes no notice", async () => {
+    const running = scheduler ?? (await startTheScheduler());
+    const jobs = join(folders.workspace, "Apps/pomade-runner/jobs");
+    await writeFile(join(jobs, "fine.md"), scriptFile("Fine", "echo fine"));
+    await writeFile(join(jobs, "fail.md"), scriptFile("Fail", "echo working; echo boom >&2; exit 3"));
+    await expect.poll(() => running.output()).toContain("jobs: 3 job files, 0 invalid\n");
+
+    expect((await command("run", "fine")).code).toBe(0);
+    await expect.poll(() => history("fine")).toEqual([expect.objectContaining({ state: "done" }) as RunRecord]);
+    expect((await command("run", "fail")).code).toBe(0);
+    await expect.poll(() => history("fail")).toEqual([expect.objectContaining({ state: "failed", exitCode: 3 }) as RunRecord]);
+    await expect.poll(() => runnerNotices()).toEqual(["Fail failed"]);
+    await expect(badge()).toHaveText("1");
+    await expect(badge()).toHaveAttribute("data-urgent", "true");
+    await shoot(page, "pomade-notice");
+
+    await page.getByTestId("notices-panel").locator('[data-testid="notice-row"][data-source="pomade-runner"]').click();
+    const card = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`).getByTestId("run-card");
+    await expect(card).toHaveAttribute("data-state", "failed");
+    await expect(card.getByTestId("run-result")).toHaveText("failed · exit 3");
+    await expect(card.getByTestId("run-exit")).toHaveText("Exit code 3");
+    await expect(card.getByTestId("run-last-lines")).toHaveText("working\nboom");
+    await shoot(page, "pomade-run-card");
+    // Opening the result resolved the item: the badge goes.
+    await expect(badge()).toHaveCount(0);
+    expect(await runnerNotices()).toEqual(["Fail failed"]);
+  });
+
   const TICKER = 'i=0; while :; do i=$((i+1)); echo "tick $i"; if read -t 1 line; then echo "got: $line"; fi; done';
 
   function schedulerSocket(): string {
@@ -202,7 +248,7 @@ test.describe("Runner in Pomade", () => {
     const running = scheduler ?? (await startTheScheduler());
     await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/ticker.md"), `---\nkind: service\nname: Ticker\nfolder: .\ncommand: ${JSON.stringify(TICKER)}\n---\n`);
     // The scheduler loads the new file within a second, and starts the service.
-    await expect.poll(() => running.output()).toContain("jobs: 2 job files, 0 invalid\n");
+    await expect.poll(() => running.output()).toContain("jobs: 4 job files, 0 invalid\n");
     const started = await runningSession(schedulerSocket(), "svc:ticker");
     pids.push(started.info.pid ?? 0);
     await expect.poll(() => readFile(started.log ?? "", "utf8").catch(() => "")).toContain("tick 2");
@@ -260,7 +306,7 @@ test.describe("Runner in Pomade", () => {
   test("the scheduler and the services' sessions outlive Pomade; a restarted scheduler lists them with their jobs", async () => {
     const running = scheduler ?? (await startTheScheduler());
     await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/stay.md"), `---\nkind: service\nname: Stay\nfolder: .\ncommand: ${JSON.stringify(TICKER)}\n---\n`);
-    await expect.poll(() => running.output()).toContain("jobs: 3 job files, 0 invalid\n");
+    await expect.poll(() => running.output()).toContain("jobs: 5 job files, 0 invalid\n");
     const stay = await runningSession(schedulerSocket(), "svc:stay");
     pids.push(stay.info.pid ?? 0);
 
@@ -280,5 +326,23 @@ test.describe("Runner in Pomade", () => {
     // Stopped by you stays stopped across the restart; the running service is not restarted.
     await expect.poll(async () => (await command("services")).stdout).toMatch(/\nstay {2}Stay {2}running, pid \d+[^\n]*\nticker {2}Ticker {2}stopped by you\n$/);
     expect(restarted.output()).not.toMatch(/service \S+: (starting|restarted)/);
+  });
+
+  test("with Pomade closed, a script that fails queues its notice; on the next launch Pomade shows it, and the badge", async () => {
+    expect(app).toBeNull();
+    const running = scheduler ?? (await startTheScheduler({ pomade: false }));
+    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/late.md"), scriptFile("Late", "echo late >&2; exit 4"));
+    await expect.poll(() => running.output()).toContain("jobs: 6 job files, 0 invalid\n");
+    expect((await command("run", "late")).code).toBe(0);
+    await expect.poll(() => history("late")).toEqual([expect.objectContaining({ state: "failed", exitCode: 4 }) as RunRecord]);
+    await expect.poll(() => running.output()).toContain('notice "Late failed": queued for Pomade\'s next launch\n');
+
+    app = await electron.launch({ executablePath: pomade.runtime, args: [pomade.main], env: pomadeEnv(folders, { POMADE_DEV_APPS: DIST }) });
+    page = await app.firstWindow();
+    await page.waitForURL("**/index.html");
+    await expect(page.getByTestId("app-shell")).toBeVisible();
+    await expect.poll(() => runnerNotices()).toEqual(["Late failed"]);
+    await expect.poll(() => running.output()).toContain("connected to Pomade");
+    await expect(badge()).toHaveText("1");
   });
 });

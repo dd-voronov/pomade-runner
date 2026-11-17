@@ -17,8 +17,9 @@ export default defineConfig({
     { name: "background", testMatch: "background.spec.ts" },
     { name: "keeper", testMatch: "keeper.spec.ts" },
     { name: "services", testMatch: "services.spec.ts" },
+    { name: "runs", testMatch: "runs.spec.ts" },
     { name: "pomade", testMatch: "pomade.spec.ts" },
-    { name: "install", testMatch: "install.spec.ts", dependencies: ["ui", "background", "keeper", "services", "pomade"] },
+    { name: "install", testMatch: "install.spec.ts", dependencies: ["ui", "background", "keeper", "services", "runs", "pomade"] },
   ],
   webServer: [
     {

@@ -5,13 +5,15 @@
 // scheduler and the keeper with what it runs, and removes the folders.
 
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "@playwright/test";
+import { NOTICE_QUEUE_DIR, parseQueuedNotice, type QueuedNotice } from "pomade-kit/protocol";
 
 import manifest from "../../app/manifest.json" with { type: "json" };
 import type { RunnerSession, ServicesReport, ServiceStatus, SessionsReport } from "../../src/keeper/model";
+import type { RunRecord } from "../../src/scheduler/model";
 import { callScheduler } from "../../src/scheduler/control/client";
 import { DIST, cleanEnv, removeDir, run, tempDir, type Finished } from "./env";
 import { runningSession, stopKeeper } from "./keeper";
@@ -28,8 +30,8 @@ export interface RunnerWorld {
   /** The jobs folder of the workspace. */
   jobs: string;
   env: Record<string, string>;
-  /** Start a scheduler of the build. */
-  startScheduler(): SchedulerProcess;
+  /** Start a scheduler of the build, with `extra` in its environment (its clock, a time zone). */
+  startScheduler(extra?: Record<string, string>): SchedulerProcess;
   /** Wait until the scheduler is connected to its keeper. */
   ready(scheduler: SchedulerProcess): Promise<void>;
   /** Write a job file into the jobs folder (`path` inside it). */
@@ -38,6 +40,10 @@ export interface RunnerWorld {
   command(...args: string[]): Promise<Finished>;
   sessions(): Promise<SessionsReport>;
   services(): Promise<ServicesReport>;
+  /** The latest finished runs, newest first, as the scheduler reports them. */
+  history(job?: string): Promise<RunRecord[]>;
+  /** The notices waiting in Pomade's closed-Pomade queue, oldest first. */
+  queuedNotices(): Promise<QueuedNotice[]>;
   /** A service's status, as the scheduler reports it. */
   service(job: string): Promise<ServiceStatus | undefined>;
   /** Wait until session `id` runs (another start than `not`, when given); its session. */
@@ -93,8 +99,8 @@ export async function createRunnerWorld(): Promise<RunnerWorld> {
     keeperSocket,
     jobs,
     env,
-    startScheduler() {
-      const scheduler = startSchedulerProcess(process.execPath, join(build, manifest.backend.entry), { ...env, POMADE_CLIENT: "backend" });
+    startScheduler(extra = {}) {
+      const scheduler = startSchedulerProcess(process.execPath, join(build, manifest.backend.entry), { ...env, ...extra, POMADE_CLIENT: "backend" });
       started.push(scheduler);
       return scheduler;
     },
@@ -104,6 +110,20 @@ export async function createRunnerWorld(): Promise<RunnerWorld> {
     writeJob: (path, text) => writeFile(join(jobs, path), text),
     command: (...args) => run(process.execPath, [join(build, "cli/pomade-runner.mjs"), ...args], { env: { ...env, POMADE_CLIENT: "command" }, cwd: tmp }),
     sessions: () => ask(callScheduler(socketPath, "sessions", null), "sessions"),
+    async history(job) {
+      return (await ask(callScheduler(socketPath, "history", { job: job ?? null, limit: 200 }), "history")).records;
+    },
+    async queuedNotices() {
+      const folder = join(userData, NOTICE_QUEUE_DIR);
+      const names = (await readdir(folder).catch(() => [])).filter((name) => name.endsWith(".json")).sort();
+      return Promise.all(
+        names.map(async (name) => {
+          const parsed = parseQueuedNotice(JSON.parse(await readFile(join(folder, name), "utf8")));
+          if (!parsed.ok) throw new Error(`${name}: ${parsed.message}`);
+          return parsed.notice;
+        }),
+      );
+    },
     services: () => ask(callScheduler(socketPath, "services", null), "services"),
     async service(job) {
       return (await world.services()).services.find((status) => status.job === job);
