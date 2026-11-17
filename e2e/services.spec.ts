@@ -111,7 +111,7 @@ test.describe("service supervision", () => {
     expect((await world.command("services")).stdout).toMatch(/\nweb {2}Web {2}(starting|running), pid \d+, since \S+ · restarted 1× · last crash \S+\n/);
   });
 
-  test("a command that exits at once ends failed after 5 crashes within a minute: no more restarts, also after a scheduler restart, until it is run", async () => {
+  test("a command that exits at once ends failed after 5 crashes within a minute, noticed once: no more restarts, also after a scheduler restart, until it is run", async () => {
     test.setTimeout(90_000);
     await world.writeJob("flaky.md", serviceFile("Flaky", "echo starting; exit 3"));
     const first = world.startScheduler();
@@ -122,6 +122,8 @@ test.describe("service supervision", () => {
     expect(first.output()).toContain("service flaky: crashed; failed — 5 crashes within a minute, no restarts until Start\n");
     expect(starts(first.output(), "flaky")).toBe(5);
     expect(await world.service("flaky")).toMatchObject({ restarts: 4, retryAt: null });
+    // Giving up is noticed once; with Pomade closed the notice waits in its queue.
+    await expect.poll(async () => (await world.queuedNotices()).map((notice) => notice.title)).toEqual(["Flaky gave up"]);
     await new Promise((resolve) => setTimeout(resolve, 2000));
     expect(starts(first.output(), "flaky")).toBe(5);
 
@@ -131,6 +133,7 @@ test.describe("service supervision", () => {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     expect(await world.service("flaky")).toMatchObject({ state: "failed", restarts: 4 });
     expect(starts(second.output(), "flaky")).toBe(0);
+    expect(await world.queuedNotices()).toHaveLength(1);
     expect((await world.command("services")).stdout).toContain("flaky  Flaky  failed: 5 crashes within a minute · restarted 4× · last crash ");
 
     const run = await world.command("run", "flaky");
@@ -181,7 +184,7 @@ test.describe("service supervision", () => {
     await expect.poll(async () => (await world.service("web"))?.session?.info.state).toBe("exited");
     expect(await world.service("web")).toMatchObject({ state: "stopped-by-you", session: { info: { exit: { reason: "stopped-by-you" } } } });
 
-    expect(await world.command("run", "backup")).toEqual({ code: 1, stdout: "", stderr: 'pomade-runner run: cannot start "backup": "backup" is a script job, not a service.\n' });
+    expect(await world.command("restart", "backup")).toEqual({ code: 1, stdout: "", stderr: 'pomade-runner restart: cannot restart "backup": "backup" is a script job, not a service.\n' });
     expect(await world.command("stop", "nothing")).toEqual({ code: 1, stdout: "", stderr: 'pomade-runner stop: cannot stop "nothing": no service "nothing".\n' });
   });
 
