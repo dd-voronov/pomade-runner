@@ -1,9 +1,8 @@
 import type { HostClient } from "pomade-kit/sdk";
 
 import { runRoute } from "../integrations/runner-api";
-import { durationWords, runWords } from "../scheduler/model";
+import { dayTime, durationWords, runWords } from "../scheduler/model";
 import styles from "./Runs.module.css";
-import { dayTime } from "./runWords";
 import { useHistory } from "./useRunnerApi";
 
 /** How many runs the History view lists. */

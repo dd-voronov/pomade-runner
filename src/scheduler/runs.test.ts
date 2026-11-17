@@ -1,6 +1,8 @@
 // The run lifecycle on a clock the tests set, against sessions that stand in for the keeper and a
 // real history on a temp folder: schedules firing, each overlap policy, Run now, every way a run
-// ends, its environment, a scheduler restart, and what the UI reads — without waiting.
+// ends, its environment, a scheduler restart, and what the UI reads — without waiting. Missed runs,
+// the queue, the switch, the warm-up, time limits and long-run warnings are in `load.test.ts`,
+// on the same stand-ins (`runs-fixture.ts`).
 
 process.env.TZ = "Europe/Madrid";
 
@@ -8,112 +10,19 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ExitReason } from "pomade-kit/protocol";
+import type { ExitReason, NoticeParams } from "pomade-kit/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { checkJobs } from "../jobs/check";
 import type { JobsSnapshot } from "../jobs/model";
-import { sessionIdOf, type SessionOwner } from "../keeper/ids";
-import type { KeeperLink, RunnerSession } from "../keeper/model";
-import type { SessionCommand, Sessions, StopReason } from "../keeper/sessions";
 import { createHistory, type History } from "./history";
 import type { ActiveRun, RunRecord } from "./model";
-import { createRuns, fileRunsStore, runEnv, type Runs, type RunsRecords, type RunsStore } from "./runs";
+import { createRuns, fileRunsStore, runEnv, type Runs } from "./runs";
+import { FakeSessions, memoryStore, memorySwitch, script } from "./runs-fixture";
+import { DEFAULT_SETTINGS } from "./settings";
 import { ON_TIME_MS } from "./triggers";
 
 const WS = "/ws";
-
-/** A script job file. */
-function script(name: string, extra = "schedule:\n  daily: { at: 13:00 }\n"): string {
-  return `---\nkind: script\nname: ${name}\nfolder: Projects/x\ncommand: ./${name.toLowerCase()}.sh\n${extra}---\n`;
-}
-
-/** Sessions held in memory, as the keeper would hold them; `end` ends one as its program would. */
-class FakeSessions implements Sessions {
-  readonly sessions = new Map<string, RunnerSession>();
-  readonly spawned: { owner: Extract<SessionOwner, { kind: "run" }>; command: SessionCommand }[] = [];
-  readonly forgotten: string[] = [];
-  refuse: string | null = null;
-  following = true;
-  link: KeeperLink = { state: "connected", version: "v1", pid: 1 };
-
-  constructor(
-    private readonly now: () => number,
-    private readonly logs: string,
-  ) {}
-
-  keeper = (): KeeperLink => this.link;
-  list = (): RunnerSession[] => [...this.sessions.values()];
-  followed = (): boolean => this.following;
-  report = () => ({ keeper: this.link, sessions: this.list() });
-  refresh = (): Promise<void> => Promise.resolve();
-
-  spawn(owner: SessionOwner, command: SessionCommand): Promise<RunnerSession> {
-    if (this.refuse !== null) return Promise.reject(new Error(this.refuse));
-    if (owner.kind !== "run") throw new Error("runs only");
-    const id = sessionIdOf(owner) ?? "";
-    const session: RunnerSession = {
-      id,
-      job: owner.job,
-      kind: "run",
-      run: owner.run,
-      log: join(this.logs, `${owner.run}.log`),
-      info: { id, title: command.title, command: command.command, cwd: command.cwd, pid: 100 + this.spawned.length, startedAt: this.now(), cols: 80, rows: 24, state: "running", exit: null, clients: 0, actions: [] },
-    };
-    this.sessions.set(id, session);
-    this.spawned.push({ owner, command });
-    return Promise.resolve(session);
-  }
-
-  stop(_id: string, _reason: StopReason): Promise<void> {
-    return Promise.resolve();
-  }
-
-  restartService(): Promise<RunnerSession> {
-    return Promise.reject(new Error("runs only"));
-  }
-
-  forget(id: string): Promise<void> {
-    this.forgotten.push(id);
-    this.sessions.delete(id);
-    return Promise.resolve();
-  }
-
-  onExit(): () => void {
-    return () => undefined;
-  }
-
-  close(): Promise<void> {
-    return Promise.resolve();
-  }
-
-  /** The run's session ends as the keeper says, `ranMs` after it started. */
-  end(id: string, reason: ExitReason, code: number | null, ranMs = 2000, signal: string | null = null): void {
-    const session = this.sessions.get(id);
-    if (session === undefined) throw new Error(`no session ${id}`);
-    this.sessions.set(id, { ...session, info: { ...session.info, pid: null, state: "exited", exit: { code, signal, reason, at: session.info.startedAt + ranMs } } });
-  }
-
-  /** The session id of the latest spawn of `job`. */
-  latest(job: string): string {
-    const spawn = [...this.spawned].reverse().find((candidate) => candidate.owner.job === job);
-    if (spawn === undefined) throw new Error(`no run of ${job}`);
-    return sessionIdOf(spawn.owner) ?? "";
-  }
-}
-
-/** Records kept in memory, as `runs.json` keeps them. */
-function memoryStore(): RunsStore & { saved: RunsRecords } {
-  const store = {
-    saved: { active: [], last: {} } as RunsRecords,
-    load: () => Promise.resolve(structuredClone(store.saved)),
-    save(records: RunsRecords) {
-      store.saved = structuredClone(records);
-    },
-    flush: () => Promise.resolve(),
-  };
-  return store;
-}
 
 describe("runs", () => {
   let dir: string;
@@ -122,6 +31,8 @@ describe("runs", () => {
   let snapshot: JobsSnapshot;
   let sessions: FakeSessions;
   let store: ReturnType<typeof memoryStore>;
+  let switchStore: ReturnType<typeof memorySwitch>;
+  let notices: NoticeParams[];
   let history: History;
   let lines: string[];
   let started: ActiveRun[];
@@ -141,10 +52,14 @@ describe("runs", () => {
     const created = createRuns({
       sessions,
       jobs: () => snapshot,
+      settings: () => DEFAULT_SETTINGS,
+      servicesSettled: () => true,
       clock: { now: () => now },
       log: (line) => lines.push(line),
       history,
       store,
+      switchStore,
+      post: (notice) => notices.push(notice),
       projectPath: (project) => (project === "p1" ? "/ws/Projects/one" : null),
       onStarted: (run) => started.push(structuredClone(run)),
       onFinished: (record) => finished.push(record),
@@ -156,9 +71,10 @@ describe("runs", () => {
     return created;
   }
 
-  /** A scheduler started at a local time. */
+  /** A scheduler started for the first time at a local time. */
   async function fresh(local: string): Promise<void> {
     await runs.close();
+    store.saved.lookedAt = null;
     now = new Date(local);
     await open();
   }
@@ -189,6 +105,8 @@ describe("runs", () => {
     load();
     sessions = new FakeSessions(() => now.getTime(), dir);
     store = memoryStore();
+    switchStore = memorySwitch();
+    notices = [];
     history = createHistory(join(dir, "state"), () => undefined);
     lines = [];
     started = [];
@@ -222,7 +140,27 @@ describe("runs", () => {
       ]);
       const id = "run:backup:20261118-120000-000001";
       expect(runs.active()).toEqual([
-        { job: "backup", name: "Backup", kind: "script", project: null, folder: "Projects/x", run: "20261118-120000-000001", trigger: "scheduled", dueAt: now.getTime(), state: "running", startedAt: now.getTime(), session: id, log: join(dir, "20261118-120000-000001.log") },
+        {
+          job: "backup",
+          name: "Backup",
+          kind: "script",
+          project: null,
+          folder: "Projects/x",
+          run: "20261118-120000-000001",
+          trigger: "scheduled",
+          dueAt: now.getTime(),
+          state: "running",
+          lowPriority: true,
+          runAt: null,
+          deadline: null,
+          waits: null,
+          startedAt: now.getTime(),
+          session: id,
+          log: join(dir, "20261118-120000-000001.log"),
+          limitHit: null,
+          warnedAt: null,
+          warningDismissed: false,
+        },
       ]);
       expect(started).toHaveLength(1);
       expect(store.saved.active).toHaveLength(1);
@@ -253,7 +191,8 @@ describe("runs", () => {
       expect(finished).toEqual([record]);
       expect(runs.active()).toEqual([]);
       expect(sessions.forgotten).toEqual([id]);
-      expect(store.saved).toEqual({ active: [], last: { backup: record } });
+      // The last look that fired something, written at once.
+      expect(store.saved).toEqual({ active: [], last: { backup: record }, lookedAt: Date.parse("2026-11-18T12:00:00.000Z"), held: {} });
       expect(lines).toContain("run backup 20261118-120000-000001: done — exit 0");
       // The next day, again.
       await minutes("2026-11-19T13:00:00");
@@ -261,7 +200,7 @@ describe("runs", () => {
     });
 
     it("every 30 min, 9:00–19:00, weekdays only: runs on a Wednesday at 9:00, 9:30…, never on a Saturday", async () => {
-      files = { "check.md": script("Check", "schedule:\n  every: { minutes: 30, from: 9:00, to: 19:00 }\n  only: weekdays\noverlap: parallel\n") };
+      files = { "check.md": script("Check", "schedule:\n  every: { minutes: 30, from: 9:00, to: 19:00 }\n  only: weekdays\noverlap: parallel\nlow-priority: false\nmissed: skip\n") };
       load();
       await at("2026-11-18T08:00:00");
       await minutes("2026-11-18T10:00:00");
@@ -286,19 +225,18 @@ describe("runs", () => {
       expect(runs.nextUp()).toEqual([]);
     });
 
-    it("nothing before the scheduler's start is due; an occurrence seen too late is missed and logged, not run", async () => {
-      now = new Date("2026-11-18T13:00:30");
-      await open();
+    it("nothing before the scheduler's first start is due; an occurrence seen too late is missed, and goes to its policy", async () => {
+      await fresh("2026-11-18T13:00:30");
       await runs.tick();
       expect(sessions.spawned).toEqual([]);
-      files = { "backup.md": script("Backup", "schedule:\n  daily: { at: [13:30, 14:00] }\n") };
+      files = { "backup.md": script("Backup", "schedule:\n  daily: { at: [13:30, 14:00] }\nmissed: skip\n") };
       load();
       await at("2026-11-18T13:20:00");
       now = new Date(Date.parse("2026-11-18T14:00:00") + ON_TIME_MS + 1000);
       await runs.tick();
       expect(sessions.spawned).toEqual([]);
-      expect(lines).toContain("job backup: missed 13:30, 14:00 — not run");
-      expect(await page()).toEqual([]);
+      expect(lines).toContain("job backup: missed Wed 13:30, Wed 14:00 — missed · skipped");
+      expect(await page()).toEqual([expect.objectContaining({ job: "backup", state: "missed", reason: "skipped", trigger: "scheduled", dueAt: Date.parse("2026-11-18T13:00:00.000Z"), startedAt: null })]);
     });
 
     it("waits for the keeper: nothing is due while it is not followed, and a short outage only delays the run", async () => {
@@ -413,13 +351,21 @@ describe("runs", () => {
       expect(runs.jobRuns()[0]?.last).toMatchObject({ state: "skipped" });
     });
 
-    it("parallel: another run starts beside it", async () => {
-      files = { "check.md": script("Check", "schedule:\n  every: { minutes: 1 }\noverlap: parallel\n") };
+    it("parallel: another run starts beside it, as far as the low-priority slots go", async () => {
+      files = { "check.md": script("Check", "schedule:\n  every: { minutes: 1 }\noverlap: parallel\nlow-priority: false\n") };
       load();
       await fresh("2026-11-18T12:59:30");
       await minutes("2026-11-18T13:02:00");
       expect(sessions.spawned).toHaveLength(3);
       expect(runs.active().map((run) => run.state)).toEqual(["running", "running", "running"]);
+      files = { "low.md": script("Low", "schedule:\n  every: { minutes: 1 }\noverlap: parallel\n") };
+      load();
+      await minutes("2026-11-18T13:05:00");
+      expect(runs.active().filter((run) => run.job === "low").map((run) => [run.state, run.waits])).toEqual([
+        ["running", null],
+        ["running", null],
+        ["queued", { kind: "slot", ahead: 1 }],
+      ]);
     });
 
     it("queue: one run waits and starts when the run going ends; a further one is skipped", async () => {
@@ -432,7 +378,7 @@ describe("runs", () => {
         ["20261118-120000-000001", "running", "run:check:20261118-120000-000001"],
         ["20261118-120100-000002", "queued", null],
       ]);
-      expect(lines).toContain("run check 20261118-120100-000002: queued after the previous run");
+      expect(lines).toContain("run check 20261118-120100-000002: queued · after the previous run");
       await at("2026-11-18T13:02:00");
       expect(finished).toEqual([expect.objectContaining({ state: "skipped", reason: "a run is already queued" })]);
       sessions.end(sessions.latest("check"), "exited", 0);
@@ -541,18 +487,22 @@ describe("runs", () => {
 
     it("keeps its records in runs.json, and starts empty from a missing or broken file", async () => {
       const file = fileRunsStore(join(dir, "state"), (line) => lines.push(line));
-      expect(await file.load()).toEqual({ active: [], last: {} });
-      store.saved = { active: [], last: {} };
+      expect(await file.load()).toEqual({ active: [], last: {}, lookedAt: null, held: {} });
+      store.saved = { active: [], last: {}, lookedAt: null, held: {} };
       await at("2026-11-18T12:59:59");
       await at("2026-11-18T13:00:00");
       file.save(store.saved);
       await file.flush();
       expect(await file.load()).toEqual(store.saved);
       await writeFile(join(dir, "state/runs.json"), "{ not json");
-      expect(await file.load()).toEqual({ active: [], last: {} });
+      expect(await file.load()).toEqual({ active: [], last: {}, lookedAt: null, held: {} });
       expect(lines.at(-1)).toContain("is not readable JSON");
-      await writeFile(join(dir, "state/runs.json"), JSON.stringify({ active: [{ job: 1 }], last: { a: { nope: true } } }));
-      expect(await file.load()).toEqual({ active: [], last: {} });
+      await writeFile(join(dir, "state/runs.json"), JSON.stringify({ active: [{ job: 1 }], last: { a: { nope: true } }, lookedAt: "soon", held: { a: "x" } }));
+      expect(await file.load()).toEqual({ active: [], last: {}, lookedAt: null, held: {} });
+      // A run going as an older build kept it: what it lacks gets its default.
+      const { lowPriority: _priority, runAt: _at, deadline: _deadline, waits: _waits, limitHit: _limit, warnedAt: _warned, warningDismissed: _dismissed, ...older } = store.saved.active[0] ?? ({} as ActiveRun);
+      await writeFile(join(dir, "state/runs.json"), JSON.stringify({ active: [older], last: {} }));
+      expect((await file.load()).active).toEqual(store.saved.active);
     });
 
     it("tells of every change", async () => {

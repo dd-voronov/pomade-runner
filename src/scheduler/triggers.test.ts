@@ -6,7 +6,7 @@ process.env.TZ = "Europe/Madrid";
 import { parseSchedule, type Schedule } from "pomade-kit/schedule";
 import { describe, expect, it } from "vitest";
 
-import { dueOccurrences, ON_TIME_MS } from "./triggers";
+import { dueOccurrences, MISSED_LIST_MAX, ON_TIME_MS } from "./triggers";
 
 function schedule(value: unknown): Schedule {
   const result = parseSchedule(value, { resolution: "time" });
@@ -96,5 +96,19 @@ describe("dueOccurrences", () => {
   it("a clock moved ahead past an occurrence misses it", () => {
     const daily = schedule({ daily: { at: "13:00" } });
     expect(dueOccurrences(daily, at("2026-11-18T12:00:00"), at("2026-11-18T15:00:00"))).toEqual({ fire: null, missed: [at("2026-11-18T13:00:00")] });
+  });
+
+  it("a long absence lists at most MISSED_LIST_MAX, the earliest and always the latest", () => {
+    const minutely = schedule({ every: { minutes: 1 } });
+    const due = dueOccurrences(minutely, at("2026-11-18T00:00:00"), at("2026-11-21T00:30:00"));
+    expect(due.fire).toEqual(at("2026-11-21T00:30:00"));
+    expect(due.missed).toHaveLength(MISSED_LIST_MAX - 1);
+    expect(due.missed[0]).toEqual(at("2026-11-18T00:01:00"));
+    expect(due.missed.at(-2)).toEqual(at("2026-11-18T16:38:00"));
+    expect(due.missed.at(-1)).toEqual(at("2026-11-21T00:29:00"));
+    const late = dueOccurrences(schedule({ daily: { at: "7:00" }, only: "weekdays" }), at("2020-01-01T00:00:00"), at("2026-11-18T08:30:00"));
+    expect(late.fire).toBeNull();
+    expect(late.missed).toHaveLength(MISSED_LIST_MAX);
+    expect(late.missed.at(-1)).toEqual(at("2026-11-18T07:00:00"));
   });
 });

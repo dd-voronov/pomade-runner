@@ -232,6 +232,22 @@ describe("service supervision", () => {
       expect(lines).toEqual(expect.arrayContaining(["service zeta: starting", "service zeta: up", "service alpha/api: starting"]));
     });
 
+    it("is settled once no service waits for its turn and none is starting within its 30 s", async () => {
+      expect(supervisor.settled()).toBe(false);
+      files = { "zeta.md": service("Zeta"), "alpha/web.md": service("Web", "project: alpha\n") };
+      load();
+      await at(0);
+      expect(supervisor.settled()).toBe(false);
+      await at(ALIVE_MS);
+      expect(supervisor.settled()).toBe(false);
+      await at(2 * ALIVE_MS);
+      expect(supervisor.settled()).toBe(true);
+      files = {};
+      load();
+      await at(2 * ALIVE_MS + 1);
+      expect(supervisor.settled()).toBe(true);
+    });
+
     it("runs each service as its job says: its command in its folder, titled with its name, with Restart on its tab", async () => {
       files = { "web.md": "---\nkind: service\nname: Web\nfolder: Projects/web\ncommand: npm run dev\nlow-priority: true\n---\n" };
       load();

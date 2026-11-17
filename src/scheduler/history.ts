@@ -7,7 +7,8 @@
 //   skips a line that is not a record, and the first append to a file that does not end with a
 //   newline starts a new line first, so a half line never swallows the next record.
 // - **Pruning** is by whole days: a day's file and the output logs of runs that started that day
-//   go once the day is `HISTORY_DAYS` behind; a log a session still writes stays.
+//   go once the day is as many days behind as the settings keep (`history-days`); a log a session
+//   still writes stays.
 // - **Reading** is newest first, a page at a time; a page ends at a cursor (`<day>:<line>`) the next
 //   page starts before. Records are only appended and days only removed whole, so a cursor stays
 //   valid while new runs land.
@@ -18,8 +19,6 @@ import { join } from "node:path";
 import type { Log } from "./log";
 import { isRunRecord, LAST_LINES, plainLines, type HistoryPage, type RunOutput, type RunRecord } from "./model";
 
-/** How long records and output logs are kept. The setting arrives with E-003. */
-export const HISTORY_DAYS = 30;
 /** The most a page holds. */
 export const PAGE_MAX = 200;
 /** How much of a log `output` reads: its end. */
@@ -40,9 +39,9 @@ export interface History {
   page(options: { job: string | null; before: string | null; limit: number }): Promise<HistoryPage>;
   /** A run's record; `null` when there is none (yet, or any more). */
   find(job: string, run: string): Promise<RunRecord | null>;
-  /** Remove the days `HISTORY_DAYS` behind `now`, with their runs' output logs — except the logs in
+  /** Remove the days `keepDays` behind `now`, with their runs' output logs — except the logs in
    *  `inUse`. */
-  prune(now: Date, inUse: ReadonlySet<string>): Promise<void>;
+  prune(now: Date, keepDays: number, inUse: ReadonlySet<string>): Promise<void>;
 }
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -158,8 +157,8 @@ export function createHistory(state: string, log: Log): History {
       return null;
     },
 
-    async prune(now, inUse) {
-      const cutoff = dayOf(now.getTime() - HISTORY_DAYS * DAY_MS);
+    async prune(now, keepDays, inUse) {
+      const cutoff = dayOf(now.getTime() - keepDays * DAY_MS);
       for (const day of await days()) {
         if (day >= cutoff) continue;
         await rm(join(folder, `${day}.jsonl`), { force: true });

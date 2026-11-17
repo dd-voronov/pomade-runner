@@ -1,25 +1,51 @@
-// Runner's view of runs (docs/DESIGN.md "Runs", "History", "Needs you"): what the scheduler holds
-// and serves to the `pomade-runner` command and to Runner's frames — the runs going now, the
-// history records of finished ones, what runs next, and what needs the person. Plain JSON. Pure:
-// shared by the scheduler, the control protocol, the command and the UI.
+// Runner's view of runs (docs/DESIGN.md "Runs", "History", "Needs you", "Missed runs and load"):
+// what the scheduler holds and serves to the `pomade-runner` command and to Runner's frames — the
+// runs going now and what each queued one waits for, the history records of finished ones, what
+// runs next, the switch, and what needs the person. Plain JSON. Pure: shared by the scheduler, the
+// control protocol, the command and the UI.
 
 import { JOB_KINDS, type JobKind } from "../jobs/model";
 import { isServiceStatus, type ServiceStatus } from "../keeper/model";
 
-/** What started a run. Hooks, chains and caught-up runs come with later epics. */
-export const RUN_TRIGGERS = ["scheduled", "manual"] as const;
+/** What started a run: its schedule on time · `caught-up`, a missed run run late, once however many
+ *  were missed · Run now. Hooks and chains come with later epics. */
+export const RUN_TRIGGERS = ["scheduled", "caught-up", "manual"] as const;
 export type RunTrigger = (typeof RUN_TRIGGERS)[number];
 
-/** A run that has not ended: `queued` waits for the job's previous run (overlap `queue`) ·
+/** A run that has not ended: `missed-waiting` a missed run of a `wait-for-me` job, waiting for the
+ *  person to pick Run now, Run at… or Skip · `queued` waits to start (`waits` says for what) ·
  *  `running` is a keeper session. */
-export const ACTIVE_STATES = ["queued", "running"] as const;
+export const ACTIVE_STATES = ["missed-waiting", "queued", "running"] as const;
 export type ActiveState = (typeof ACTIVE_STATES)[number];
 
-/** How a run ended: `done` exit 0 · `failed` exit ≠ 0, a signal, a start the keeper refused or a
- *  session lost · `skipped` never started (the reason says why) · `stopped-by-you` Ctrl+C or Stop in
- *  its tab. */
-export const RUN_RESULTS = ["done", "failed", "skipped", "stopped-by-you"] as const;
+/** How a run ended: `done` exit 0 · `failed` exit ≠ 0, a signal, a time limit, a start the keeper
+ *  refused or a session lost · `skipped` never started (the reason says why) · `missed` never
+ *  started because it was missed, and its policy did not run it (the reason says what happened) ·
+ *  `stopped-by-you` Ctrl+C or Stop in its tab, or Stop on its long-run warning. */
+export const RUN_RESULTS = ["done", "failed", "skipped", "missed", "stopped-by-you"] as const;
 export type RunResult = (typeof RUN_RESULTS)[number];
+
+/** The global switch's positions: everything runs · runs of low-priority jobs are held · every run
+ *  but Run now is held. Services keep running in every position. */
+export const SWITCH_POSITIONS = ["running", "pause-low", "pause-all"] as const;
+export type SwitchPosition = (typeof SWITCH_POSITIONS)[number];
+
+export interface SwitchState {
+  position: SwitchPosition;
+  /** When it was set (epoch ms); `null` for the default, never set. */
+  since: number | null;
+}
+
+/** What a queued run waits for, the first that holds it: Run at…'s time · the switch · the warm-up
+ *  after login or wake (a caught-up run; `until` is `null` while the services still start) · the
+ *  job's previous run (overlap `queue`) · a free low-priority slot, with how many runs have to end
+ *  before it starts: the slot-waiting runs ahead of it and the one whose slot it takes. */
+export type Waits =
+  | { kind: "time"; at: number }
+  | { kind: "switch"; position: Exclude<SwitchPosition, "running"> }
+  | { kind: "warm-up"; until: number | null }
+  | { kind: "previous-run" }
+  | { kind: "slot"; ahead: number };
 
 export type RunState = ActiveState | RunResult;
 
@@ -44,12 +70,28 @@ interface RunBase {
 /** A run that has not ended. */
 export interface ActiveRun extends RunBase {
   state: ActiveState;
+  /** Whether it runs — or is to run — with macOS background priority: the job's `low-priority`.
+   *  Low-priority runs share the slots and are held by Pause low-priority. */
+  lowPriority: boolean;
+  /** Run at…: it starts no earlier than this (epoch ms); `null` for no such time. */
+  runAt: number | null;
+  /** A caught-up run is worth starting until this moment (epoch ms) — its job's `worth-until`; past
+   *  it, it is missed · skipped. `null` for any other run, or no such moment. */
+  deadline: number | null;
+  /** What a queued run waits for; `null` for one about to start and every other state. */
+  waits: Waits | null;
   /** When its session started (epoch ms, the scheduler's clock); `null` while queued. */
   startedAt: number | null;
   /** The keeper session (`run:<job>:<run>`) once it runs; `null` while queued. */
   session: string | null;
   /** Its output log (absolute) once it runs. */
   log: string | null;
+  /** The time limit Runner stopped it at, in minutes; `null` while it has not. */
+  limitHit: number | null;
+  /** When it became a long-run warning (epoch ms); `null` before. */
+  warnedAt: number | null;
+  /** The person dismissed its long-run warning. */
+  warningDismissed: boolean;
 }
 
 /** A finished run: one history record. */
@@ -98,7 +140,8 @@ export interface JobRuns {
   last: RunRecord | null;
 }
 
-/** Something Runner cannot settle alone: a run that failed, a service that gave up. */
+/** Something Runner cannot settle alone: a run that failed, a service that gave up, a missed run of
+ *  a `wait-for-me` job, a run going longer than the long-run warning. */
 export type NeedsYouItem =
   | {
       /** `run-failed:<job>`: one per job. */
@@ -126,11 +169,38 @@ export type NeedsYouItem =
       /** When it gave up: its last crash (epoch ms). */
       at: number;
       detail: string;
+    }
+  | {
+      /** `missed:<job>`: one per job. */
+      id: string;
+      kind: "missed";
+      job: string;
+      name: string;
+      project: string | null;
+      /** The waiting run. */
+      run: string;
+      /** Its latest missed time (epoch ms). */
+      at: number;
+      detail: string;
+    }
+  | {
+      /** `long-run:<job>:<run>`. */
+      id: string;
+      kind: "long-run";
+      job: string;
+      name: string;
+      project: string | null;
+      run: string;
+      /** When the warning came (epoch ms). */
+      at: number;
+      /** When the run started (epoch ms). */
+      startedAt: number;
+      detail: string;
     };
 
 /** What the panel, the Jobs view and the badge show: everything about runs that changes on its own. */
 export interface RunsReport {
-  /** Queued and running runs, oldest first. */
+  /** Missed runs waiting for the person, queued and running runs, oldest first. */
   active: ActiveRun[];
   /** Every enabled scheduled job's next run, soonest first. */
   nextUp: NextRun[];
@@ -138,6 +208,7 @@ export interface RunsReport {
   jobs: JobRuns[];
   /** Newest first. */
   needsYou: NeedsYouItem[];
+  switch: SwitchState;
 }
 
 /** A page of history, newest first. */
@@ -160,6 +231,26 @@ export type RunActionResult = { ok: true; run: ActiveRun } | { ok: true; service
 
 /** A job enabled or disabled. */
 export type EnableResult = { ok: true; job: string; enabled: boolean } | { ok: false; reason: string };
+
+/** What the person picks for a missed run that waits for them: Run now · Run at… (a time, a day and
+ *  a time, or a date phrase: `23:00`, `tomorrow 9:00`, `+2h`) · Skip. */
+export type MissedChoice = { kind: "run-now" } | { kind: "run-at"; at: string } | { kind: "skip" };
+
+/** The answer to a missed run's choice: when it runs (`at`: epoch ms; `null` for Skip), or why not. */
+export type MissedChoiceResult = { ok: true; at: number | null } | { ok: false; reason: string };
+
+/** The answer to Stop on a run. */
+export type RunStopResult = { ok: true } | { ok: false; reason: string };
+
+export function isMissedChoiceResult(value: unknown): value is MissedChoiceResult {
+  if (!isRecord(value)) return false;
+  if (value.ok === false) return typeof value.reason === "string";
+  return value.ok === true && nullableNumber(value.at);
+}
+
+export function isRunStopResult(value: unknown): value is RunStopResult {
+  return isRecord(value) && (value.ok === true || (value.ok === false && typeof value.reason === "string"));
+}
 
 /** A job as `pomade-runner list` shows it. */
 export interface JobListing {
@@ -186,6 +277,7 @@ const KINDS: readonly string[] = JOB_KINDS;
 const TRIGGERS: readonly string[] = RUN_TRIGGERS;
 const ACTIVE: readonly string[] = ACTIVE_STATES;
 const RESULTS: readonly string[] = RUN_RESULTS;
+const POSITIONS: readonly string[] = SWITCH_POSITIONS;
 const nullableString = (value: unknown): boolean => value === null || typeof value === "string";
 const nullableNumber = (value: unknown): boolean => value === null || (typeof value === "number" && Number.isFinite(value));
 const finite = (value: unknown): boolean => typeof value === "number" && Number.isFinite(value);
@@ -206,10 +298,45 @@ function isRunBase(value: Record<string, unknown>): boolean {
   );
 }
 
+function isWaits(value: unknown): value is Waits {
+  if (!isRecord(value)) return false;
+  switch (value.kind) {
+    case "time":
+      return finite(value.at);
+    case "switch":
+      return value.position === "pause-low" || value.position === "pause-all";
+    case "warm-up":
+      return nullableNumber(value.until);
+    case "previous-run":
+      return true;
+    case "slot":
+      return typeof value.ahead === "number" && Number.isSafeInteger(value.ahead) && value.ahead >= 1;
+    default:
+      return false;
+  }
+}
+
 export function isActiveRun(value: unknown): value is ActiveRun {
   if (!isRecord(value) || !isRunBase(value)) return false;
-  const { state, startedAt, session, log } = value;
-  return typeof state === "string" && ACTIVE.includes(state) && nullableNumber(startedAt) && nullableString(session) && nullableString(log);
+  const { state, lowPriority, runAt, deadline, waits, startedAt, session, log, limitHit, warnedAt, warningDismissed } = value;
+  return (
+    typeof state === "string" &&
+    ACTIVE.includes(state) &&
+    typeof lowPriority === "boolean" &&
+    nullableNumber(runAt) &&
+    nullableNumber(deadline) &&
+    (waits === null || isWaits(waits)) &&
+    nullableNumber(startedAt) &&
+    nullableString(session) &&
+    nullableString(log) &&
+    nullableNumber(limitHit) &&
+    nullableNumber(warnedAt) &&
+    typeof warningDismissed === "boolean"
+  );
+}
+
+export function isSwitchState(value: unknown): value is SwitchState {
+  return isRecord(value) && typeof value.position === "string" && POSITIONS.includes(value.position) && nullableNumber(value.since);
 }
 
 export function isRunRecord(value: unknown): value is RunRecord {
@@ -238,8 +365,18 @@ function isNeedsYouItem(value: unknown): value is NeedsYouItem {
   if (!isRecord(value)) return false;
   const { id, kind, job, name, project, at, detail } = value;
   if (typeof id !== "string" || typeof job !== "string" || typeof name !== "string" || !nullableString(project) || !finite(at) || typeof detail !== "string") return false;
-  if (kind === "run-failed") return typeof value.run === "string" && typeof value.count === "number";
-  return kind === "service-failed";
+  switch (kind) {
+    case "run-failed":
+      return typeof value.run === "string" && typeof value.count === "number";
+    case "service-failed":
+      return true;
+    case "missed":
+      return typeof value.run === "string";
+    case "long-run":
+      return typeof value.run === "string" && finite(value.startedAt);
+    default:
+      return false;
+  }
 }
 
 function isJobRuns(value: unknown): value is JobRuns {
@@ -263,7 +400,8 @@ export function isRunsReport(value: unknown): value is RunsReport {
     Array.isArray(jobs) &&
     jobs.every(isJobRuns) &&
     Array.isArray(needsYou) &&
-    needsYou.every(isNeedsYouItem)
+    needsYou.every(isNeedsYouItem) &&
+    isSwitchState(value.switch)
   );
 }
 
@@ -308,11 +446,46 @@ export function isJobListings(value: unknown): value is JobListing[] {
   return Array.isArray(value) && value.every(isJobListing);
 }
 
-/** A run's state in words: "failed · exit 1", "skipped · previous run still going". */
+/** A time of day on this Mac's clock, `HH:MM`. */
+export function clockTime(epochMs: number): string {
+  const at = new Date(epochMs);
+  return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+/** A moment as its weekday and time of day: "Wed 13:00". */
+export function dayTime(epochMs: number): string {
+  return `${WEEKDAYS[new Date(epochMs).getDay()] ?? ""} ${clockTime(epochMs)}`;
+}
+
+/** The switch's position in words. */
+export const SWITCH_WORDS: Record<SwitchPosition, string> = { running: "Running", "pause-low": "Pause low-priority", "pause-all": "Pause all" };
+
+/** What a queued run waits for, in words: "1 ahead", "warm-up until 08:32". */
+export function waitsWords(waits: Waits | null): string {
+  if (waits === null) return "starting";
+  switch (waits.kind) {
+    case "time":
+      return `at ${dayTime(waits.at)}`;
+    case "switch":
+      return `held · ${SWITCH_WORDS[waits.position]}`;
+    case "warm-up":
+      return waits.until === null ? "warm-up · services start first" : `warm-up until ${clockTime(waits.until)}`;
+    case "previous-run":
+      return "after the previous run";
+    case "slot":
+      return `${waits.ahead} ahead`;
+  }
+}
+
+/** A run's state in words: "failed · exit 1", "queued · 1 ahead", "missed · skipped". */
 export function runWords(view: RunView): string {
   switch (view.state) {
+    case "missed-waiting":
+      return "missed · waiting for you";
     case "queued":
-      return "queued · after the previous run";
+      return `queued · ${waitsWords(view.waits)}`;
     case "running":
       return "running";
     case "done":
@@ -321,6 +494,8 @@ export function runWords(view: RunView): string {
       return "stopped by you";
     case "skipped":
       return view.reason === null ? "skipped" : `skipped · ${view.reason}`;
+    case "missed":
+      return view.reason === null ? "missed" : `missed · ${view.reason}`;
     case "failed":
       return `failed · ${failureWords(view)}`;
   }

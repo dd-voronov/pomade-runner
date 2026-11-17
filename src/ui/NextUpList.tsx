@@ -1,6 +1,6 @@
-import type { NextRun } from "../scheduler/model";
+import { dayTime, type NextRun } from "../scheduler/model";
 import styles from "./Runs.module.css";
-import { aheadWords, dayTime } from "./runWords";
+import { aheadWords } from "./runWords";
 
 /** How many runs Next up shows. */
 const NEXT_UP = 5;

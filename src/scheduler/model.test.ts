@@ -1,16 +1,37 @@
 import { describe, expect, it } from "vitest";
 
 import { outputRoute, parseRoute, runRoute } from "../integrations/runner-api";
-import { durationWords, isRunsReport, runWords, type ActiveRun, type RunRecord } from "./model";
+import { clockTime, dayTime, durationWords, isActiveRun, isRunsReport, runWords, type ActiveRun, type RunRecord } from "./model";
 
 const base = { job: "coda/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/coda", run: "20261117-120000-abcdef", trigger: "manual" as const, dueAt: 1 };
-const active: ActiveRun = { ...base, state: "running", startedAt: 1, session: "run:coda.web:20261117-120000-abcdef", log: "/o.log" };
+const active: ActiveRun = {
+  ...base,
+  state: "running",
+  lowPriority: true,
+  runAt: null,
+  deadline: null,
+  waits: null,
+  startedAt: 1,
+  session: "run:coda.web:20261117-120000-abcdef",
+  log: "/o.log",
+  limitHit: null,
+  warnedAt: null,
+  warningDismissed: false,
+};
+const queued: ActiveRun = { ...active, state: "queued", startedAt: null, session: null, log: null };
 const record: RunRecord = { ...base, state: "failed", reason: null, startedAt: 1, endedAt: 2, durationMs: 1, exitCode: 1, signal: null, log: "/o.log", lastLines: [] };
 
 describe("runs in words", () => {
   it("says each state", () => {
     expect(runWords(active)).toBe("running");
-    expect(runWords({ ...active, state: "queued" })).toBe("queued · after the previous run");
+    expect(runWords({ ...queued, waits: { kind: "previous-run" } })).toBe("queued · after the previous run");
+    expect(runWords({ ...queued, waits: { kind: "slot", ahead: 1 } })).toBe("queued · 1 ahead");
+    expect(runWords({ ...queued, waits: { kind: "switch", position: "pause-low" } })).toBe("queued · held · Pause low-priority");
+    expect(runWords({ ...queued, waits: { kind: "warm-up", until: null } })).toBe("queued · warm-up · services start first");
+    expect(runWords({ ...queued, waits: { kind: "warm-up", until: new Date(2026, 10, 18, 8, 32).getTime() } })).toBe("queued · warm-up until 08:32");
+    expect(runWords({ ...queued, waits: { kind: "time", at: new Date(2026, 10, 18, 23, 0).getTime() } })).toBe("queued · at Wed 23:00");
+    expect(runWords(queued)).toBe("queued · starting");
+    expect(runWords({ ...queued, state: "missed-waiting" })).toBe("missed · waiting for you");
     expect(runWords(record)).toBe("failed · exit 1");
     expect(runWords({ ...record, exitCode: null, signal: "SIGKILL" })).toBe("failed · SIGKILL");
     expect(runWords({ ...record, exitCode: null })).toBe("failed · ended");
@@ -19,6 +40,30 @@ describe("runs in words", () => {
     expect(runWords({ ...record, state: "stopped-by-you" })).toBe("stopped by you");
     expect(runWords({ ...record, state: "skipped", reason: "previous run still going" })).toBe("skipped · previous run still going");
     expect(runWords({ ...record, state: "skipped" })).toBe("skipped");
+    expect(runWords({ ...record, state: "missed", reason: "skipped" })).toBe("missed · skipped");
+    expect(runWords({ ...record, state: "missed", reason: null })).toBe("missed");
+  });
+
+  it("says a moment on this Mac's clock", () => {
+    expect(clockTime(new Date(2026, 10, 17, 14, 2, 30).getTime())).toBe("14:02");
+    expect(clockTime(new Date(2026, 10, 17, 7, 5).getTime())).toBe("07:05");
+    expect(dayTime(new Date(2026, 10, 18, 13, 0).getTime())).toBe("Wed 13:00");
+    expect(dayTime(new Date(2026, 10, 22, 7, 5).getTime())).toBe("Sun 07:05");
+  });
+
+  it("checks an active run's shape", () => {
+    expect(isActiveRun(active)).toBe(true);
+    expect(isActiveRun({ ...queued, runAt: 5, deadline: 9, waits: { kind: "time", at: 5 } })).toBe(true);
+    for (const bad of [
+      { ...active, lowPriority: undefined },
+      { ...active, waits: { kind: "slot", ahead: 0 } },
+      { ...active, waits: { kind: "nap" } },
+      { ...active, waits: { kind: "switch", position: "running" } },
+      { ...active, warningDismissed: null },
+      { ...active, trigger: "hook" },
+    ]) {
+      expect(isActiveRun(bad)).toBe(false);
+    }
   });
 
   it("says how long", () => {
@@ -33,6 +78,7 @@ describe("routes", () => {
     expect(parseRoute(runRoute("coda/web", "20261117-120000-abcdef"))).toEqual({ view: "run", job: "coda/web", run: "20261117-120000-abcdef" });
     expect(parseRoute(outputRoute("Café", "r1"))).toEqual({ view: "output", job: "Café", run: "r1" });
     expect(parseRoute("history")).toEqual({ view: "history" });
+    expect(parseRoute("settings")).toEqual({ view: "settings" });
     for (const route of ["", "jobs", "run/x", "run/a_zz/r", "run//r", "nope/a/b"]) expect(parseRoute(route)).toEqual({ view: "jobs" });
   });
 });
@@ -46,7 +92,10 @@ describe("isRunsReport", () => {
       needsYou: [
         { id: "run-failed:a", kind: "run-failed", job: "a", name: "A", project: null, run: "r", at: 1, count: 1, detail: "exit 1" },
         { id: "service-failed:w", kind: "service-failed", job: "w", name: "W", project: null, at: 1, detail: "x" },
+        { id: "missed:a", kind: "missed", job: "a", name: "A", project: null, run: "r", at: 1, detail: "x" },
+        { id: "long-run:a:r", kind: "long-run", job: "a", name: "A", project: null, run: "r", at: 2, startedAt: 1, detail: "x" },
       ],
+      switch: { position: "pause-low", since: 3 },
     };
     expect(isRunsReport(report)).toBe(true);
     for (const bad of [
@@ -55,6 +104,9 @@ describe("isRunsReport", () => {
       { ...report, jobs: [{ job: "a", next: "soon", finished: true, last: null }] },
       { ...report, needsYou: [{ ...report.needsYou[0], count: "1" }] },
       { ...report, needsYou: [{ ...report.needsYou[1], kind: "other" }] },
+      { ...report, needsYou: [{ ...report.needsYou[3], startedAt: null }] },
+      { ...report, switch: { position: "off", since: null } },
+      { ...report, switch: undefined },
       { active: [] },
     ]) {
       expect(isRunsReport(bad)).toBe(false);

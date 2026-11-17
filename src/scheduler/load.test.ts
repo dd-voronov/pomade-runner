@@ -1,0 +1,503 @@
+// Missed runs and load on a clock the tests set, against the stand-in keeper (`runs-fixture.ts`)
+// and a real history on a temp folder: sleep and wake, power-off, DST, clock jumps, each missed-run
+// policy and its edges, the staged start's warm-up, the queue and its slots, the switch and resume,
+// time limits and long-run warnings — without waiting.
+
+process.env.TZ = "Europe/Madrid";
+
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import type { NoticeParams } from "pomade-kit/protocol";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { checkJobs } from "../jobs/check";
+import type { JobsSnapshot } from "../jobs/model";
+import { createHistory, type History } from "./history";
+import type { ActiveRun, RunRecord } from "./model";
+import { ALIVE_EVERY_MS, createRuns, WAKE_GAP_MS, type Runs } from "./runs";
+import { FakeSessions, memoryStore, memorySwitch, script } from "./runs-fixture";
+import { DEFAULT_SETTINGS, type Settings } from "./settings";
+
+const ms = (local: string): number => new Date(local).getTime();
+
+describe("missed runs and load", () => {
+  let dir: string;
+  let now: Date;
+  let files: Record<string, string>;
+  let snapshot: JobsSnapshot;
+  let sessions: FakeSessions;
+  let store: ReturnType<typeof memoryStore>;
+  let switchStore: ReturnType<typeof memorySwitch>;
+  let history: History;
+  let settings: Settings;
+  let settled: boolean;
+  let lines: string[];
+  let notices: NoticeParams[];
+  let finished: RunRecord[];
+  let runs: Runs;
+  let randoms: number;
+
+  function load(): void {
+    snapshot = checkJobs(
+      Object.entries(files).map(([path, text]) => ({ path, text })),
+      { workspace: "/ws", projects: [] },
+    );
+  }
+
+  async function open(): Promise<void> {
+    runs = createRuns({
+      sessions,
+      jobs: () => snapshot,
+      settings: () => settings,
+      servicesSettled: () => settled,
+      clock: { now: () => now },
+      log: (line) => lines.push(line),
+      history,
+      store,
+      switchStore,
+      projectPath: () => null,
+      post: (notice) => notices.push(notice),
+      onStarted: () => undefined,
+      onFinished: (record) => finished.push(record),
+      onChange: () => undefined,
+      random: () => (++randoms).toString(16).padStart(6, "0"),
+    });
+    await runs.load();
+  }
+
+  /** The scheduler stops — the Mac is off — and starts again at a local time. */
+  async function restart(local: string): Promise<void> {
+    await runs.close();
+    now = new Date(local);
+    await open();
+    await runs.tick();
+  }
+
+  /** Set the clock to a local time and tick. */
+  async function at(local: string): Promise<void> {
+    now = new Date(local);
+    await runs.tick();
+  }
+
+  /** Tick every `stepMs` from now to a local time: the Mac awake. */
+  async function awake(local: string, stepMs = 1000): Promise<void> {
+    const end = ms(local);
+    while (now.getTime() < end) {
+      now = new Date(Math.min(end, now.getTime() + stepMs));
+      await runs.tick();
+    }
+  }
+
+  const spawned = (): string[] => sessions.spawned.map((spawn) => `${spawn.owner.job} ${spawn.command.env?.POMADE_TRIGGER ?? ""}`);
+  const records = async (): Promise<RunRecord[]> => (await history.page({ job: null, before: null, limit: 200 })).records;
+  const going = (job: string): ActiveRun[] => runs.active().filter((run) => run.job === job);
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "prl-"));
+    now = new Date("2026-11-18T06:00:00");
+    files = { "summary.md": script("Summary", "schedule:\n  daily: { at: 7:00 }\n") };
+    load();
+    sessions = new FakeSessions(() => now.getTime(), dir);
+    store = memoryStore();
+    switchStore = memorySwitch();
+    history = createHistory(join(dir, "state"), () => undefined);
+    settings = { ...DEFAULT_SETTINGS };
+    settled = true;
+    lines = [];
+    notices = [];
+    finished = [];
+    randoms = 0;
+    await open();
+    await awake("2026-11-18T06:03:00");
+  });
+
+  afterEach(async () => {
+    await runs.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  describe("sleep and wake", () => {
+    it("asleep across 7:00, awake at 8:30: one caught-up run after the 2-minute warm-up", async () => {
+      await awake("2026-11-18T06:50:00", 60_000);
+      await at("2026-11-18T08:30:00");
+      expect(lines).toContain("wake: 1 h 40 min since the previous tick; caught-up runs wait for the warm-up");
+      expect(lines).toContain("job summary: missed Wed 07:00 — one caught-up run, worth it until Thu 07:00");
+      expect(going("summary").map((run) => [run.state, run.trigger, run.waits])).toEqual([["queued", "caught-up", { kind: "warm-up", until: ms("2026-11-18T08:32:00") }]]);
+      await awake("2026-11-18T08:31:59");
+      expect(sessions.spawned).toEqual([]);
+      await awake("2026-11-18T08:32:00");
+      expect(spawned()).toEqual(["summary caught-up"]);
+      expect(going("summary")[0]).toMatchObject({ state: "running", dueAt: ms("2026-11-18T07:00:00"), startedAt: ms("2026-11-18T08:32:00") });
+      sessions.end(sessions.latest("summary"), "exited", 0);
+      await awake("2026-11-18T09:00:00");
+      expect(spawned()).toEqual(["summary caught-up"]);
+      expect(finished).toEqual([expect.objectContaining({ trigger: "caught-up", state: "done" })]);
+    });
+
+    it("awake at 15:00 with worth-until 12:00: missed · skipped", async () => {
+      files = { "summary.md": script("Summary", "schedule:\n  daily: { at: 7:00 }\nworth-until: 12:00\n") };
+      load();
+      await at("2026-11-18T15:00:00");
+      await awake("2026-11-18T15:05:00");
+      expect(sessions.spawned).toEqual([]);
+      expect(await records()).toEqual([expect.objectContaining({ job: "summary", state: "missed", reason: "skipped · past 12:00", trigger: "scheduled", dueAt: ms("2026-11-18T07:00:00") })]);
+    });
+
+    it("a caught-up run still in its warm-up when worth-until passes is missed · skipped", async () => {
+      files = { "summary.md": script("Summary", "schedule:\n  daily: { at: 7:00 }\nworth-until: 8:31\n") };
+      load();
+      await at("2026-11-18T08:30:00");
+      expect(going("summary")).toHaveLength(1);
+      await awake("2026-11-18T08:33:00");
+      expect(sessions.spawned).toEqual([]);
+      expect(await records()).toEqual([expect.objectContaining({ state: "missed", reason: "skipped · past 8:31" })]);
+    });
+
+    it("a wake within 5 minutes of a run still runs it on time, at once", async () => {
+      await awake("2026-11-18T06:58:00", 60_000);
+      await at("2026-11-18T07:04:00");
+      expect(spawned()).toEqual(["summary scheduled"]);
+    });
+
+    it("many missed runs make one caught-up run", async () => {
+      files = { "check.md": script("Check", "schedule:\n  every: { minutes: 15 }\n") };
+      load();
+      await at("2026-11-18T14:10:00");
+      expect(lines).toContain("job check: missed 32 runs, the latest Wed 14:00 — one caught-up run, worth it until Wed 14:15");
+      await awake("2026-11-18T14:12:30");
+      expect(spawned()).toEqual(["check caught-up"]);
+    });
+
+    it("an on-time run covers a caught-up run still waiting for the warm-up", async () => {
+      files = { "hourly.md": script("Hourly", "schedule:\n  every: { hours: 1 }\n") };
+      load();
+      await awake("2026-11-18T06:50:00", 60_000);
+      await at("2026-11-18T08:58:00");
+      expect(going("hourly").map((run) => [run.trigger, run.dueAt])).toEqual([["caught-up", ms("2026-11-18T08:00:00")]]);
+      await awake("2026-11-18T09:00:00");
+      expect(spawned()).toEqual(["hourly scheduled"]);
+      expect(await records()).toEqual([expect.objectContaining({ trigger: "caught-up", state: "missed", reason: "skipped · the 09:00 run covers it" })]);
+    });
+
+    it("a clock moved ahead is a wake; a clock set back is a fresh start with nothing due", async () => {
+      await at("2026-11-18T09:00:00");
+      expect(lines.filter((line) => line.startsWith("wake:"))).toHaveLength(1);
+      expect(going("summary")).toHaveLength(1);
+      await awake("2026-11-18T09:02:00");
+      sessions.end(sessions.latest("summary"), "exited", 0);
+      await at("2026-11-18T06:30:00");
+      await awake("2026-11-18T06:59:00", 60_000);
+      expect(sessions.spawned).toHaveLength(1);
+      await awake("2026-11-18T07:00:00");
+      expect(spawned()).toEqual(["summary caught-up", "summary scheduled"]);
+    });
+
+    it("ticks closer than WAKE_GAP_MS are no wake", async () => {
+      await awake("2026-11-18T06:30:00", WAKE_GAP_MS);
+      expect(lines.filter((line) => line.startsWith("wake:"))).toEqual([]);
+    });
+
+    it("the warm-up starts once the services are up", async () => {
+      await awake("2026-11-18T06:50:00", 60_000);
+      settled = false;
+      await at("2026-11-18T08:30:00");
+      await awake("2026-11-18T08:35:00", 10_000);
+      expect(going("summary")[0]?.waits).toEqual({ kind: "warm-up", until: null });
+      settled = true;
+      await awake("2026-11-18T08:35:10", 10_000);
+      expect(going("summary")[0]?.waits).toEqual({ kind: "warm-up", until: ms("2026-11-18T08:37:10") });
+      await awake("2026-11-18T08:37:10", 10_000);
+      expect(spawned()).toEqual(["summary caught-up"]);
+    });
+
+    it("the warm-up is a setting", async () => {
+      settings = { ...settings, warmUpMinutes: 0 };
+      await at("2026-11-18T08:30:00");
+      expect(spawned()).toEqual(["summary caught-up"]);
+    });
+  });
+
+  describe("after power-off", () => {
+    it("the scheduler stopped across two slots: one caught-up run, not two, after the warm-up", async () => {
+      files = { "twice.md": script("Twice", "schedule:\n  daily: { at: [7:00, 8:00] }\n") };
+      load();
+      await restart("2026-11-18T09:00:00");
+      expect(lines).toContain("job twice: missed Wed 07:00, Wed 08:00 — one caught-up run, worth it until Thu 07:00");
+      await awake("2026-11-18T09:01:59");
+      expect(sessions.spawned).toEqual([]);
+      await awake("2026-11-18T09:02:00");
+      expect(spawned()).toEqual(["twice caught-up"]);
+      expect(going("twice")[0]?.dueAt).toBe(ms("2026-11-18T08:00:00"));
+      sessions.end(sessions.latest("twice"), "exited", 0);
+      // Off for days: still one.
+      await restart("2026-11-20T09:00:00");
+      expect(lines).toContain("job twice: missed 4 runs, the latest Fri 08:00 — one caught-up run, worth it until Sat 07:00");
+      await awake("2026-11-20T09:02:00");
+      expect(spawned()).toEqual(["twice caught-up", "twice caught-up"]);
+    });
+
+    it("knows its last alive time within ALIVE_EVERY_MS, and at once after it fired or missed something", async () => {
+      await awake("2026-11-18T06:10:00");
+      expect(store.saved.lookedAt).toBeGreaterThan(ms("2026-11-18T06:10:00") - ALIVE_EVERY_MS - 1000);
+      await awake("2026-11-18T07:00:00");
+      expect(store.saved.lookedAt).toBe(ms("2026-11-18T07:00:00"));
+    });
+
+    it("never runs twice what fired before the stop", async () => {
+      await awake("2026-11-18T07:00:30");
+      expect(sessions.spawned).toHaveLength(1);
+      await restart("2026-11-18T07:00:40");
+      await awake("2026-11-18T07:10:00");
+      expect(sessions.spawned).toHaveLength(1);
+    });
+
+    it("follows DST: across spring-forward the skipped 2:30 is 3:30, missed once", async () => {
+      files = { "dst.md": script("Dst", "schedule:\n  daily: { at: 2:30 }\nmissed: skip\n") };
+      load();
+      await restart("2027-03-27T23:00:00");
+      await restart("2027-03-28T09:00:00");
+      const [latest, before] = await records();
+      expect(latest).toMatchObject({ job: "dst", state: "missed", reason: "skipped", dueAt: ms("2027-03-28T03:30:00") });
+      expect(before).toMatchObject({ job: "dst", state: "missed", dueAt: ms("2027-03-27T02:30:00") });
+      expect(await records()).toHaveLength(2);
+    });
+  });
+
+  describe("wait for me", () => {
+    beforeEach(() => {
+      files = { "weekly.md": script("Weekly", "schedule:\n  weekly: { days: [sun], at: 3:00 }\nmissed: wait-for-me\n") };
+      load();
+    });
+
+    async function missedSunday(): Promise<ActiveRun> {
+      await restart("2026-11-23T09:00:00");
+      const [run] = going("weekly");
+      if (run === undefined) throw new Error("no waiting run");
+      return run;
+    }
+
+    it("a missed run waits for you: a Needs-you item and a notice, once; never starts on its own", async () => {
+      const run = await missedSunday();
+      expect(run).toMatchObject({ state: "missed-waiting", trigger: "scheduled", dueAt: ms("2026-11-22T03:00:00") });
+      expect(runs.needsYou()).toEqual([{ id: "missed:weekly", kind: "missed", job: "weekly", name: "Weekly", project: null, run: run.run, at: ms("2026-11-22T03:00:00"), detail: "missed Sun 03:00" }]);
+      expect(notices).toEqual([{ title: "Weekly · missed Sun 03:00", body: "It waits for you: Run now, Run at… or Skip.", action: { kind: "openApp", route: `run/weekly/${run.run}` } }]);
+      await awake("2026-11-23T09:30:00", 10_000);
+      expect(sessions.spawned).toEqual([]);
+      // Missed again a week later: still one item, at the latest time, noticed once.
+      await restart("2026-11-30T09:00:00");
+      expect(runs.needsYou()).toEqual([expect.objectContaining({ id: "missed:weekly", run: run.run, at: ms("2026-11-29T03:00:00") })]);
+      expect(notices).toHaveLength(1);
+    });
+
+    it("Run at… 23:00 runs it at 23:00, through the queue; it shows in Next up", async () => {
+      const run = await missedSunday();
+      expect(await runs.missed("weekly", { kind: "run-at", at: "23:00" })).toEqual({ ok: true, at: ms("2026-11-23T23:00:00") });
+      expect(runs.needsYou()).toEqual([]);
+      expect(going("weekly")).toEqual([expect.objectContaining({ run: run.run, state: "queued", trigger: "caught-up", runAt: ms("2026-11-23T23:00:00"), waits: { kind: "time", at: ms("2026-11-23T23:00:00") } })]);
+      expect(runs.nextUp()[0]).toEqual({ job: "weekly", name: "Weekly", project: null, at: ms("2026-11-23T23:00:00") });
+      await awake("2026-11-23T22:59:00", 60_000);
+      await awake("2026-11-23T22:59:59");
+      expect(sessions.spawned).toEqual([]);
+      await awake("2026-11-23T23:00:00");
+      expect(spawned()).toEqual(["weekly caught-up"]);
+    });
+
+    it("Skip records missed · skipped by you and clears the item", async () => {
+      const run = await missedSunday();
+      expect(await runs.missed("Weekly", { kind: "skip" })).toEqual({ ok: true, at: null });
+      expect(runs.needsYou()).toEqual([]);
+      expect(runs.active()).toEqual([]);
+      expect(finished).toEqual([expect.objectContaining({ run: run.run, state: "missed", reason: "skipped by you" })]);
+      expect(await runs.missed("weekly", { kind: "skip" })).toEqual({ ok: false, reason: 'no missed run of "weekly" waits for you' });
+    });
+
+    it("Run now runs it now, as a run of yours; refused while a run of the job goes with overlap skip", async () => {
+      await missedSunday();
+      await runs.runNow("weekly");
+      expect(await runs.missed("weekly", { kind: "run-now" })).toEqual({ ok: false, reason: '"Weekly" is running, and its overlap is skip' });
+      expect(runs.needsYou()).toHaveLength(1);
+      sessions.end(sessions.latest("weekly"), "exited", 0);
+      await runs.tick();
+      expect(await runs.missed("weekly", { kind: "run-now" })).toEqual({ ok: true, at: now.getTime() });
+      expect(spawned()).toEqual(["weekly manual", "weekly manual"]);
+      expect(runs.needsYou()).toEqual([]);
+    });
+
+    it("a missed run whose job is disabled or gone waits no longer", async () => {
+      await missedSunday();
+      files = { "weekly.md": script("Weekly", "schedule:\n  weekly: { days: [sun], at: 3:00 }\nmissed: wait-for-me\nenabled: false\n") };
+      load();
+      await runs.tick();
+      expect(runs.needsYou()).toEqual([]);
+      expect(finished).toEqual([expect.objectContaining({ state: "missed", reason: "skipped · its job is disabled" })]);
+    });
+
+    it("Run at… says why a time will not do", async () => {
+      await missedSunday();
+      expect(await runs.missed("weekly", { kind: "run-at", at: "soonish" })).toEqual({ ok: false, reason: '"soonish" is not a time — write e.g. 23:00, tomorrow 9:00 or +2h' });
+      expect(await runs.missed("weekly", { kind: "run-at", at: "2026-11-23 08:00" })).toEqual({ ok: false, reason: "2026-11-23 08:00 has passed — pick a later time" });
+      expect(runs.needsYou()).toHaveLength(1);
+    });
+  });
+
+  describe("the queue", () => {
+    beforeEach(async () => {
+      files = { "a.md": script("A"), "b.md": script("B"), "c.md": script("C"), "git.md": script("Git", "schedule:\n  daily: { at: 13:00 }\nlow-priority: false\n") };
+      load();
+      await restart("2026-11-18T12:59:58");
+      await awake("2026-11-18T13:00:00");
+    });
+
+    it("three low-priority jobs due at once: two run, one is queued · 1 ahead; a job that is not low-priority runs beside them", async () => {
+      expect(runs.active().map((run) => [run.job, run.state, run.waits])).toEqual([
+        ["a", "running", null],
+        ["b", "running", null],
+        ["c", "queued", { kind: "slot", ahead: 1 }],
+        ["git", "running", null],
+      ]);
+      expect(sessions.spawned.find((spawn) => spawn.owner.job === "git")?.command.background).toBe(false);
+      expect(lines).toContain("run c 20261118-120000-000003: queued · 1 ahead");
+      sessions.end(sessions.latest("a"), "exited", 0);
+      await awake("2026-11-18T13:00:01");
+      expect(going("c")[0]).toMatchObject({ state: "running", waits: null });
+    });
+
+    it("Run now waits for a slot too", async () => {
+      expect(await runs.runNow("A")).toEqual({ ok: false, reason: '"A" is running, and its overlap is skip' });
+      files = { ...files, "d.md": script("D", "hook: { event: login }\n") };
+      load();
+      expect(await runs.runNow("d")).toMatchObject({ ok: true, run: { state: "queued", waits: { kind: "slot", ahead: 2 } } });
+    });
+
+    it("the number of slots is a setting, applied at the next tick", async () => {
+      settings = { ...settings, maxLowPriorityRuns: 3 };
+      await awake("2026-11-18T13:00:01");
+      expect(going("c")[0]?.state).toBe("running");
+    });
+  });
+
+  describe("the switch", () => {
+    beforeEach(async () => {
+      files = { "summary.md": script("Summary", "schedule:\n  daily: { at: 13:00 }\n"), "git.md": script("Git", "schedule:\n  daily: { at: 13:00 }\nlow-priority: false\nmissed: skip\n") };
+      load();
+      await restart("2026-11-18T12:00:00");
+    });
+
+    it("Pause low-priority holds the low-priority job; another runs; resume within 5 minutes runs the held one on time", async () => {
+      expect(await runs.setSwitch("pause-low")).toEqual({ position: "pause-low", since: now.getTime() });
+      expect(switchStore.saved.position).toBe("pause-low");
+      await awake("2026-11-18T13:02:00");
+      expect(spawned()).toEqual(["git scheduled"]);
+      await runs.setSwitch("running");
+      await awake("2026-11-18T13:02:01");
+      expect(spawned()).toEqual(["git scheduled", "summary scheduled"]);
+    });
+
+    it("Pause all holds everything scheduled, but not Run now; on resume the held runs follow their missed-run policy", async () => {
+      await runs.setSwitch("pause-all");
+      await awake("2026-11-18T13:30:00", 10_000);
+      expect(sessions.spawned).toEqual([]);
+      expect(runs.nextUp()).toHaveLength(2);
+      expect((await runs.runNow("summary")).ok).toBe(true);
+      sessions.end(sessions.latest("summary"), "exited", 0);
+      await awake("2026-11-18T13:30:01");
+      await runs.setSwitch("running");
+      await awake("2026-11-18T13:30:02");
+      // Summary (run on wake, worth it until its next run) catches up; Git (skip) is recorded missed.
+      expect(spawned()).toEqual(["summary manual", "summary caught-up"]);
+      expect((await records()).find((record) => record.job === "git")).toMatchObject({ state: "missed", reason: "skipped", dueAt: ms("2026-11-18T13:00:00") });
+    });
+
+    it("a queued run the switch held follows its policy when released late", async () => {
+      settings = { ...settings, maxLowPriorityRuns: 1 };
+      files = { ...files, "other.md": script("Other", "schedule:\n  daily: { at: 13:00 }\nmissed: skip\n") };
+      load();
+      await awake("2026-11-18T13:00:00");
+      expect(runs.active().map((run) => [run.job, run.state])).toEqual([
+        ["git", "running"],
+        ["other", "running"],
+        ["summary", "queued"],
+      ]);
+      await runs.setSwitch("pause-low");
+      sessions.end(sessions.latest("other"), "exited", 0);
+      await awake("2026-11-18T13:20:00", 10_000);
+      expect(going("summary")[0]?.waits).toEqual({ kind: "switch", position: "pause-low" });
+      await runs.setSwitch("running");
+      expect(lines).toContain(`run summary ${going("summary")[0]?.run ?? ""}: held by the switch — one caught-up run, worth it until Thu 13:00`);
+      expect(going("summary")[0]).toMatchObject({ trigger: "caught-up", state: "running" });
+    });
+
+    it("survives a restart", async () => {
+      await runs.setSwitch("pause-all");
+      await restart("2026-11-18T12:30:00");
+      expect(runs.switch().position).toBe("pause-all");
+      expect(lines).toContain("switch: Pause all");
+    });
+  });
+
+  describe("time limit", () => {
+    it("stops a run past its job's time limit, once: failed, stopped: ran over 1 min", async () => {
+      files = { "long.md": script("Long", "schedule:\n  daily: { at: 7:00 }\ntime-limit: 1m\n") };
+      load();
+      await awake("2026-11-18T07:00:59");
+      expect(sessions.stops).toEqual([]);
+      await awake("2026-11-18T07:01:00");
+      const id = sessions.latest("long");
+      expect(sessions.stops).toEqual([{ id, reason: "time-limit" }]);
+      expect(lines).toContain(`run long ${id.slice(-22)}: ran over its time limit of 1 min; stopping it`);
+      await awake("2026-11-18T07:01:02");
+      expect(sessions.stops).toHaveLength(1);
+      sessions.end(id, "time-limit", null, 61_000, "SIGTERM");
+      await awake("2026-11-18T07:01:03");
+      expect(finished).toEqual([expect.objectContaining({ job: "long", state: "failed", reason: "stopped: ran over 1 min", signal: "SIGTERM" })]);
+    });
+
+    it("no time limit by default", async () => {
+      await awake("2026-11-18T07:00:00");
+      await awake("2026-11-18T09:00:00", 60_000);
+      expect(sessions.stops).toEqual([]);
+    });
+  });
+
+  describe("long-run warning", () => {
+    beforeEach(() => {
+      settings = { ...settings, longRunWarningMinutes: 1 };
+    });
+
+    it("at the threshold, a Needs-you item and one notice; the run keeps going", async () => {
+      await awake("2026-11-18T07:00:59");
+      expect(runs.needsYou()).toEqual([]);
+      await awake("2026-11-18T07:01:00");
+      const run = going("summary")[0];
+      expect(runs.needsYou()).toEqual([
+        { id: `long-run:summary:${run?.run ?? ""}`, kind: "long-run", job: "summary", name: "Summary", project: null, run: run?.run, at: ms("2026-11-18T07:01:00"), startedAt: ms("2026-11-18T07:00:00"), detail: "running 1 min — still expected?" },
+      ]);
+      expect(notices).toEqual([expect.objectContaining({ title: "Summary has been running 1 min — still expected?", action: { kind: "openApp", route: `run/summary/${run?.run ?? ""}` } })]);
+      await awake("2026-11-18T09:00:00", 60_000);
+      expect(sessions.stops).toEqual([]);
+      expect(going("summary")[0]?.state).toBe("running");
+      expect(notices).toHaveLength(1);
+      await restart("2026-11-18T09:00:01");
+      expect(notices).toHaveLength(1);
+      expect(runs.needsYou()).toHaveLength(1);
+    });
+
+    it("Dismiss clears it for good; Stop stops the run as stopped by you", async () => {
+      await awake("2026-11-18T07:01:00");
+      const run = going("summary")[0]?.run ?? "";
+      expect(runs.dismissWarning("summary", run)).toBe(true);
+      expect(runs.dismissWarning("summary", run)).toBe(false);
+      expect(runs.needsYou()).toEqual([]);
+      await awake("2026-11-18T08:00:00", 60_000);
+      expect(runs.needsYou()).toEqual([]);
+      expect(await runs.stop("summary", run)).toEqual({ ok: true });
+      expect(sessions.stops).toEqual([{ id: `run:summary:${run}`, reason: "stopped-by-you" }]);
+      sessions.end(`run:summary:${run}`, "stopped-by-you", null, 3_600_000, "SIGTERM");
+      await runs.tick();
+      expect(finished).toEqual([expect.objectContaining({ state: "stopped-by-you" })]);
+      expect(await runs.stop("summary", run)).toEqual({ ok: false, reason: `run ${run} of "summary" is not running` });
+    });
+  });
+});

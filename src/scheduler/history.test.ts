@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createHistory, HISTORY_DAYS, lastLines, readOutput, type History } from "./history";
+import { createHistory, lastLines, readOutput, type History } from "./history";
 import { plainLines, type RunRecord } from "./model";
 
 const DAY = 86_400_000;
@@ -106,7 +106,8 @@ describe("history", () => {
     expect(await createHistory(join(state, "none"), () => undefined).find("a", "r1")).toBeNull();
   });
 
-  it("prunes the days HISTORY_DAYS behind and their runs' output logs, never a log in use", async () => {
+  it("prunes the days the setting keeps behind, and their runs' output logs, never a log in use", async () => {
+    const HISTORY_DAYS = 30;
     const old = T0 - (HISTORY_DAYS + 1) * DAY;
     await history.append(record("a", "old", old));
     await history.append(record("a", "edge", T0 - HISTORY_DAYS * DAY));
@@ -119,14 +120,17 @@ describe("history", () => {
     for (const file of [join(output, "a", `${oldRun}.log`), join(output, "a", "20261117-120000-bbbbbb.log"), join(output, "svc", `${oldRun}.log`), join(output, "gone", `${oldRun}.log`), join(output, "a", "notes.txt")]) {
       await writeFile(file, "x");
     }
-    await history.prune(new Date(T0), new Set([join(output, "svc", `${oldRun}.log`)]));
+    await history.prune(new Date(T0), HISTORY_DAYS, new Set([join(output, "svc", `${oldRun}.log`)]));
     expect((await readdir(join(state, "history"))).sort()).toEqual(["2026-10-18.jsonl", "2026-11-17.jsonl"]);
     expect((await readdir(join(output, "a"))).sort()).toEqual(["20261117-120000-bbbbbb.log", "notes.txt"]);
     expect(await readdir(join(output, "svc"))).toEqual([`${oldRun}.log`]);
     expect((await readdir(output)).sort()).toEqual(["a", "svc"]);
     expect(lines).toEqual(["history: removed the runs of 2026-10-17"]);
     expect((await history.page({ job: null, before: null, limit: 10 })).records.map((r) => r.run)).toEqual(["new", "edge"]);
-    await createHistory(join(state, "empty"), () => undefined).prune(new Date(T0), new Set());
+    await createHistory(join(state, "empty"), () => undefined).prune(new Date(T0), HISTORY_DAYS, new Set());
+    // Fewer days kept: the edge day goes too.
+    await history.prune(new Date(T0), 7, new Set());
+    expect(await readdir(join(state, "history"))).toEqual(["2026-11-17.jsonl"]);
   });
 
   it("reads a log's end, from a whole line, and says when it cut", async () => {

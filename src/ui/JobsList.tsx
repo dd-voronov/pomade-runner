@@ -6,9 +6,8 @@ import { RUN_NOW_METHOD, SET_ENABLED_METHOD } from "../integrations/runner-api";
 import { describeJobError } from "../jobs/format";
 import { entryId, entryPath, type Job, type JobEntry, type JobKind } from "../jobs/model";
 import type { ServiceStatus } from "../keeper/model";
-import { runWords, type JobRuns } from "../scheduler/model";
+import { dayTime, runWords, type JobRuns } from "../scheduler/model";
 import styles from "./JobsList.module.css";
-import { dayTime } from "./runWords";
 import { serviceWords } from "./serviceWords";
 import { useAction } from "./useAction";
 

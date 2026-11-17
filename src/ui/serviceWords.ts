@@ -1,6 +1,7 @@
 // A service's state in words for a job row: "Running · restarted 2× · last crash 14:02". Pure.
 
 import type { ServiceState, ServiceStatus } from "../keeper/model";
+import { clockTime } from "../scheduler/model";
 
 const STATE_WORDS: Record<ServiceState, string> = {
   queued: "Queued to start",
@@ -14,12 +15,6 @@ const STATE_WORDS: Record<ServiceState, string> = {
   invalid: "Not started: its file has errors",
   removed: "Stopping: its file is gone",
 };
-
-/** A time of day on this Mac's clock, `HH:MM`. */
-export function clockTime(epochMs: number): string {
-  const at = new Date(epochMs);
-  return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
-}
 
 export function serviceWords(status: ServiceStatus): string {
   return [

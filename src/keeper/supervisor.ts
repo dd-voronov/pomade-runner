@@ -146,6 +146,9 @@ export interface Supervisor {
    *  the keeper or no workspace is known. A tick asked for while one is due is dropped. */
   tick(): Promise<void>;
   report(): ServicesReport;
+  /** Whether the staged start is done: as of the latest tick, no service waits for its turn to
+   *  start and none is starting within its 30 s. `false` before the first tick. */
+  settled(): boolean;
   /** Start a service now, out of turn: clears its hold and its crash count. */
   start(ref: string): Promise<ServiceActionResult>;
   /** Stop it as stopped by you: it stays stopped until Start. */
@@ -188,6 +191,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
   let lane: Promise<unknown> = Promise.resolve();
   let tickQueued = false;
   let published = "";
+  let settled = false;
 
   const now = (): number => clock.now().getTime();
   const save = (): void => store.save(records);
@@ -469,6 +473,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     }
     const next = due[0];
     if (current === null && next !== undefined) await startNext(next.entry, next.service, workspace, at);
+    settled = current === null && due.length === 0;
   }
 
   /** The entry `ref` names: a job id or name, or the job of a service session. */
@@ -520,6 +525,8 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     },
 
     report,
+
+    settled: () => settled,
 
     start: (ref) =>
       inLane(async () => {

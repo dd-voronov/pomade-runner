@@ -2,12 +2,14 @@
 // stays in front of them until they deal with it.
 //
 // - **A run that ends** is noticed as its job's `notify` says: `always` every run that started,
-//   `on-failure` a failed one, `never` none. A skipped run is never noticed.
+//   `on-failure` a failed one, `never` none. A skipped or missed run is never noticed.
 // - **A failed run** makes its job's Needs-you item (one per job: the latest failure and how many
 //   since the item came) unless the job says `notify: never`. The item goes when the person opens
 //   the run's result or dismisses it, when a run of the job is done, or when the job's file is gone.
 // - **A service that gave up** after a crash loop is an item while it stays `failed` (Start, a fixed
 //   or disabled file, or its removal end it), and is noticed once — Needs-you items always notify.
+// - Missed runs that wait for the person and long-run warnings are runs' items (`runs.ts`), noticed
+//   with `missedNotice` and `longRunNotice`.
 //
 // The items live in `needs-you.json` in Runner's state folder, with the giving-ups already noticed,
 // so a restarted scheduler neither forgets an item nor notices one twice.
@@ -21,7 +23,7 @@ import { runRoute } from "../integrations/runner-api";
 import { entryId, type JobsSnapshot, type Notify } from "../jobs/model";
 import type { ServicesReport, ServiceStatus } from "../keeper/model";
 import type { Log } from "./log";
-import { durationWords, failureWords, type NeedsYouItem, type RunRecord } from "./model";
+import { dayTime, durationWords, failureWords, type ActiveRun, type NeedsYouItem, type RunRecord } from "./model";
 
 /** A failed-run item as it is kept. */
 interface Failure {
@@ -107,7 +109,7 @@ export function fileNeedsYouStore(state: string, log: Log): NeedsYouStore {
 
 /** The notice for a run that ended, as its job's `notify` asks; `null` for none. */
 export function runNotice(record: RunRecord, notify: Notify): NoticeParams | null {
-  if (record.state === "skipped" || notify === "never") return null;
+  if (record.state === "skipped" || record.state === "missed" || notify === "never") return null;
   if (record.state !== "failed" && notify !== "always") return null;
   const action = { kind: "openApp" as const, route: runRoute(record.job, record.run) };
   const took = record.durationMs === null ? null : `took ${durationWords(record.durationMs)}`;
@@ -121,6 +123,25 @@ export function runNotice(record: RunRecord, notify: Notify): NoticeParams | nul
     case "stopped-by-you":
       return { title: `${record.name} stopped by you`, ...(took === null ? {} : { body: took }), action };
   }
+}
+
+/** The notice for a missed run of a `wait-for-me` job, which waits for the person. Its click opens
+ *  the run's card, with Run now · Run at… · Skip. */
+export function missedNotice(run: ActiveRun): NoticeParams {
+  return {
+    title: `${run.name} · missed ${dayTime(run.dueAt)}`,
+    body: "It waits for you: Run now, Run at… or Skip.",
+    action: { kind: "openApp", route: runRoute(run.job, run.run) },
+  };
+}
+
+/** The notice for a run going longer than the long-run warning: it keeps going. */
+export function longRunNotice(run: ActiveRun, ranMs: number): NoticeParams {
+  return {
+    title: `${run.name} has been running ${durationWords(ranMs)} — still expected?`,
+    body: "It keeps running: Runner never stops a run for running long. Open it, or Stop it.",
+    action: { kind: "openApp", route: runRoute(run.job, run.run) },
+  };
 }
 
 /** The notice for a service that gave up after a crash loop. */

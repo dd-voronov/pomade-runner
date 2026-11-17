@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { aheadWords, dayTime } from "./runWords";
+import { aheadWords } from "./runWords";
 
 const NOW = new Date(2026, 10, 18, 12, 20).getTime();
 
@@ -19,10 +19,5 @@ describe("run times in words", () => {
       "in 1 day",
       "in 3 days",
     ]);
-  });
-
-  it("says a moment's weekday and time", () => {
-    expect(dayTime(new Date(2026, 10, 18, 13, 0).getTime())).toBe("Wed 13:00");
-    expect(dayTime(new Date(2026, 10, 22, 7, 5).getTime())).toBe("Sun 07:05");
   });
 });
