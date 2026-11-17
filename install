@@ -1,5 +1,8 @@
 #!/bin/sh
 # Builds Runner and installs it into Pomade: the first install and every update are this one step.
+# Then it links Runner's agent skill (pomade-runner-jobs) into ~/.claude/skills/ and into the
+# skills/ folder of every agent under <workspace>/Agents/; the first time, it drops a note for the
+# skills map into <workspace>/Knowledge/00-Inbox/.
 #
 #   ./install            into the dev Pomade
 #   ./install --stable   into the stable Pomade — only on Daniil's explicit word
@@ -18,3 +21,4 @@ fi
 [ -d node_modules ] || npm ci
 npm run build
 "$pomade" apps install "$@" dist
+node src/jobs/skill/link.ts link "$@"

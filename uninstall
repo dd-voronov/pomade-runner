@@ -1,0 +1,20 @@
+#!/bin/sh
+# Removes Runner from Pomade: the skill links ./install made (only those pointing at this Pomade's
+# copy), then the installed app.
+#
+#   ./uninstall            from the dev Pomade
+#   ./uninstall --stable   from the stable Pomade — only on Daniil's explicit word
+#
+# POMADE_REPO is the Pomade checkout whose `pomade` command does the removal (default ../Pomade).
+set -eu
+
+cd "$(dirname "$0")"
+
+pomade="${POMADE_REPO:-../Pomade}/bin/pomade"
+if [ ! -x "$pomade" ]; then
+  echo "uninstall: no pomade command at $pomade — point POMADE_REPO at a Pomade checkout" >&2
+  exit 1
+fi
+
+node src/jobs/skill/link.ts unlink "$@"
+"$pomade" apps remove "$@" pomade-runner
