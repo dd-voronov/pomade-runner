@@ -41,10 +41,30 @@ describe("control protocol", () => {
     expect(PARAMS_PARSERS.status(null)).toBeNull();
     expect(PARAMS_PARSERS.sessions({})).toBeUndefined();
     expect(PARAMS_PARSERS.services(null)).toBeNull();
-    for (const method of ["start", "stop", "restart"] as const) {
+    for (const method of ["run", "stop", "restart", "enable", "disable"] as const) {
       expect(PARAMS_PARSERS[method]({ job: "coda/web", extra: 1 })).toEqual({ job: "coda/web" });
       for (const bad of [null, {}, { job: "" }, { job: 3 }, "web"]) expect(PARAMS_PARSERS[method](bad)).toBeUndefined();
     }
+    expect(PARAMS_PARSERS.list(null)).toBeNull();
+    expect(PARAMS_PARSERS.history({ job: null, limit: 20 })).toEqual({ job: null, limit: 20 });
+    expect(PARAMS_PARSERS.history({ job: "backup", limit: 1, extra: true })).toEqual({ job: "backup", limit: 1 });
+    for (const bad of [null, {}, { job: null }, { job: "", limit: 5 }, { job: null, limit: 0 }, { job: null, limit: 2.5 }, { job: 3, limit: 5 }]) expect(PARAMS_PARSERS.history(bad)).toBeUndefined();
+  });
+
+  it("checks the runs' answers' shapes", () => {
+    const base = { job: "backup", name: "Backup", kind: "script", project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled", dueAt: 1 };
+    const active = { ...base, state: "running", startedAt: 2, session: "run:backup:20261117-120000-abcdef", log: "/s/o.log" };
+    const record = { ...base, state: "failed", reason: null, startedAt: 2, endedAt: 3, durationMs: 1, exitCode: 1, signal: null, log: "/s/o.log", lastLines: ["boom"] };
+    expect(RESULT_GUARDS.run({ run: active })).toBe(true);
+    expect(RESULT_GUARDS.run({ run: { ...active, state: "queued", startedAt: null, session: null, log: null } })).toBe(true);
+    for (const bad of [{}, { run: { ...active, state: "done" } }, { run: { ...active, trigger: "hook" } }, { run: { ...active, dueAt: null } }]) expect(RESULT_GUARDS.run(bad)).toBe(false);
+    expect(RESULT_GUARDS.history({ records: [record, { ...record, state: "skipped", reason: "previous run still going", startedAt: null, durationMs: null, exitCode: null, log: null, lastLines: [] }], next: "2026-11-17:3" })).toBe(true);
+    for (const bad of [{ records: [] }, { records: [{ ...record, lastLines: [1] }], next: null }, { records: [{ ...record, state: "queued" }], next: null }]) expect(RESULT_GUARDS.history(bad)).toBe(false);
+    const listing = { job: "backup", name: "Backup", kind: "script", enabled: true, trigger: "daily at 13:00", problem: null, next: 5, finished: false, last: record, service: null };
+    expect(RESULT_GUARDS.list([listing, { ...listing, kind: null, trigger: null, problem: "x", last: null }])).toBe(true);
+    for (const bad of [{}, [{ ...listing, kind: "cron" }], [{ ...listing, last: {} }]]) expect(RESULT_GUARDS.list(bad)).toBe(false);
+    expect(RESULT_GUARDS.enable({ job: "backup", name: "Backup", enabled: false })).toBe(true);
+    expect(RESULT_GUARDS.disable({ job: "backup", enabled: false })).toBe(false);
   });
 
   it("checks a sessions answer's shape", () => {
@@ -72,7 +92,8 @@ describe("control protocol", () => {
     const service = { job: "web", name: "Web", project: null, state: "running", session, restarts: 2, lastCrashAt: 5, retryAt: null, needsRestart: false, problem: null };
     const report = { keeper: { state: "connected", version: "v", pid: 1 }, services: [service, { ...service, job: "b", state: "waiting", session: null, project: "p", lastCrashAt: null }] };
     expect(RESULT_GUARDS.services(report)).toBe(true);
-    for (const method of ["start", "stop", "restart"] as const) expect(RESULT_GUARDS[method](service)).toBe(true);
+    for (const method of ["stop", "restart"] as const) expect(RESULT_GUARDS[method](service)).toBe(true);
+    expect(RESULT_GUARDS.run({ service })).toBe(true);
     for (const bad of [
       { ...service, state: "sleeping" },
       { ...service, session: { ...session, kind: "job" } },
@@ -82,7 +103,7 @@ describe("control protocol", () => {
       { ...service, problem: 1 },
       { ...service, project: undefined },
     ]) {
-      expect(RESULT_GUARDS.start(bad)).toBe(false);
+      expect(RESULT_GUARDS.stop(bad)).toBe(false);
       expect(RESULT_GUARDS.services({ ...report, services: [bad] })).toBe(false);
     }
     expect(RESULT_GUARDS.services({ keeper: { state: "connecting" } })).toBe(false);
@@ -94,7 +115,8 @@ describe("control protocol", () => {
   it("knows its methods", () => {
     expect(isControlMethod("status")).toBe(true);
     expect(isControlMethod("sessions")).toBe(true);
-    for (const method of ["services", "start", "stop", "restart"]) expect(isControlMethod(method)).toBe(true);
+    for (const method of ["services", "run", "stop", "restart", "enable", "disable", "list", "history"]) expect(isControlMethod(method)).toBe(true);
+    expect(isControlMethod("start")).toBe(false);
     expect(isControlMethod("toString")).toBe(false);
   });
 });

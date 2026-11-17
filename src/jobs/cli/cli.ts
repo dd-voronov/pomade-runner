@@ -3,16 +3,19 @@
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { APP_VERSION } from "../../app";
-import type { ServiceVerb } from "../../integrations/runner-api";
-import { exitWords, type KeeperLink, type RunnerSession, type ServicesReport, type ServiceStatus, type SessionsReport } from "../../keeper/model";
+import { exitWords, type KeeperLink, type RunnerSession, type ServiceStatus } from "../../keeper/model";
 import type { ControlCallResult } from "../../scheduler/control/client";
-import type { SchedulerStatus } from "../../scheduler/control/protocol";
+import type { ControlMethod, ControlMethods, ControlParams } from "../../scheduler/control/protocol";
+import { durationWords, runWords, type JobListing, type RunRecord } from "../../scheduler/model";
 import { checkJobs, projectJobsFolder } from "../check";
 import { formatJobError } from "../format";
 import { entryPath, JOBS_FOLDER, type ProjectRecord } from "../model";
 import type { JobFileInput } from "../parse";
 
 export const COMMAND = "pomade-runner";
+
+/** How many runs `history` prints. */
+export const HISTORY_LIMIT = 20;
 
 /** Exit codes: 0 done · 1 problems found (or Pomade needed and closed) · 2 the command could not run. */
 export const EXIT_OK = 0;
@@ -24,15 +27,9 @@ export interface CliDeps {
   err(text: string): void;
   /** The directory the command runs in, for reading and printing paths. */
   cwd: string;
-  /** Asks the scheduler for its status; `null` when the command does not run under Pomade's shim,
-   *  so there is no scheduler to find. */
-  schedulerStatus(): Promise<ControlCallResult<SchedulerStatus> | null>;
-  /** Asks the scheduler for the keeper's sessions; `null` as for `schedulerStatus`. */
-  sessions(): Promise<ControlCallResult<SessionsReport> | null>;
-  /** Asks the scheduler for the services; `null` as for `schedulerStatus`. */
-  services(): Promise<ControlCallResult<ServicesReport> | null>;
-  /** Asks the scheduler to start, stop or restart a service (by its id or name); `null` as for `schedulerStatus`. */
-  serviceAction(action: ServiceVerb, job: string): Promise<ControlCallResult<ServiceStatus> | null>;
+  /** Calls a method of the scheduler's control protocol; `null` when the command does not run
+   *  under Pomade's shim, so there is no scheduler to find. */
+  ask<M extends ControlMethod>(method: M, params: ControlParams[M]): Promise<ControlCallResult<ControlMethods[M]> | null>;
   /** The workspace root (absolute, by its real path), with Pomade open or closed; `null` when none is recorded. */
   workspace(): string | null;
   /** An absolute path by its real path (symlinks resolved), as far as it exists. */
@@ -52,19 +49,24 @@ Usage:
   ${COMMAND} projects             Pomade's projects: the id a project job's project: takes and the
                                  sub-folder of ${JOBS_FOLDER}/ its jobs sit in (needs Pomade
                                  running)
+  ${COMMAND} list                 every job: its kind, trigger in words, next run and last result
+  ${COMMAND} run <job>            run a job now, by its id or name: a script runs (or queues
+                                 behind its run going, as its overlap says); a service starts —
+                                 one stopped by you or failed too
+  ${COMMAND} history [job]        the latest ${HISTORY_LIMIT} finished runs, newest first: of every job, or one
+  ${COMMAND} enable <job>         write enabled: true into a job's file
+  ${COMMAND} disable <job>        write enabled: false into a job's file; a running service stops
   ${COMMAND} services             every service: its state, restarts and last crash
-  ${COMMAND} run <service>        start a service now, by its id or name — one stopped by you or
-                                 failed too
   ${COMMAND} stop <service>       stop a service; it stays stopped until run
   ${COMMAND} restart <service>    restart a service with its job file as it is now
   ${COMMAND} sessions             the keeper and its sessions: each one's job, state and output log
   ${COMMAND} --version            print the version and whether the scheduler is running
   ${COMMAND} --help               print this help
 
-services, run, stop, restart and sessions need the scheduler running.
+Every command but check and projects needs the scheduler running.
 `;
 
-function schedulerLine(result: ControlCallResult<SchedulerStatus> | null): string {
+function schedulerLine(result: ControlCallResult<ControlMethods["status"]> | null): string {
   if (result === null) return `scheduler: unknown — ${COMMAND} was not started through Pomade's command folder`;
   if (result.status === "not-running") return "scheduler: not running";
   if (result.status === "failed") return `scheduler: not answering — ${result.message}`;
@@ -168,7 +170,7 @@ function answerOf<T>(result: ControlCallResult<T> | null, holds: string): { ok: 
 }
 
 async function sessions(deps: CliDeps): Promise<number> {
-  const answer = answerOf(await deps.sessions(), "holds the sessions");
+  const answer = answerOf(await deps.ask("sessions", null), "holds the sessions");
   if (!answer.ok) {
     deps.err(`${COMMAND} sessions: ${answer.why}.\n`);
     return EXIT_PROBLEMS;
@@ -221,7 +223,7 @@ function serviceLine(status: ServiceStatus): string {
 }
 
 async function services(deps: CliDeps): Promise<number> {
-  const answer = answerOf(await deps.services(), "supervises the services");
+  const answer = answerOf(await deps.ask("services", null), "supervises the services");
   if (!answer.ok) {
     deps.err(`${COMMAND} services: ${answer.why}.\n`);
     return EXIT_PROBLEMS;
@@ -233,16 +235,87 @@ async function services(deps: CliDeps): Promise<number> {
   return EXIT_OK;
 }
 
-const VERBS: Record<string, ServiceVerb> = { run: "start", stop: "stop", restart: "restart" };
+/** A finished run in words: `failed · exit 1, 2026-11-17T12:00:03.000Z, took 3 s`. */
+function runLine(record: RunRecord): string {
+  return [runWords(record), iso(record.endedAt), record.durationMs === null ? null : `took ${durationWords(record.durationMs)}`].filter((part) => part !== null).join(", ");
+}
 
-async function serviceAction(name: string, verb: ServiceVerb, job: string, deps: CliDeps): Promise<number> {
-  const answer = answerOf(await deps.serviceAction(verb, job), "supervises the services");
+/** A job in one line: `backup  Backup  script  daily at 13:00  next … · last done, …`. */
+function listingLine(listing: JobListing): string {
+  const head = `${listing.job}  ${listing.name}`;
+  if (listing.kind === null || listing.trigger === null) return `${head}  invalid — ${listing.problem ?? `see ${COMMAND} check`}`;
+  if (listing.service !== null) return `${head}  service  ${listing.trigger}  ${stateWords(listing.service)}`;
+  const next = !listing.enabled ? "disabled" : listing.finished ? "finished" : listing.next === null ? "no next run" : `next ${iso(listing.next)}`;
+  const last = listing.last === null ? "never ran" : `last ${runLine(listing.last)}`;
+  return `${head}  ${listing.kind}  ${listing.trigger}  ${next} · ${last}`;
+}
+
+async function list(deps: CliDeps): Promise<number> {
+  const answer = answerOf(await deps.ask("list", null), "holds the jobs");
   if (!answer.ok) {
-    deps.err(`${COMMAND} ${name}: ${answer.why}.\n`);
+    deps.err(`${COMMAND} list: ${answer.why}.\n`);
     return EXIT_PROBLEMS;
   }
-  deps.out(`${serviceLine(answer.value)}\n`);
+  if (answer.value.length === 0) deps.out("No jobs.\n");
+  for (const listing of answer.value) deps.out(`${listingLine(listing)}\n`);
   return EXIT_OK;
+}
+
+async function history(job: string | null, deps: CliDeps): Promise<number> {
+  const answer = answerOf(await deps.ask("history", { job, limit: HISTORY_LIMIT }), "keeps the history");
+  if (!answer.ok) {
+    deps.err(`${COMMAND} history: ${answer.why}.\n`);
+    return EXIT_PROBLEMS;
+  }
+  const { records } = answer.value;
+  if (records.length === 0) deps.out(job === null ? "No runs yet.\n" : `No runs of ${job} yet.\n`);
+  for (const record of records) {
+    deps.out(`${record.job}  ${record.name}  ${record.trigger}  ${runLine(record)}${record.log === null ? "" : `  output ${record.log}`}\n`);
+  }
+  return EXIT_OK;
+}
+
+/** What `run` started, in a line. */
+function startedLine(value: ControlMethods["run"]): string {
+  if ("service" in value) return serviceLine(value.service);
+  const { run } = value;
+  const where = run.state === "queued" ? "queued after the run going" : `running${run.log === null ? "" : `, output ${run.log}`}`;
+  return `${run.job}  ${run.name}  run ${run.run}  ${where}`;
+}
+
+/** The commands that act on one job, and what each needs running. */
+const JOB_COMMANDS = {
+  run: { holds: "runs the jobs", target: "job" },
+  stop: { holds: "supervises the services", target: "service" },
+  restart: { holds: "supervises the services", target: "service" },
+  enable: { holds: "holds the jobs", target: "job" },
+  disable: { holds: "holds the jobs", target: "job" },
+} as const;
+type JobCommand = keyof typeof JOB_COMMANDS;
+
+async function jobCommand(name: JobCommand, job: string, deps: CliDeps): Promise<number> {
+  let line: string;
+  const { holds } = JOB_COMMANDS[name];
+  if (name === "run") {
+    const answer = answerOf(await deps.ask("run", { job }), holds);
+    if (!answer.ok) return refused(name, answer.why, deps);
+    line = startedLine(answer.value);
+  } else if (name === "enable" || name === "disable") {
+    const answer = answerOf(await deps.ask(name, { job }), holds);
+    if (!answer.ok) return refused(name, answer.why, deps);
+    line = `${answer.value.job}  ${answer.value.name}  ${answer.value.enabled ? "enabled" : "disabled"}`;
+  } else {
+    const answer = answerOf(await deps.ask(name, { job }), holds);
+    if (!answer.ok) return refused(name, answer.why, deps);
+    line = serviceLine(answer.value);
+  }
+  deps.out(`${line}\n`);
+  return EXIT_OK;
+}
+
+function refused(name: string, why: string, deps: CliDeps): number {
+  deps.err(`${COMMAND} ${name}: ${why}.\n`);
+  return EXIT_PROBLEMS;
 }
 
 export async function runCli(args: readonly string[], deps: CliDeps): Promise<number> {
@@ -252,28 +325,41 @@ export async function runCli(args: readonly string[], deps: CliDeps): Promise<nu
     return EXIT_OK;
   }
   if (first === "--version" || first === "-V") {
-    deps.out(`${COMMAND} ${APP_VERSION}\n${schedulerLine(await deps.schedulerStatus())}\n`);
+    deps.out(`${COMMAND} ${APP_VERSION}\n${schedulerLine(await deps.ask("status", null))}\n`);
     return EXIT_OK;
   }
-  if (first === "check" || first === "projects" || first === "sessions" || first === "services") {
+  if (first === "check" || first === "projects" || first === "sessions" || first === "services" || first === "list" || first === "history") {
     const option = rest.find((arg) => arg.startsWith("-"));
-    if (option !== undefined || (first !== "check" && rest.length > 0)) {
-      deps.err(`${COMMAND} ${first}: unexpected "${option ?? rest[0] ?? ""}". Run \`${COMMAND} --help\` for what it takes.\n`);
+    const most = first === "check" ? Infinity : first === "history" ? 1 : 0;
+    if (option !== undefined || rest.length > most) {
+      deps.err(`${COMMAND} ${first}: unexpected "${option ?? rest[most] ?? ""}". Run \`${COMMAND} --help\` for what it takes.\n`);
       return EXIT_USAGE;
     }
-    if (first === "check") return check(rest, deps);
-    if (first === "projects") return projects(deps);
-    return first === "sessions" ? sessions(deps) : services(deps);
+    switch (first) {
+      case "check":
+        return check(rest, deps);
+      case "projects":
+        return projects(deps);
+      case "sessions":
+        return sessions(deps);
+      case "services":
+        return services(deps);
+      case "list":
+        return list(deps);
+      case "history":
+        return history(rest[0] ?? null, deps);
+    }
   }
-  const verb = Object.hasOwn(VERBS, first) ? VERBS[first] : undefined;
-  if (verb !== undefined) {
+  if (Object.hasOwn(JOB_COMMANDS, first)) {
+    const name = first as JobCommand;
+    const { target } = JOB_COMMANDS[name];
     const [job, ...extra] = rest;
     if (job === undefined || job === "" || job.startsWith("-") || extra.length > 0) {
-      const problem = job === undefined || job === "" ? "names no service" : `unexpected "${job.startsWith("-") ? job : (extra[0] ?? "")}"`;
-      deps.err(`${COMMAND} ${first}: ${problem}. Usage: ${COMMAND} ${first} <service> — its id or its name.\n`);
+      const problem = job === undefined || job === "" ? `names no ${target}` : `unexpected "${job.startsWith("-") ? job : (extra[0] ?? "")}"`;
+      deps.err(`${COMMAND} ${first}: ${problem}. Usage: ${COMMAND} ${first} <${target}> — its id or its name.\n`);
       return EXIT_USAGE;
     }
-    return serviceAction(first, verb, job, deps);
+    return jobCommand(name, job, deps);
   }
   const what = first.startsWith("-") ? "option" : "command";
   deps.err(`${COMMAND}: unknown ${what} "${first}". Run \`${COMMAND} --help\` for what it takes.\n`);

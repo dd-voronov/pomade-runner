@@ -1,7 +1,7 @@
 // The scheduler's connection to Pomade over the Host API socket: kept up while Pomade runs,
 // retried while it is closed. While connected, the scheduler serves Runner's API through the
-// broker, publishes Runner's events, follows Pomade's projects, and hears the header actions
-// clicked on attached tabs of Runner's sessions.
+// broker, publishes Runner's events, follows Pomade's projects, hears the header actions clicked
+// on attached tabs of Runner's sessions, and sets the badge once Pomade is ready.
 
 import { stayConnected } from "pomade-kit/node";
 import type { AttachedTabActionPayload, JsonValue } from "pomade-kit/protocol";
@@ -10,7 +10,23 @@ import { HostError, type HostClient } from "pomade-kit/sdk";
 import type { JobsSnapshot, ProjectRecord } from "../jobs/model";
 import { APP_ID } from "../app";
 import type { ServiceActionResult, ServicesReport } from "../keeper/model";
-import { JOBS_CHANGED_EVENT, JOBS_LIST_METHOD, SERVICE_METHODS, SERVICES_CHANGED_EVENT, SERVICES_LIST_METHOD, type ServiceVerb } from "./runner-api";
+import type { EnableResult, HistoryPage, RunActionResult, RunOutput, RunsReport, RunView } from "../scheduler/model";
+import {
+  DISMISS_METHOD,
+  HISTORY_LIST_METHOD,
+  JOBS_CHANGED_EVENT,
+  JOBS_LIST_METHOD,
+  RUN_GET_METHOD,
+  RUN_NOW_METHOD,
+  RUN_OUTPUT_METHOD,
+  RUNS_CHANGED_EVENT,
+  RUNS_LIST_METHOD,
+  SERVICE_METHODS,
+  SERVICES_CHANGED_EVENT,
+  SERVICES_LIST_METHOD,
+  SET_ENABLED_METHOD,
+  type ServiceVerb,
+} from "./runner-api";
 
 export interface PomadeLinkHandlers {
   connected(host: HostClient): void;
@@ -33,7 +49,8 @@ export const linkPomade: LinkPomade = (handlers) =>
     },
   );
 
-function asJson(value: JobsSnapshot | ServicesReport | ServiceActionResult): JsonValue {
+/** A plain-JSON value as the broker carries it. */
+function asJson(value: unknown): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
 
@@ -55,23 +72,78 @@ export interface RunnerOffer {
   /** A header action clicked on an attached tab of one of Runner's sessions (`attachedTab.action`,
    *  which Pomade delivers only to the session's owner). */
   tabAction(payload: AttachedTabActionPayload): void;
+  /** The runs going, next up, each job's latest run and Needs you. */
+  runs(): RunsReport;
+  /** A page of history. */
+  history(query: { job: string | null; before: string | null; limit: number }): Promise<HistoryPage>;
+  /** One run, going or finished. */
+  run(job: string, run: string): Promise<RunView | null>;
+  /** The end of a run's output log. */
+  output(job: string, run: string): Promise<RunOutput>;
+  /** Run now. */
+  runNow(job: string): Promise<RunActionResult>;
+  /** Enable or Disable a job. */
+  setEnabled(job: string, enabled: boolean): Promise<EnableResult>;
+  /** Resolve a Needs-you item. */
+  dismiss(id: string): boolean;
+  /** Pomade restored its tabs (`pomade.ready`, sticky: heard at once when it already did). */
+  ready(): void;
   log(message: string): void;
+}
+
+/** The params of a call: a mapping, or `invalid-params` with what `method` takes. */
+function paramsOf(method: string, params: JsonValue, takes: string): Record<string, JsonValue | undefined> {
+  if (typeof params === "object" && params !== null && !Array.isArray(params)) return params;
+  throw new HostError("invalid-params", `${method} takes ${takes}`);
+}
+
+/** A non-empty text param. */
+function text(method: string, params: Record<string, JsonValue | undefined>, key: string, takes: string): string {
+  const value = params[key];
+  if (typeof value !== "string" || value === "") throw new HostError("invalid-params", `${method} takes ${takes}`);
+  return value;
+}
+
+/** A handler for Runner's own frames only. */
+function own(method: string, handle: (params: JsonValue) => Promise<unknown> | unknown) {
+  return async (params: JsonValue, { from }: { from: string }): Promise<JsonValue> => {
+    if (from !== APP_ID) throw new HostError("capability-denied", `${method} is Runner's own`);
+    return asJson(await handle(params));
+  };
 }
 
 /** A Start, Stop or Restart handler: for Runner's own frames, with `{ job }`. */
 function serviceHandler(offer: RunnerOffer, verb: ServiceVerb) {
-  return async (params: JsonValue, { from }: { from: string }): Promise<JsonValue> => {
-    if (from !== APP_ID) throw new HostError("capability-denied", `${SERVICE_METHODS[verb]} is Runner's own`);
-    const job = typeof params === "object" && params !== null && !Array.isArray(params) ? params.job : undefined;
-    if (typeof job !== "string" || job === "") throw new HostError("invalid-params", `${SERVICE_METHODS[verb]} takes { job: <a service's id or name> }`);
-    return asJson(await offer.serviceAction(verb, job));
-  };
+  const method = SERVICE_METHODS[verb];
+  const takes = "{ job: <a service's id or name> }";
+  return own(method, (params) => offer.serviceAction(verb, text(method, paramsOf(method, params, takes), "job", takes)));
+}
+
+const RUN_TAKES = "{ job: <a job's id>, run: <a run id> }";
+
+/** `{ job, run }`. */
+function runParams(method: string, params: JsonValue): { job: string; run: string } {
+  const given = paramsOf(method, params, RUN_TAKES);
+  return { job: text(method, given, "job", RUN_TAKES), run: text(method, given, "run", RUN_TAKES) };
+}
+
+/** `history.list`'s `{ job?, before?, limit? }`. */
+function historyParams(params: JsonValue): { job: string | null; before: string | null; limit: number } {
+  const takes = "{ job?: <a job's id>, before?: <a page's next>, limit?: <1–200> }";
+  const given = params === null ? {} : paramsOf(HISTORY_LIST_METHOD, params, takes);
+  const { job = null, before = null, limit = 50 } = given;
+  if ((job !== null && typeof job !== "string") || (before !== null && typeof before !== "string") || typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1) {
+    throw new HostError("invalid-params", `${HISTORY_LIST_METHOD} takes ${takes}`);
+  }
+  return { job, before, limit };
 }
 
 /**
- * On a new connection: serve `jobs.list`, `services.list` and the services' Start, Stop and
- * Restart, follow the projects, hear tab actions, and announce the jobs and the services — a frame
- * that found no scheduler before asks again when it hears `jobs.changed` or `services.changed`.
+ * On a new connection: serve Runner's API — the jobs, the services and their Start, Stop and
+ * Restart, the runs, the history, Run now, Enable / Disable, Needs you — follow the projects, hear
+ * tab actions and `pomade.ready`, and announce the jobs, the services and the runs: a frame that
+ * found no scheduler before asks again when it hears `jobs.changed`, `services.changed` or
+ * `runs.changed`.
  */
 export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise<void> {
   const reloadProjects = (): void => {
@@ -84,19 +156,46 @@ export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise
       [SERVICE_METHODS.start]: serviceHandler(offer, "start"),
       [SERVICE_METHODS.stop]: serviceHandler(offer, "stop"),
       [SERVICE_METHODS.restart]: serviceHandler(offer, "restart"),
+      [RUNS_LIST_METHOD]: () => asJson(offer.runs()),
+      [HISTORY_LIST_METHOD]: async (params) => asJson(await offer.history(historyParams(params))),
+      [RUN_GET_METHOD]: async (params) => {
+        const { job, run } = runParams(RUN_GET_METHOD, params);
+        return asJson(await offer.run(job, run));
+      },
+      [RUN_OUTPUT_METHOD]: async (params) => {
+        const { job, run } = runParams(RUN_OUTPUT_METHOD, params);
+        return asJson(await offer.output(job, run));
+      },
+      [RUN_NOW_METHOD]: own(RUN_NOW_METHOD, (params) => {
+        const takes = "{ job: <a job's id or name> }";
+        return offer.runNow(text(RUN_NOW_METHOD, paramsOf(RUN_NOW_METHOD, params, takes), "job", takes));
+      }),
+      [SET_ENABLED_METHOD]: own(SET_ENABLED_METHOD, (params) => {
+        const takes = "{ job: <a job's id or name>, enabled: true | false }";
+        const given = paramsOf(SET_ENABLED_METHOD, params, takes);
+        if (typeof given.enabled !== "boolean") throw new HostError("invalid-params", `${SET_ENABLED_METHOD} takes ${takes}`);
+        return offer.setEnabled(text(SET_ENABLED_METHOD, given, "job", takes), given.enabled);
+      }),
+      [DISMISS_METHOD]: own(DISMISS_METHOD, (params) => {
+        const takes = "{ id: <a Needs-you item's id> }";
+        return { resolved: offer.dismiss(text(DISMISS_METHOD, paramsOf(DISMISS_METHOD, params, takes), "id", takes)) };
+      }),
     });
     await host.events.subscribe("project.created", reloadProjects);
     await host.events.subscribe("project.renamed", reloadProjects);
     await host.events.subscribe("attachedTab.action", offer.tabAction);
+    await host.events.subscribe("pomade.ready", offer.ready);
     offer.projects(await readProjects(host));
     await host.events.publish(JOBS_CHANGED_EVENT);
     await host.events.publish(SERVICES_CHANGED_EVENT);
+    await host.events.publish(RUNS_CHANGED_EVENT);
   } catch (err) {
     offer.log(`cannot offer Runner's API to Pomade: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
-/** Tell Runner's frames the jobs (`jobs.changed`) or the services (`services.changed`) changed. */
-export function announce(host: HostClient, event: typeof JOBS_CHANGED_EVENT | typeof SERVICES_CHANGED_EVENT, log: (message: string) => void): void {
-  host.events.publish(event).catch((err: unknown) => log(`cannot publish ${event}: ${String(err)}`));
+/** Publish one of Runner's events: a change its frames ask again on (`jobs.changed`,
+ *  `services.changed`, `runs.changed`), or a run's start or end with its payload. */
+export function announce(host: HostClient, event: string, log: (message: string) => void, payload?: unknown): void {
+  host.events.publish(event, payload === undefined ? null : asJson(payload)).catch((err: unknown) => log(`cannot publish ${event}: ${String(err)}`));
 }

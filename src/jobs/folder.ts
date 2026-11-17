@@ -1,10 +1,12 @@
 // Reading the jobs folder from disk (Node): every `.md` file in it and in its sub-folders, as the
 // validator takes them. Works with Pomade closed — the scheduler and the command read the folder
-// directly. Hidden files (`.x.md`, editors' `.#x.md`) and other files are not job files.
+// directly. Hidden files (`.x.md`, editors' `.#x.md`) and other files are not job files. And the one
+// write the scheduler makes to a job file: Enable / Disable.
 
-import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
+import { setJobFields } from "./edit";
 import { JOBS_FOLDER } from "./model";
 import type { JobFileInput } from "./parse";
 
@@ -49,4 +51,22 @@ export async function readJobFiles(folder: string): Promise<JobFileInput[] | nul
   }
   if (!(await walk("", 1))) return null;
   return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+/** Write `enabled:` into the job file at `path` (workspace-relative), field-only: the rest of the
+ *  file stays byte for byte. The file — a link's target, for a linked one — is replaced whole
+ *  through a hidden file beside it, which the loader never reads as a job. */
+export async function writeEnabled(workspace: string, path: string, enabled: boolean): Promise<void> {
+  const file = await realpath(join(workspace, path));
+  const result = setJobFields(await readFile(file, "utf8"), { enabled });
+  if (!result.ok) throw new Error(result.message);
+  if (!result.changed) return;
+  const temp = join(dirname(file), `.${basename(file)}.tmp`);
+  try {
+    await writeFile(temp, result.text);
+    await rename(temp, file);
+  } catch (err) {
+    await rm(temp, { force: true });
+    throw err;
+  }
 }

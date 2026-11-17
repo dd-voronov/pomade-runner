@@ -8,12 +8,13 @@ import { fileURLToPath } from "node:url";
 import { resolveWorkspace } from "pomade-kit/node";
 import { POMADE_ENV } from "pomade-kit/protocol";
 
+import { noticePoster } from "../integrations/notices";
 import { linkPomade } from "../integrations/pomade";
 import { probeReadiness } from "../keeper/readiness";
 import { createSessions } from "../keeper/sessions";
 import { fileStore } from "../keeper/supervisor";
-import { keeperSocketPath, schedulerSocketPath, stateDir } from "../locations";
-import { systemClock, tickMs } from "./clock";
+import { keeperSocketPath, schedulerSocketPath, stateDir, userDataDir } from "../locations";
+import { clockFrom, systemClock, tickMs } from "./clock";
 import { createLog } from "./log";
 import { startScheduler } from "./scheduler";
 
@@ -35,11 +36,12 @@ function readKey(file: string | undefined): string | null {
 }
 
 const state = stateDir(process.env);
+const userData = userDataDir(process.env);
 const socketPath = schedulerSocketPath(process.env);
 const keeperSocket = keeperSocketPath(process.env);
 const key = readKey(process.env[POMADE_ENV.keyFile]);
 
-if (state === null || socketPath === null) {
+if (state === null || socketPath === null || userData === null) {
   log("not started: POMADE_APP_KEY_FILE is not set — the scheduler runs as Runner's background part, started by Pomade");
   process.exitCode = 1;
 } else if (keeperSocket === null) {
@@ -49,10 +51,12 @@ if (state === null || socketPath === null) {
   log(`not started: cannot read the app's key from ${process.env[POMADE_ENV.keyFile] ?? ""}`);
   process.exitCode = 1;
 } else {
-  const sessions = createSessions({ socketPath: keeperSocket, key, keeper: { entry: KEEPER_ENTRY, version: KEEPER_VERSION }, state, clock: systemClock, log });
+  const clock = clockFrom(process.env);
+  const sessions = createSessions({ socketPath: keeperSocket, key, keeper: { entry: KEEPER_ENTRY, version: KEEPER_VERSION }, state, clock, log });
   const result = await startScheduler({
     socketPath,
-    clock: systemClock,
+    state,
+    clock,
     tickMs: tickMs(process.env),
     log,
     linkPomade,
@@ -60,6 +64,7 @@ if (state === null || socketPath === null) {
     sessions,
     supervision: fileStore(state, log),
     probe: probeReadiness,
+    postNotice: noticePoster(userData, log),
   });
   if (result.status === "already-running") {
     // A clean exit: launchd restarts a login item only after a failure.

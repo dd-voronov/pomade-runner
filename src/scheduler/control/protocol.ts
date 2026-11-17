@@ -7,6 +7,7 @@
 // `unknown-method` by an older scheduler.
 
 import { isServicesReport, isServiceStatus, isSessionsReport, type ServicesReport, type ServiceStatus, type SessionsReport } from "../../keeper/model";
+import { isActiveRun, isHistoryPage, isJobListings, type ActiveRun, type HistoryPage, type JobListing } from "../model";
 
 export const CONTROL_PROTOCOL = 1;
 
@@ -31,12 +32,30 @@ export interface ControlMethods {
   sessions: SessionsReport;
   /** Every service and where it stands. */
   services: ServicesReport;
-  /** Start a service now. */
-  start: ServiceStatus;
+  /** Run a job now: a script's run (going or queued), or a service's status after Start. */
+  run: RunStarted;
   /** Stop a service as stopped by you. */
   stop: ServiceStatus;
   /** Restart a service (start it when it does not run). */
   restart: ServiceStatus;
+  /** Write `enabled: true` into a job's file. */
+  enable: JobEnabled;
+  /** Write `enabled: false` into a job's file. */
+  disable: JobEnabled;
+  /** Every job, with its trigger in words, next run and latest run. */
+  list: JobListing[];
+  /** Finished runs, newest first. */
+  history: HistoryPage;
+}
+
+/** What Run now started: a script's run, or a service. */
+export type RunStarted = { run: ActiveRun } | { service: ServiceStatus };
+
+/** A job after Enable or Disable. */
+export interface JobEnabled {
+  job: string;
+  name: string;
+  enabled: boolean;
 }
 
 /** Every method's params. */
@@ -44,10 +63,17 @@ export interface ControlParams {
   status: null;
   sessions: null;
   services: null;
+  /** `job`: a job's id or name. */
+  run: { job: string };
   /** `job`: a service job's id or name. */
-  start: { job: string };
   stop: { job: string };
   restart: { job: string };
+  /** `job`: a job's id or name. */
+  enable: { job: string };
+  disable: { job: string };
+  list: null;
+  /** `job`: one job's id, or every job's runs; `limit`: at most this many records. */
+  history: { job: string | null; limit: number };
 }
 
 export type ControlMethod = keyof ControlMethods;
@@ -119,26 +145,48 @@ export function isSchedulerStatus(value: unknown): value is SchedulerStatus {
 }
 
 /** The check a caller runs on each method's answer before trusting its shape. */
+function isRunStarted(value: unknown): value is RunStarted {
+  return isRecord(value) && (isActiveRun(value.run) || isServiceStatus(value.service));
+}
+
+function isJobEnabled(value: unknown): value is JobEnabled {
+  return isRecord(value) && typeof value.job === "string" && typeof value.name === "string" && typeof value.enabled === "boolean";
+}
+
 export const RESULT_GUARDS: { [M in ControlMethod]: (value: unknown) => value is ControlMethods[M] } = {
   status: isSchedulerStatus,
   sessions: isSessionsReport,
   services: isServicesReport,
-  start: isServiceStatus,
+  run: isRunStarted,
   stop: isServiceStatus,
   restart: isServiceStatus,
+  enable: isJobEnabled,
+  disable: isJobEnabled,
+  list: isJobListings,
+  history: isHistoryPage,
 };
 
 const noParams = (params: unknown): null | undefined => (params === null ? null : undefined);
 const jobParams = (params: unknown): { job: string } | undefined => (isRecord(params) && typeof params.job === "string" && params.job !== "" ? { job: params.job } : undefined);
+const historyParams = (params: unknown): { job: string | null; limit: number } | undefined => {
+  if (!isRecord(params)) return undefined;
+  const { job, limit } = params;
+  if ((job !== null && (typeof job !== "string" || job === "")) || typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1) return undefined;
+  return { job, limit };
+};
 
 /** Each method's params check: the params, or `undefined` when they are not the method's. */
 export const PARAMS_PARSERS: { [M in ControlMethod]: (params: unknown) => ControlParams[M] | undefined } = {
   status: noParams,
   sessions: noParams,
   services: noParams,
-  start: jobParams,
+  run: jobParams,
   stop: jobParams,
   restart: jobParams,
+  enable: jobParams,
+  disable: jobParams,
+  list: noParams,
+  history: historyParams,
 };
 
 /** What each method's params look like, for the error that refuses others. */
@@ -146,9 +194,13 @@ export const PARAMS_SHAPES: { [M in ControlMethod]: string } = {
   status: "none",
   sessions: "none",
   services: "none",
-  start: "{ job: <a service's id or name> }",
+  run: "{ job: <a job's id or name> }",
   stop: "{ job: <a service's id or name> }",
   restart: "{ job: <a service's id or name> }",
+  enable: "{ job: <a job's id or name> }",
+  disable: "{ job: <a job's id or name> }",
+  list: "none",
+  history: "{ job: <a job's id> | null, limit: <a whole number ≥ 1> }",
 };
 
 export function isControlMethod(method: string): method is ControlMethod {

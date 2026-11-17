@@ -13,11 +13,16 @@ import { encodeJobId } from "./keeper/ids";
 
 export type Env = Readonly<Record<string, string | undefined>>;
 
+/** The user-data folder of the Pomade that started the process, or `null` when no Pomade did. */
+export function userDataDir(env: Env): string | null {
+  const keyFile = env[POMADE_ENV.keyFile];
+  return keyFile ? dirname(dirname(keyFile)) : null;
+}
+
 /** Runner's state folder, or `null` when the process was not started by Pomade or one of its shims. */
 export function stateDir(env: Env): string | null {
-  const keyFile = env[POMADE_ENV.keyFile];
-  if (!keyFile) return null;
-  return join(dirname(dirname(keyFile)), "app-state", APP_ID);
+  const userData = userDataDir(env);
+  return userData === null ? null : join(userData, "app-state", APP_ID);
 }
 
 /** The socket the scheduler serves its control protocol on. */

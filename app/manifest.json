@@ -23,11 +23,16 @@
   "events": {
     "publish": [
       "jobs.changed",
-      "services.changed"
+      "services.changed",
+      "runs.changed",
+      "run.started",
+      "run.finished"
     ],
     "subscribe": [
       "pomade-runner:jobs.changed",
       "pomade-runner:services.changed",
+      "pomade-runner:runs.changed",
+      "pomade.ready",
       "project.created",
       "project.renamed",
       "attachedTab.action"
@@ -43,7 +48,14 @@
     "services.list",
     "services.start",
     "services.stop",
-    "services.restart"
+    "services.restart",
+    "runs.list",
+    "runs.get",
+    "runs.output",
+    "history.list",
+    "jobs.run",
+    "jobs.setEnabled",
+    "needsYou.dismiss"
   ],
   "commands": [
     {

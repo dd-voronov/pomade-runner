@@ -14,6 +14,9 @@ import { runCli } from "./cli";
 
 const socketPath = schedulerSocketPath(process.env);
 
+/** The methods that may wait on a session or a tick. */
+const SLOW: ReadonlySet<string> = new Set(["run", "stop", "restart", "enable", "disable"]);
+
 /** Pomade's projects over its socket; `null` when it is closed or this is not run through its shim. */
 async function projects(): Promise<ProjectRecord[] | null> {
   let result;
@@ -50,11 +53,9 @@ process.exitCode = await runCli(process.argv.slice(2), {
   out: (text) => process.stdout.write(text),
   err: (text) => process.stderr.write(text),
   cwd: process.cwd(),
-  schedulerStatus: () => (socketPath === null ? Promise.resolve(null) : callScheduler(socketPath, "status", null)),
-  sessions: () => (socketPath === null ? Promise.resolve(null) : callScheduler(socketPath, "sessions", null)),
-  services: () => (socketPath === null ? Promise.resolve(null) : callScheduler(socketPath, "services", null)),
-  // A start or restart waits for a running session to end first: up to the keeper's grace and more.
-  serviceAction: (action, job) => (socketPath === null ? Promise.resolve(null) : callScheduler(socketPath, action, { job }, { timeoutMs: 15_000 })),
+  // A service's start or restart waits for its running session to end first: up to the keeper's
+  // grace and more; Run now and Enable / Disable wait their turn behind a tick.
+  ask: (method, params) => (socketPath === null ? Promise.resolve(null) : callScheduler(socketPath, method, params, SLOW.has(method) ? { timeoutMs: 15_000 } : {})),
   workspace,
   realPath,
   readJobFiles,
