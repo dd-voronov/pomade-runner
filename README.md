@@ -13,12 +13,14 @@ backlog `docs/BACKLOG.md`.
 |---|---|---|
 | UI | the Runner side panel and the Runner tab inside Pomade | `src/ui/` |
 | Scheduler | the always-on background part: a login item that keeps running when Pomade quits | `src/scheduler/` |
-| `pomade-runner` | the command line, on `PATH` through Pomade's command folder: `check` job files, list `projects` | `src/jobs/cli/` |
+| Keeper | holds every service's terminal session, so it outlives Pomade and the scheduler; Pomade's tabs attach to it. The scheduler starts and owns it | `src/keeper/` |
+| `pomade-runner` | the command line, on `PATH` through Pomade's command folder: `check` job files, list `projects`, show `sessions` | `src/jobs/cli/` |
 | Skill `pomade-runner-jobs` | teaches agents to write job files | `app/skills/pomade-runner-jobs/` |
 
 `npm run build` puts all of it into `dist/`, the folder Pomade installs: the UI, `manifest.json`,
-the skill, and the scheduler and the command each bundled into one file, so the folder runs
-wherever it is copied.
+the skill, the scheduler, the keeper and the command each bundled into one file, and the four
+packages the keeper loads at run time in `dist/node_modules/`, so the folder runs wherever it is
+copied.
 
 Jobs are Markdown files in `<workspace>/Apps/pomade-runner/jobs/` — the format is in
 `docs/DESIGN.md` "Job files" and, for agents, in the skill. `pomade-runner check` validates them.
@@ -49,8 +51,9 @@ npm run gate       # lint, typecheck, unit tests, e2e
 | Unit | `npm run test:unit` | vitest: the logic, with every edge case |
 | E2E | `npm run test:e2e` | Playwright, on the built `dist/` |
 
-The e2e has four parts: the UI in `pomade-kit`'s fake host · the scheduler and the command as
-processes · Runner hosted by a real Pomade · the install and uninstall scripts.
+The e2e has five parts: the UI in `pomade-kit`'s fake host · the scheduler and the command as
+processes · the keeper and its sessions as processes · Runner hosted by a real Pomade, attached
+tabs included · the install and uninstall scripts.
 
 The last two need a Pomade checkout with its dependencies installed and `npm run build` done:
 `POMADE_REPO`, default `../Pomade`.
@@ -83,9 +86,12 @@ After it:
 - Pomade shows the Runner icon on its left strip; the icon fills the side panel, and "Open Runner"
   opens the Runner tab.
 - The scheduler runs as a login item of that Pomade. Its log is
-  `<userData>/app-logs/pomade-runner/backend.log`.
+  `<userData>/app-logs/pomade-runner/backend.log`. It starts Runner's keeper, which holds the
+  services' sessions; an update of Runner leaves them running, and hands them to a new keeper when
+  the update ships one.
 - `pomade-runner --version` prints the version and whether the scheduler is running;
-  `pomade-runner check` checks the job files. New terminals
+  `pomade-runner check` checks the job files; `pomade-runner sessions` shows the keeper and its
+  sessions. New terminals
   find the command once Pomade's command folder is on `PATH` (Pomade ▸ Settings ▸ General ▸
   Commands).
 

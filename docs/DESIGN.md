@@ -19,8 +19,8 @@ workspace-level app: one list of every job, filterable to the current project.
 |---|---|---|
 | **UI** | the Runner side panel and the Runner tab, in Pomade (`pomade-app://pomade-runner/`) | hidden-not-unmounted, like every pane |
 | **Scheduler** | the always-on backend: loads job files; evaluates triggers; applies missed-run, queue and load policies; starts the keeper and starts runs through it as its owner; writes history; posts notices; publishes events; serves Runner's API | a login item (launchd) that keeps running when Pomade quits; updated and restarted freely; reconnects to the keeper and its running sessions on restart |
-| **Keeper** | `pomade-kit/keeper`, run as Runner's own detached process: holds every service's and run's terminal session (PTY); serves the attach protocol Pomade tabs use; reports exits | started by the scheduler (`startKeeper`); does not notice a scheduler restart or update; a keeper update hands the open PTYs to the new keeper process, so sessions keep running |
-| **`pomade-runner` command** | `check [file…]` validates job files · `projects` lists the project ids and jobs sub-folders · `run <job>` starts a run now · `list` prints jobs with their next run and last result | on `PATH` via `~/.pomade/bin`; reads the job files and talks to the scheduler directly, so it works with Pomade closed |
+| **Keeper** | `pomade-kit/keeper`, run as Runner's own detached process (`backend/keeper.mjs`): holds every service's and run's terminal session (PTY); serves the attach protocol Pomade tabs use; reports exits | started by the scheduler (`startKeeper`), and started again when it dies; does not notice a scheduler restart or update; a keeper update hands the open PTYs to the new keeper process, so sessions keep running |
+| **`pomade-runner` command** | `check [file…]` validates job files · `projects` lists the project ids and jobs sub-folders · `sessions` shows the keeper and its sessions · `run <job>` starts a run now · `list` prints jobs with their next run and last result | on `PATH` via `~/.pomade/bin`; reads the job files and talks to the scheduler directly, so it works with Pomade closed |
 | **Skill** | `pomade-runner-jobs` teaches agents the job format and location | master in `app/skills/pomade-runner-jobs/SKILL.md`, shipped in the build at `skills/pomade-runner-jobs` (the manifest's `skills`); `./install` links the installed copy into agents' skill folders |
 
 **What Runner tracks:** only jobs created in Runner. A terminal opened by hand, inside Pomade or
@@ -50,7 +50,9 @@ A job has a **kind**, a **trigger**, a **folder** and **policies**.
 - The file name is the job's slug: lower-case letters, digits and single dashes. Other files —
   not `.md`, or hidden (`.x.md`, an editor's swap file) — are not job files.
 - A job's **id** is its path inside the jobs folder without `.md`: `backup`,
-  `coda-helper/coda-web`. Chains name jobs by id.
+  `coda-helper/coda-web`. Chains name jobs by id. It names the job's terminal sessions too (see
+  "Sessions"), so it is at most 101 characters once encoded — a character other than a letter, a
+  digit or `-` counts 3 or more; a longer one is refused.
 - A job is bound to its project by the stable project id, so renaming the project doesn't orphan
   it; Runner renames the sub-folder to match. `pomade-runner projects` prints each project's id and
   sub-folder.
@@ -183,14 +185,49 @@ and goes to Needs you.
   environment (same PATH and keys as Daniil's terminals).
 - Low-priority runs start with macOS background priority (`taskpolicy -b`).
 
-**Sessions.** The scheduler owns the keeper's sessions (`connectKeeper` from `pomade-kit/node`, as
-the owner, with the app's key):
-- **Ids** are Runner's choice (a service: e.g. `svc:coda-web`).
-- **Restart** stops the session and spawns the same id; attached tabs follow the new session.
+**Sessions.** The scheduler owns the keeper's sessions (`src/keeper/sessions.ts`): it starts the
+keeper (`startKeeper` from `pomade-kit/node`, the entry `backend/keeper.mjs` next to its own) and
+stays connected to it as the owner (`connectKeeper`, with the app's key), at
+`POMADE_KEEPER_SOCKET`:
+- **Following.** Every tick the scheduler makes sure the keeper runs — starting it again when it
+  died — and reads its `list`. A restarted scheduler rebuilds its view from that list, with no
+  effect on any session.
+- **Ids** (`src/keeper/ids.ts`) say whose session it is:
+  - a service's one session: `svc:<job>`, the same across restarts (`svc:coda-helper.coda-web`);
+  - one run of a job: `run:<job>:<run id>`.
+  - `<job>` is the job id encoded into the characters a session id allows: letters, digits and `-`
+    stay; `/` becomes `.`; every other character becomes `_` and two hex digits per UTF-8 byte
+    (`Café/web` → `Caf_c3_a9.web`). `.` and `_` never stand for themselves, so the encoding is
+    reversible and two jobs never share an id. A session id is at most 128 characters, so the
+    encoded job id is at most 101 — room for `run:`, `:` and a run id.
+- **Run ids** name each start: `YYYYMMDD-HHMMSS-` (UTC) and six random hex digits
+  (`20261117-080509-a1b2c3`), so they sort by start time. A service gets a new run id on every
+  start; its session id stays.
+- **Records.** What `list` does not carry — each session's job, run and output log — is in
+  `sessions.json` in Runner's state folder, with the session's end (code, signal, reason, time)
+  once it is reported. Every end is reported once, an end while the scheduler was down included. A session with no record (the file lost) is
+  read from its id, without a run or log; an id Runner does not make is skipped.
+- **Spawn:** the job's folder as `cwd`, the `command` run by the user's login shell, `env`, and
+  `background` for low priority. A service's session carries the Restart header action.
+- **Stop:** SIGTERM, then SIGKILL after a grace period (default 3 s), with the reason Runner names:
+  `stopped`, `stopped-by-you` or `time-limit`. **Forget** drops an ended session from the keeper
+  and the records.
+- **Restart** stops a running session (reason `stopped`), waits for its end and spawns the same id
+  with the job file as it is now; attached tabs follow the new session.
 - **Exit reasons** the keeper reports: `exited` · `crashed` · `stopped` (by Runner) ·
-  `stopped-by-you` · `time-limit` · `lost-in-keeper-crash`.
+  `stopped-by-you` · `time-limit` · `lost-in-keeper-crash`. The scheduler logs each end
+  (`session svc:web: ended: crashed — code 137, SIGKILL`).
 - **Output.** The keeper keeps ~1,000 lines of scrollback per session. The full history is the
-  per-run output log, which the keeper appends to at the path Runner gives at spawn.
+  run's output log, which the keeper appends to: `output/<encoded job id>/<run id>.log` in Runner's
+  state folder.
+- **Keeper updates.** The keeper's version is a digest of its bundled entry and the versions of the
+  packages it loads (`src/keeper/version.ts`); the build computes it and builds the scheduler with
+  it. When the running keeper reports another version — older or newer — the scheduler calls
+  `upgrade` with the shipped entry, once per scheduler start: the keeper hands its PTYs to the new
+  process and the sessions keep running, with the same pids. While a hand-off may be under way
+  (20 s) the scheduler only reconnects and never starts a keeper, which would take the socket from
+  the one holding the sessions. A hand-off that fails leaves the old keeper running, and the
+  scheduler works with it.
 
 **Attached tabs.** Any session opens as a Pomade terminal tab attached to the keeper
 (`pomade:E-034`), with `tabs.openAttached({ session: { app: "pomade-runner", session } })`. Pomade
@@ -200,7 +237,8 @@ attaches at the keeper's socket directly and never calls Runner to do it:
 - Ctrl+C typed through a tab followed by an exit within 5 s, or the tab's Stop, ends the process as
   **stopped by you**;
 - header actions (Restart) are set by Runner per session; a click arrives as the platform event
-  `attachedTab.action`, delivered to Runner only.
+  `attachedTab.action`, delivered to Runner only — the scheduler subscribes while connected to
+  Pomade and restarts the service.
 
 **Services:**
 - Start at login one by one, each given until it is "up" (alive after 5 s, or its `ready` check)
@@ -306,6 +344,9 @@ example. This is a product requirement, not polish.
 | Job files | `<workspace>/Apps/pomade-runner/jobs/` (synced with the workspace) |
 | Workspace settings (max heavy runs 2, warm-up 2 min, long-run warning 3h, retention 30 days) | `<workspace>/Apps/pomade-runner/settings.yaml` |
 | Run history, captured output (30 days), keeper state (`keeper/`), switch position, last-alive record | `<userData>/app-state/pomade-runner/` (machine-local) |
+| Session records (job, run, output log, end) | `<userData>/app-state/pomade-runner/sessions.json` |
+| Run output logs | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.log` |
+| The keeper's own state (session records, exit statuses, `keeper.log`) and its stdout and stderr (`keeper.out`) | `<userData>/app-state/pomade-runner/keeper/` |
 | Scheduler log (its stdout and stderr) | `<userData>/app-logs/pomade-runner/backend.log` |
 | Scheduler control socket | `<userData>/app-state/pomade-runner/scheduler.sock` |
 | Keeper socket (`POMADE_KEEPER_SOCKET`) | `<userData>/run/keepers/pomade-runner.sock` |
@@ -350,7 +391,7 @@ TypeScript (strict) everywhere, on `pomade-kit` (`github:dd-voronov/pomade-kit#v
 | Part | Built with | Why |
 |---|---|---|
 | UI | React 19, CSS modules over `src/ui/tokens.css`, bundled by Vite | the tab grows into several views and a form with many dependent fields: component state and composition carry that; Pomade's renderer is React with CSS modules and tokens, so the look and the habits are shared; no UI framework on top |
-| Scheduler, command | Node programs on Pomade's runtime (Electron in Node mode), each bundled by esbuild into one `.mjs` file with everything it imports | an installed copy has no `node_modules`; one file per entry runs from the build folder alone |
+| Scheduler, keeper, command | Node programs on Pomade's runtime (Electron in Node mode), each bundled by esbuild into one `.mjs` file with everything it imports; the four packages the keeper loads at run time ship beside them | an installed copy has no `node_modules` of the repo; one file per entry runs from the build folder alone |
 | Tests | vitest for logic; Playwright for the built app — the UI in `pomade-kit`'s fake host, the scheduler and command as processes, Runner hosted by a real Pomade, the install script | the family's split: input matrices in vitest, behavior through the real thing in e2e |
 | Lint | ESLint flat config, type-aware typescript-eslint with hand-picked rules, React's hook rules, Playwright's rules | the platform's approach: silent bug classes, not style |
 
@@ -361,6 +402,8 @@ TypeScript (strict) everywhere, on `pomade-kit` (`github:dd-voronov/pomade-kit#v
 | `manifest.json`, `icon.svg` | the static files of `app/` |
 | `index.html`, `assets/` | the UI — one bundle for the panel, the tab and a plain browser |
 | `backend/scheduler.mjs` | the scheduler, the manifest's always-on `backend` (`restartOnUpdate`: an update restarts it) |
+| `backend/keeper.mjs` | the keeper's entry, which the scheduler starts with the keeper's version as its argument |
+| `node_modules/` | what the keeper loads with `require` at run time, which a bundle cannot carry: `node-pty` (`package.json`, `lib/`, `prebuilds/darwin-*` — its binary is N-API, so it loads in any Pomade runtime with no rebuild; the build sets its helper's executable bit), `@xterm/headless`, `@xterm/addon-serialize`, `@xterm/addon-unicode11` — the versions `pomade-kit` resolves |
 | `cli/pomade-runner.mjs` | the `pomade-runner` command |
 | `skills/pomade-runner-jobs/` | the agent skill, from `app/skills/` (the manifest's `skills`; the build checks each folder has its `SKILL.md`) |
 
@@ -380,12 +423,19 @@ system's colour scheme (`prefers-color-scheme`).
 unix socket, `<userData>/app-state/pomade-runner/scheduler.sock`, so it works with Pomade closed:
 - **Protocol:** one JSON object per line, request → response; `src/scheduler/control/protocol.ts`
   is the one definition both sides import. A request names the protocol version it speaks and
-  every response carries the scheduler's; a mismatch is answered with an error that says both.
+  every response carries the scheduler's; a mismatch is answered with an error that says both. An
+  older scheduler answers a method it does not have with `unknown-method`.
+- **Methods:** `status` (the scheduler: version, pid, start, last tick, Pomade link) · `sessions`
+  (the keeper's state and every session with its job, run and output log; `pomade-runner
+  sessions` prints it) · `start { job }` (start a service's session now; `refused`, with the
+  reason, for a job that is not a valid service or a service that runs).
 - **Location:** found from `POMADE_APP_KEY_FILE` (`<userData>/app-keys/pomade-runner`), which
   Pomade gives the scheduler and the command alike — each Pomade (dev, stable, a test run) has its
   own scheduler.
 - **One scheduler per Pomade:** a second one finds the first answering on the socket and exits
-  cleanly; the socket file of a killed scheduler is replaced.
+  cleanly, never touching the keeper; the socket file of a killed scheduler is replaced.
+- **Starting needs** `POMADE_APP_KEY_FILE` (a readable key) and `POMADE_KEEPER_SOCKET`; without
+  them the scheduler logs why and exits with 1.
 
 **Test hooks.** Every part of the scheduler reads the time from the `Clock` it is given
 (`src/scheduler/clock.ts`); `POMADE_RUNNER_TICK_MS` shortens its 1 s tick for a run of the real
