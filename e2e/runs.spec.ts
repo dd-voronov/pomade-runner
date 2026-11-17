@@ -110,8 +110,8 @@ test.describe("scheduled scripts", () => {
     await world.writeJob("slow.md", scriptFile("Slow", 'echo "start $POMADE_RUN_ID"; sleep 2', "schedule:\n  every: { minutes: 1 }\noverlap: queue\n"));
     const scheduler = world.startScheduler(clock("2026-11-18T12:59:59", 60));
     await world.ready(scheduler);
-    await expect.poll(() => scheduler.output(), { timeout: 10_000 }).toMatch(/run slow \S+: queued after the previous run\n/);
-    const queued = /run slow (\S+): queued after the previous run\n/.exec(scheduler.output())?.[1] ?? "";
+    await expect.poll(() => scheduler.output(), { timeout: 10_000 }).toMatch(/run slow \S+: queued · after the previous run\n/);
+    const queued = /run slow (\S+): queued · after the previous run\n/.exec(scheduler.output())?.[1] ?? "";
     await expect.poll(async () => (await world.history("slow")).find((record) => record.run === queued), { timeout: 15_000 }).toMatchObject({ state: "done", lastLines: [`start ${queued}`] });
     const done = (await world.history("slow")).filter((record) => record.state === "done");
     const first = done.at(-1);

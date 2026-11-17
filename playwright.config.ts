@@ -2,11 +2,12 @@ import { defineConfig, devices } from "@playwright/test";
 
 import { APP_PORT, HARNESS_PORT } from "./e2e/support/ports";
 
-// Seven projects over the built app folder `dist/` (the first web server builds it before any test
+// Nine projects over the built app folder `dist/` (the first web server builds it before any test
 // runs): the UI in pomade-kit's fake host · the scheduler and the command as processes · the keeper
 // and its sessions as processes · service supervision as processes · scheduled scripts as
-// processes · Runner hosted by a real Pomade (`POMADE_REPO`) · the install script, which rebuilds
-// `dist/` and so runs after the others.
+// processes · missed runs and load as processes · Runner hosted by a real Pomade (`POMADE_REPO`) ·
+// a missed run that waits for you in a real Pomade · the install script, which rebuilds `dist/` and
+// so runs after the others.
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
@@ -19,8 +20,10 @@ export default defineConfig({
     { name: "keeper", testMatch: "keeper.spec.ts" },
     { name: "services", testMatch: "services.spec.ts" },
     { name: "runs", testMatch: "runs.spec.ts" },
+    { name: "load", testMatch: "load.spec.ts" },
     { name: "pomade", testMatch: "pomade.spec.ts" },
-    { name: "install", testMatch: "install.spec.ts", dependencies: ["ui", "background", "keeper", "services", "runs", "pomade"] },
+    { name: "pomade-load", testMatch: "pomade-load.spec.ts" },
+    { name: "install", testMatch: "install.spec.ts", dependencies: ["ui", "background", "keeper", "services", "runs", "load", "pomade", "pomade-load"] },
   ],
   webServer: [
     {
