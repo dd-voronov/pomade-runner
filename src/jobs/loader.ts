@@ -2,11 +2,13 @@
 // watches it, and checks every file on each change, so an edit by hand, by an agent or by the form
 // applies within a second — with Pomade open or closed. The folder is read whole each time: a
 // save by atomic rename, a half-written file (it is read again when the write ends), a folder that
-// appears later or a workspace switch all come out right. A watch event refreshes at once; every
-// tick refreshes too, so a missed event costs at most a tick. Invalid files stay listed with their
-// errors.
+// appears later or a workspace switch all come out right. The watch is on the jobs folder, or —
+// until it exists — on its nearest existing parent inside the workspace, so the folder's creation
+// is seen at once too. A watch event refreshes at once; every tick refreshes too, so a missed event
+// costs at most a tick. Invalid files stay listed with their errors.
 
-import { watch, type FSWatcher } from "node:fs";
+import { existsSync, watch, type FSWatcher } from "node:fs";
+import { dirname } from "node:path";
 
 import { checkJobs } from "./check";
 import { jobsFolderOf, readJobFiles } from "./folder";
@@ -40,6 +42,7 @@ export function createJobsLoader(options: JobsLoaderOptions): JobsLoader {
   let projects: readonly ProjectRecord[] | null = null;
   let workspace: string | null = null;
   let watcher: FSWatcher | null = null;
+  let watched: string | null = null;
   let settle: NodeJS.Timeout | null = null;
   let running: Promise<void> | null = null;
   let again = false;
@@ -48,6 +51,7 @@ export function createJobsLoader(options: JobsLoaderOptions): JobsLoader {
   const unwatch = (): void => {
     watcher?.close();
     watcher = null;
+    watched = null;
   };
 
   const onEvent = (): void => {
@@ -58,14 +62,22 @@ export function createJobsLoader(options: JobsLoaderOptions): JobsLoader {
     }, settleMs);
   };
 
-  function ensureWatch(folder: string): void {
-    if (watcher !== null) return;
+  /** Watch the jobs folder (all of it) when it exists, else its nearest existing parent (that folder alone). */
+  function ensureWatch(root: string, folder: string, exists: boolean): void {
+    let target = folder;
+    if (!exists) {
+      do target = dirname(target);
+      while (target !== root && !existsSync(target));
+    }
+    if (target === watched && watcher !== null) return;
+    unwatch();
     try {
-      watcher = watch(folder, { recursive: true }, onEvent);
-      // The folder went away (deleted, or a volume unmounted): the tick watches it again when it is back.
+      watcher = watch(target, { recursive: exists }, onEvent);
+      watched = target;
+      // The folder went away (deleted, or a volume unmounted): the next refresh watches again.
       watcher.on("error", unwatch);
     } catch {
-      watcher = null;
+      unwatch();
     }
   }
 
@@ -78,15 +90,15 @@ export function createJobsLoader(options: JobsLoaderOptions): JobsLoader {
     }
     const folder = current === null ? null : jobsFolderOf(current);
     let files = null;
-    if (folder !== null) {
+    if (current !== null && folder !== null) {
+      // Watch first, then read: a write between the two is seen by the read or reported by the watch.
+      ensureWatch(current, folder, existsSync(folder));
       try {
         files = await readJobFiles(folder);
       } catch (err) {
         options.log(`jobs: cannot read ${folder}: ${err instanceof Error ? err.message : String(err)}`);
         return;
       }
-      if (files === null) unwatch();
-      else ensureWatch(folder);
     }
     if (stopped) return;
     const next = checkJobs(files ?? [], { workspace: current, projects });

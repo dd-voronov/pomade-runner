@@ -1,6 +1,8 @@
 // The `pomade-runner` command's entry: Pomade's shim in its command folder runs it with Pomade's
 // runtime, with Pomade open or closed.
 
+import { realpathSync } from "node:fs";
+
 import { connectSocket, resolveWorkspace } from "pomade-kit/node";
 
 import { schedulerSocketPath } from "../../locations";
@@ -28,12 +30,23 @@ async function projects(): Promise<ProjectRecord[] | null> {
   }
 }
 
+/** The workspace by its real path — the form `process.cwd()` has — so paths print relative to where the command runs. */
+function workspace(): string | null {
+  const root = resolveWorkspace();
+  if (root === null) return null;
+  try {
+    return realpathSync(root);
+  } catch {
+    return root;
+  }
+}
+
 process.exitCode = await runCli(process.argv.slice(2), {
   out: (text) => process.stdout.write(text),
   err: (text) => process.stderr.write(text),
   cwd: process.cwd(),
   schedulerStatus: () => (socketPath === null ? Promise.resolve(null) : callScheduler(socketPath, "status")),
-  workspace: () => resolveWorkspace(),
+  workspace,
   readJobFiles,
   projects,
 });

@@ -85,6 +85,15 @@ describe("the jobs loader", () => {
     expect(ids(l.snapshot())).toEqual(["ok a"]);
   });
 
+  it("sees the jobs folder created, through the watch alone, within a second", async () => {
+    await mkdir(workspace ?? "", { recursive: true });
+    const l = start();
+    await l.refresh();
+    await mkdir(jobs, { recursive: true });
+    await writeFile(join(jobs, "a.md"), job("A"));
+    await vi.waitFor(() => expect(ids(l.snapshot())).toEqual(["ok a"]), { timeout: 1000, interval: 10 });
+  });
+
   it("applies an added, edited, broken and deleted file through the watch alone, within a second", async () => {
     await mkdir(jobs, { recursive: true });
     const l = start();

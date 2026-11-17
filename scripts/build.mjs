@@ -33,6 +33,8 @@ await bundle({
   // The oldest Node an Electron that runs Pomade carries.
   target: "node22",
   legalComments: "none",
+  // CommonJS dependencies bundled into ESM (yaml) call `require` for Node's built-ins.
+  banner: { js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);' },
   logLevel: "warning",
 });
 

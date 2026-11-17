@@ -2,7 +2,7 @@
 // in a temp folder — where, as in an installed copy, there is no `node_modules` — with Pomade
 // closed: the environment names a Pomade home and user data that no Pomade runs on.
 
-import { cp, mkdir, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
@@ -136,6 +136,65 @@ test.describe("scheduler and command", () => {
       code: 2,
       stdout: "",
       stderr: 'pomade-runner: unknown command "frobnicate". Run `pomade-runner --help` for what it takes.\n',
+    });
+  });
+
+  test.describe("job files", () => {
+    const VALID = "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\nschedule:\n  daily: { at: 13:00 }\n---\n";
+    const BROKEN = VALID.replace("13:00", "25:00");
+    const ERROR = 'schedule.daily.at — "25:00" is not a time. Fix: write a time like 7:00 or 13:30 (H:MM, 24-hour).';
+    let workspace: string;
+    let jobs: string;
+
+    /** Point the Pomade home at a workspace, as Pomade does on every switch. */
+    async function pointAt(root: string): Promise<void> {
+      await mkdir(join(tmp, "home"), { recursive: true });
+      await writeFile(join(tmp, "home", "workspace"), `${root}\n`);
+    }
+
+    test.beforeEach(async () => {
+      workspace = join(tmp, "ws");
+      jobs = join(workspace, "Apps/pomade-runner/jobs");
+      await mkdir(jobs, { recursive: true });
+      await pointAt(workspace);
+    });
+
+    test("the scheduler loads the jobs folder with Pomade closed and applies a change within a second", async () => {
+      await writeFile(join(jobs, "backup.md"), VALID);
+      const scheduler = startScheduler();
+      await expect.poll(() => scheduler.output()).toContain(`jobs: workspace ${workspace}\n`);
+      await expect.poll(() => scheduler.output()).toContain("jobs: 1 job file, 0 invalid\n");
+
+      await writeFile(join(jobs, "backup.md"), BROKEN);
+      await expect.poll(() => scheduler.output(), { timeout: 1000 }).toContain("jobs: 1 job file, 1 invalid\n");
+      await rm(join(jobs, "backup.md"));
+      await expect.poll(() => scheduler.output(), { timeout: 1000 }).toContain("jobs: 0 job files, 0 invalid\n");
+    });
+
+    test("the scheduler follows a workspace switch", async () => {
+      const scheduler = startScheduler();
+      await expect.poll(() => scheduler.output()).toContain(`jobs: workspace ${workspace}\n`);
+      const other = join(tmp, "other");
+      await mkdir(join(other, "Apps/pomade-runner/jobs"), { recursive: true });
+      await writeFile(join(other, "Apps/pomade-runner/jobs/backup.md"), VALID);
+      await pointAt(other);
+      await expect.poll(() => scheduler.output()).toContain(`jobs: workspace ${other}\n`);
+      await expect.poll(() => scheduler.output().split(`jobs: workspace ${other}\n`)[1]).toMatch(/Z jobs: 1 job file, 0 invalid\n/);
+    });
+
+    test("pomade-runner check validates from disk with Pomade and the scheduler closed", async () => {
+      await writeFile(join(jobs, "backup.md"), VALID);
+      expect(await command("check")).toEqual({
+        code: 0,
+        stdout: `1 job file in ws/Apps/pomade-runner/jobs: no problems.\nProject ids were not checked: Pomade is closed. Run it again with Pomade open to check them too.\n`,
+        stderr: "",
+      });
+      await writeFile(join(jobs, "backup.md"), BROKEN);
+      const broken = await command("check", join(jobs, "backup.md"));
+      expect(broken.code).toBe(1);
+      expect(broken.stdout.split("\n")[0]).toBe(`ws/Apps/pomade-runner/jobs/backup.md:7: ${ERROR}`);
+      expect(await command("check", "nowhere.md")).toMatchObject({ code: 1, stdout: expect.stringContaining("nowhere.md: not a job file") });
+      expect(await command("projects")).toMatchObject({ code: 1, stderr: expect.stringContaining("Pomade is not running") });
     });
   });
 });
