@@ -3,11 +3,11 @@
 // the settings (`settings.get`), asked of Runner's scheduler through Pomade's broker and asked again
 // whenever the scheduler announces a change (`jobs.changed`, `services.changed`, `runs.changed`,
 // `settings.changed`) — on every change, and when it connects to Pomade, so a frame that found no
-// scheduler catches up. And Runner's own tab route, which Pomade sets when it opens or navigates
-// the tab.
+// scheduler catches up. The workspace's repos, from Pomade's git state (`git.read`), followed live.
+// And Runner's own tab route, which Pomade sets when it opens or navigates the tab.
 
 import { useEffect, useState } from "react";
-import type { JsonValue } from "pomade-kit/protocol";
+import type { GitRepoState, JsonValue } from "pomade-kit/protocol";
 import { HostError, type HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
@@ -104,6 +104,31 @@ export function useOutput(host: HostClient, job: string, run: string): LiveState
 /** The workspace settings that apply, and the settings file's problems. */
 export function useSettings(host: HostClient): LiveState<SettingsReport> {
   return useLive(host, SETTINGS_GET_METHOD, SETTINGS_CHANGED_EVENT, isSettingsReport, "the settings");
+}
+
+/** The workspace's repos as Pomade's Git panel lists them — their `name` is what a git job's
+ *  `repos` hold — followed as they change. */
+export function useRepos(host: HostClient): LiveState<GitRepoState[]> {
+  const [state, setState] = useState<LiveState<GitRepoState[]>>({ status: "loading" });
+
+  useEffect(() => {
+    let live = true;
+    const show = (repos: GitRepoState[]): void => {
+      if (live) setState({ status: "ready", value: repos });
+    };
+    const fail = (err: unknown): void => {
+      if (live) setState({ status: "failed", message: err instanceof Error ? err.message : String(err) });
+    };
+    // Watch first, then read: a change between the two is heard, never lost.
+    const watch = host.git.watch({}, show);
+    watch.then(() => host.git.getState().then(({ repos }) => show(repos), fail), fail);
+    return () => {
+      live = false;
+      void watch.then((w) => w.close(), () => undefined);
+    };
+  }, [host]);
+
+  return state;
 }
 
 /** The tab's route: the one it opened with, then each one Pomade navigates it to. */

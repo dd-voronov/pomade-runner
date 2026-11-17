@@ -22,6 +22,8 @@ const fakeHost = createFakeHost({
   pomadeVersion: "0.0.0-e2e",
   projects: [{ id: "alpha", name: "Alpha", root: "Projects/alpha" }],
   activeProject: "alpha",
+  // The workspace's one repo, as Pomade's git state reads it: the name git jobs name it by.
+  git: [{ name: "Knowledge", root: "Knowledge", absPath: "/fake/workspace/Knowledge", remoteUrl: null, branch: "main", upstream: null, ahead: 0, behind: 0, hasCommits: true, changes: [] }],
   ...(hostApi === null ? {} : { hostApi: Number(hostApi) }),
 });
 window.fakeHost = fakeHost;

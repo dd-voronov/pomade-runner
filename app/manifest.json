@@ -8,7 +8,8 @@
     "project.read",
     "files.read",
     "files.write",
-    "tabs.open"
+    "tabs.open",
+    "git.read"
   ],
   "strip": [
     {

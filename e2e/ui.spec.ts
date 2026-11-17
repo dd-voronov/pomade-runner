@@ -131,6 +131,22 @@ test.describe("the jobs list", () => {
     await shoot(page, "panel-jobs");
   });
 
+  test("a git job's row says its operation and repos — one the workspace lacks, so — with Run now; its route marks it", async ({ page }) => {
+    const GIT = "---\nkind: git\nname: Knowledge twice daily\ngit: { operation: commit-push, repos: [Knowledge, Notes] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n";
+    await page.goto(harness({ route: "jobs/knowledge" }));
+    await expect(app(page).getByTestId("tab-empty")).toBeVisible();
+    await writeJob(page, "alpha/coda-web.md", VALID);
+    await writeJob(page, "knowledge.md", GIT);
+    const row = app(page).locator('[data-testid="job-row"][data-job="knowledge"]');
+    await expect(row.getByTestId("job-git")).toHaveText("Commit & push · Knowledge, Notes (not in this workspace)");
+    await expect(row.getByTestId("job-runs")).toHaveText("daily at 13:00 and 20:00 · never ran");
+    await expect(row).toHaveAttribute("aria-current", "true");
+    await expect(app(page).locator('[data-testid="job-row"][data-job="alpha/coda-web"]')).not.toHaveAttribute("aria-current", /.*/);
+    await shoot(page, "tab-jobs-git");
+    await row.getByRole("button", { name: "Run now" }).click();
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toEqual([{ method: "jobs.run", params: { job: "knowledge" } }]);
+  });
+
   test("says so when the scheduler does not answer", async ({ page }) => {
     await page.goto(harness({ scheduler: "none" }));
     const problem = app(page).getByTestId("tab-problem");
@@ -282,6 +298,44 @@ test.describe("runs", () => {
     await expect(card).toBeVisible();
     await app(page).getByTestId("nav-jobs").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+  });
+
+  test("a git run's card has a line per repo — a failed repo red — and Run now", async ({ page }) => {
+    const steps = [
+      { step: "commit" as const, outcome: "done" as const, detail: "committed a1b2c3d (2 files)" },
+      { step: "pull" as const, outcome: "done" as const, detail: "up to date with origin/main" },
+      { step: "push" as const, outcome: "done" as const, detail: "pushed 1 commit to origin/main" },
+    ];
+    const reason = "Their changes conflict with yours in notes.md. Nothing was changed — the repository is exactly as before, and nothing was pushed.";
+    const git: RunRecord = {
+      ...failed,
+      job: "knowledge",
+      name: "Knowledge twice daily",
+      kind: "git",
+      exitCode: 1,
+      reason: `Pomade: ${reason}`,
+      lastLines: [],
+      git: {
+        op: "commit-push",
+        job: "Knowledge twice daily",
+        at: new Date(at(13, 0)).toISOString(),
+        results: [
+          { repo: "Knowledge", path: "/fake/workspace/Knowledge", op: "commit-push", status: "done", reason: null, steps, commit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
+          { repo: "coda-helper", path: "/fake/workspace/Projects/coda-helper", op: "commit-push", status: "skipped", reason: "agent working", steps: [], commit: null },
+          { repo: "Pomade", path: "/fake/workspace/Projects/Pomade", op: "commit-push", status: "failed", reason, steps: [], commit: null },
+        ],
+      },
+    };
+    await page.goto(harness({ route: `run/knowledge/${RUN}` }));
+    await setRuns(page, [git]);
+    const card = app(page).getByTestId("run-card");
+    await expect(card.getByTestId("run-result")).toHaveText(`failed · Pomade: ${reason}`);
+    await expect(card.getByTestId("run-git-repo")).toHaveText(["Knowledge · committed a1b2c3d · pulled · pushed", "coda-helper · skipped · agent working", `Pomade · failed · ${reason}`]);
+    await expect(card.locator('[data-testid="run-git-repo"][data-status="failed"]')).toHaveCSS("color", await card.getByTestId("run-result").evaluate((element) => getComputedStyle(element).color));
+    await expect(card.getByTestId("run-last-lines")).toHaveCount(0);
+    await shoot(page, "tab-run-git");
+    await card.getByRole("button", { name: "Run now" }).click();
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toContainEqual({ method: "jobs.run", params: { job: "knowledge" } });
   });
 
   test("the tab opens at a run's route, as a notice's click opens it", async ({ page }) => {

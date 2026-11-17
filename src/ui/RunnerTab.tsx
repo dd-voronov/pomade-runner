@@ -12,8 +12,8 @@ import { JobsProblem } from "./JobsProblem";
 import { SettingsView } from "./SettingsView";
 import { useJobs, useRoute, useRuns, useServices } from "./useRunnerApi";
 
-/** The Runner tab: every job, the history with the runs going, a run's result and output, the
- *  settings — by its route. */
+/** The Runner tab: every job — at one job, from a repo row's Scheduled line — the history with the
+ *  runs going, a run's result and output, the settings — by its route. */
 export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   const jobs = useJobs(host);
   const services = useServices(host);
@@ -78,7 +78,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
           {invalid > 0 && ` · ${invalid} invalid`}
         </span>
       </header>
-      <JobsList host={host} jobs={jobs.value.jobs} services={services.status === "ready" ? services.value.services : []} runs={report?.jobs ?? []} />
+      <JobsList host={host} jobs={jobs.value.jobs} services={services.status === "ready" ? services.value.services : []} runs={report?.jobs ?? []} selected={view.job} />
       <footer className={styles.footer}>{version}</footer>
     </main>
   );

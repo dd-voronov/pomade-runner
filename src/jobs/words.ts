@@ -2,7 +2,10 @@
 // "at Mac login", "after backup is done", "always on, from login; restarts after git-pull is done".
 // Pure.
 
-import type { Chain, Hook, Job, ServiceAction } from "./model";
+import type { Chain, GitOperation, Hook, Job, ServiceAction } from "./model";
+
+/** A git operation as the Git panel and the job form name it. */
+export const GIT_OPERATION_WORDS: Record<GitOperation, string> = { "commit-push": "Commit & push", pull: "Pull", push: "Push", fetch: "Fetch" };
 
 const HOOK_TRIGGER_WORDS: Record<Hook["event"], (hook: Hook) => string> = {
   login: () => "at Mac login",

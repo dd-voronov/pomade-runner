@@ -3,14 +3,15 @@ import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
 import { DISMISS_METHOD, outputRoute, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute } from "../integrations/runner-api";
+import { gitRepoLine } from "../scheduler/git-runs";
 import { dayTime, durationWords, plainLines, runTriggerWords, runWords, type NeedsYouItem } from "../scheduler/model";
 import { MissedActions } from "./MissedActions";
 import styles from "./Runs.module.css";
 import { useAction } from "./useAction";
 import { useOutput, useRun } from "./useRunnerApi";
 
-/** A run's result: its state, what started it, exit code, when and how long, the last lines; View
- *  output. Opening a failed run that is a Needs-you item resolves the item. A chain run opens the
+/** A run's result: its state, what started it, exit code, when and how long, the last lines — a git
+ *  run's result per repo; View output. Opening a failed run that is a Needs-you item resolves the item. A chain run opens the
  *  run it followed. A missed run that waits for the person offers Run now · Run at… · Skip; a running
  *  one, Stop. A stand-in until the real result card. */
 export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; job: string; run: string; needsYou: readonly NeedsYouItem[]; open: (route: string) => void }): React.JSX.Element {
@@ -50,10 +51,21 @@ export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; 
           Exit code {value.exitCode}
         </span>
       )}
-      {"lastLines" in value && value.lastLines.length > 0 && (
-        <pre className={styles.output} data-testid="run-last-lines">
-          {value.lastLines.join("\n")}
-        </pre>
+      {"git" in value && value.git !== null ? (
+        <ul className={styles.list} data-testid="run-git-repos">
+          {value.git.results.map((result, index) => (
+            <li key={`${index}:${result.repo}`} className={`${styles.meta} ${result.status === "failed" ? styles.failed : ""}`} data-testid="run-git-repo" data-status={result.status}>
+              {gitRepoLine(result)}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        "lastLines" in value &&
+        value.lastLines.length > 0 && (
+          <pre className={styles.output} data-testid="run-last-lines">
+            {value.lastLines.join("\n")}
+          </pre>
+        )
       )}
       {value.state === "missed-waiting" && <MissedActions host={host} job={job} />}
       <span className={styles.actions}>
@@ -77,7 +89,7 @@ export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; 
             Stop
           </button>
         )}
-        {value.kind === "script" && value.state !== "missed-waiting" && (
+        {(value.kind === "script" || value.kind === "git") && value.state !== "missed-waiting" && (
           <button type="button" className={styles.button} onClick={() => action.run(() => host.apps.call(APP_ID, RUN_NOW_METHOD, { job }))}>
             Run now
           </button>
