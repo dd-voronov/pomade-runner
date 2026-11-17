@@ -69,6 +69,60 @@ test.describe("the Runner tab", () => {
   });
 });
 
+const VALID = "---\nkind: service\nname: Coda web\nproject: alpha\nfolder: Projects/alpha\ncommand: ./start.sh\n---\n";
+const BROKEN = "---\nkind: script\nname: Weekly report\nfolder: .\ncommand: ./report.sh\nschedule:\n  weekly: { days: [fri], at: 25:00 }\n---\n";
+
+/** Write a job file into the fake workspace, as an agent or the user would. */
+async function writeJob(page: Page, path: string, text: string): Promise<void> {
+  await page.evaluate(([p, t]) => window.fakeHost.writeFile(`Apps/pomade-runner/jobs/${p}`, t), [path, text] as const);
+}
+
+test.describe("the jobs list", () => {
+  test.use({ viewport: { width: 1040, height: 700 } });
+
+  test("a valid file appears within a second, a broken one shows its error, Open file opens it", async ({ page }) => {
+    await page.goto(harness());
+    await expect(app(page).getByTestId("tab-empty")).toBeVisible();
+
+    await writeJob(page, "alpha/coda-web.md", VALID);
+    const row = app(page).getByTestId("job-row");
+    await expect(row).toHaveText(/Coda web\s*Service · Alpha/, { timeout: 1000 });
+
+    await writeJob(page, "weekly-report.md", BROKEN);
+    const invalid = app(page).getByTestId("job-invalid");
+    await expect(invalid).toContainText('Invalid: line 7: schedule.weekly.at — "25:00" is not a time. Fix: write a time like 7:00 or 13:30 (H:MM, 24-hour).', { timeout: 1000 });
+    await expect(app(page).getByTestId("tab-jobs")).toContainText("2 jobs · 1 invalid");
+    await shoot(page, "tab-jobs");
+
+    await invalid.getByRole("button", { name: "Open file" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/weekly-report.md" }]);
+
+    await page.evaluate(() => window.fakeHost.deleteFile("Apps/pomade-runner/jobs/alpha/coda-web.md"));
+    await expect(row).toHaveCount(0, { timeout: 1000 });
+  });
+
+  test("the panel lists the jobs above Open Runner", async ({ page }) => {
+    await page.setViewportSize({ width: 240, height: 640 });
+    await page.goto(harness({ surface: "panel" }));
+    await expect(app(page).getByTestId("panel-empty")).toBeVisible();
+    await writeJob(page, "alpha/coda-web.md", VALID);
+    await writeJob(page, "weekly-report.md", BROKEN);
+    const panel = app(page).getByTestId("panel-jobs");
+    await expect(panel.getByTestId("job-row")).toContainText("Coda web");
+    await expect(panel.getByTestId("job-invalid")).toContainText("Invalid: line 7: schedule.weekly.at");
+    await expect(panel.getByRole("button", { name: "Open Runner" })).toBeVisible();
+    await shoot(page, "panel-jobs");
+  });
+
+  test("says so when the scheduler does not answer", async ({ page }) => {
+    await page.goto(harness({ scheduler: "none" }));
+    const problem = app(page).getByTestId("tab-problem");
+    await expect(problem.getByRole("heading", { name: "Runner's scheduler is not running" })).toBeVisible();
+    await expect(problem.getByTestId("version")).toBeVisible();
+    await shoot(page, "tab-no-scheduler");
+  });
+});
+
 test.describe("outside Pomade", () => {
   test.use({ viewport: { width: 1040, height: 700 } });
 

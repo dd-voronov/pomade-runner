@@ -9,6 +9,7 @@
   --accent-hover: #3aa6c8;
   --accent-active: #2f92b2;
   --accent-contrast: #ffffff;
+  --accent-text: #1f7f9c;
   --focus-ring: rgba(79, 184, 216, 0.55);
 
   --bg: #fafbfc;
@@ -48,6 +49,7 @@
     --accent-hover: #63c4e1;
     --accent-active: #7bcfe8;
     --accent-contrast: #0e2a33;
+    --accent-text: #63c4e1;
 
     --bg: #1a1e22;
     --panel: #20252a;

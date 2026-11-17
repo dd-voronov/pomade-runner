@@ -1,13 +1,15 @@
 // pomade-kit's fake host as the parent window of a Runner frame: the page the UI specs open
 // instead of Pomade. `?app=<url>` is the Runner page to load; `?surface=panel` opens it as the
 // side panel of the strip icon, otherwise as a tab; `?hostApi=<n>` makes the host speak another
-// Host API version, so the handshake is refused. The fake host is on `window.fakeHost` for the
-// specs to read what the app did.
+// Host API version, so the handshake is refused; `?scheduler=none` leaves out the stand-in
+// scheduler that serves the jobs. The fake host is on `window.fakeHost` for the specs to read what
+// the app did and to write job files.
 
 import { createFakeHost, mountApp } from "pomade-kit/fake-host";
 
 import manifest from "../../app/manifest.json" with { type: "json" };
 import { STRIP_ICON } from "../../src/app";
+import { startFakeScheduler } from "./scheduler";
 
 const query = new URLSearchParams(location.search);
 const app = query.get("app");
@@ -23,4 +25,5 @@ const fakeHost = createFakeHost({
 });
 window.fakeHost = fakeHost;
 
+if (query.get("scheduler") !== "none" && hostApi === null) await startFakeScheduler(fakeHost);
 mountApp(fakeHost, { src: app, ...(query.get("surface") === "panel" ? { surface: "panel", icon: STRIP_ICON } : {}) });

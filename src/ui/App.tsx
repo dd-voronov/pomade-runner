@@ -37,5 +37,5 @@ export function App({ connection }: { connection: ConnectResult }): React.JSX.El
     );
   }
   const { host } = connection;
-  return host.welcome.surface === "panel" ? <Panel host={host} /> : <RunnerTab />;
+  return host.welcome.surface === "panel" ? <Panel host={host} /> : <RunnerTab host={host} />;
 }
