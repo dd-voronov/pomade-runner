@@ -225,8 +225,8 @@ A script runs in its folder, by the login shell, with `POMADE_JOB` (its id), `PO
 `POMADE_TRIGGER` (`scheduled`, `caught-up` for a missed run run late, `manual`, `hook` or `chain`)
 and, for a project job, `POMADE_PROJECT` and `POMADE_PROJECT_PATH` in its environment; a chain's
 run also gets `POMADE_PARENT_JOB`, `POMADE_PARENT_RUN_ID` and `POMADE_PARENT_RESULT` (`done` or
-`failed`). Exit 0 is done, anything else failed. A `login` hook runs once each time Runner's
-scheduler starts — at Mac login — after a short warm-up. `pomade-runner list` prints every job with its trigger in
+`failed`). Exit 0 is done, anything else failed. A `login` hook runs once after each Mac login,
+after a short warm-up; an update or restart of Runner is no login. `pomade-runner list` prints every job with its trigger in
 words, next run and last result; `pomade-runner run <job>` runs one now; `pomade-runner history
 [job]` prints the latest runs with their output log; `pomade-runner runs` prints the runs going,
 queued ones with what they wait for, and what needs the user; `pomade-runner enable|disable <job>`

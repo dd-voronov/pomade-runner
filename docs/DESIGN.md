@@ -173,7 +173,7 @@ disk.
 
 | Hook | In the file | Source | Note |
 |---|---|---|---|
-| Mac login | `hook: { event: login }` | Runner | one-shot scripts, once per scheduler start, after the warm-up |
+| Mac login | `hook: { event: login }` | Runner | one-shot scripts, once per login, after the warm-up |
 | Pomade started | `event: pomade-started` | platform event bus | fires when Pomade is ready (tabs restored) |
 | First open of project X since Pomade started | `event: project-first-open` | platform event bus | — |
 | Project created | `event: project-created` | platform event bus | — |
@@ -185,10 +185,13 @@ disk.
 - An event fires every valid, enabled script whose `hook` names it and whose filters it passes; a
   filter left out takes any value. Every event comes through one firing path, `hook()`, with the
   context its runs get in their environment; E-007 brings Pomade's and the agents' events to it.
-- **Mac login** is the scheduler's start: the scheduler is the login item. Each start fires the
-  login hooks once, as soon as it follows the keeper in a known workspace — after a log-in or a
-  reboot, and after the scheduler was updated or restarted after a crash, which start it the same
-  way.
+- **Mac login** is a scheduler start that finds no keeper running (`startedKeeper` in
+  `src/keeper/sessions.ts`): macOS ends the user's processes at log-out and shutdown, so the
+  scheduler — the login item — starts the keeper itself at a login. An update of Runner or a
+  restart of the scheduler after a crash finds the keeper alive and is no login. The decision is
+  made once per scheduler, when it first follows the keeper; a login fires the login hooks once,
+  in a known workspace. A keeper that died and the scheduler restarted after it is a login too:
+  the services start again then as well. So is the first start after Runner is installed.
 - A hook run has trigger `hook` and its event in `cause` (History: "hook: Mac login"). It joins the
   queue and waits for the warm-up while a staged start is under way ("Missed runs and load"). It has
   no missed-run policy: the switch holds it, and it runs late on release.
@@ -345,10 +348,10 @@ attaches at the keeper's socket directly and never calls Runner to do it:
 **Services** (`src/keeper/supervisor.ts`). The scheduler supervises every service job: each tick,
 after it follows the keeper, it compares each service with its session and acts; each session end
 the keeper reports updates the service's record.
-- **What keeps running.** A valid, enabled service with `start: login` runs all the time. "At
-  login" is the scheduler's start — the scheduler is the login item — so every such service that
-  is not running is started then. A scheduler restarted after a crash or an update does the same
-  and reattaches the running ones: it never restarts a running service. A new service file, or one
+- **What keeps running.** A valid, enabled service with `start: login` runs all the time. Every
+  scheduler start — the scheduler is the login item — starts each such service that is not
+  running: at a login (no keeper running, "Firing hooks") that is all of them; a scheduler
+  restarted after a crash or an update reattaches the running ones and never restarts one. A new service file, or one
   enabled again, starts the same way within a tick.
 - **`start: project-first-open`** services start on the first open of their project, a trigger
   that comes with the platform's event bus (E-007). Until it fires they
@@ -503,8 +506,9 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
     "queued · 1 ahead", a fourth would be "2 ahead". The others: "queued · at Wed 23:00", "queued ·
     held · Pause all", "queued · warm-up until 08:32", "queued · after the previous run".
   - Run now joins the queue too: the switch never holds it, a slot may.
-- **Staged start after login or wake.** The scheduler's start — it is the login item — and every
-  wake begin a staged start:
+- **Staged start after login or wake.** A login — a scheduler start that finds no keeper running
+  ("Firing hooks") — and every wake begin a staged start; a scheduler restarted with its keeper
+  alive begins none, so its caught-up runs need no warm-up:
   1. the services start one by one (the supervisor's staged start, "Services"; at a wake they run
      already);
   2. once no service waits for its turn or is starting (`servicesSettled`), the **warm-up**
@@ -790,6 +794,7 @@ clock at another time, running `POMADE_RUNNER_CLOCK_RATE` times as fast (default
 schedule plays out in seconds. Unset, empty or invalid values mean the production ones. A tick
 due while the previous one still works is dropped. A wake is simulated the way it is detected:
 the scheduler process stopped (`SIGSTOP`) while its clock runs on, then continued — its next tick
-comes after a gap. On a clock many times as fast a short stall of the machine is a gap of minutes
-too; the specs with caught-up runs, which a wake holds for the warm-up, run their clock at most 60
-times as fast.
+comes after a gap. A login is simulated the way it is detected too: the scheduler and its keeper
+stopped, then the scheduler started. On a clock many times as fast a short stall of the machine is
+a gap of minutes too; the specs with caught-up runs, which a wake holds for the warm-up, run their
+clock at most 60 times as fast.
