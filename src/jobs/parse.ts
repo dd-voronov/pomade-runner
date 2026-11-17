@@ -96,7 +96,8 @@ export interface ParsedJobFile {
 export type JobFileInput = { path: string; text: string } | { path: string; readError: string };
 
 function show(value: unknown): string {
-  return typeof value === "string" ? JSON.stringify(value) : value === null ? "empty" : JSON.stringify(value) ?? String(value);
+  if (value === null || value === undefined) return "empty";
+  return JSON.stringify(value);
 }
 
 /** "a script job", "an agent job". */
