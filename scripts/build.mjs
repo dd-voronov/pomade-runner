@@ -42,7 +42,13 @@ if (!parsed.ok) {
   throw new Error(`dist/manifest.json is invalid: ${parsed.errors.map((e) => `${e.field}: ${e.message}`).join("; ")}`);
 }
 const { manifest } = parsed;
-const named = [manifest.entry, manifest.icon, manifest.backend?.entry, ...(manifest.commands ?? []).map((c) => c.entry)].filter(
+const named = [
+  manifest.entry,
+  manifest.icon,
+  manifest.backend?.entry,
+  ...(manifest.commands ?? []).map((c) => c.entry),
+  ...(manifest.skills ?? []).map((skill) => `${skill.path}/SKILL.md`),
+].filter(
   (path) => path !== undefined,
 );
 for (const path of named) {

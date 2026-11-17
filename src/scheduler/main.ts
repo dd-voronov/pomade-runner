@@ -1,6 +1,8 @@
 // The always-on backend's entry: Pomade's login item runs it with Pomade's runtime, and it keeps
 // running when Pomade quits.
 
+import { resolveWorkspace } from "pomade-kit/node";
+
 import { linkPomade } from "../integrations/pomade";
 import { schedulerSocketPath } from "../locations";
 import { systemClock, tickMs } from "./clock";
@@ -14,7 +16,7 @@ if (socketPath === null) {
   log("not started: POMADE_APP_KEY_FILE is not set — the scheduler runs as Runner's background part, started by Pomade");
   process.exitCode = 1;
 } else {
-  const result = await startScheduler({ socketPath, clock: systemClock, tickMs: tickMs(process.env), log, linkPomade });
+  const result = await startScheduler({ socketPath, clock: systemClock, tickMs: tickMs(process.env), log, linkPomade, workspace: () => resolveWorkspace() });
   if (result.status === "already-running") {
     // A clean exit: launchd restarts a login item only after a failure.
     log("another scheduler is running; this one exits");

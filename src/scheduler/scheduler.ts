@@ -1,8 +1,14 @@
 // The scheduler: Runner's always-on background part. It serves the control protocol to the
-// `pomade-runner` command, keeps a connection to Pomade while Pomade runs, and ticks on its clock.
+// `pomade-runner` command, keeps a connection to Pomade while Pomade runs, ticks on its clock, and
+// holds the checked job files of the current workspace — served to Runner's frames through
+// Pomade's broker.
+
+import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_VERSION } from "../app";
-import type { LinkPomade } from "../integrations/pomade";
+import { announceJobs, offerRunner, type LinkPomade } from "../integrations/pomade";
+import { createJobsLoader } from "../jobs/loader";
+import type { JobsSnapshot } from "../jobs/model";
 import type { Clock } from "./clock";
 import type { PomadeLinkState, SchedulerStatus } from "./control/protocol";
 import { serveControl } from "./control/server";
@@ -15,10 +21,14 @@ export interface SchedulerOptions {
   tickMs: number;
   log: Log;
   linkPomade: LinkPomade;
+  /** The workspace root now (absolute), or `null`; asked on every tick, so a switch is followed. */
+  workspace(): string | null;
 }
 
 export interface Scheduler {
   status(): SchedulerStatus;
+  /** The checked job files. */
+  jobs(): JobsSnapshot;
   /** Stops ticking, closes the connection to Pomade and the control socket. */
   stop(): Promise<void>;
 }
@@ -39,12 +49,25 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
   const control = await serveControl(options.socketPath, { status });
   if (control.status !== "listening") return control;
 
+  let host: HostClient | null = null;
+  const jobs = createJobsLoader({
+    workspace: options.workspace,
+    log,
+    onChange: () => {
+      if (host !== null) announceJobs(host, log);
+    },
+  });
+  await jobs.refresh();
+
   const link = options.linkPomade({
-    connected() {
+    connected(client) {
+      host = client;
       pomade = "connected";
       log("connected to Pomade");
+      void offerRunner(client, { jobs: jobs.snapshot, projects: jobs.setProjects, log });
     },
     disconnected() {
+      host = null;
       pomade = "disconnected";
       log("Pomade went away; reconnecting");
     },
@@ -55,6 +78,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
   });
   const ticker = setInterval(() => {
     lastTickAt = clock.now().toISOString();
+    void jobs.refresh();
   }, options.tickMs);
   log(`scheduler ${APP_VERSION} started (pid ${process.pid}, tick ${options.tickMs} ms)`);
 
@@ -62,8 +86,10 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     status: "started",
     scheduler: {
       status,
+      jobs: jobs.snapshot,
       async stop() {
         clearInterval(ticker);
+        jobs.stop();
         link.stop();
         await control.close();
         log("scheduler stopped");

@@ -4,7 +4,12 @@
   "version": "0.1.0",
   "hostApi": 0,
   "icon": "icon.svg",
-  "capabilities": [],
+  "capabilities": [
+    "project.read",
+    "files.read",
+    "files.write",
+    "tabs.open"
+  ],
   "strip": [
     {
       "id": "runner",
@@ -12,11 +17,27 @@
       "action": "panel"
     }
   ],
+  "skills": [
+    "skills/pomade-runner-jobs"
+  ],
+  "events": {
+    "publish": [
+      "jobs.changed"
+    ],
+    "subscribe": [
+      "pomade-runner:jobs.changed",
+      "project.created",
+      "project.renamed"
+    ]
+  },
   "backend": {
     "entry": "backend/scheduler.mjs",
     "mode": "always-on",
     "restartOnUpdate": true
   },
+  "api": [
+    "jobs.list"
+  ],
   "commands": [
     {
       "name": "pomade-runner",

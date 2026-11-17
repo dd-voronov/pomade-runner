@@ -3,24 +3,47 @@ import { describe, expect, it } from "vitest";
 import { APP_VERSION } from "../../app";
 import type { ControlCallResult } from "../../scheduler/control/client";
 import type { SchedulerStatus } from "../../scheduler/control/protocol";
+import type { ProjectRecord } from "../model";
 import { runCli, USAGE } from "./cli";
 
 type StatusResult = ControlCallResult<SchedulerStatus> | null;
 
-async function run(args: string[], status: StatusResult = { status: "not-running" }) {
+interface World {
+  status?: StatusResult;
+  workspace?: string | null;
+  cwd?: string;
+  /** Job files by path inside the jobs folder; `null` = no jobs folder. */
+  files?: Record<string, string> | null;
+  projects?: ProjectRecord[] | null;
+}
+
+const WS = "/ws";
+const JOBS = "/ws/Apps/pomade-runner/jobs";
+
+async function run(args: string[], status: StatusResult = { status: "not-running" }, world: World = {}) {
   let out = "";
   let err = "";
   let asked = 0;
+  const files = world.files === undefined ? {} : world.files;
   const code = await runCli(args, {
     out: (text) => (out += text),
     err: (text) => (err += text),
+    cwd: world.cwd ?? WS,
     schedulerStatus: () => {
       asked++;
       return Promise.resolve(status);
     },
+    workspace: () => (world.workspace === undefined ? WS : world.workspace),
+    readJobFiles: (folder) => {
+      expect(folder).toBe(JOBS);
+      return Promise.resolve(files === null ? null : Object.entries(files).map(([path, text]) => ({ path, text })));
+    },
+    projects: () => Promise.resolve(world.projects === undefined ? null : world.projects),
   });
   return { code, out, err, asked };
 }
+
+const job = (name: string, extra = ""): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ./x.sh\nhook: { event: login }${extra}\n---\n`;
 
 const running: SchedulerStatus = { version: "0.1.0", pid: 4242, startedAt: "2026-11-17T08:00:00.000Z", lastTickAt: null, pomade: "connected" };
 
@@ -68,5 +91,69 @@ describe("pomade-runner", () => {
     const option = await run(["--frob"]);
     expect(option.code).toBe(2);
     expect(option.err).toContain('unknown option "--frob"');
+  });
+
+  it("check reports every problem as path:line: field — problem. Fix: …, and exits 1", async () => {
+    const r = await run(["check"], undefined, { files: { "a.md": job("A"), "b.md": job("B", "\nnotify: loud"), "c.md": job("C", "\ncolor: red\noverlap: wait") } });
+    expect(r).toEqual({
+      code: 1,
+      err: "",
+      asked: 0,
+      out: [
+        "Apps/pomade-runner/jobs/b.md:7: notify — \"loud\" is not allowed. Fix: use one of always, on-failure or never.",
+        "Apps/pomade-runner/jobs/c.md:7: color — color is not a job field. Fix: remove it — the pomade-runner-jobs skill lists every field.",
+        "Apps/pomade-runner/jobs/c.md:8: overlap — \"wait\" is not allowed. Fix: use one of skip, parallel or queue.",
+        "3 problems in 2 of 3 job files in Apps/pomade-runner/jobs.",
+        "Project ids were not checked: Pomade is closed. Run it again with Pomade open to check them too.",
+        "",
+      ].join("\n"),
+    });
+  });
+
+  it("check says so when every file is fine, and prints paths from where it runs", async () => {
+    const r = await run(["check"], undefined, { files: { "a.md": job("A") }, projects: [], cwd: JOBS });
+    expect(r).toMatchObject({ code: 0, out: "1 job file in .: no problems.\n" });
+    const elsewhere = await run(["check"], undefined, { files: { "b.md": job("B", "\nnotify: loud") }, projects: [], cwd: "/tmp" });
+    expect(elsewhere.out).toContain("/ws/Apps/pomade-runner/jobs/b.md:7: notify");
+    const none = await run(["check"], undefined, { files: null, projects: [] });
+    expect(none).toMatchObject({ code: 0, out: "0 job files in Apps/pomade-runner/jobs: no problems.\n" });
+  });
+
+  it("check checks project ids while Pomade runs", async () => {
+    const r = await run(["check"], undefined, { files: { "alpha/a.md": job("A", "\nproject: nope") }, projects: [{ id: "p1", name: "Alpha", root: "Projects/alpha" }] });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Apps/pomade-runner/jobs/alpha/a.md:7: project — Pomade has no project with the id nope. Fix: write project: p1 (Alpha).\n");
+    expect(r.out).not.toContain("not checked");
+  });
+
+  it("check with files checks only those, against the others", async () => {
+    const files = { "a.md": job("A", "\nafter: { job: b }").replace("hook: { event: login }\n", ""), "b.md": job("B", "\nnotify: loud"), "c.md": job("C", "\ncolor: red") };
+    const r = await run(["check", "a.md", "Apps/pomade-runner/jobs/b.md"], undefined, { files, projects: [], cwd: WS });
+    expect(r.out).toBe(
+      'Apps/pomade-runner/jobs/b.md:7: notify — "loud" is not allowed. Fix: use one of always, on-failure or never.\n1 problem in 1 of 2 job files.\n'.replace(
+        /^/,
+        "a.md: not a job file — Runner reads job files only from /ws/Apps/pomade-runner/jobs. Fix: move it there (a project job into its project's sub-folder), as <slug>.md.\n",
+      ).replace("1 problem in", "2 problems in").replace("of 2 job files", "of 1 job file"),
+    );
+    const named = await run(["check", "/ws/Apps/pomade-runner/jobs/a.md"], undefined, { files, projects: [] });
+    expect(named).toMatchObject({ code: 0, out: "1 job file: no problems.\n" });
+    const missing = await run(["check", "/ws/Apps/pomade-runner/jobs/zz.md"], undefined, { files, projects: [] });
+    expect(missing).toMatchObject({ code: 1, out: "Apps/pomade-runner/jobs/zz.md: no such job file. Fix: check the path, or write the file first.\n1 problem.\n" });
+  });
+
+  it("check without a workspace, or with an option, cannot run: exit 2", async () => {
+    expect(await run(["check"], undefined, { workspace: null })).toMatchObject({ code: 2, out: "", err: expect.stringContaining("no workspace") as string });
+    expect(await run(["check", "--all"])).toMatchObject({ code: 2, err: 'pomade-runner check: unexpected "--all". Run `pomade-runner --help` for what it takes.\n' });
+  });
+
+  it("projects lists each project's id and jobs sub-folder, and needs Pomade", async () => {
+    const r = await run(["projects"], undefined, { projects: [{ id: "p1", name: "Coda Helper", root: "Projects/coda-helper" }] });
+    expect(r).toMatchObject({
+      code: 0,
+      out: "p1  Coda Helper  (Projects/coda-helper)  → Apps/pomade-runner/jobs/coda-helper/\n",
+    });
+    expect(await run(["projects"], undefined, { projects: [] })).toMatchObject({ code: 0, out: "Pomade has no projects.\n" });
+    expect(await run(["projects"])).toMatchObject({ code: 1, err: expect.stringContaining("Pomade is not running") as string });
+    expect(await run(["projects", "x"])).toMatchObject({ code: 2 });
   });
 });

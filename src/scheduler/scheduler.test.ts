@@ -5,9 +5,14 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { createFakeHost, type FakeHost } from "pomade-kit/fake-host";
+import { connect, type HostClient } from "pomade-kit/sdk";
+import type { Surface } from "pomade-kit/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import manifest from "../../app/manifest.json" with { type: "json" };
 import { APP_VERSION } from "../app";
+import { isJobsSnapshot, JOBS_CHANGED_EVENT, JOBS_LIST_METHOD } from "../integrations/runner-api";
 import type { PomadeLinkHandlers } from "../integrations/pomade";
 import { callScheduler } from "./control/client";
 import { CONTROL_PROTOCOL } from "./control/protocol";
@@ -31,6 +36,13 @@ function exchange(socketPath: string, line: string): Promise<unknown> {
   });
 }
 
+/** A client of the fake host: a frame of Runner, or its backend. */
+async function frame(fake: FakeHost, surface: Surface = "tab"): Promise<HostClient> {
+  const result = await connect({ transport: fake.createTransport({ surface }), keySource: null });
+  if (result.status !== "connected") throw new Error(`fake host: ${result.status}`);
+  return result.host;
+}
+
 describe("scheduler", () => {
   let dir: string;
   let socketPath: string;
@@ -50,6 +62,7 @@ describe("scheduler", () => {
         link = handlers;
         return { stop: () => void (linkStopped = true) };
       },
+      workspace: () => null,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -96,13 +109,14 @@ describe("scheduler", () => {
 
   it("follows its connection to Pomade", async () => {
     const scheduler = await start();
-    link?.connected();
+    link?.connected(await frame(createFakeHost({ manifest }), "backend"));
     expect(scheduler.status().pomade).toBe("connected");
     link?.disconnected();
     expect(scheduler.status().pomade).toBe("disconnected");
     link?.rejected("unauthorized");
     expect(scheduler.status().pomade).toBe("rejected");
-    expect(lines.slice(1)).toEqual(["connected to Pomade", "Pomade went away; reconnecting", "Pomade refused the connection: unauthorized"]);
+    expect(lines.slice(1, 2)).toEqual(["connected to Pomade"]);
+    expect(lines.slice(-2)).toEqual(["Pomade went away; reconnecting", "Pomade refused the connection: unauthorized"]);
   });
 
   it("leaves a running scheduler in charge", async () => {
@@ -115,6 +129,7 @@ describe("scheduler", () => {
       linkPomade: () => {
         throw new Error("a second scheduler must not connect to Pomade");
       },
+      workspace: () => null,
     });
     expect(second).toEqual({ status: "already-running" });
     expect((await callScheduler(socketPath, "status")).status).toBe("ok");
@@ -155,7 +170,7 @@ describe("scheduler", () => {
 
   it("refuses a socket path macOS cannot bind", async () => {
     socketPath = join(dir, "x".repeat(120), "scheduler.sock");
-    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }) });
+    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: () => null });
     expect(result.status).toBe("failed");
   });
 
@@ -173,5 +188,82 @@ describe("scheduler", () => {
       error: { code: "unknown-method" },
     });
     expect(await exchange(socketPath, `"hello"\n`)).toMatchObject({ id: "", ok: false, error: { code: "invalid-request" } });
+  });
+});
+
+describe("scheduler and the job files", () => {
+  let dir: string;
+  let workspace: string | null;
+  let link: PomadeLinkHandlers | null;
+  const running: Scheduler[] = [];
+  const job = (name: string): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ./x.sh\nhook: { event: login }\n---\n`;
+
+  async function start(): Promise<Scheduler> {
+    const result = await startScheduler({
+      socketPath: join(dir, "state", "scheduler.sock"),
+      clock: { now: () => new Date() },
+      tickMs: 20,
+      log: () => undefined,
+      linkPomade: (handlers) => {
+        link = handlers;
+        return { stop: () => undefined };
+      },
+      workspace: () => workspace,
+    });
+    if (result.status !== "started") throw new Error(`not started: ${result.status}`);
+    running.push(result.scheduler);
+    return result.scheduler;
+  }
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "pr-"));
+    workspace = join(dir, "ws");
+    link = null;
+    await mkdir(join(workspace, "Apps/pomade-runner/jobs"), { recursive: true });
+  });
+
+  afterEach(async () => {
+    for (const scheduler of running.splice(0)) await scheduler.stop();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("holds the checked jobs of the workspace from its start, and follows changes", async () => {
+    await writeFile(join(dir, "ws/Apps/pomade-runner/jobs/a.md"), job("A"));
+    const scheduler = await start();
+    expect(scheduler.jobs()).toMatchObject({ workspace, projectsChecked: false, jobs: [{ valid: true, job: { id: "a" } }] });
+    await writeFile(join(dir, "ws/Apps/pomade-runner/jobs/b.md"), "---\nkind: nope\n---\n");
+    await vi.waitFor(() => expect(scheduler.jobs().jobs.map((e) => e.valid)).toEqual([true, false]));
+  });
+
+  it("follows a workspace switch", async () => {
+    const scheduler = await start();
+    expect(scheduler.jobs().jobs).toEqual([]);
+    workspace = join(dir, "other");
+    await mkdir(join(workspace, "Apps/pomade-runner/jobs/alpha"), { recursive: true });
+    await writeFile(join(workspace, "Apps/pomade-runner/jobs/b.md"), job("B"));
+    await vi.waitFor(() => expect(scheduler.jobs()).toMatchObject({ workspace, jobs: [{ job: { id: "b" } }] }));
+  });
+
+  it("serves jobs.list through Pomade, checks projects, and tells Runner's frames when the jobs change", async () => {
+    const fake = createFakeHost({ manifest, projects: [{ id: "alpha", name: "Alpha", root: "Projects/alpha" }] });
+    const ui = await frame(fake);
+    const heard: unknown[] = [];
+    await ui.events.subscribe(`pomade-runner:${JOBS_CHANGED_EVENT}`, (payload) => heard.push(payload));
+    await writeFile(join(dir, "ws/Apps/pomade-runner/jobs/a.md"), job("A"));
+    await start();
+    link?.connected(await frame(fake, "backend"));
+
+    await vi.waitFor(() => expect(heard.length).toBeGreaterThan(0));
+    const listed = await ui.apps.call("pomade-runner", JOBS_LIST_METHOD);
+    expect(isJobsSnapshot(listed)).toBe(true);
+    expect(listed).toMatchObject({ workspace, projectsChecked: true, jobs: [{ valid: true, job: { id: "a", name: "A" } }] });
+
+    const before = heard.length;
+    await mkdir(join(dir, "ws/Apps/pomade-runner/jobs/alpha"));
+    await writeFile(join(dir, "ws/Apps/pomade-runner/jobs/alpha/web.md"), job("Web").replace("name: Web", "name: Web\nproject: gone"));
+    await vi.waitFor(() => expect(heard.length).toBeGreaterThan(before));
+    expect(await ui.apps.call("pomade-runner", JOBS_LIST_METHOD)).toMatchObject({
+      jobs: [{ valid: true }, { valid: false, invalid: { errors: [{ field: "project", fix: "write project: alpha (Alpha)" }] } }],
+    });
   });
 });
