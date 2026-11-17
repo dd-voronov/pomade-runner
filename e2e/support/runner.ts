@@ -50,6 +50,9 @@ export interface RunnerWorld {
   running(id: string, not?: RunnerSession): Promise<RunnerSession>;
   /** The program a session's shim runs (the shell running the command). */
   childOf(pid: number | null): number;
+  /** A log-out or a shutdown: the keeper ends, with what it runs, as macOS ends the user's
+   *  processes. Stop the schedulers first; the next one to start finds no keeper — a login. */
+  logOut(): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -137,6 +140,9 @@ export async function createRunnerWorld(): Promise<RunnerWorld> {
       const child = Number(execFileSync("pgrep", ["-P", String(pid)], { encoding: "utf8" }).trim().split("\n")[0]);
       pids.push(child);
       return child;
+    },
+    async logOut() {
+      await stopKeeper(keeperSocket, pids.splice(0));
     },
     async dispose() {
       for (const scheduler of started.splice(0)) await scheduler.kill();

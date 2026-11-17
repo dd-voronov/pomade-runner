@@ -6,9 +6,10 @@
 //
 // Sleep is simulated the way the scheduler detects it: the scheduler process is stopped (SIGSTOP)
 // while its clock runs on, so its next tick comes long after the previous one — the gap a Mac's
-// sleep leaves. Power-off is the scheduler killed and started again later on its clock. The clock
-// runs 60 times as fast: a second is a minute, so a stall of the test machine never looks like a
-// wake (a tick gap over a minute is one).
+// sleep leaves. Power-off is the scheduler killed with its keeper — macOS ends the user's
+// processes — and started again later on its clock: a login. The clock runs 60 times as fast: a
+// second is a minute, so a stall of the test machine never looks like a wake (a tick gap over a
+// minute is one).
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -102,6 +103,7 @@ test.describe("missed runs and load", () => {
     await world.ready(first);
     await until(world, "2026-11-18T06:32:00");
     await first.kill();
+    await world.logOut();
 
     const second = world.startScheduler(clock("2026-11-18T09:00:00"));
     await world.ready(second);
@@ -196,6 +198,7 @@ test.describe("missed runs and load", () => {
     await world.ready(before);
     await until(world, "2026-11-18T06:32:00");
     await before.kill();
+    await world.logOut();
     await world.writeJob("api.md", serviceFile("Api", "sleep 600"));
     await world.writeJob("web.md", serviceFile("Web", "sleep 600"));
 

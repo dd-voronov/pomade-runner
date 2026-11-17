@@ -3,9 +3,11 @@
 // (`support/runner.ts`). Every rule's edge is in the unit tests (`src/scheduler/hooks-chains.test.ts`
 // and its neighbours); these show E-005's acceptance on real processes.
 //
-// A login is the scheduler's start — it is the login item — so a simulated login is the scheduler
-// started again. The login specs run its clock 60 times as fast: a second is a minute, so the
-// warm-up's minute passes in a second.
+// A login is a scheduler start that finds no keeper running: macOS ends the user's processes at
+// log-out and shutdown. A simulated login is the scheduler and its keeper stopped (`logOut`), then
+// the scheduler started again; a scheduler started again with its keeper alive — an update, a
+// crash-restart — is no login. The login specs run its clock 60 times as fast: a second is a
+// minute, so the warm-up's minute passes in a second.
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -118,7 +120,9 @@ test.describe("chains and login hooks", () => {
       const scheduler = world.startScheduler(ZONE);
       await world.ready(scheduler);
       await expect.poll(() => scheduler.output(), { timeout: 15_000 }).toMatch(login <= 10 ? /run mount \S+: done — exit 0\n/ : /job mount: fired more than 10 times in 10 min by hooks or chains — looks like a loop; paused until Resume\n/);
+      expect(scheduler.output()).toContain("login: no keeper was running");
       await scheduler.kill();
+      await world.logOut();
     }
     await expect.poll(() => world.queuedNotices()).toContainEqual(expect.objectContaining({ title: "Mount paused: triggered 10× in 10 min — looks like a loop" }));
 
@@ -134,6 +138,7 @@ test.describe("chains and login hooks", () => {
     expect((await world.command("runs")).stdout).not.toContain("needs you: Mount");
     expect(await world.command("resume-job", "mount")).toMatchObject({ code: 1, stderr: 'pomade-runner resume-job: cannot resume "mount": "mount" is not paused.\n' });
     await scheduler.kill();
+    await world.logOut();
     const resumed = world.startScheduler(ZONE);
     await world.ready(resumed);
     await expect.poll(() => world.history("mount"), { timeout: 15_000 }).toHaveLength(11);
@@ -159,8 +164,32 @@ test.describe("chains and login hooks", () => {
     expect(await world.history("mount")).toHaveLength(1);
 
     await scheduler.kill();
+    await world.logOut();
     const next = world.startScheduler(fast("2026-11-19T08:00:00"));
     await world.ready(next);
     await expect.poll(() => world.history("mount"), { timeout: 15_000 }).toHaveLength(2);
+  });
+
+  test("6 · a scheduler restarted with its keeper alive — an update, a crash-restart — is no login: the login hook does not fire, the services run on and no warm-up runs", async () => {
+    await writeSettings(world, "warm-up: 1m\n");
+    await world.writeJob("mount.md", scriptFile("Mount", "echo mounted", "hook: { event: login }\n"));
+    await world.writeJob("web.md", serviceFile("Web", "sleep 600"));
+    const first = world.startScheduler(fast("2026-11-18T08:00:00"));
+    await world.ready(first);
+    await expect.poll(() => world.history("mount"), { timeout: 15_000 }).toHaveLength(1);
+    const web = await world.running("svc:web");
+    await first.kill();
+
+    const restarted = world.startScheduler(fast("2026-11-18T09:00:00"));
+    await world.ready(restarted);
+    await expect.poll(() => restarted.output()).toContain("start: the keeper was running — no login: no warm-up, no login hooks\n");
+    await expect.poll(() => schedulerTime(world), { timeout: 30_000 }).toBeGreaterThan(madrid("2026-11-18T09:10:00"));
+    expect(await world.history("mount")).toHaveLength(1);
+    expect((await world.service("web"))?.session?.info).toMatchObject({ state: "running", startedAt: web.info.startedAt, pid: web.info.pid });
+    const log = restarted.output();
+    expect(log).not.toContain("keeper: started");
+    expect(log).not.toContain("warm-up:");
+    expect(log).not.toContain("hook login");
+    expect(log).not.toContain("service web: starting");
   });
 });
