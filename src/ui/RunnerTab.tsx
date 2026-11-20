@@ -3,14 +3,14 @@ import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_NAME, APP_VERSION } from "../app";
 import { parseRoute, type RunnerRoute } from "../integrations/runner-api";
-import { ActiveRunsList, goingRuns } from "./ActiveRunsList";
 import { JobForm } from "./form/JobForm";
 import { HistoryView } from "./HistoryView";
 import { newJobRoute } from "./jobWords";
 import { JobsView } from "./JobsView";
 import { JobsProblem } from "./JobsProblem";
-import { Button, EmptyBlock, GroupHead } from "./kit";
-import { OutputView, RunDialog } from "./RunCard";
+import { Button, EmptyBlock } from "./kit";
+import { OutputPage } from "./OutputPage";
+import { RunDialog } from "./RunCard";
 import styles from "./RunnerTab.module.css";
 import { ServicesView } from "./ServicesView";
 import { SettingsView } from "./SettingsView";
@@ -25,7 +25,8 @@ function tabView(route: RunnerRoute): TabView {
 }
 
 /** The Runner tab: the shell's four views by its route — every job (at one job, from a repo row's
- *  Scheduled line), the history with the runs going — a run's result card over it — a run's output,
+ *  Scheduled line), the history with the runs going — a run's result card over it — a run's output
+ *  on a page of its own,
  *  the services, the settings with Runner's version. */
 export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   const jobs = useJobs(host);
@@ -58,17 +59,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
     </TabShell>
   );
 
-  const history = (
-    <>
-      {goingRuns(report?.active ?? []).length > 0 && (
-        <div className={styles.going}>
-          <GroupHead title="Running now" />
-          <ActiveRunsList host={host} runs={report?.active ?? []} open={open} />
-        </div>
-      )}
-      <HistoryView host={host} open={open} />
-    </>
-  );
+  const history = <HistoryView host={host} active={report?.active ?? []} open={open} thisProject={thisProject} onThisProject={setThisProject} />;
 
   if (jobs.status === "loading") return shell("tab-loading", null);
   if (view.view === "new" || view.view === "edit") {
@@ -127,6 +118,6 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
         </>,
       );
     case "output":
-      return shell("tab-output", <OutputView host={host} job={view.job} run={view.run} open={open} />);
+      return <OutputPage host={host} job={view.job} run={view.run} open={open} />;
   }
 }

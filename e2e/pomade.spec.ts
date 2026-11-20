@@ -209,10 +209,12 @@ test.describe("Runner in Pomade", () => {
     await shoot(page, "pomade-notice");
 
     await page.getByTestId("notices-panel").locator('[data-testid="notice-row"][data-source="pomade-runner"]').click();
-    const card = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`).getByTestId("run-card");
+    const frame = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
+    const card = frame.getByTestId("run-card");
     await expect(card).toHaveAttribute("data-state", "failed");
-    await expect(card.getByTestId("run-result")).toHaveText("failed · exit 3");
-    await expect(card.getByTestId("run-exit")).toHaveText("Exit code 3");
+    await expect(frame.getByTestId("run-dialog")).toHaveAttribute("data-tone", "danger");
+    await expect(frame.getByTestId("run-result")).toHaveText("Failed");
+    await expect(card.getByTestId("run-exit")).toHaveText("3");
     await expect(card.getByTestId("run-last-lines")).toHaveText("working\nboom");
     await shoot(page, "pomade-run-card");
     // Opening the result resolved the item: the badge goes.
@@ -243,7 +245,8 @@ test.describe("Runner in Pomade", () => {
       await expect(card).toBeVisible({ timeout: 1500 });
     }).toPass({ intervals: [500, 1000] });
     await expect(card).toHaveAttribute("data-state", "failed");
-    await expect(card.getByTestId("run-result")).toHaveText("failed · exit 3");
+    await expect(page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`).getByTestId("run-result")).toHaveText("Failed");
+    await expect(card.getByTestId("run-exit")).toHaveText("3");
     await expect(badge()).toHaveCount(0);
     await expect(item).toHaveCount(0);
     await expect(panel().getByTestId("section-needs-you-head-count")).toHaveText("0");

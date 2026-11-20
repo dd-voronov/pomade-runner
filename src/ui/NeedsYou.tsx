@@ -5,14 +5,11 @@ import { APP_ID } from "../app";
 import { DISMISS_METHOD, editRoute, jobsRoute, MISSED_METHOD, RESUME_METHOD, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute, SERVICE_ACTION_TIMEOUT_MS, SERVICE_METHODS } from "../integrations/runner-api";
 import { sessionIdOf } from "../keeper/ids";
 import { isMissedChoiceResult, isRunActionResult, type NeedsYouItem } from "../scheduler/model";
-import { parseRunAt } from "../scheduler/missed";
-import { Button, PanelCard, PanelEmpty, TextInput, useToast } from "./kit";
+import { Button, PanelCard, PanelEmpty, useToast } from "./kit";
 import styles from "./NeedsYou.module.css";
+import { RunAtField } from "./RunAtField";
 import { aheadMoment, needLook } from "./panelWords";
 import { useNow } from "./useNow";
-
-/** What Run at…'s field says before a time is typed. */
-const AT_HINT = "Try: tonight 23:00 · tomorrow 7:00 · +2h";
 
 const bold = (name: string, rest: string): ReactNode => (
   <>
@@ -24,34 +21,6 @@ const bold = (name: string, rest: string): ReactNode => (
 function refusal(answer: unknown): string | null {
   if (typeof answer !== "object" || answer === null || !("ok" in answer) || answer.ok !== false) return null;
   return "reason" in answer && typeof answer.reason === "string" ? answer.reason : "refused";
-}
-
-/** Run at…'s field: the time or phrase as typed, with what it comes to (or what to try) below;
- *  Esc closes it. */
-function RunAtField({ at, setAt, onSet, onClose }: { at: string; setAt: (at: string) => void; onSet: () => void; onClose: () => void }): React.JSX.Element {
-  const now = useNow();
-  const parsed = parseRunAt(at, new Date(now));
-  return (
-    <form
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSet();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") onClose();
-      }}
-    >
-      <div className={styles.at}>
-        <TextInput width="compact" aria-label="Run at" value={at} onChange={(event) => setAt(event.target.value)} autoFocus />
-        <Button type="submit" size="sm" variant="primary">
-          Set
-        </Button>
-      </div>
-      <div className={styles.hint} data-testid="run-at-hint">
-        {parsed.ok ? `→ ${aheadMoment(parsed.at, now)}` : AT_HINT}
-      </div>
-    </form>
-  );
 }
 
 /** One Needs-you card: the job's name (it opens what the card is about), the (i) help, the time, the
@@ -191,7 +160,7 @@ function NeedCard({ host, item }: { host: HostClient; item: NeedsYouItem }): Rea
       help={look.help}
       when={look.when}
       actions={actions}
-      extra={at !== null && item.kind === "missed" ? <RunAtField at={at} setAt={setAt} onSet={() => choose("run-at", { at })} onClose={() => setAt(null)} /> : undefined}
+      extra={at !== null && item.kind === "missed" ? <RunAtField compact at={at} setAt={setAt} onSet={() => choose("run-at", { at })} onClose={() => setAt(null)} /> : undefined}
     >
         <span data-testid="needs-you-words">{look.text}</span>
       </PanelCard>

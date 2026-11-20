@@ -22,18 +22,4 @@
 }
 
 /* Run at…: the field and Set on one line, what the time comes to below. */
-.at {
-  display: flex;
-  gap: var(--space-1);
-}
 
-.at input {
-  flex: 1;
-  min-width: 0;
-}
-
-.hint {
-  margin-top: 3px;
-  color: var(--text-faint);
-  font-size: var(--fs-xs);
-}

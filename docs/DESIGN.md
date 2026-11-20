@@ -491,16 +491,26 @@ limit, Run now, hooks, chains, History, notices and Needs you.
 The command decides the "agent working" skip and appends every run to Pomade's git run log, which
 the Git panel's failure mark reads. It posts no notice: Runner notifies about a failed run.
 
-**Result card.** One per run: job · time · duration · result. Kind-specific content:
+**Result card** (`src/ui/RunCard.tsx`, its look in `src/ui/runLook.ts`). One per run, a dialog
+over History. Its head: the kind icon, the job's name, the result as a pill with its help
+("Done", "Failed", "Missed · waiting for you"), then when it ran (or was due), how long and what
+started it — with its help — and a why line: a hook's event ("Mac login"), a caught-up run's
+missed time, a chain's "After Pull: done" whose name opens the run it followed. A failed run's
+head is red, a missed run that waits for you amber. Its body, by what the run left:
 
-| Kind | Card adds |
-|---|---|
-| Script | exit code and last lines |
-| Agent | the agent's last message, **Open session** |
-| Git | per-repo steps and the commit hash |
+| Run | Card body | Card foot |
+|---|---|---|
+| Script, ended | exit code (red when failed) or the reason it failed, and the last lines | **View output** · **Run again** |
+| Git, ended | each repo: its commit hash and its steps (✓ done, ✗ failed, faint skipped), and a reason a step does not say | **View output** · **Run again** |
+| Agent, ended | the agent's last message | **Open session** · **View output** |
+| Running | the latest output, followed while it runs | **Open terminal** · **Stop run** |
+| Queued | what it waits for, in a sentence | **Run now** |
+| Missed, waiting for you | when it was due, and that its policy waits for you; **Run at…** opens a field that reads the time as it is typed | **Run now** · **Run at…** · **Skip** |
+| Skipped or missed; a chain's action on a service | why it never started, or what the chain did | **Run now** (scripts and git jobs) |
 
-Every card has **View output** (the full captured log; a git run's holds what `pomade-git` wrote
-to its standard error — nothing, when all went well).
+Every card ends with **Edit job**. **View output** shows the full captured log (a git run's holds
+what `pomade-git` wrote to its standard error — nothing, when all went well). Stop and the missed
+run's choices close the card and toast the outcome; Run again toasts it.
 
 **History** (`src/scheduler/history.ts`). One record per run that ended or never started
 (`RunRecord`), and per chain's action on a service: the job's id, name and kind, project, folder,
@@ -758,10 +768,19 @@ to it, light theme only.
     or toggle and Delete report as toasts. The toggle writes `enabled:` (`jobs.setEnabled`).
   - **An invalid file** is a red row with its file name, its help, its first error and **Open file**.
   - **The route `jobs/<job>`** marks that job's row — the accent bar and wash — and scrolls to it.
-- **History:** the runs going on top, queued ones with what they wait for; then every run, with
-  time, job, result, duration and what started it (scheduled · caught up · manual · hook: Mac login
-  · chain: after Pull); opens the result card — a chain run's card opens the run it followed — or
-  the output.
+- **History** (`src/ui/HistoryView.tsx`): the runs going (`runs.list`'s `active`: running,
+  queued with what they wait for, missed and waiting for you) and every record, one list newest
+  first by when each started — or, one that has not, was due — under day heads (Today, Yesterday,
+  "Sun 15 Nov"). Each row: the time, the kind icon, the job, the result (`runLook`: dot and words
+  — "failed · exit 1", "done · restarted", "queued · 1 ahead", "running · 3h — still expected?" —
+  explaining itself on hover), the duration (a running run's so far) and what started it
+  (scheduled · caught up · manual · hook: Mac login · chain: after Pull), with its help. The
+  result chips — All · Active · Failed · Skipped & missed, each but All with its count — and
+  "This project" filter the list; the summary says how many days History keeps. History loads a
+  page of 100 records, the newest page again on every `runs.changed`, and the next older page
+  each time the list's end comes into sight (`useHistoryPages`); while older pages remain, a
+  count is of the runs loaded and says so ("3+"). A row — click, Enter or Space — opens the run's
+  result card.
 - **Services** (`src/ui/ServicesView.tsx`): every service file in start order — a valid one's row:
   the kind icon, the name, project · folder · command; the status (`serviceLook`,
   `src/ui/serviceWords.ts`) — "running · up 3d 4h" over "no crashes" or "restarted 3× · last
@@ -778,8 +797,10 @@ to it, light theme only.
 **Routes of the Runner tab** (`parseRoute`, `src/integrations/runner-api.ts`): `""` Jobs ·
 `jobs/<encoded job id>` Jobs at one job, its row marked and scrolled to (what a repo row's Scheduled
 line opens) · `history` · `services` · `settings` · `run/<encoded job id>/<run id>` a run's result
-card, a dialog over History (what a run's notice opens; a missed run's card offers Run now · Run at…
-· Skip, a running run's Stop) · `output/<encoded job id>/<run id>` its full output · `new` the job form for a new job (what
+card, a dialog over History (what a run's notice opens) · `output/<encoded job id>/<run id>` its
+full output, the whole tab (`src/ui/OutputPage.tsx`): a head with the way back to the card, the
+job's name and "Captured log · <when> · read-only", then the log as plain text, followed while the
+run runs · `new` the job form for a new job (what
 **New job** opens; `newRoute`), `new/<encoded project id>` for one that starts in that project · `edit/<encoded job id>` the job form editing a job (`editRoute`).
 An unknown route is Jobs. The tab follows Pomade's `route.changed`.
 

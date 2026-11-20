@@ -1,166 +1,409 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import type { GitRunResult } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
-import { DISMISS_METHOD, outputRoute, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute } from "../integrations/runner-api";
-import { gitRepoLine } from "../scheduler/git-runs";
-import { dayTime, durationWords, plainLines, runTriggerWords, runWords, type NeedsYouItem } from "../scheduler/model";
-import { MissedActions } from "./MissedActions";
-import styles from "./Runs.module.css";
-import { useAction } from "./useAction";
-import { useOutput, useRun } from "./useRunnerApi";
-import { Button, Dialog, DialogBody, DialogHead } from "./kit";
+import { DISMISS_METHOD, editRoute, MISSED_METHOD, outputRoute, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute } from "../integrations/runner-api";
+import { isMissedChoiceResult, isRunActionResult, isRunStopResult, LAST_LINES, plainLines, TRIGGER_WORDS, type ActiveRun, type NeedsYouItem, type RunRecord, type RunView } from "../scheduler/model";
+import { Button, Dialog, DialogBody, DialogFoot, DialogHead, Help, Icon, LinkButton, Pill, useToast } from "./kit";
+import styles from "./RunCard.module.css";
+import { dayWords, isRecord, KIND_WORDS, runDuration, runLook, runTime, shortDuration, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
+import { shortClock, upWords } from "./serviceWords";
+import { aheadMoment } from "./panelWords";
+import { RunAtField } from "./RunAtField";
+import { useNow } from "./useNow";
+import { useRunOutput } from "./useRunOutput";
+import { useRun } from "./useRunnerApi";
 
-/** A run's result card, in the dialog over History that Esc, the close button or a click outside
- *  closes back to History. */
-export function RunDialog(props: { host: HostClient; job: string; run: string; needsYou: readonly NeedsYouItem[]; open: (route: string) => void }): React.JSX.Element {
-  const close = (): void => props.open("history");
-  return (
-    <Dialog onClose={close} testId="run-dialog">
-      <RunCard {...props} close={close} />
-    </Dialog>
-  );
-}
-
-/** A run's result: its state, what started it, exit code, when and how long, the last lines — a git
- *  run's result per repo; View output. Opening a failed run that is a Needs-you item resolves the item. A chain run opens the
- *  run it followed. A missed run that waits for the person offers Run now · Run at… · Skip; a running
- *  one, Stop. A stand-in until the real result card. */
-function RunCard({
-  host,
-  job,
-  run,
-  needsYou,
-  open,
-  close,
-}: {
-  host: HostClient;
-  job: string;
-  run: string;
-  needsYou: readonly NeedsYouItem[];
-  open: (route: string) => void;
-  close: () => void;
-}): React.JSX.Element {
+/** A run's result card (the prototype's `cardHtml`), a dialog over History that Esc, the close
+ *  button or a click outside closes back to History. Its head says the run's job, result, when,
+ *  how long and what started it; its body what the run left — exit code and last lines, a git
+ *  run's repos, why one never started, what a queued one waits for; its foot what can be done.
+ *  Opening a failed run that is a Needs-you item resolves the item. */
+export function RunDialog({ host, job, run, needsYou, open }: { host: HostClient; job: string; run: string; needsYou: readonly NeedsYouItem[]; open: (route: string) => void }): React.JSX.Element {
+  const close = (): void => open("history");
   const view = useRun(host, job, run);
-  const action = useAction();
   const item = needsYou.find((candidate) => candidate.kind === "run-failed" && candidate.job === job && candidate.run === run);
 
   useEffect(() => {
     if (item !== undefined) host.apps.call(APP_ID, DISMISS_METHOD, { id: item.id }).catch(() => undefined);
   }, [host, item]);
 
-  if (view.status === "loading") return <DialogHead title="" onClose={close} />;
-  if (view.status !== "ready" || view.value === null) {
+  const value = view.status === "ready" ? view.value : null;
+  if (value === null) {
     return (
-      <>
-        <DialogHead title="Result" onClose={close} />
-        <DialogBody>
-          <p className={styles.error} role="alert" data-testid="run-missing">
-            {view.status === "ready" ? "This run is not in the history any more." : view.status === "failed" ? view.message : "Runner's scheduler is not running."}
-          </p>
-        </DialogBody>
-      </>
+      <Dialog onClose={close} testId="run-dialog" label={view.status === "loading" ? "Result" : undefined}>
+        {view.status === "loading" ? (
+          <DialogHead title="" onClose={close} />
+        ) : (
+          <>
+            <DialogHead title="Result" onClose={close} />
+            <DialogBody>
+              <p className={styles.problem} role="alert" data-testid="run-missing">
+                {view.status === "ready" ? "This run is not in the history any more." : view.status === "failed" ? view.message : "Runner's scheduler is not running."}
+              </p>
+            </DialogBody>
+          </>
+        )}
+      </Dialog>
     );
   }
-  const value = view.value;
-  const failed = value.state === "failed";
-  const session = value.state === "running" ? value.session : null;
-  const parent = value.cause?.kind === "chain" ? value.cause : null;
   return (
-    <>
-    <DialogHead title={value.name} onClose={close} />
-    <DialogBody>
-    <section className={styles.card} data-testid="run-card" data-state={value.state}>
-      <span className={`${styles.meta} ${failed ? styles.failed : ""}`} data-testid="run-result">
-        {runWords(value)}
-      </span>
-      <span className={styles.meta} data-testid="run-trigger">
-        {runTriggerWords(value)} · due {dayTime(value.dueAt)}
-        {value.startedAt !== null && ` · started ${dayTime(value.startedAt)}`}
-        {"durationMs" in value && value.durationMs !== null && ` · took ${durationWords(value.durationMs)}`}
-      </span>
-      {"exitCode" in value && value.exitCode !== null && (
-        <span className={styles.meta} data-testid="run-exit">
-          Exit code {value.exitCode}
-        </span>
-      )}
-      {"git" in value && value.git !== null ? (
-        <ul className={styles.list} data-testid="run-git-repos">
-          {value.git.results.map((result, index) => (
-            <li key={`${index}:${result.repo}`} className={`${styles.meta} ${result.status === "failed" ? styles.failed : ""}`} data-testid="run-git-repo" data-status={result.status}>
-              {gitRepoLine(result)}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        "lastLines" in value &&
-        value.lastLines.length > 0 && (
-          <pre className={styles.output} data-testid="run-last-lines">
-            {value.lastLines.join("\n")}
-          </pre>
-        )
-      )}
-      {value.state === "missed-waiting" && <MissedActions host={host} job={job} />}
-      <span className={styles.actions}>
-        {value.log !== null && (
-          <Button onClick={() => open(outputRoute(job, run))}>
+    <Dialog onClose={close} testId="run-dialog" tone={runLook(value).cardTone}>
+      <RunCard host={host} view={value} open={open} close={close} />
+    </Dialog>
+  );
+}
+
+const capital = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
+function RunCard({ host, view, open, close }: { host: HostClient; view: RunView; open: (route: string) => void; close: () => void }): React.JSX.Element {
+  const now = useNow(10_000);
+  const toast = useToast();
+  const [runAt, setRunAt] = useState<string | null>(null);
+  const look = runLook(view);
+  const duration = runDuration(view, now);
+  const parent = view.cause?.kind === "chain" ? view.cause : null;
+  const why =
+    parent !== null ? (
+      <>
+        After{" "}
+        <LinkButton aria-label={`Open ${parent.name}'s run`} data-tip={`Open ${parent.name}'s run`} onClick={() => open(runRoute(parent.job, parent.run))}>
+          {parent.name}
+        </LinkButton>
+        : {parent.result}
+      </>
+    ) : (
+      whyWords(view, now)
+    );
+  const meta = [
+    <span key="when" data-testid="run-when">
+      {whenWords(runTime(view), now)}
+    </span>,
+    ...(duration === null ? [] : [<span key="duration">{view.state === "running" ? upWords(duration) : shortDuration(duration)}</span>]),
+    <span key="trigger" className={styles.helped} data-help={TRIGGER_HELP[view.trigger]} data-testid="run-trigger">
+      {TRIGGER_WORDS[view.trigger]}
+    </span>,
+  ];
+
+  const failed = (what: string) => (err: unknown) => toast(`Could not ${what}: ${err instanceof Error ? err.message : String(err)}`);
+  const stop = (): void => {
+    host.apps.call(APP_ID, RUN_STOP_METHOD, { job: view.job, run: view.run }).then(
+      (answer: unknown) => {
+        if (isRunStopResult(answer) && !answer.ok) return toast(`Could not stop ${view.name}: ${answer.reason}`);
+        toast(
+          <>
+            <b>{view.name}</b> stopped by you
+          </>,
+        );
+        close();
+      },
+      failed(`stop ${view.name}`),
+    );
+  };
+  const runNow = (): void => {
+    host.apps.call(APP_ID, RUN_NOW_METHOD, { job: view.job }).then(
+      (answer: unknown) => {
+        if (isRunActionResult(answer) && !answer.ok) return toast(`Could not run ${view.name}: ${answer.reason}`);
+        const queued = isRunActionResult(answer) && "run" in answer && answer.run.state === "queued";
+        toast(
+          <>
+            <b>{view.name}</b> {queued ? "queued" : "started"} · trigger “manual”
+          </>,
+        );
+      },
+      failed(`run ${view.name}`),
+    );
+  };
+  const choose = (params: { choice: "run-now" | "skip" } | { choice: "run-at"; at: string }): void => {
+    host.apps.call(APP_ID, MISSED_METHOD, { job: view.job, ...params }).then(
+      (answer: unknown) => {
+        if (isMissedChoiceResult(answer) && !answer.ok) return toast(`Could not ${params.choice === "skip" ? "skip" : "run"} ${view.name}: ${answer.reason}`);
+        const at = isMissedChoiceResult(answer) && answer.ok ? answer.at : null;
+        toast(
+          params.choice === "skip" ? (
+            "Recorded as “missed · skipped”"
+          ) : (
+            <>
+              <b>{view.name}</b> {params.choice === "run-at" && at !== null ? `will run ${aheadMoment(at, Date.now())}` : "started"}
+            </>
+          ),
+        );
+        close();
+      },
+      failed(`settle ${view.name}`),
+    );
+  };
+  const openTerminal = (session: string): void => {
+    host.tabs.openAttached({ session: { app: APP_ID, session }, title: view.name }).catch(failed(`open ${view.name}'s terminal`));
+  };
+
+  const record = isRecord(view) ? view : null;
+  const started = view.startedAt !== null;
+  let foot: React.ReactNode;
+  if (view.state === "missed-waiting") {
+    foot = (
+      <>
+        <Button variant="primary" onClick={() => choose({ choice: "run-now" })}>
+          Run now
+        </Button>
+        <Button aria-expanded={runAt !== null} onClick={() => setRunAt(runAt === null ? "" : null)}>
+          Run at…
+        </Button>
+        <Button onClick={() => choose({ choice: "skip" })}>Skip</Button>
+      </>
+    );
+  } else if (view.state === "running") {
+    const session = view.session;
+    foot = (
+      <>
+        {session !== null && (
+          <Button variant="primary" onClick={() => openTerminal(session)}>
+            Open terminal
+          </Button>
+        )}
+        <Button variant="danger" onClick={stop}>
+          Stop run
+        </Button>
+      </>
+    );
+  } else {
+    foot = (
+      <>
+        {view.log !== null && (
+          <Button data-help="c.output" onClick={() => open(outputRoute(view.job, view.run))}>
             View output
           </Button>
         )}
-        {parent !== null && (
-          <Button onClick={() => open(runRoute(parent.job, parent.run))}>
-            Open {parent.name}'s run
+        {(view.kind === "script" || view.kind === "git") && <Button onClick={runNow}>{started ? "Run again" : "Run now"}</Button>}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <DialogHead
+        icon={view.kind}
+        iconTip={KIND_WORDS[view.kind]}
+        title={view.name}
+        badge={
+          <Pill tone={look.pill} help={look.help} data-testid="run-result">
+            {look.label}
+          </Pill>
+        }
+        meta={meta}
+        why={why ?? undefined}
+        onClose={close}
+      />
+      <DialogBody>
+        <section className={styles.content} data-testid="run-card" data-state={view.state}>
+          {view.state === "missed-waiting" ? (
+            <MissedBody view={view} now={now} runAt={runAt} setRunAt={setRunAt} onSet={(at) => choose({ choice: "run-at", at })} onClose={() => setRunAt(null)} />
+          ) : view.state === "queued" ? (
+            <p data-testid="run-waits">{waitsSentence(view.waits, now)}</p>
+          ) : view.state === "running" ? (
+            <RunningBody host={host} view={view} />
+          ) : record === null ? null : record.action !== null || !started ? (
+            <p data-testid="run-reason">{neverWords(record)}</p>
+          ) : record.git !== null ? (
+            <GitBody record={record} />
+          ) : (
+            <EndedBody record={record} />
+          )}
+        </section>
+      </DialogBody>
+      <DialogFoot
+        end={
+          <Button variant="ghost" onClick={() => open(editRoute(view.job))}>
+            Edit job
           </Button>
-        )}
-        {session !== null && (
-          <Button onClick={() => action.run(() => host.tabs.openAttached({ session: { app: APP_ID, session }, title: value.name }))}>
-            Open session
-          </Button>
-        )}
-        {session !== null && (
-          <Button onClick={() => action.run(() => host.apps.call(APP_ID, RUN_STOP_METHOD, { job, run }))}>
-            Stop
-          </Button>
-        )}
-        {(value.kind === "script" || value.kind === "git") && value.state !== "missed-waiting" && (
-          <Button onClick={() => action.run(() => host.apps.call(APP_ID, RUN_NOW_METHOD, { job }))}>
-            Run now
-          </Button>
-        )}
-      </span>
-      {action.error !== null && (
-        <p className={styles.error} role="alert">
-          {action.error}
-        </p>
-      )}
-    </section>
-    </DialogBody>
+        }
+      >
+        {foot}
+      </DialogFoot>
     </>
   );
 }
 
-/** A run's full output, as plain text. A stand-in until the real output view. */
-export function OutputView({ host, job, run, open }: { host: HostClient; job: string; run: string; open: (route: string) => void }): React.JSX.Element {
-  const output = useOutput(host, job, run);
+/** A run that never started, or a chain's action on a service, in a sentence. */
+function neverWords(record: RunRecord): string {
+  if (record.action !== null) {
+    const done = { restart: "Restarted", start: "Started", stop: "Stopped" }[record.action];
+    const parent = record.cause?.kind === "chain" ? ` after ${record.cause.name}` : "";
+    if (record.state === "done") return `${done} by a chain${parent}.`;
+    return `${capital(record.state === "skipped" ? "skipped" : "failed")}: ${record.reason ?? "the chain did not act"}.`;
+  }
+  return `${capital(record.reason ?? (record.state === "missed" ? "missed" : "it never started"))}.`;
+}
+
+/** The lines of a run's output in a box under their label — a first line that is the command, faint. */
+function Lines({ lines, title, testId }: { lines: readonly string[]; title: string; testId: string }): React.JSX.Element {
   return (
-    <section className={styles.card} data-testid="run-output">
-      <span className={styles.actions}>
-        <Button onClick={() => open(runRoute(job, run))}>
-          Back to the result
-        </Button>
-      </span>
-      {output.status === "ready" ? (
-        <pre className={styles.output} data-testid="run-output-text">
-          {output.value.truncated && "…\n"}
-          {plainLines(output.value.text).join("\n")}
-        </pre>
+    <div>
+      <h5 className={styles.label}>{title}</h5>
+      {lines.length === 0 ? (
+        <p className={styles.note}>It printed nothing.</p>
       ) : (
-        output.status !== "loading" && (
-          <p className={styles.error} role="alert">
-            {output.status === "failed" ? output.message : "Runner's scheduler is not running."}
-          </p>
-        )
+        <pre className={styles.lines} data-testid={testId}>
+          {lines.map((line, index) => (
+            <span key={index} className={index === 0 && line.startsWith("$") ? styles.dim : undefined}>
+              {line === "" ? " " : line}
+              {index < lines.length - 1 && "\n"}
+            </span>
+          ))}
+        </pre>
       )}
-    </section>
+    </div>
+  );
+}
+
+/** A run that ended: its exit code — red when it failed — or why it failed, then its last lines. */
+function EndedBody({ record }: { record: RunRecord }): React.JSX.Element {
+  const failed = record.state === "failed";
+  return (
+    <>
+      <dl className={styles.kv}>
+        {record.exitCode !== null && (
+          <>
+            <dt>
+              Exit code <Help k="c.exit" />
+            </dt>
+            <dd className={failed ? `${styles.code} ${styles.bad}` : styles.code} data-testid="run-exit">
+              {record.exitCode}
+            </dd>
+          </>
+        )}
+        {record.exitCode === null && record.signal !== null && record.reason === null && (
+          <>
+            <dt>Signal</dt>
+            <dd className={styles.code}>{record.signal}</dd>
+          </>
+        )}
+        {failed && record.reason !== null && (
+          <>
+            <dt>Reason</dt>
+            <dd className={styles.bad} data-testid="run-why">
+              {capital(record.reason)}
+            </dd>
+          </>
+        )}
+      </dl>
+      <Lines lines={record.lastLines} title="Last lines" testId="run-last-lines" />
+    </>
+  );
+}
+
+/** A running run: the end of its output so far, followed as it grows. */
+function RunningBody({ host, view }: { host: HostClient; view: ActiveRun }): React.JSX.Element {
+  const output = useRunOutput(host, view.job, view.run, true);
+  if (output.status !== "ready")
+    return <p className={styles.note}>{output.status === "loading" ? "Reading its output…" : output.status === "failed" ? output.message : "Runner's scheduler is not running."}</p>;
+  const lines = plainLines(output.value.text);
+  if (lines.at(-1) === "") lines.pop();
+  return <Lines lines={lines.slice(-LAST_LINES)} title="Latest output" testId="run-last-lines" />;
+}
+
+const STEP_CLASS = { done: styles.yes, failed: styles.no, skipped: styles.skip } as const;
+
+/** A repo's steps as the card lists them: each step's detail with its outcome, the reason a repo
+ *  that did not finish gives when no step says it. */
+function repoSteps(result: GitRunResult): { key: string; outcome: GitRunResult["status"]; text: string }[] {
+  const steps = result.steps.filter((step) => !(step.step === "agents" && step.outcome === "done")).map((step, index) => ({ key: `${index}:${step.step}`, outcome: step.outcome, text: step.detail }));
+  if (result.status !== "done" && !steps.some((step) => step.outcome === result.status)) steps.push({ key: "reason", outcome: result.status, text: result.reason ?? result.status });
+  if (steps.length === 0) steps.push({ key: "none", outcome: "skipped", text: "nothing to do" });
+  return steps;
+}
+
+/** What a repo that did not finish says beyond its steps: its reason, when a step already shows
+ *  the outcome and the reason adds to it ("The repo was left as it was before the pull."). */
+function repoNotes(results: readonly GitRunResult[]): string[] {
+  return results.flatMap((result) => {
+    const shown = result.steps.some((step) => step.outcome === result.status);
+    if (result.status === "done" || result.reason === null || !shown || result.steps.some((step) => step.detail === result.reason)) return [];
+    return [results.length > 1 ? `${result.repo}: ${result.reason}` : result.reason];
+  });
+}
+
+/** A git run: each repo with its commit and steps, in order; what a repo that did not finish adds. */
+function GitBody({ record }: { record: RunRecord }): React.JSX.Element {
+  const results = record.git?.results ?? [];
+  return (
+    <>
+      <div>
+        <h5 className={styles.label}>
+          Repositories <Help k="c.steps" />
+        </h5>
+        <div className={styles.repos} data-testid="run-git-repos">
+          {results.map((result, index) => (
+            <div key={`${index}:${result.repo}`} className={styles.repo} data-testid="run-git-repo" data-status={result.status}>
+              <div className={styles.repoTop}>
+                <Icon name="git" size={14} />
+                <span>{result.repo}</span>
+                {result.commit !== null && (
+                  <code className={styles.hash} data-tip="Commit hash">
+                    {result.commit.slice(0, 7)}
+                  </code>
+                )}
+              </div>
+              <div className={styles.steps}>
+                {repoSteps(result).map((step) => (
+                  <span key={step.key} className={STEP_CLASS[step.outcome]} data-testid="run-git-step" data-outcome={step.outcome}>
+                    {step.outcome === "done" && <Icon name="check" size={12} />}
+                    {step.outcome === "failed" && <Icon name="x" size={12} />}
+                    {step.text}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {repoNotes(results).map((note) => (
+        <p key={note} className={styles.note} data-testid="run-git-note">
+          {note}
+        </p>
+      ))}
+    </>
+  );
+}
+
+/** A missed run that waits for you: when it was due, why it did not catch up, and — after Run at… —
+ *  the field for the time to run it at. */
+function MissedBody({
+  view,
+  now,
+  runAt,
+  setRunAt,
+  onSet,
+  onClose,
+}: {
+  view: ActiveRun;
+  now: number;
+  runAt: string | null;
+  setRunAt: (value: string) => void;
+  onSet: (at: string) => void;
+  onClose: () => void;
+}): React.JSX.Element {
+  return (
+    <>
+      <p>
+        This run was due{" "}
+        <b>
+          {dayWords(view.dueAt, now).replace(/^Today$/, "today")} at {shortClock(view.dueAt)}
+        </b>{" "}
+        and was missed.
+      </p>
+      <p className={styles.note}>
+        Its missed-run policy is “Wait for me”, so it didn’t catch up on its own. <Help k="need.waitforme" />
+      </p>
+      {runAt !== null && (
+        <div>
+          <h5 className={styles.label}>
+            Run at <Help k="c.runat" />
+          </h5>
+          <RunAtField at={runAt} setAt={setRunAt} onSet={() => runAt.trim() !== "" && onSet(runAt.trim())} onClose={onClose} />
+        </div>
+      )}
+    </>
   );
 }

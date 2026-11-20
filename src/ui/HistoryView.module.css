@@ -1,0 +1,80 @@
+/* History (the prototype's `viewHistory`): time · kind · job · result · duration · trigger. The
+   trigger column is wider than the prototype's 86 px, at least as wide, so "hook: Mac login" fits. */
+.cols {
+  grid-template-columns: 44px 16px minmax(0, 1fr) minmax(0, 1.25fr) 62px minmax(86px, 0.6fr);
+}
+
+.chipGap {
+  width: var(--space-2);
+}
+
+.right {
+  justify-content: flex-end;
+}
+
+.list .row {
+  min-height: 32px;
+  padding: 0 var(--space-2);
+}
+
+.time {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.duration {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.trigger {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.none {
+  padding: var(--space-4) var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+}
+
+/* The list's end: what makes the next older page load once it is in sight. */
+.end {
+  min-height: 1px;
+  padding: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.end:empty {
+  padding: 0;
+}
+
+.problem {
+  margin: 0;
+  padding: 0 var(--space-2);
+  color: var(--danger-text);
+  font-size: var(--fs-sm);
+}

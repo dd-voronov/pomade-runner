@@ -119,8 +119,9 @@ test.describe("chains and login hooks", () => {
     for (let login = 1; login <= 11; login++) {
       const scheduler = world.startScheduler(ZONE);
       await world.ready(scheduler);
-      await expect.poll(() => scheduler.output(), { timeout: 15_000 }).toMatch(login <= 10 ? /run mount \S+: done — exit 0\n/ : /job mount: fired more than 10 times in 10 min by hooks or chains — looks like a loop; paused until Resume\n/);
+      await expect.poll(() => scheduler.output(), { timeout: 15_000 }).toMatch(login <= 10 ? /run mount \S+: done — exit 0\n/ : /job mount: fired more than 10 times in 10 min by hooks or chains — looks like a loop; paused until Resume\n[\s\S]*notice "Mount paused: triggered 10× in 10 min — looks like a loop": queued for Pomade's next launch\n/);
       expect(scheduler.output()).toContain("login: no keeper was running");
+      // The eleventh waits for the pause's notice in the queue too: killed before, it would be lost.
       await scheduler.kill();
       await world.logOut();
     }

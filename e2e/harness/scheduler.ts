@@ -1,5 +1,5 @@
 // A stand-in for Runner's scheduler in the fake host: another client of the app that serves
-// Runner's API — the jobs, the services, the runs, the history, one run and its output, Run now,
+// Runner's API — the jobs, the services, the runs, the history a page at a time, one run and its output, Run now,
 // Enable / Disable, Needs you, a missed run's choice, Stop, the switch, Resume, the settings — and
 // announces `jobs.changed`, `services.changed`, `runs.changed` and `settings.changed`, as the real
 // scheduler does through Pomade. It reads the fake workspace's jobs folder through the Host API and
@@ -98,6 +98,13 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     const service = services(snapshot).services.find((status) => status.job === job);
     return service === undefined ? { ok: false, reason: `no service "${job}"` } : { ok: true, service };
   };
+  /** A page of the history as set, newest first: `limit` records from the cursor `before` (an index). */
+  const historyPage = (params: JsonValue): { records: RunRecord[]; next: string | null } => {
+    const { before = null, limit = 50 } = (params ?? {}) as { before?: string | null; limit?: number };
+    const from = before === null ? 0 : Number(before);
+    const records = runs.history.slice(from, from + limit);
+    return { records, next: from + limit < runs.history.length ? String(from + limit) : null };
+  };
   /** The run Run now starts, as the scheduler answers it. */
   const startedRun = (job: string, name: string, kind: JobKind, project: string | null): ActiveRun => ({
     job,
@@ -129,7 +136,7 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     [JOBS_LIST_METHOD]: () => json(snapshot),
     [SERVICES_LIST_METHOD]: () => json(services(snapshot)),
     [RUNS_LIST_METHOD]: () => json(runs.report),
-    [HISTORY_LIST_METHOD]: () => json({ records: runs.history, next: null }),
+    [HISTORY_LIST_METHOD]: (params) => json(historyPage(params)),
     [RUN_GET_METHOD]: (params) => json(find(params) ?? null),
     [RUN_OUTPUT_METHOD]: () => json({ text: runs.output, truncated: false }),
     [RUN_NOW_METHOD]: action(RUN_NOW_METHOD, (params) => {

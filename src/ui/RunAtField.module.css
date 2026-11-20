@@ -1,0 +1,32 @@
+/* Run at…'s field: the input and Set in a row, the hint below. Full size in the result card
+   (the prototype's 320 px row, a 30 px Set), compact in the panel's Needs-you card. */
+.at {
+  display: flex;
+  gap: var(--space-2);
+  max-width: 320px;
+}
+
+.at.compact {
+  gap: var(--space-1);
+  max-width: none;
+}
+
+.at input {
+  flex: 1;
+  min-width: 0;
+}
+
+.set {
+  flex: none;
+  height: 30px;
+}
+
+.hint {
+  margin-top: 4px;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.hint.compact {
+  margin-top: 3px;
+}

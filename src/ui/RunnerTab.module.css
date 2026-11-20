@@ -1,7 +1,3 @@
-.going {
-  margin-bottom: var(--space-4);
-}
-
 .version {
   margin: var(--space-6) 0 0;
   color: var(--text-faint);

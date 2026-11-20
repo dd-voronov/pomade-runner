@@ -340,7 +340,7 @@ test.describe("runs", () => {
     ]);
   });
 
-  test("History lists the runs; a row opens the result card: red, the exit code and the last lines; View output shows the whole output", async ({ page }) => {
+  test("History lists the runs; a row opens the result card: red, the exit code and the last lines; View output shows the whole output on its page", async ({ page }) => {
     await page.goto(harness());
     await expect(app(page).getByTestId("tab-empty")).toBeVisible();
     await writeJob(page, "backup.md", SCRIPT);
@@ -350,21 +350,24 @@ test.describe("runs", () => {
     await expect(rows).toHaveCount(2);
     await expect(rows.first()).toContainText("Backup");
     await expect(rows.first()).toContainText("failed · exit 2");
-    await expect(rows.first()).toContainText("3 s");
+    await expect(rows.first()).toContainText("3s");
     await shoot(page, "tab-history");
 
     await rows.first().click();
     const card = app(page).getByTestId("run-card");
     await expect(card).toHaveAttribute("data-state", "failed");
-    await expect(card.getByTestId("run-result")).toHaveText("failed · exit 2");
-    await expect(card.getByTestId("run-exit")).toHaveText("Exit code 2");
+    await expect(app(page).getByTestId("run-dialog")).toHaveAttribute("data-tone", "danger");
+    await expect(app(page).getByTestId("run-result")).toHaveText("Failed");
+    await expect(card.getByTestId("run-exit")).toHaveText("2");
     await expect(card.getByTestId("run-last-lines")).toHaveText("copying\nrsync: connection refused");
     // Opening it resolves its Needs-you item.
     await expect.poll(() => page.evaluate(() => window.runnerCalls)).toContainEqual({ method: "needsYou.dismiss", params: { id: "run-failed:backup" } });
     await shoot(page, "tab-run-failed");
 
-    await card.getByRole("button", { name: "View output" }).click();
-    await expect(app(page).getByTestId("run-output-text")).toHaveText("copying\nrsync: connection refused\n");
+    await app(page).getByRole("button", { name: "View output" }).click();
+    await expect(app(page).getByTestId("run-output-text")).toHaveText("copying\nrsync: connection refused");
+    await expect(app(page).getByTestId("run-output-badge")).toContainText("Captured log ·");
+    await shoot(page, "tab-run-output");
     await app(page).getByRole("button", { name: "Back to the result" }).click();
     await expect(card).toBeVisible();
     await page.keyboard.press("Escape");
@@ -384,7 +387,7 @@ test.describe("runs", () => {
     await page.goto(harness({ route: `run/backup/${RUN}` }));
     await setRuns(page, [failed]);
     const dialog = app(page).getByRole("dialog", { name: "Backup" });
-    await expect(dialog.getByTestId("run-result")).toHaveText("failed · exit 2");
+    await expect(dialog.getByTestId("run-result")).toHaveText("Failed");
     await expect(app(page).getByTestId("history-row")).toHaveCount(1);
     await expect(app(page).getByTestId("nav-history")).toHaveAttribute("aria-current", "page");
     const close = dialog.getByRole("button", { name: "Close (Esc)" });
@@ -417,7 +420,7 @@ test.describe("runs", () => {
     await expect(app(page).getByTestId("history-row")).toBeFocused();
   });
 
-  test("a git run's card has a line per repo — a failed repo red — and Run now", async ({ page }) => {
+  test("a git run's card has each repo with its commit and steps — a failed repo's red — and Run again", async ({ page }) => {
     const steps = [
       { step: "commit" as const, outcome: "done" as const, detail: "committed a1b2c3d (2 files)" },
       { step: "pull" as const, outcome: "done" as const, detail: "up to date with origin/main" },
@@ -446,19 +449,35 @@ test.describe("runs", () => {
     await page.goto(harness({ route: `run/knowledge/${RUN}` }));
     await setRuns(page, [git]);
     const card = app(page).getByTestId("run-card");
-    await expect(card.getByTestId("run-result")).toHaveText(`failed · Pomade: ${reason}`);
-    await expect(card.getByTestId("run-git-repo")).toHaveText(["Knowledge · committed a1b2c3d · pulled · pushed", "coda-helper · skipped · agent working", `Pomade · failed · ${reason}`]);
-    await expect(card.locator('[data-testid="run-git-repo"][data-status="failed"]')).toHaveCSS("color", await card.getByTestId("run-result").evaluate((element) => getComputedStyle(element).color));
+    await expect(app(page).getByTestId("run-result")).toHaveText("Failed");
+    const repos = card.getByTestId("run-git-repo");
+    await expect(repos).toHaveCount(3);
+    await expect(repos.nth(0)).toHaveAttribute("data-status", "done");
+    await expect(repos.nth(0)).toContainText("Knowledgea1b2c3d");
+    await expect(repos.nth(0).getByTestId("run-git-step")).toHaveText(["committed a1b2c3d (2 files)", "up to date with origin/main", "pushed 1 commit to origin/main"]);
+    await expect(repos.nth(1).getByTestId("run-git-step")).toHaveText(["agent working"]);
+    await expect(repos.nth(1).getByTestId("run-git-step")).toHaveAttribute("data-outcome", "skipped");
+    const failedStep = repos.nth(2).getByTestId("run-git-step");
+    await expect(failedStep).toHaveText(reason);
+    await expect(failedStep).toHaveCSS("color", await failedStep.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--danger-text)";
+      document.body.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    }));
     await expect(card.getByTestId("run-last-lines")).toHaveCount(0);
     await shoot(page, "tab-run-git");
-    await card.getByRole("button", { name: "Run now" }).click();
+    await app(page).getByRole("button", { name: "Run again" }).click();
     await expect.poll(() => page.evaluate(() => window.runnerCalls)).toContainEqual({ method: "jobs.run", params: { job: "knowledge" } });
   });
 
   test("the tab opens at a run's route, as a notice's click opens it", async ({ page }) => {
     await page.goto(harness({ route: `run/backup/${RUN}` }));
     await setRuns(page, [failed]);
-    await expect(app(page).getByTestId("run-card").getByTestId("run-result")).toHaveText("failed · exit 2");
+    await expect(app(page).getByTestId("run-result")).toHaveText("Failed");
+    await expect(app(page).getByTestId("run-card").getByTestId("run-exit")).toHaveText("2");
     await page.evaluate((route) => window.mounted.navigate(route), "history");
     await expect(app(page).getByTestId("history-row")).toHaveCount(1);
     await page.evaluate((route) => window.mounted.navigate(route), "run/backup/20000101-000000-000000");
@@ -569,7 +588,7 @@ test.describe("missed runs and load", () => {
     ]);
   });
 
-  test("Running now shows what each queued run waits for, in the panel and above History", async ({ page }) => {
+  test("Running now shows what each queued run waits for, in the panel and as History's rows", async ({ page }) => {
     await open(page, { surface: "panel" });
     const rows = app(page).getByTestId("active-run");
     await expect(rows).toHaveCount(3);
@@ -582,8 +601,11 @@ test.describe("missed runs and load", () => {
 
     await page.setViewportSize({ width: 1040, height: 700 });
     await open(page, { route: "history" });
-    await expect(app(page).getByTestId("active-runs").getByTestId("active-run")).toHaveCount(3);
-    await expect(app(page).getByTestId("active-runs")).toContainText("queued · 1 ahead");
+    const history = app(page).getByTestId("history-row");
+    await expect(history).toHaveCount(4);
+    await expect(app(page).locator('[data-testid="history-row"][data-job="lint"]')).toContainText("queued · 1 ahead");
+    await expect(app(page).locator('[data-testid="history-row"][data-job="late"]')).toContainText("queued · warm-up until 08:32");
+    await expect(app(page).locator('[data-testid="history-row"][data-job="weekly"]')).toContainText("missed · waiting for you");
     await shoot(page, "tab-history-queued");
   });
 
@@ -591,19 +613,36 @@ test.describe("missed runs and load", () => {
     await page.setViewportSize({ width: 1040, height: 700 });
     await open(page, { route: `run/weekly/${weekly.run}` });
     const card = app(page).getByTestId("run-card");
+    const dialog = app(page).getByTestId("run-dialog");
     await expect(card).toHaveAttribute("data-state", "missed-waiting");
-    await expect(card.getByTestId("run-result")).toHaveText("missed · waiting for you");
-    await expect(card.getByRole("button", { name: "Run at…" })).toBeVisible();
-    await expect(card.getByRole("button", { name: "Run now" })).toHaveCount(1);
+    await expect(dialog).toHaveAttribute("data-tone", "warning");
+    await expect(app(page).getByTestId("run-result")).toHaveText("Missed · waiting for you");
+    await expect(dialog.getByRole("button", { name: "Run now" })).toHaveCount(1);
+    await expect(dialog.getByRole("button", { name: "Skip" })).toHaveCount(1);
+    await dialog.getByRole("button", { name: "Run at…" }).click();
+    await dialog.getByRole("textbox", { name: "Run at" }).fill("23:00");
+    await expect(dialog.getByTestId("run-at-hint")).toContainText("→ ");
     await shoot(page, "tab-run-missed");
+    await dialog.getByRole("button", { name: "Set" }).click();
+    await expect(dialog).toHaveCount(0);
     await page.evaluate((route) => window.mounted.navigate(route), `run/summary/${base.run}`);
-    await card.getByRole("button", { name: "Stop" }).click();
-    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toEqual([{ method: "runs.stop", params: { job: "summary", run: base.run } }]);
+    await expect(app(page).getByTestId("run-result")).toHaveText("Running");
+    await dialog.getByRole("button", { name: "Stop run" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toEqual([
+      { method: "runs.missed", params: { job: "weekly", choice: "run-at", at: "23:00" } },
+      { method: "runs.stop", params: { job: "summary", run: base.run } },
+    ]);
 
     const stopped: RunRecord = { ...base, state: "failed", action: null, reason: "stopped: ran over 45 min", endedAt: at(7, 45), durationMs: 45 * 60_000, exitCode: null, signal: "SIGTERM", lastLines: ["still summarizing"], git: null };
     await page.evaluate((h) => window.setRuns({ report: { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } }, history: h }), [stopped]);
-    await expect(card.getByTestId("run-result")).toHaveText("failed · stopped: ran over 45 min");
-    const red = await card.getByTestId("run-result").evaluate((element) => {
+    // The host still has the tab at this run's route: the card closed in the frame alone.
+    await page.evaluate((route) => window.mounted.navigate(route), "history");
+    await page.evaluate((route) => window.mounted.navigate(route), `run/summary/${base.run}`);
+    await expect(app(page).getByTestId("run-result")).toHaveText("Failed");
+    await expect(dialog).toHaveAttribute("data-tone", "danger");
+    await expect(card.getByTestId("run-why")).toHaveText("Stopped: ran over 45 min");
+    const red = await card.getByTestId("run-why").evaluate((element) => {
       const probe = document.createElement("span");
       probe.style.color = "var(--danger-text)";
       document.body.append(probe);
@@ -718,16 +757,17 @@ test.describe("hooks and chains", () => {
     const rows = app(page).getByTestId("history-row");
     await expect(rows).toHaveCount(4);
     await expect(app(page).getByTestId("history-trigger")).toHaveText(["chain: after Pull", "chain: after Pull", "scheduled", "hook: Mac login"]);
-    await expect(rows.nth(1)).toContainText("restarted");
+    await expect(app(page).locator('[data-testid="history-row"][data-job="web"]')).toContainText("done · restarted");
     await shoot(page, "tab-history-chains");
 
-    await rows.first().click();
-    const card = app(page).getByTestId("run-card");
-    await expect(card.getByTestId("run-trigger")).toContainText("chain: after Pull · due");
-    await card.getByRole("button", { name: "Open Pull's run" }).click();
-    await expect(card.getByTestId("run-trigger")).toContainText("scheduled · due");
-    await expect(card.getByRole("button", { name: "Open Pull's run" })).toHaveCount(0);
-    await expect(card.getByTestId("run-last-lines")).toHaveText("Already up to date.");
+    await app(page).locator('[data-testid="history-row"][data-job="tests"]').click();
+    const dialog = app(page).getByTestId("run-dialog");
+    await expect(dialog.getByTestId("run-trigger")).toHaveText("chain");
+    await expect(dialog).toContainText("After Pull: done");
+    await dialog.getByRole("button", { name: "Open Pull's run" }).click();
+    await expect(dialog.getByTestId("run-trigger")).toHaveText("scheduled");
+    await expect(dialog.getByRole("button", { name: "Open Pull's run" })).toHaveCount(0);
+    await expect(dialog.getByTestId("run-last-lines")).toHaveText("Already up to date.");
   });
 
   test("a job the loop guard paused is in Needs you, with Resume", async ({ page }) => {
@@ -1421,6 +1461,177 @@ test.describe("services: Running now and the Services view", () => {
   });
 });
 
+/** A History day's head for `time` by the clock now: "Today", "Yesterday", "Sun 15 Nov". */
+function dayHead(time: number): string {
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(time).setHours(0, 0, 0, 0)) / 86_400_000);
+  const date = new Date(time);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][date.getDay()]} ${date.getDate()} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][date.getMonth()]}`;
+}
+
+test.describe("History and result cards", () => {
+  test.use({ viewport: { width: 1040, height: 700 } });
+  const now = new Date();
+  /** A moment `days` before today at `hours:minutes`. */
+  const at = (days: number, hours: number, minutes: number): number => new Date(now.getFullYear(), now.getMonth(), now.getDate() - days, hours, minutes).getTime();
+  const done: RunRecord = {
+    job: "backup",
+    name: "Backup",
+    kind: "script",
+    project: null,
+    folder: "",
+    run: "20261117-000000-aaaaaa",
+    trigger: "scheduled",
+    cause: null,
+    dueAt: at(0, 0, 10),
+    state: "done",
+    action: null,
+    reason: null,
+    startedAt: at(0, 0, 10),
+    endedAt: at(0, 0, 10) + 2000,
+    durationMs: 2000,
+    exitCode: 0,
+    signal: null,
+    log: "/ud/output/backup/a.log",
+    lastLines: ["ok"],
+    git: null,
+  };
+  const failed: RunRecord = { ...done, job: "scraper", name: "Scraper", project: "alpha", run: "20261117-000100-bbbbbb", state: "failed", exitCode: 1, dueAt: at(1, 9, 14), startedAt: at(1, 9, 14), endedAt: at(1, 9, 14) + 8000, durationMs: 8000 };
+  const skipped: RunRecord = { ...done, job: "health", name: "Health check", project: "alpha", run: "20261117-000200-cccccc", state: "skipped", reason: "previous run still going", dueAt: at(3, 13, 0), startedAt: null, endedAt: at(3, 13, 0), durationMs: null, exitCode: null, log: null, lastLines: [] };
+  const missed: RunRecord = { ...skipped, job: "summary", name: "Summary", project: null, run: "20261117-000300-dddddd", state: "missed", reason: "skipped", dueAt: at(3, 7, 0), endedAt: at(3, 7, 0) };
+  const running: ActiveRun = {
+    job: "lint",
+    name: "Lint",
+    kind: "script",
+    project: "alpha",
+    folder: "",
+    run: "20261117-000400-eeeeee",
+    trigger: "manual",
+    cause: null,
+    dueAt: Date.now() - 180_000,
+    state: "running",
+    lowPriority: true,
+    runAt: null,
+    deadline: null,
+    waits: null,
+    startedAt: Date.now() - 180_000,
+    session: "run:lint:20261117-000400-eeeeee",
+    log: "/ud/output/lint/e.log",
+    limitHit: null,
+    warnedAt: null,
+    warningDismissed: false,
+  };
+  const queued: ActiveRun = { ...running, job: "reindex", name: "Reindex", project: null, run: "20261117-000500-ffffff", trigger: "scheduled", state: "queued", dueAt: Date.now() - 60_000, startedAt: null, session: null, log: null, waits: { kind: "slot", ahead: 1 } };
+  const quiet: RunsReport = { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } };
+
+  async function show(page: Page, route: string, runs: { active?: ActiveRun[]; history?: RunRecord[]; output?: string }): Promise<void> {
+    await page.goto(harness({ route }));
+    await page.waitForFunction(() => typeof window.setRuns === "function");
+    await page.evaluate(([report, history, output]) => window.setRuns({ report, history, output }), [{ ...quiet, active: runs.active ?? [] }, runs.history ?? [], runs.output ?? ""] as const);
+  }
+
+  test("History groups the runs by day, the runs going among them by time; each chip keeps its runs and counts them; This project keeps the open project's", async ({ page }) => {
+    await show(page, "history", { active: [running, queued], history: [done, failed, skipped, missed] });
+    const rows = app(page).getByTestId("history-row");
+    await expect(rows).toHaveCount(6);
+    // The heads by the clock as the test runs: near midnight a run minutes old is yesterday's.
+    const heads = (times: number[]): string[] => [...new Set([...times].sort((a, b) => b - a).map(dayHead))];
+    const going = [running.startedAt ?? 0, queued.dueAt];
+    expect(heads([done.dueAt, failed.dueAt, skipped.dueAt])).toEqual(["Today", "Yesterday", expect.stringMatching(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d+ \w{3}$/)]);
+    await expect(app(page).getByTestId("history-day")).toHaveText(heads([...going, done.dueAt, failed.dueAt, skipped.dueAt, missed.dueAt]));
+    await expect(app(page).locator('[data-testid="history-row"][data-job="lint"]')).toContainText(/Lint\s*running\s*3m\s*manual/);
+    await expect(app(page).locator('[data-testid="history-row"][data-job="scraper"]')).toContainText(/9:14\s*Scraper\s*failed · exit 1\s*8s\s*scheduled/);
+    await expect(app(page).getByTestId("history-filter-active")).toHaveText("Active2");
+    await expect(app(page).getByTestId("history-filter-failed")).toHaveText("Failed1");
+    await expect(app(page).getByTestId("history-filter-missed")).toHaveText("Skipped & missed2");
+    await expect(app(page).getByTestId("history-filter-all")).toHaveAttribute("aria-pressed", "true");
+    await shoot(page, "tab-history-days");
+
+    const kept = async (chip: string): Promise<string[]> => {
+      await app(page).getByTestId(`history-filter-${chip}`).click();
+      return rows.evaluateAll((elements) => elements.map((element) => element.getAttribute("data-job") ?? ""));
+    };
+    expect(await kept("active")).toEqual(["reindex", "lint"]);
+    await expect(app(page).getByTestId("history-day")).toHaveText(heads(going));
+    expect(await kept("failed")).toEqual(["scraper"]);
+    expect(await kept("missed")).toEqual(["health", "summary"]);
+    await expect(app(page).getByTestId("history-day")).toHaveCount(1);
+    await app(page).getByTestId("this-project").click();
+    await expect(app(page).getByTestId("this-project")).toContainText("Alpha");
+    expect(await rows.evaluateAll((elements) => elements.map((element) => element.getAttribute("data-job")))).toEqual(["health"]);
+    await expect(app(page).getByTestId("history-filter-missed")).toHaveText("Skipped & missed1");
+    await app(page).getByTestId("history-filter-all").click();
+    await expect(rows).toHaveCount(3);
+    await app(page).getByTestId("history-filter-failed").click();
+    await app(page).getByTestId("this-project").click();
+    await expect(rows).toHaveCount(1);
+    await page.evaluate((report) => window.setRuns({ report, history: [] }), quiet);
+    await expect(app(page).getByTestId("history-empty")).toContainText("Every run lands here with its result and output.");
+  });
+
+  test("older runs load as History scrolls to its end", async ({ page }) => {
+    const many = Array.from({ length: 130 }, (_, index): RunRecord => ({ ...done, run: `20261117-000000-${String(index).padStart(6, "0")}`, dueAt: done.dueAt - index * 60_000, startedAt: done.dueAt - index * 60_000, endedAt: done.dueAt - index * 60_000 + 2000 }));
+    await show(page, "history", { history: many });
+    const rows = app(page).getByTestId("history-row");
+    await expect(rows).toHaveCount(100);
+    await expect(app(page).getByTestId("history-filter-failed")).toHaveText("Failed0+");
+    await app(page).getByTestId("history-end").scrollIntoViewIfNeeded();
+    await expect(rows).toHaveCount(130);
+    await expect(app(page).getByTestId("history-filter-failed")).toHaveText("Failed0");
+    await expect(app(page).getByTestId("history-end")).toHaveText("");
+  });
+
+  test("a running run's card: its latest output, Open terminal opens its attached tab, Stop run stops it", async ({ page }) => {
+    await show(page, `run/lint/${running.run}`, { active: [running], output: "$ ./lint.sh\r\nchecking 12 files\r\n" });
+    const dialog = app(page).getByTestId("run-dialog");
+    await expect(app(page).getByTestId("run-result")).toHaveText("Running");
+    await expect(dialog.getByTestId("run-last-lines")).toHaveText("$ ./lint.sh\nchecking 12 files");
+    await expect(dialog.getByTestId("run-trigger")).toHaveText("manual");
+    await shoot(page, "tab-run-running");
+    await dialog.getByRole("button", { name: "Open terminal" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: running.session }, title: "Lint" }]);
+    await dialog.getByRole("button", { name: "Stop run" }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(await page.evaluate(() => window.runnerCalls)).toEqual([{ method: "runs.stop", params: { job: "lint", run: running.run } }]);
+  });
+
+  test("a queued run's card says what it waits for; a skipped run's why it never started", async ({ page }) => {
+    await show(page, `run/reindex/${queued.run}`, { active: [queued], history: [skipped] });
+    const dialog = app(page).getByTestId("run-dialog");
+    await expect(app(page).getByTestId("run-result")).toHaveText("Queued");
+    await expect(dialog.getByTestId("run-waits")).toHaveText("Low-priority runs are going in every free slot — 1 run ahead. This one starts when one of them finishes.");
+    await page.evaluate((route) => window.mounted.navigate(route), `run/health/${skipped.run}`);
+    await expect(app(page).getByTestId("run-result")).toHaveText("Skipped");
+    await expect(dialog.getByTestId("run-reason")).toHaveText("Previous run still going.");
+    await expect(dialog.getByRole("button", { name: "View output" })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "Run now" })).toBeVisible();
+    await dialog.getByRole("button", { name: "Edit job" }).click();
+    await expect(app(page).getByTestId("run-dialog")).toHaveCount(0);
+  });
+
+  test("statuses explain themselves on hover, with no (i): History's results and the card's pill", async ({ page }) => {
+    await show(page, "history", { active: [running], history: [failed, skipped] });
+    const tip = app(page).getByRole("tooltip");
+    const text = (key: keyof typeof HELP): string => HELP[key].join("");
+    await app(page).locator('[data-testid="history-row"][data-job="scraper"]').getByTestId("history-result").hover();
+    await expect(tip).toHaveText(text("st.failed"));
+    await app(page).locator('[data-testid="history-row"][data-job="health"]').getByTestId("history-result").hover();
+    await expect(tip).toHaveText(text("st.skipped"));
+    await app(page).locator('[data-testid="history-row"][data-job="lint"]').getByTestId("history-result").hover();
+    await expect(tip).toHaveText(text("st.running"));
+    await app(page).locator('[data-testid="history-row"][data-job="lint"]').getByTestId("history-trigger").hover();
+    await expect(tip).toHaveText(text("tr.manual"));
+    await shoot(page, "tab-history-help");
+    await expect(app(page).getByTestId("history").locator('[data-testid^="help-st."]')).toHaveCount(0);
+
+    await app(page).locator('[data-testid="history-row"][data-job="scraper"]').click();
+    await app(page).getByTestId("run-result").hover();
+    await expect(tip).toHaveText(text("st.failed"));
+    await expect(app(page).getByTestId("run-dialog").locator('[data-testid^="help-st."]')).toHaveCount(0);
+  });
+});
+
 test.describe("the Script form and the schedule picker", () => {
   test.use({ viewport: { width: 1040, height: 760 } });
   /** The prototype's clock: Tue 17 Nov 2026, 12:48. */
@@ -1713,6 +1924,8 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
   ];
 
   async function panel(page: Page, report: (now: number) => RunsReport): Promise<void> {
+    // Midday on the prototype's day: an item minutes old is today's at any time the suite runs.
+    await page.clock.setFixedTime(new Date(2026, 10, 17, 12, 48));
     await page.goto(harness({ surface: "panel" }));
     await page.waitForFunction(() => typeof window.setServiceStatus === "function");
     await writeJob(page, "backup.md", SCRIPT("Backup"));
