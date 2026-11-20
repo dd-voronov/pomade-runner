@@ -9,11 +9,16 @@ import { baseName } from "pomade-kit/protocol";
 import { checkJobAmong, projectJobsFolder } from "../../jobs/check";
 import { readJobDocument } from "../../jobs/document";
 import { FIELD_ORDER, jobFileCandidates, newJobText, setJobFields, type FieldChanges, type FieldInput } from "../../jobs/edit";
-import { JOB_KINDS, JOBS_FOLDER, NOTIFY_VALUES, SERVICE_STARTS, type JobError, type JobKind, type JobsSnapshot, type Notify, type ProjectRecord, type ServiceStart } from "../../jobs/model";
+import { JOB_KINDS, JOBS_FOLDER, NOTIFY_VALUES, OVERLAP_POLICIES, SERVICE_STARTS, type JobError, type JobKind, type JobsSnapshot, type Notify, type OverlapPolicy, type ProjectRecord, type ServiceStart } from "../../jobs/model";
 import { KIND_DEFAULTS } from "../../jobs/parse";
+import { blankSchedule, readSchedule, scheduleInput, type ScheduleValues } from "./schedule";
 
 /** How a service tells it is up, as the form offers it. */
 export type ReadyCheck = "alive" | "port" | "url";
+
+/** Which trigger a script's file has: the form edits a schedule; a hook or a chain stays as the file
+ *  says. */
+export type TriggerKind = "schedule" | "hook" | "chain";
 
 /** Every value the form shows. A kind writes the ones it takes; the others are kept for a switch back. */
 export interface FormValues {
@@ -30,6 +35,10 @@ export interface FormValues {
   /** The port and the URL as typed; one of them is written, by `ready`. */
   port: string;
   url: string;
+  /** Script, agent, git: the trigger, and the schedule's values. */
+  trigger: TriggerKind;
+  schedule: ScheduleValues;
+  overlap: OverlapPolicy;
   lowPriority: boolean;
   notify: Notify;
 }
@@ -47,10 +56,10 @@ export interface KindFile {
 }
 
 /** The values whose default depends on the kind: switching kind resets them unless the person set them. */
-export const KIND_DEFAULT_FIELDS = ["lowPriority", "notify"] as const satisfies readonly FormField[];
+export const KIND_DEFAULT_FIELDS = ["overlap", "lowPriority", "notify"] as const satisfies readonly FormField[];
 
 function kindDefaults(kind: JobKind): Pick<FormValues, (typeof KIND_DEFAULT_FIELDS)[number]> {
-  return { lowPriority: KIND_DEFAULTS[kind].lowPriority, notify: KIND_DEFAULTS[kind].notify };
+  return { overlap: "skip", lowPriority: KIND_DEFAULTS[kind].lowPriority, notify: KIND_DEFAULTS[kind].notify };
 }
 
 /** The fields every kind writes the same way. */
@@ -94,8 +103,26 @@ const SERVICE: KindFile = {
   errorFields: { ...COMMON_ERROR_FIELDS, command: "command", start: "start", ready: "ready" },
 };
 
+/** A job that runs once per trigger writes its schedule — a hook or a chain stays as the file has it
+ *  — and its overlap. */
+function runFields(values: FormValues): Record<string, FieldInput | undefined> {
+  return {
+    schedule: values.trigger === "schedule" ? scheduleInput(values.schedule) : undefined,
+    overlap: values.overlap === "skip" ? undefined : values.overlap,
+  };
+}
+
+/** A hook's or a chain's errors — a chain that loops back among them — show on the trigger the form
+ *  shows from the file, and keep Save from writing. */
+const RUN_ERROR_FIELDS: Readonly<Record<string, FormField>> = { schedule: "schedule", hook: "trigger", after: "trigger", overlap: "overlap" };
+
+const SCRIPT: KindFile = {
+  fields: (values) => ({ ...commonFields(values), command: values.command.trim(), ...runFields(values) }),
+  errorFields: { ...COMMON_ERROR_FIELDS, command: "command", ...RUN_ERROR_FIELDS },
+};
+
 /** The kinds the form builds. */
-export const FORM_KINDS: Partial<Record<JobKind, KindFile>> = { service: SERVICE };
+export const FORM_KINDS: Partial<Record<JobKind, KindFile>> = { service: SERVICE, script: SCRIPT };
 
 export function formKind(kind: JobKind): KindFile | null {
   return FORM_KINDS[kind] ?? null;
@@ -120,7 +147,7 @@ export interface FormState {
 }
 
 export function blankValues(kind: JobKind): FormValues {
-  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", ready: "alive", port: "", url: "", ...kindDefaults(kind) };
+  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), ...kindDefaults(kind) };
 }
 
 /** A new job's form. */
@@ -154,6 +181,9 @@ export function valuesFromText(text: string): FormValues | null {
     ready: isMapping(ready) && ready.port != null ? "port" : isMapping(ready) && ready.url != null ? "url" : "alive",
     port: isMapping(ready) ? asText(ready.port) : "",
     url: isMapping(ready) ? asText(ready.url) : "",
+    trigger: kind !== "service" && fields.schedule === undefined && fields.hook !== undefined ? "hook" : kind !== "service" && fields.schedule === undefined && fields.after !== undefined ? "chain" : "schedule",
+    schedule: readSchedule(fields.schedule),
+    overlap: choice(fields.overlap, OVERLAP_POLICIES, values.overlap),
     lowPriority: typeof fields["low-priority"] === "boolean" ? fields["low-priority"] : values.lowPriority,
     notify: choice(fields.notify, NOTIFY_VALUES, values.notify),
   };
@@ -209,13 +239,17 @@ export function followText(state: FormState, text: string): FormState {
   const clashes = [...state.clashes];
   for (const field of Object.keys(read) as FormField[]) {
     if (!state.touched.includes(field)) Object.assign(values, { [field]: read[field] });
-    else if (read[field] !== state.base[field] && !clashes.includes(field)) clashes.push(field);
+    else if (!sameValue(read[field], state.base[field]) && !clashes.includes(field)) clashes.push(field);
   }
   return { ...state, values, base: read, text, clashes };
 }
 
-function sameInput(a: FieldInput | undefined, b: FieldInput | undefined): boolean {
+function sameValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function sameInput(a: FieldInput | undefined, b: FieldInput | undefined): boolean {
+  return sameValue(a, b);
 }
 
 /** The field changes an edit writes: every file field whose value differs from the file as read,
@@ -305,6 +339,7 @@ export function errorsByPlace(errors: readonly JobError[], kind: JobKind): Map<E
 }
 
 function filled(values: FormValues, field: FormField): boolean {
+  if (field === "schedule") return true;
   if (field === "ready") return values.ready === "alive" || (values.ready === "port" ? values.port : values.url).trim() !== "";
   const value = values[field];
   return typeof value !== "string" || value.trim() !== "";
@@ -331,10 +366,12 @@ export function hasChanges(state: FormState): boolean {
   return state.path === null || Object.keys(fieldChanges(state)).length > 0;
 }
 
-/** Whether the policies are other than the kind's defaults. */
-export function customised(values: FormValues): boolean {
-  const defaults = kindDefaults(values.kind);
-  return KIND_DEFAULT_FIELDS.some((field) => values[field] !== defaults[field]);
+/** The file's own value of a field as last read — for what the form shows but does not edit
+ *  (a missed-run policy, a time limit); `undefined` for a new job or a field the file lacks. */
+export function fileValue(state: FormState, field: string): unknown {
+  if (state.text === null) return undefined;
+  const read = readJobDocument(state.text);
+  return read.ok ? read.doc.fields[field] : undefined;
 }
 
 /** The project and folder choices Pomade gives, as the checks need them. */

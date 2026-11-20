@@ -1,0 +1,39 @@
+.root {
+  width: 40px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-raised);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.root:hover {
+  border-color: var(--text-faint);
+  color: var(--text);
+}
+
+.root[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--badge-fg);
+}
+
+/* The month grid's cell: a day number, tabular. */
+.compact {
+  width: 32px;
+  height: 26px;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--fw-normal);
+}
+
+.compact.wide {
+  grid-column: span 4;
+  width: auto;
+}

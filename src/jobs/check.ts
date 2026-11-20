@@ -102,7 +102,7 @@ function entry(file: ParsedJobFile): JobEntry {
   const errors: JobError[] = [...file.errors].sort((a, b) => a.line - b.line);
   return {
     valid: false,
-    invalid: { id: file.id, path: file.path, name: file.name?.value ?? null, kind: file.kind, project: file.project?.value ?? null, errors },
+    invalid: { id: file.id, path: file.path, name: file.name?.value ?? null, kind: file.kind, project: file.project?.value ?? null, after: file.after?.job ?? null, errors },
   };
 }
 
@@ -113,7 +113,7 @@ function knownFile(known: JobEntry): ParsedJobFile {
   const id = known.valid ? known.job.id : known.invalid.id;
   const name = known.valid ? known.job.name : known.invalid.name;
   const project = known.valid ? known.job.project : known.invalid.project;
-  const after = job === null ? null : job.kind === "service" ? job.after : job.trigger.kind === "chain" ? job.trigger.chain : null;
+  const after = job === null ? (known.valid ? null : known.invalid.after === null ? null : { job: known.invalid.after }) : job.kind === "service" ? job.after : job.trigger.kind === "chain" ? job.trigger.chain : null;
   return {
     id,
     path: known.valid ? known.job.path : known.invalid.path,

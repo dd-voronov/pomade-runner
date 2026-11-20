@@ -5,20 +5,21 @@
 
 import { useState, type ReactNode } from "react";
 
-import type { JobKind, Notify } from "../../jobs/model";
+import type { JobKind, Notify, OverlapPolicy } from "../../jobs/model";
 import type { HelpKey } from "../help";
 import { Field, Help, LinkButton, Segmented, Select, TextInput, Toggle, type IconName, type SelectOption } from "../kit";
 import { FolderField, type FormProps } from "./FolderField";
+import { FormSection } from "./FormSection";
 import styles from "./JobForm.module.css";
-import type { FormField, FormValues } from "./state";
+import { fileLimit, fileMissed, LOW_PRIORITY_WORDS, MISSED_FROM_FILE_WORDS, NOTIFY_WORDS, OVERLAP_WORDS, TIME_LIMIT_FROM_FILE_WORDS, type PolicyWords } from "./policies";
+import type { FormValues } from "./state";
+import { TriggerSection } from "./TriggerSection";
 
-/** A policy as the Policies section shows it: its words in the summary, and its row. */
-export interface PolicyRow {
-  field: FormField;
-  /** Its words in the one-sentence summary ("normal priority"). */
-  words(values: FormValues): string;
-  /** Whether the value is the kind's default (the summary bolds the others). */
-  isDefault(values: FormValues, defaults: FormValues): boolean;
+/** A policy as the Policies section shows it: its words in the summary (`policies.ts`), and its
+ *  row once the person presses Change — a control for a policy the form edits, the file's value for
+ *  one it shows from the file only. */
+export interface PolicyRow extends PolicyWords {
+  /** Its row; `null` when it shows none. */
   row(props: FormProps & { defaults: FormValues }): ReactNode;
 }
 
@@ -51,9 +52,7 @@ export function PolicyLine({ label, help, children }: { label: string; help: Hel
 }
 
 const LOW_PRIORITY: PolicyRow = {
-  field: "lowPriority",
-  words: (values) => (values.lowPriority ? "low priority" : "normal priority"),
-  isDefault: (values, defaults) => values.lowPriority === defaults.lowPriority,
+  ...LOW_PRIORITY_WORDS,
   row: ({ state, set, defaults }) => (
     <PolicyLine key="lowPriority" label="Low priority" help="p.low">
       <div className={styles.inline}>
@@ -67,12 +66,8 @@ const LOW_PRIORITY: PolicyRow = {
   ),
 };
 
-const NOTIFY_WORDS: Record<Notify, string> = { "on-failure": "notifies on failure", always: "always notifies", never: "never notifies" };
-
 const NOTIFY: PolicyRow = {
-  field: "notify",
-  words: (values) => NOTIFY_WORDS[values.notify],
-  isDefault: (values, defaults) => values.notify === defaults.notify,
+  ...NOTIFY_WORDS,
   row: ({ state, set, defaults, error }) => (
     <PolicyLine key="notify" label="Notify me" help="p.notify">
       <div data-field="notify">
@@ -91,6 +86,75 @@ const NOTIFY: PolicyRow = {
     </PolicyLine>
   ),
 };
+
+const OVERLAP: PolicyRow = {
+  ...OVERLAP_WORDS,
+  row: ({ state, set, defaults, error }) => (
+    <PolicyLine key="overlap" label="If still running" help="p.overlap">
+      <div data-field="overlap">
+        <Segmented<OverlapPolicy>
+          label="If still running"
+          value={state.values.overlap}
+          onChange={(value) => set("overlap", value)}
+          options={[
+            { value: "skip", label: "Skip", isDefault: defaults.overlap === "skip" },
+            { value: "parallel", label: "Run in parallel", isDefault: defaults.overlap === "parallel" },
+            { value: "queue", label: "Queue after", isDefault: defaults.overlap === "queue" },
+          ]}
+        />
+      </div>
+      {error("overlap")}
+    </PolicyLine>
+  ),
+};
+
+/** A policy the form shows from the file only: its row says it is changed in the job file. */
+function FileOnlyLine({ label, help, value }: { label: string; help: HelpKey; value: string }): React.JSX.Element {
+  return (
+    <PolicyLine key={label} label={label} help={help}>
+      <div className={styles.inline} data-testid="policy-file-only">
+        <span>
+          <b className={styles.fileOnlyValue}>{value}</b> · changed in the job file
+        </span>
+      </div>
+    </PolicyLine>
+  );
+}
+
+const MISSED_FROM_FILE: PolicyRow = {
+  ...MISSED_FROM_FILE_WORDS,
+  row: ({ state }) => {
+    const read = fileMissed(state);
+    return read === null ? null : <FileOnlyLine key="missed" label="If a run is missed" help="p.missed" value={read.label} />;
+  },
+};
+
+const TIME_LIMIT_FROM_FILE: PolicyRow = {
+  ...TIME_LIMIT_FROM_FILE_WORDS,
+  row: ({ state }) => {
+    const limit = fileLimit(state);
+    return limit === null ? null : <FileOnlyLine key="timeLimit" label="Time limit" help="p.limit" value={limit} />;
+  },
+};
+
+/** A script's policies, in the sentence's order. */
+const SCRIPT_POLICIES: readonly PolicyRow[] = [MISSED_FROM_FILE, OVERLAP, LOW_PRIORITY, TIME_LIMIT_FROM_FILE, NOTIFY];
+
+/** The Script kind: Trigger (a schedule), then Runs. */
+function ScriptSections(props: FormProps): React.JSX.Element {
+  const { state, set, error } = props;
+  return (
+    <>
+      <TriggerSection {...props} />
+      <FormSection title="Runs" sub="what · where">
+        <Field label="Command" help="f.command" error={error("command")}>
+          {(id) => <TextInput id={id} mono placeholder="./scripts/backup.sh" value={state.values.command} bad={error("command") !== undefined} data-field="command" onChange={(event) => set("command", event.target.value)} />}
+        </Field>
+        <FolderAndProject {...props} />
+      </FormSection>
+    </>
+  );
+}
 
 /** The Service kind: Trigger (always on — when it starts, when it counts as up), then Runs. */
 function ServiceSections(props: FormProps): React.JSX.Element {
@@ -177,18 +241,6 @@ export function FolderAndProject(props: FormProps): React.JSX.Element {
   );
 }
 
-/** One of the form's sections: its heading (and a faint line under it) beside its fields. */
-export function FormSection({ title, sub, children, testId }: { title: string; sub?: string | undefined; children: ReactNode; testId?: string | undefined }): React.JSX.Element {
-  return (
-    <section className={styles.section} aria-label={title} data-testid={testId}>
-      <h4 className={styles.sectionTitle}>
-        {title}
-        {sub !== undefined && <small>{sub}</small>}
-      </h4>
-      <div className={styles.sectionBody}>{children}</div>
-    </section>
-  );
-}
 
 /** Every kind's card, in the picker's order; the ones with `build` are the ones the form makes. */
 export const KIND_UI: Record<JobKind, KindUi> = {
@@ -204,7 +256,18 @@ export const KIND_UI: Record<JobKind, KindUi> = {
       createLabel: (values) => (values.enabled ? "Create and start" : "Create job"),
     },
   },
-  script: { label: "Script", line: "Runs a command on a trigger", icon: "script", help: "kind.script", namePlaceholder: "Health check" },
+  script: {
+    label: "Script",
+    line: "Runs a command on a trigger",
+    icon: "script",
+    help: "kind.script",
+    namePlaceholder: "Health check",
+    build: {
+      sections: (props) => <ScriptSections {...props} />,
+      policies: SCRIPT_POLICIES,
+      createLabel: () => "Create job",
+    },
+  },
   agent: { label: "Agent", line: "Runs an agent with a prompt", icon: "agent", help: "kind.agent", namePlaceholder: "Morning summary" },
   git: { label: "Git", line: "Git operation on your repos", icon: "git", help: "kind.git", namePlaceholder: "Knowledge commit & push" },
 };

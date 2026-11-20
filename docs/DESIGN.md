@@ -784,13 +784,38 @@ changed). Order: kind → trigger → folder and project (agent: agent → folde
 policies show as one sentence, non-defaults in bold, until **Change**.
 - **State** (`state.ts`, pure): the values the form shows, the fields the person set (`touched`),
   and the file as last read (`base`). Switching kind keeps what the person set and resets the
-  kind-dependent defaults they left alone (low priority, notify). A folder inside a project fills
-  in that project.
+  kind-dependent defaults they left alone (overlap, low priority, notify). A folder inside a project
+  fills in that project.
 - **Kinds**: a kind the form builds is registered in `FORM_KINDS` (`state.ts`: the file's fields
   from the values, and which form field each file field's errors belong to) and in `KIND_UI`
   (`kinds.tsx`: its sections between Kind and Policies, its policy rows, its Create button). The
   picker shows every kind; the ones not registered are shown faded, with their help, and cannot be
   chosen. A job of such a kind opens a page saying so, with **Open file**.
+- **Trigger** (script; `TriggerSection.tsx`, the values in `schedule.ts`, pure). A choice of **On a
+  schedule** · **When something happens**, then the schedule editor:
+  - **Repeats**: Once (a date of the coming week and a time, or a phrase typed in words — `tonight
+    23:00`, `tomorrow 7:00`, `+2h` — read by `pomade-kit/dates`, which fills in the date and time) ·
+    Every N minutes or hours, optionally only between two times · Daily at one or more times ·
+    Weekly on chosen days · Monthly on days of the 1–31 grid, the last day, and nth weekdays added
+    as "the [first] [Monday]";
+  - **Days**: Every day · Weekdays only · Weekends only, for every and daily (the format's `only:`);
+  - the schedule in words (`describeSchedule`) and its next three runs (`nextOccurrence`), live, from
+    the text the form would write; "Fix the schedule to see it in words" while the checker finds a
+    problem with it.
+
+  The editor's values are kept as typed and written as the format's canonical lines (`schedule:` one
+  entry per line, a shape's mapping in flow style); what the file's schedule has that the editor has
+  no control for (`monthly.months`, `start`, `end`, an unknown key) is kept. A schedule the person
+  left alone is never written. Each schedule error the checker names lands on its control by its
+  path (`schedule.daily.at[1]` → the second time), and the error shows under the box. A script
+  whose file has a hook or a chain keeps it: the section says it in words (`jobTriggerWords`), that
+  it is changed in the job file, with **Open file**; its errors — a chain that loops back — show
+  there and keep Save from writing. The choice the form does not make is shown faded, with a tip.
+- **Policies** (`policies.ts` their words, pure; `kinds.tsx` their rows). Each kind lists its
+  policies in the sentence's order; a policy's words come from the values, a non-default's in bold.
+  A script's: overlap (**If still running**: Skip · Run in parallel · Queue after), low priority,
+  notify — and its missed-run policy and time limit, shown from the file (in the sentence and as
+  a row "· changed in the job file") only when the file sets them.
 - **The file it writes.** A new job: its kind's fields, defaults left out (`enabled` always
   written), in the project's sub-folder (`projectJobsFolder`) or at the top for the Workspace,
   under the first free slug of its name (`createJobFile`). An edit writes only the fields whose
@@ -802,7 +827,8 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   jobs (`checkJobAmong`, `src/jobs/check.ts`): the file on its own, names and chains against the
   snapshot, project ids against Pomade's projects. Each error shows on its field in
   `describeJobError`'s words — `pomade-runner check`'s — the field in bold; one the form has no
-  field for shows in a note at the top with its line. A new job's errors show once Save was
+  field for shows in a note at the top with its line. An invalid job in the snapshot still names the
+  job it follows (`InvalidJob.after`), so a chain loop the snapshot already refused is seen. A new job's errors show once Save was
   pressed, or at once on a field the person filled in; an edit's, at once. Save with errors shows
   "N things to fix before saving" and focuses the first field in error. A new job's errors all
   block Save; an edit's block it only on the form's fields — the file's own other problems stay

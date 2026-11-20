@@ -128,3 +128,8 @@ textarea.input {
 .error svg {
   margin-top: 1px;
 }
+
+/* A choice under a label keeps its own width. */
+.field > [role="group"] {
+  align-self: flex-start;
+}

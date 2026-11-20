@@ -72,7 +72,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
 
   if (jobs.status === "loading") return shell("tab-loading", null);
   if (view.view === "new" || view.view === "edit") {
-    const target = view.view === "new" ? ({ kind: "new" } as const) : ({ kind: "edit", job: view.job } as const);
+    const target = view.view === "new" ? ({ kind: "new", project: view.project } as const) : ({ kind: "edit", job: view.job } as const);
     const running = view.view === "edit" && serviceStates.some((service) => service.job === view.job && SERVICE_RUNS.includes(service.state));
     return <JobForm host={host} target={target} jobs={jobs.value} serviceRunning={running} open={open} />;
   }

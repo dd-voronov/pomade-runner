@@ -12,6 +12,9 @@ export interface SegmentedOption<T extends string> {
   /** The accessible name, when `label` is not plain words. */
   name?: string | undefined;
   disabled?: boolean | undefined;
+  /** Shown faded and never chosen, its tip and help still working on hover and focus (a choice
+   *  this build's form does not make). */
+  unavailable?: boolean | undefined;
   /** A plain tooltip, or a help text. */
   tip?: string | undefined;
   help?: HelpKey | undefined;
@@ -71,12 +74,13 @@ export function Segmented<T extends string>({
             className={styles.option}
             aria-pressed={on}
             aria-label={option.name}
+            aria-disabled={option.unavailable === true ? true : undefined}
             disabled={option.disabled}
             data-tip={option.tip}
             data-help={option.help}
             data-testid={optionTestId?.(option.value)}
             onClick={() => {
-              if (!on) onChange(option.value);
+              if (!on && option.unavailable !== true) onChange(option.value);
             }}
           >
             {variant === "switch" ? (

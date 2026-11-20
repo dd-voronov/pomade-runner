@@ -425,6 +425,17 @@ describe("one file among the others (the job form's check)", () => {
     ]);
   });
 
+  it("sees a loop the snapshot already refused: its other jobs are invalid, and still name whom they follow", () => {
+    const looping = check({
+      "a.md": file("kind: script\nname: A\nfolder: .\ncommand: ./a.sh\nafter: { job: b }"),
+      "b.md": file("kind: script\nname: B\nfolder: .\ncommand: ./b.sh\nafter: { job: a }"),
+    });
+    expect(looping.jobs.map((entry) => (entry.valid ? null : entry.invalid.after))).toEqual(["b", "a"]);
+    expect(checkJobAmong({ path: "a.md", text: file("kind: script\nname: A\nfolder: .\ncommand: ./a2.sh\nafter: { job: b }") }, looping, { projects: PROJECTS }).map((e) => formatJobError(e))).toEqual([
+      "Apps/pomade-runner/jobs/a.md:6: after.job — the chain loops back: a → b → a. Fix: remove after: from one of these jobs, or point it at a job outside the loop.",
+    ]);
+  });
+
   it("a moved file leaves its old entry: its name is free", () => {
     const moved = file("kind: service\nname: Coda web\nproject: p9Lq4_hunt\nfolder: .\ncommand: ./a.sh");
     expect(among("job-hunt/coda-web.md", moved)).toHaveLength(1);

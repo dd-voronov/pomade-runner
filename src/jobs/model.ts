@@ -150,13 +150,16 @@ export interface JobError {
   fix: string;
 }
 
-/** What is known of an invalid job, for listing it. */
+/** What is known of an invalid job, for listing it and for checking another file among it. */
 export interface InvalidJob {
   id: string;
   path: string;
   name: string | null;
   kind: JobKind | null;
   project: string | null;
+  /** The id of the job its `after:` names, as written; `null` for none. A chain that loops back
+   *  makes every job in the loop invalid, and the job form's check still sees the loop by it. */
+  after: string | null;
   errors: JobError[];
 }
 

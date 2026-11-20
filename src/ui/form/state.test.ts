@@ -5,7 +5,6 @@ import { describeJobError } from "../../jobs/format";
 import type { JobsSnapshot, ProjectRecord } from "../../jobs/model";
 import {
   blocksSave,
-  customised,
   editForm,
   errorShows,
   errorsByPlace,
@@ -22,6 +21,7 @@ import {
   wouldBe,
   type FormState,
 } from "./state";
+import { blankSchedule } from "./schedule";
 
 const PROJECTS: ProjectRecord[] = [
   { id: "p-coda", name: "coda-helper", root: "Projects/coda-helper" },
@@ -165,6 +165,9 @@ describe("editing a job file", () => {
       ready: "port",
       port: "5173",
       url: "",
+      trigger: "schedule",
+      schedule: blankSchedule(),
+      overlap: "skip",
       lowPriority: false,
       notify: "on-failure",
     });
@@ -224,10 +227,5 @@ describe("editing a job file", () => {
     const broken = followText(state, "---\nkind: [x\n---\n");
     expect(broken.values).toEqual(state.values);
     expect(broken.text).toBe("---\nkind: [x\n---\n");
-  });
-
-  it("says when the policies are not the kind's defaults", () => {
-    expect(customised(edit().values)).toBe(false);
-    expect(customised(setValue(edit(), "lowPriority", true).values)).toBe(true);
   });
 });

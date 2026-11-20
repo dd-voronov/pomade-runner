@@ -9,21 +9,20 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ProjectListResult } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
-import { APP_ID } from "../../app";
-import { DELETE_JOB_METHOD, DELETE_JOB_TIMEOUT_MS } from "../../integrations/runner-api";
 import { projectJobsFolder } from "../../jobs/check";
 import { describeJobError } from "../../jobs/format";
 import type { JobError, JobKind, JobsSnapshot } from "../../jobs/model";
-import { isDeleteResult } from "../../scheduler/model";
 import { createJobFile, followJobFile, updateJobFile } from "../jobFiles";
-import { Button, ConfirmDialog, EmptyBlock, Field, Help, Icon, IconButton, TextInput, Toggle, useToast } from "../kit";
+import { DeleteJobDialog } from "../DeleteJobDialog";
+import { Button, EmptyBlock, Field, Help, Icon, IconButton, TextInput, Toggle, useToast } from "../kit";
 import type { FormProps, ProjectChoices } from "./FolderField";
 import styles from "./JobForm.module.css";
-import { FormSection, KIND_UI } from "./kinds";
+import { FormSection } from "./FormSection";
+import { KIND_UI } from "./kinds";
+import { policySentence } from "./policies";
 import {
   blankValues,
   blocksSave,
-  customised,
   editForm,
   errorShows,
   errorsByPlace,
@@ -31,6 +30,7 @@ import {
   followText,
   formErrors,
   formKind,
+  FORM_KINDS,
   hasChanges,
   newForm,
   projectRecords,
@@ -44,7 +44,8 @@ import {
 } from "./state";
 
 /** Which job the form is for. */
-export type FormTarget = { kind: "new" } | { kind: "edit"; job: string };
+/** A new job — in `project` (an id) when given: its project and folder start as that project's — or the job edited. */
+export type FormTarget = { kind: "new"; project: string | null } | { kind: "edit"; job: string };
 
 /** One validator error, in `pomade-runner check`'s words, its field in bold. */
 function ErrorText({ error }: { error: JobError }): React.JSX.Element {
@@ -120,7 +121,7 @@ export function JobForm({
       </FormFrame>
     );
   }
-  return <FormBody key={path ?? "new"} host={host} path={path} jobs={jobs} projects={projects} serviceRunning={serviceRunning} open={open} />;
+  return <FormBody key={path ?? "new"} host={host} path={path} preset={target.kind === "new" ? target.project : null} jobs={jobs} projects={projects} serviceRunning={serviceRunning} open={open} />;
 }
 
 /** The form's head and page around what it shows. */
@@ -145,6 +146,7 @@ const KINDS = Object.keys(KIND_UI) as JobKind[];
 function FormBody({
   host,
   path,
+  preset,
   jobs,
   projects,
   serviceRunning,
@@ -153,6 +155,8 @@ function FormBody({
   host: HostClient;
   /** The edited file; `null` for a new job. */
   path: string | null;
+  /** The project a new job starts in; `null` for none. */
+  preset: string | null;
   jobs: JobsSnapshot;
   projects: ProjectChoices;
   serviceRunning: boolean;
@@ -165,10 +169,22 @@ function FormBody({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [polOpen, setPolOpen] = useState(false);
-  const [deleting, setDeleting] = useState<{ busy: boolean; error: string | null } | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [focusTick, setFocusTick] = useState(0);
   const form = useRef<HTMLFormElement>(null);
   const back = (): void => open("");
+
+  // A new job opened from a project starts in it, once Pomade's projects are known — unless the
+  // person has set either field by then.
+  const presetRoot = preset === null ? undefined : projects.list?.projects.find((project) => project.id === preset)?.root;
+  useEffect(() => {
+    if (preset === null || presetRoot === undefined) return;
+    setState((now) => {
+      if (now === null || now.path !== null || now.touched.includes("project") || now.touched.includes("folder") || now.values.project !== null) return now;
+      const start = { project: preset, folder: presetRoot };
+      return { ...now, values: { ...now.values, ...start }, base: { ...now.base, ...start } };
+    });
+  }, [preset, presetRoot]);
 
   useEffect(() => {
     if (path === null) return;
@@ -193,7 +209,7 @@ function FormBody({
     const places = errorsByPlace(errors, state.values.kind);
     for (const el of form.current?.querySelectorAll<HTMLElement>("[data-field]") ?? []) {
       if (!places.has(el.dataset.field as FormField)) continue;
-      const target = el.matches("input, select, textarea, button") ? el : el.querySelector<HTMLElement>("input, select, textarea, button");
+      const target = el.matches("input, select, textarea, button") ? el : (el.querySelector<HTMLElement>('[aria-invalid="true"]') ?? el.querySelector<HTMLElement>("input, select, textarea, button"));
       target?.focus();
       el.scrollIntoView({ block: "center" });
       break;
@@ -211,7 +227,7 @@ function FormBody({
         ? "Its file is gone: it was deleted or moved on disk."
         : kind === undefined
           ? "The form cannot read its file: the frontmatter is broken, or its kind is not one Runner has. Open the file to fix it."
-          : `It is ${kind === "agent" ? "an" : "a"} ${kind} job, and this build's form edits services only. Open its file to change it.`;
+          : `It is ${kind === "agent" ? "an" : "a"} ${kind} job, and this build's form edits ${builtKinds()} only. Open its file to change it.`;
     return (
       <FormFrame title={title || "Edit job"} back={back}>
         <div className={styles.page}>
@@ -242,25 +258,28 @@ function FormBody({
   const places = errorsByPlace(errors, values.kind);
   const blocking = [...places].filter(([place]) => blocksSave(state, place)).flatMap(([, list]) => list);
   const shownCount = state.tried ? blocking.length : 0;
+  const errorList = (place: ErrorPlace): readonly JobError[] => (errorShows(state, place) ? (places.get(place) ?? []) : []);
   const error = (place: ErrorPlace): ReactNode => {
-    const list = places.get(place);
-    if (list === undefined || !errorShows(state, place)) return undefined;
+    const list = errorList(place);
+    if (list.length === 0) return undefined;
     return list.map((one, index) => <ErrorText key={index} error={one} />);
   };
   const update = (next: (current: FormState) => FormState): void => {
     setSaveError(null);
     setState((current) => (current === null ? current : next(current)));
   };
+  const target = wouldBe(state, jobs, projects.records);
   const props: FormProps = {
     host,
     state,
     set: (field, value) => update((current) => setValue(current, field, value)),
     setFolder: (folder) => update((current) => setFolder(current, folder, projects.records)),
     error,
+    errorList,
+    wouldBeText: target.text,
     projects,
     workspaceName: folderName(jobs.workspace),
   };
-  const target = wouldBe(state, jobs, projects.records);
   const changed = hasChanges(state);
   const gone = path !== null && file === null;
 
@@ -300,26 +319,7 @@ function FormBody({
     }
   };
 
-  const confirmDelete = (): void => {
-    if (path === null || entryId(jobs, path) === null) return;
-    const job = entryId(jobs, path) ?? "";
-    setDeleting({ busy: true, error: null });
-    host.apps.call(APP_ID, DELETE_JOB_METHOD, { job }, { timeoutMs: DELETE_JOB_TIMEOUT_MS }).then(
-      (result) => {
-        if (!isDeleteResult(result)) return setDeleting({ busy: false, error: "the scheduler answered something that is not a delete result" });
-        if (!result.ok) return setDeleting({ busy: false, error: result.reason });
-        toast(
-          <>
-            Deleted <span className={styles.mono}>{result.path}</span>
-            {result.stopped ? " · stopped first" : ""}
-          </>,
-        );
-        back();
-      },
-      (err: unknown) => setDeleting({ busy: false, error: err instanceof Error ? err.message : String(err) }),
-    );
-  };
-
+  const jobId = path === null ? null : entryId(jobs, path);
   const head = (
     <>
       <label className={styles.enabled}>
@@ -331,7 +331,7 @@ function FormBody({
           <Button icon="file" onClick={() => void host.tabs.openFile({ path })} data-testid="form-open-file">
             Open file
           </Button>
-          <Button icon="trash" variant="danger" onClick={() => setDeleting({ busy: false, error: null })} disabled={gone} data-testid="form-delete">
+          <Button icon="trash" variant="danger" onClick={() => setDeleting(true)} disabled={gone} data-testid="form-delete">
             Delete
           </Button>
         </div>
@@ -342,16 +342,13 @@ function FormBody({
   const fileErrors = places.get("file");
   const clashWords = state.clashes.map((field) => FIELD_WORDS[field]).join(", ");
   const policyDefaults = blankValues(values.kind);
-  const policySummary = build.policies.map((policy, index) => {
-    const words = policy.words(values);
-    const text = index === 0 ? words.charAt(0).toUpperCase() + words.slice(1) : words;
-    return (
-      <span key={policy.field}>
-        {index > 0 && " · "}
-        {policy.isDefault(values, policyDefaults) ? text : <b>{text}</b>}
-      </span>
-    );
-  });
+  const sentence = policySentence(build.policies, state, policyDefaults);
+  const policySummary = sentence.parts.map((part, index) => (
+    <span key={part.key}>
+      {index > 0 && " · "}
+      {part.isDefault ? part.text : <b>{part.text}</b>}
+    </span>
+  ));
 
   return (
     <FormFrame
@@ -448,7 +445,7 @@ function FormBody({
           <NameField {...props} placeholder={ui.namePlaceholder} />
         </FormSection>
         {build.sections(props)}
-        <FormSection title="Policies" sub={customised(values) ? "customised" : `defaults for ${ui.label}`} testId="form-policies">
+        <FormSection title="Policies" sub={sentence.customised ? "customised" : `defaults for ${ui.label}`} testId="form-policies">
           {polOpen ? (
             <div>{build.policies.map((policy) => policy.row({ ...props, defaults: policyDefaults }))}</div>
           ) : (
@@ -459,23 +456,8 @@ function FormBody({
           )}
         </FormSection>
       </form>
-      {deleting !== null && path !== null && (
-        <ConfirmDialog
-          title={`Delete “${state.base.name || "this job"}”?`}
-          confirm="Delete job"
-          danger
-          busy={deleting.busy ? "Deleting…" : undefined}
-          error={deleting.error ?? undefined}
-          onConfirm={confirmDelete}
-          onCancel={() => setDeleting(null)}
-          testId="delete-confirm"
-        >
-          <p>Runner removes the job's file:</p>
-          <p className={styles.confirmPath} data-testid="delete-path">
-            {path}
-          </p>
-          <p>{serviceRunning ? "The service is running: Runner stops it first, then removes the file. This can't be undone." : "This can't be undone."}</p>
-        </ConfirmDialog>
+      {deleting && path !== null && jobId !== null && (
+        <DeleteJobDialog host={host} job={{ id: jobId, name: state.base.name, path }} serviceRunning={serviceRunning} onDeleted={back} onCancel={() => setDeleting(false)} />
       )}
     </FormFrame>
   );
@@ -493,9 +475,18 @@ const FIELD_WORDS: Record<FormField, string> = {
   ready: "counts as up",
   port: "port",
   url: "URL",
+  trigger: "trigger",
+  schedule: "schedule",
+  overlap: "if still running",
   lowPriority: "low priority",
   notify: "notify me",
 };
+
+/** The kinds the form builds, in words: "services and scripts". */
+function builtKinds(): string {
+  const names = Object.keys(FORM_KINDS).map((kind) => `${kind}s`);
+  return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""}`;
+}
 
 function NameField({ state, set, error, placeholder }: FormProps & { placeholder: string }): React.JSX.Element {
   return (

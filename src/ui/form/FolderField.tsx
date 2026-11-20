@@ -5,7 +5,7 @@ import { useState, type ReactNode } from "react";
 import type { ProjectListResult } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
-import type { ProjectRecord } from "../../jobs/model";
+import type { JobError, ProjectRecord } from "../../jobs/model";
 import { Button, Field, Menu, MenuHeader, MenuItem, MenuSeparator, TextInput } from "../kit";
 import styles from "./JobForm.module.css";
 import type { FormField, FormState, FormValues } from "./state";
@@ -25,6 +25,10 @@ export interface FormProps {
   setFolder(folder: string): void;
   /** The field's errors as they show now, in the validator's words; `undefined` for none. */
   error(field: FormField): ReactNode;
+  /** The field's errors as they show now; empty for none. */
+  errorList(field: FormField): readonly JobError[];
+  /** The whole text of the file the form would write. */
+  wouldBeText: string;
   projects: ProjectChoices;
   /** The workspace folder's name ("git-base"). */
   workspaceName: string;

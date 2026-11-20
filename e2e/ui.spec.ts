@@ -790,8 +790,9 @@ test.describe("the job form", () => {
     await expect(app(page).getByTestId("form-title")).toHaveText("Jobs / New job");
     // Only the kinds the form builds are offered; the others show, with their help.
     await expect(form.getByTestId("kind-service")).toHaveAttribute("aria-checked", "true");
-    for (const kind of ["script", "agent", "git"]) await expect(form.getByTestId(`kind-${kind}`)).toHaveAttribute("aria-disabled", "true");
-    await form.getByTestId("kind-script").dispatchEvent("click");
+    await expect(form.getByTestId("kind-script")).not.toHaveAttribute("aria-disabled");
+    for (const kind of ["agent", "git"]) await expect(form.getByTestId(`kind-${kind}`)).toHaveAttribute("aria-disabled", "true");
+    await form.getByTestId("kind-agent").dispatchEvent("click");
     await expect(form.getByTestId("kind-service")).toHaveAttribute("aria-checked", "true");
 
     await form.getByRole("textbox", { name: "Name", exact: true }).fill("Coda web");
@@ -836,6 +837,15 @@ test.describe("the job form", () => {
     expect(await fileText(page, "Apps/pomade-runner/jobs/coda-helper/coda-web.md")).toBe(
       "---\nkind: service\nname: Coda web\nproject: coda-helper\nfolder: Projects/coda-helper\nenabled: true\ncommand: ./start.sh\nready: { port: 5173 }\nnotify: always\n---\n",
     );
+  });
+
+  test("a new job opened from a project starts in it: its project and folder are that project's", async ({ page }) => {
+    await start(page);
+    await navigate(page, "new/alpha");
+    const form = app(page).getByTestId("job-form");
+    await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("Projects/alpha");
+    await expect(form.getByRole("combobox", { name: "Project", exact: true })).toHaveValue("alpha");
+    await expect(app(page).getByTestId("form-path")).toContainText("Apps/pomade-runner/jobs/alpha/");
   });
 
   test("validation: Save shows the checker's words on each field, the count in the Save bar, and focuses the first; a filled-in field's error shows at once", async ({ page }) => {
@@ -992,11 +1002,11 @@ test.describe("the job form", () => {
     await start(page, { route: "edit/nope" });
     await writeJob(page, "alpha/coda-web.md", VALID);
     await expect(app(page).getByTestId("form-missing")).toContainText("No job file has the id nope.");
-    await writeJob(page, "backup.md", "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./b.sh\nschedule:\n  daily: { at: 13:00 }\n---\n");
-    await navigate(page, "edit/backup");
-    await expect(app(page).getByTestId("form-unsupported")).toContainText("It is a script job, and this build's form edits services only. Open its file to change it.");
+    await writeJob(page, "summary.md", "---\nkind: agent\nname: Summary\nfolder: .\nagent: claude\nschedule:\n  daily: { at: 7:00 }\n---\nWrite my summary.\n");
+    await navigate(page, "edit/summary");
+    await expect(app(page).getByTestId("form-unsupported")).toContainText("It is an agent job, and this build's form edits services and scripts only. Open its file to change it.");
     await app(page).getByTestId("form-unsupported").getByRole("button", { name: "Open file" }).click();
-    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/backup.md" }]);
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/summary.md" }]);
     await app(page).getByTestId("form-back").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
   });
@@ -1402,5 +1412,257 @@ test.describe("services: Running now and the Services view", () => {
       await expect(app(page).getByTestId("services-none")).toHaveText("No services in this project.");
       await shoot(page, "tab-services-none");
     });
+  });
+});
+
+test.describe("the Script form and the schedule picker", () => {
+  test.use({ viewport: { width: 1040, height: 760 } });
+  /** The prototype's clock: Tue 17 Nov 2026, 12:48. */
+  const NOW = new Date(2026, 10, 17, 12, 48);
+  const JOBS = "Apps/pomade-runner/jobs";
+
+  async function start(page: Page, route = "new"): Promise<void> {
+    await page.clock.setFixedTime(NOW);
+    await page.goto(harness({ route }));
+    // The stand-in scheduler first, then the mounted app.
+    await page.waitForFunction(() => typeof window.setServiceStatus === "function" && typeof window.mounted === "object");
+  }
+
+  function fileText(page: Page, path: string): Promise<string | null> {
+    return page.evaluate((p) => {
+      try {
+        return window.fakeHost.readFile(p);
+      } catch {
+        return null;
+      }
+    }, path);
+  }
+
+  /** New job → Script, its name, command and folder typed; the form. */
+  async function newScript(page: Page, name: string): Promise<FrameLocator> {
+    await page.evaluate(() => {
+      window.mounted.navigate("");
+      window.mounted.navigate("new");
+    });
+    await app(page).getByTestId("kind-script").click();
+    const form = app(page).getByTestId("form-script");
+    await form.getByRole("textbox", { name: "Name", exact: true }).fill(name);
+    await form.getByRole("textbox", { name: "Command", exact: true }).fill("./run.sh");
+    await form.getByRole("textbox", { name: "Folder", exact: true }).fill(".");
+    return app(page);
+  }
+
+  /** The words box: the schedule in words, and the next runs. */
+  async function expectWords(frame: FrameLocator, words: string, next: string): Promise<void> {
+    await expect(frame.getByTestId("schedule-in-words")).toHaveText(words);
+    await expect(frame.getByTestId("schedule-next")).toHaveText(next);
+  }
+
+  /** Create, back on Jobs, and the file the form wrote. */
+  async function create(page: Page, slug: string): Promise<string | null> {
+    await expect(app(page).getByTestId("form-save")).toHaveText("Create job");
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+    return fileText(page, `${JOBS}/${slug}.md`);
+  }
+
+  const header = (name: string): string => `---\nkind: script\nname: ${name}\nfolder: .\nenabled: true\ncommand: ./run.sh\n`;
+
+  test("a script in each shape: once, every, daily, weekly, monthly — the words and next three runs live, and the file the checker accepts", async ({ page }) => {
+    await start(page);
+    // The Script card is live; the form's order: Kind · Trigger · Runs · Policies.
+    let frame = await newScript(page, "Daily report");
+    const form = frame.getByTestId("form-script");
+    await expect(form.getByRole("region")).toHaveText([/^Kind/, /^Trigger/, /^Runs/, /^Policies/]);
+    await expect(frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" })).toHaveAttribute("aria-disabled", "true");
+    await expect(frame.getByTestId("schedule-shape").getByRole("button", { name: "Daily" })).toHaveAttribute("aria-pressed", "true");
+    // Daily, two times, weekdays only.
+    await expectWords(frame, "Runs daily at 9:00", "Next: tomorrow 9:00 · Thu 9:00 · Fri 9:00 · Mac’s local time");
+    await form.getByRole("textbox", { name: "Time 1" }).fill("13:00");
+    await form.getByRole("button", { name: "Add time" }).click();
+    await expect(form.getByRole("textbox", { name: "Time 2" })).toHaveValue("20:00");
+    await expect(form.getByRole("textbox", { name: "Time 2" })).toBeFocused();
+    await expectWords(frame, "Runs daily at 13:00 and 20:00", "Next: today 13:00 · today 20:00 · tomorrow 13:00 · Mac’s local time");
+    await frame.getByTestId("day-filter").getByRole("button", { name: "Weekdays only" }).click();
+    await expectWords(frame, "Runs weekdays at 13:00 and 20:00", "Next: today 13:00 · today 20:00 · tomorrow 13:00 · Mac’s local time");
+    await shoot(page, "tab-form-script-daily");
+    expect(await create(page, "daily-report")).toBe(`${header("Daily report")}schedule:\n  daily: { at: [13:00, 20:00] }\n  only: weekdays\n---\n`);
+
+    // Every 2 hours, only between 9:00 and 17:00.
+    frame = await newScript(page, "Ping");
+    await frame.getByTestId("schedule-shape").getByRole("button", { name: "Every…" }).click();
+    await frame.getByRole("textbox", { name: "Interval" }).fill("2");
+    await frame.getByRole("combobox", { name: "Unit" }).selectOption("hours");
+    await frame.getByRole("switch", { name: "Only between" }).click();
+    await frame.getByRole("textbox", { name: "To" }).fill("17:00");
+    await expectWords(frame, "Runs every 2 hours, 9:00–17:00", "Next: today 13:00 · today 15:00 · today 17:00 · Mac’s local time");
+    await frame.getByTestId("day-filter").getByRole("button", { name: "Weekends only" }).click();
+    await expectWords(frame, "Runs every 2 hours on weekends, 9:00–17:00", "Next: Sat 9:00 · Sat 11:00 · Sat 13:00 · Mac’s local time");
+    expect(await create(page, "ping")).toBe(`${header("Ping")}schedule:\n  every: { hours: 2, from: 9:00, to: 17:00 }\n  only: weekends\n---\n`);
+
+    // Weekly on Monday and Saturday.
+    frame = await newScript(page, "Backup");
+    await frame.getByTestId("schedule-shape").getByRole("button", { name: "Weekly" }).click();
+    const week = frame.getByTestId("week-days");
+    for (const day of ["Tue", "Wed", "Thu", "Fri", "Sat"]) await week.getByRole("button", { name: day }).click();
+    await expect(week.getByRole("button", { pressed: true })).toHaveText(["Mon", "Sat"]);
+    await frame.getByRole("textbox", { name: "Time 1" }).fill("7:00");
+    await expectWords(frame, "Runs every Mon and Sat at 7:00", "Next: Sat 7:00 · Mon 7:00 · Sat 28 Nov 7:00 · Mac’s local time");
+    expect(await create(page, "backup")).toBe(`${header("Backup")}schedule:\n  weekly: { days: [mon, sat], at: 7:00 }\n---\n`);
+
+    // Monthly: the 15th, the last day and the first Monday.
+    frame = await newScript(page, "Rotate logs");
+    await frame.getByTestId("schedule-shape").getByRole("button", { name: "Monthly" }).click();
+    const grid = frame.getByTestId("month-days");
+    await grid.getByRole("button", { name: "1", exact: true }).click();
+    await grid.getByRole("button", { name: "15", exact: true }).click();
+    await grid.getByRole("button", { name: "Last day" }).click();
+    await frame.getByRole("button", { name: "Add", exact: true }).click();
+    await frame.getByRole("combobox", { name: "Which" }).selectOption("last");
+    await frame.getByRole("combobox", { name: "Weekday" }).selectOption("fri");
+    await frame.getByRole("button", { name: "Add", exact: true }).click();
+    await expect(frame.getByRole("checkbox")).toHaveText(["the first Monday", "the last Friday"]);
+    await frame.getByRole("checkbox", { name: "the last Friday" }).click();
+    await expect(frame.getByRole("checkbox")).toHaveText(["the first Monday"]);
+    await expectWords(frame, "Runs monthly on the 15th, the last day and the first Monday at 9:00", "Next: Mon 30 Nov 9:00 · Mon 7 Dec 9:00 · Tue 15 Dec 9:00 · Mac’s local time");
+    await shoot(page, "tab-form-script-monthly");
+    expect(await create(page, "rotate-logs")).toBe(`${header("Rotate logs")}schedule:\n  monthly: { days: [15, last, first mon], at: 9:00 }\n---\n`);
+
+    // Once: a phrase fills in the day and the time; one it cannot read says so.
+    frame = await newScript(page, "Tidy notes");
+    await frame.getByTestId("schedule-shape").getByRole("button", { name: "Once" }).click();
+    await expect(frame.getByRole("combobox", { name: "Date" })).toHaveValue("2026-11-17");
+    await expect(frame.getByRole("combobox", { name: "Date" }).locator("option")).toHaveText(["Today", "Tomorrow", "Thu", "Fri", "Sat", "Sun", "Mon"]);
+    await expectWords(frame, "Runs once on Nov 17, 2026 at 23:00", "Next: today 23:00 — then finished · Mac’s local time");
+    const phrase = frame.getByRole("textbox", { name: "Or say it in words" });
+    await phrase.fill("whenever");
+    await expect(frame.getByTestId("schedule-box").getByRole("alert")).toHaveText("Can’t read that — try “tonight 23:00”, “tomorrow 7:00” or “+2h”.");
+    await phrase.fill("tomorrow 7:30");
+    await expect(frame.getByTestId("schedule-box").getByRole("alert")).toHaveCount(0);
+    await expect(frame.getByRole("combobox", { name: "Date" })).toHaveValue("2026-11-18");
+    await expect(frame.getByRole("textbox", { name: "Time" })).toHaveValue("7:30");
+    await expectWords(frame, "Runs once on Nov 18, 2026 at 7:30", "Next: tomorrow 7:30 — then finished · Mac’s local time");
+    await phrase.fill("+2h");
+    await expect(frame.getByRole("textbox", { name: "Time" })).toHaveValue("14:48");
+    await shoot(page, "tab-form-script-once");
+    expect(await create(page, "tidy-notes")).toBe(`${header("Tidy notes")}schedule:\n  once: 2026-11-17 14:48\n---\n`);
+  });
+
+  test("a schedule error shows on the control that caused it, the words wait for a fix, and Save focuses it", async ({ page }) => {
+    await start(page);
+    const frame = await newScript(page, "Report");
+    await frame.getByRole("button", { name: "Add time" }).click();
+    const second = frame.getByRole("textbox", { name: "Time 2" });
+    await second.fill("25:00");
+    // A filled-in field's error shows at once, on that time.
+    await expect(second).toHaveAttribute("aria-invalid", "true");
+    await expect(frame.getByRole("textbox", { name: "Time 1" })).not.toHaveAttribute("aria-invalid");
+    await expect(frame.getByTestId("form-trigger").getByRole("alert")).toHaveText('schedule.daily.at[1] — "25:00" is not a time. Fix: write a time like 7:00 or 13:30 (H:MM, 24-hour).');
+    await expect(frame.getByTestId("schedule-in-words")).toHaveText("Fix the schedule to see it in words");
+    await expect(frame.getByTestId("schedule-next")).toHaveCount(0);
+    await frame.getByRole("textbox", { name: "Name", exact: true }).fill("");
+    await frame.getByTestId("form-save").click();
+    await expect(frame.getByTestId("form-error-count")).toHaveText("2 things to fix before saving");
+    await expect(frame.getByRole("textbox", { name: "Name", exact: true })).toBeFocused();
+    await shoot(page, "tab-form-script-errors");
+    await frame.getByRole("textbox", { name: "Name", exact: true }).fill("Report");
+    await frame.getByTestId("form-save").click();
+    await expect(second).toBeFocused();
+    // Weekly with no day: said on the days.
+    await second.fill("20:00");
+    await frame.getByTestId("schedule-shape").getByRole("button", { name: "Weekly" }).click();
+    for (const day of ["Mon", "Tue", "Wed", "Thu", "Fri"]) await frame.getByTestId("week-days").getByRole("button", { name: day }).click();
+    await expect(frame.getByTestId("form-trigger").getByRole("alert")).toHaveText("schedule.weekly.days — empty. Fix: list at least one a weekday (mon, tue, wed, thu, fri, sat or sun).");
+    await frame.getByTestId("week-days").getByRole("button", { name: "Sun" }).click();
+    await expect(frame.getByTestId("form-trigger").getByRole("alert")).toHaveCount(0);
+    await frame.getByTestId("form-save").click();
+    await expect(frame.getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, `${JOBS}/report.md`)).toBe(`${header("Report")}schedule:\n  weekly: { days: [sun], at: [9:00, 20:00] }\n---\n`);
+  });
+
+  test("policies: one sentence until Change; overlap's options with the default tagged; a non-default in bold; values the file sets shown from it", async ({ page }) => {
+    await start(page);
+    const frame = await newScript(page, "Sync");
+    const policies = frame.getByTestId("form-policies");
+    await expect(policies.getByTestId("policy-summary")).toHaveText("Never overlaps itself · low priority · notifies on failure");
+    await expect(policies).toContainText("defaults for Script");
+    await policies.getByRole("button", { name: "Change" }).click();
+    const overlap = policies.getByRole("group", { name: "If still running" });
+    await expect(overlap.getByRole("button")).toHaveText(["Skipdefault", "Run in parallel", "Queue after"]);
+    await overlap.getByRole("button", { name: "Queue after" }).click();
+    await policies.getByRole("group", { name: "Notify me" }).getByRole("button", { name: "Never" }).click();
+    await expect(policies).toContainText("customised");
+    await shoot(page, "tab-form-script-policies");
+    expect(await create(page, "sync")).toBe(`${header("Sync")}schedule:\n  daily: { at: 9:00 }\noverlap: queue\nnotify: never\n---\n`);
+
+    // A file that sets a missed-run policy and a time limit: the sentence says them, the rows show them.
+    await page.evaluate(() => {
+      window.fakeHost.writeFile("Apps/pomade-runner/jobs/librarian.md", "---\nkind: script\nname: Librarian\nfolder: .\ncommand: ./l.sh\nschedule:\n  weekly: { days: [sun], at: 3:00 }\nmissed: wait-for-me\ntime-limit: 45m\n---\n");
+      window.mounted.navigate("");
+      window.mounted.navigate("edit/librarian");
+    });
+    await expect(policies.getByTestId("policy-summary")).toHaveText("If missed, wait for me · never overlaps itself · low priority · stops after 45m · notifies on failure");
+    await expect(policies.getByTestId("policy-summary").locator("b")).toHaveText(["If missed, wait for me", "stops after 45m"]);
+    await policies.getByRole("button", { name: "Change" }).click();
+    await expect(policies.getByTestId("policy-file-only")).toHaveText(["Wait for me · changed in the job file", "45m · changed in the job file"]);
+  });
+
+  test("editing a script writes the schedule field only: comments elsewhere and the body stay", async ({ page }) => {
+    const text = "---\nkind: script # tidy\nname: Tidy\nfolder: .\ncommand: ./tidy.sh\nschedule:\n  daily: { at: 7:00 }\nnotify: always # say so\n---\nNotes.\n";
+    await start(page, "edit/tidy");
+    await page.evaluate((t) => window.fakeHost.writeFile("Apps/pomade-runner/jobs/tidy.md", t), text);
+    const frame = app(page);
+    await expect(frame.getByRole("textbox", { name: "Time 1" })).toHaveValue("7:00");
+    await expect(frame.getByTestId("form-save")).toHaveText("Saved");
+    await frame.getByRole("textbox", { name: "Time 1" }).fill("7:30");
+    await expect(frame.getByTestId("form-save")).toHaveText("Save");
+    await frame.getByTestId("form-save").click();
+    await expect(frame.getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, `${JOBS}/tidy.md`)).toBe(text.replace("at: 7:00", "at: 7:30"));
+  });
+
+  test("a script whose trigger is a hook keeps it: said in words, changed in the file", async ({ page }) => {
+    const text = "---\nkind: script\nname: Mount\nfolder: .\ncommand: ./mount.sh\nhook: { event: login }\n---\n";
+    await start(page, "edit/mount");
+    await page.evaluate((t) => window.fakeHost.writeFile("Apps/pomade-runner/jobs/mount.md", t), text);
+    const frame = app(page);
+    const choice = frame.getByTestId("trigger-choice");
+    await expect(choice.getByRole("button", { name: "When something happens" })).toHaveAttribute("aria-pressed", "true");
+    await expect(choice.getByRole("button", { name: "On a schedule" })).toHaveAttribute("aria-disabled", "true");
+    await expect(frame.getByTestId("file-trigger")).toContainText("Runs at Mac loginThe form edits schedules; a hook or a chain is changed in the job file.");
+    await frame.getByTestId("trigger-open-file").click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: `${JOBS}/mount.md` }]);
+    await frame.getByRole("textbox", { name: "Command", exact: true }).fill("./mount-all.sh");
+    await frame.getByTestId("form-save").click();
+    await expect(frame.getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, `${JOBS}/mount.md`)).toBe(text.replace("./mount.sh", "./mount-all.sh"));
+  });
+
+  test("every field the Script form adds has a working (i)", async ({ page }) => {
+    await start(page);
+    const frame = await newScript(page, "Help");
+    const tip = frame.getByRole("tooltip");
+    const shapes = frame.getByTestId("schedule-shape");
+    for (const [name, key] of [["Once", "sh.once"], ["Every…", "sh.every"], ["Daily", "sh.daily"], ["Weekly", "sh.weekly"], ["Monthly", "sh.monthly"]] as const) {
+      await shapes.getByRole("button", { name }).hover();
+      await expect(tip).toHaveText(HELP[key].join(""));
+    }
+    await frame.getByTestId("kind-script").hover();
+    await expect(tip).toHaveText(HELP["kind.script"].join(""));
+    await frame.getByTestId("form-policies").getByRole("button", { name: "Change" }).click();
+    const keys = ["f.trigger", "sh.filter", "p.overlap", "p.low", "p.notify", "f.command", "f.folder", "f.project"] as const;
+    for (const key of keys) {
+      await frame.getByTestId(`help-${key}`).hover();
+      await expect(tip).toHaveText(HELP[key].join(""));
+    }
+    await shapes.getByRole("button", { name: "Every…" }).click();
+    await frame.getByTestId("help-sh.within").hover();
+    await expect(tip).toHaveText(HELP["sh.within"].join(""));
+    await shapes.getByRole("button", { name: "Once" }).click();
+    await frame.getByTestId("help-sh.phrase").hover();
+    await expect(tip).toHaveText(HELP["sh.phrase"].join(""));
+    // The hook's choice, faded, still says why on hover.
+    await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).hover();
+    await expect(tip).toHaveText("A hook or a chain is set in the job file: hook: or after:");
   });
 });

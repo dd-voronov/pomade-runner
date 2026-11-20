@@ -365,18 +365,120 @@
   font-size: var(--fs-sm);
 }
 
-/* The file Delete removes, on its own line in the confirm; doubled to outweigh the dialog's `p` size. */
-.confirmPath.confirmPath {
-  overflow-wrap: anywhere;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-}
-
 .monoFamily {
   font-family: var(--font-mono);
 }
 
 .page {
   padding: var(--space-4) var(--space-5);
+}
+
+/* The schedule editor: a shape's controls in a box under the shape's choice. */
+.subBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+
+.subBox [role="group"] {
+  align-self: flex-start;
+}
+
+.phrase {
+  max-width: 260px;
+}
+
+.times {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.timeItem {
+  position: relative;
+  display: inline-flex;
+}
+
+.timeItem .timeInput {
+  width: 74px;
+  padding-right: 20px;
+  padding-left: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeRemove {
+  position: absolute;
+  top: 5px;
+  right: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.timeRemove:hover {
+  background: var(--hover-bg);
+  color: var(--text);
+}
+
+.days {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.monthGrid {
+  display: grid;
+  grid-template-columns: repeat(7, 32px);
+  gap: 3px;
+}
+
+/* The schedule in words and its next runs, live. */
+.words {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+}
+
+.words > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--badge-fg);
+}
+
+.wordsText {
+  flex: 1;
+  min-width: 0;
+}
+
+.wordsText b {
+  display: block;
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+.wordsText span {
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+/* A policy the form shows from the file only: its value, then where it is changed. */
+.fileOnlyValue {
+  color: var(--text);
+  font-weight: var(--fw-medium);
 }

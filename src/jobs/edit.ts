@@ -9,9 +9,9 @@ import { parse } from "yaml";
 import { JOBS_FOLDER } from "./model";
 import { SLUG_RE } from "./parse";
 
-/** A value the form writes: a scalar, a list of text, or a mapping of them (`ready: { port: 5173 }`);
- *  inside a mapping, `null` leaves the entry out. */
-export type FieldInput = string | number | boolean | null | readonly string[] | { readonly [key: string]: FieldInput };
+/** A value the form writes: a scalar, a list of text and numbers (`days: [1, last]`), or a mapping of
+ *  them (`ready: { port: 5173 }`); inside a mapping, `null` leaves the entry out. */
+export type FieldInput = string | number | boolean | null | readonly (string | number)[] | { readonly [key: string]: FieldInput };
 
 /** Field changes: a value sets the field, `undefined` removes it. */
 export type FieldChanges = Readonly<Record<string, FieldInput | undefined>>;
@@ -64,7 +64,7 @@ function entriesOf(value: { readonly [key: string]: FieldInput }): Array<[string
 }
 
 function flowValue(value: FieldInput): string {
-  if (Array.isArray(value)) return `[${value.map((item: string) => flowScalar(item)).join(", ")}]`;
+  if (Array.isArray(value)) return `[${value.map((item: string | number) => flowScalar(item)).join(", ")}]`;
   if (isMappingInput(value)) {
     const entries = entriesOf(value).map(([key, item]) => `${key}: ${flowValue(item)}`);
     return entries.length === 0 ? "{}" : `{ ${entries.join(", ")} }`;
@@ -72,10 +72,14 @@ function flowValue(value: FieldInput): string {
   return flowScalar(value as string | number | boolean | null);
 }
 
-/** A mapping field's lines: one flow line, or — when it holds mappings — one line per entry. */
+/** The fields always written one entry per line: a schedule, as `pomade-kit/schedule` formats it. */
+const BLOCK_FIELDS: readonly string[] = ["schedule"];
+
+/** A mapping field's lines: one flow line, or — when it holds mappings, or is a block field — one
+ *  line per entry. */
 function mappingLines(key: string, value: { readonly [key: string]: FieldInput }, indent = ""): string[] {
   const nested = Object.values(value).some((item) => isMappingInput(item) && Object.values(item).some(isMappingInput));
-  const holdsMappings = Object.values(value).some(isMappingInput);
+  const holdsMappings = Object.values(value).some(isMappingInput) || (indent === "" && BLOCK_FIELDS.includes(key) && entriesOf(value).length > 0);
   if (!holdsMappings || (!nested && Object.keys(value).length === 0)) return [`${indent}${key}: ${flowValue(value)}`];
   const lines = [`${indent}${key}:`];
   for (const [entry, item] of entriesOf(value)) {
@@ -113,7 +117,8 @@ export function setJobFields(text: string, changes: FieldChanges): FieldWriteRes
     let result: FieldWriteResult;
     if (value === undefined) result = removeField(current, key);
     else if (isMappingInput(value)) result = setMappingField(current, key, value);
-    else result = setField(current, key, value);
+    // A top-level list is a list of text in the frontmatter writer; numbers go in nested ones.
+    else result = setField(current, key, Array.isArray(value) ? value.map(String) : (value as string | number | boolean | null));
     if (!result.ok) return result;
     current = result.text;
   }

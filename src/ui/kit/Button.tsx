@@ -16,6 +16,7 @@ export function Button({
   variant = "default",
   size = "md",
   icon,
+  iconSize = 14,
   wide = false,
   className,
   children,
@@ -24,6 +25,8 @@ export function Button({
   variant?: ButtonVariant | undefined;
   size?: ButtonSize | undefined;
   icon?: IconName | undefined;
+  /** The leading icon's size: 14 px, or 12 beside a short label ("Add time"). */
+  iconSize?: 12 | 14 | undefined;
   wide?: boolean | undefined;
   children: ReactNode;
   ref?: Ref<HTMLButtonElement> | undefined;
@@ -34,7 +37,7 @@ export function Button({
       className={join(styles.root, variant !== "default" && styles[variant], size !== "md" && styles[size], wide && styles.wide, className)}
       {...rest}
     >
-      {icon !== undefined && <Icon name={icon} size={14} />}
+      {icon !== undefined && <Icon name={icon} size={iconSize} />}
       {children}
     </button>
   );

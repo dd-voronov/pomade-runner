@@ -20,6 +20,8 @@ import { STRIP_ICON } from "../src/app";
 import { callScheduler } from "../src/scheduler/control/client";
 import type { RunRecord } from "../src/scheduler/model";
 import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
+import { blankSchedule, type ScheduleValues } from "../src/ui/form/schedule";
+import { newForm, setFolder, setValue, switchKind, wouldBe } from "../src/ui/form/state";
 import { runningSession, sessionInfo, stopKeeper } from "./support/keeper";
 import { pomadeCheckout, pomadeEnv, type PomadeFolders } from "./support/pomade";
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
@@ -528,5 +530,56 @@ test.describe("Runner in Pomade", () => {
     } finally {
       runner.close();
     }
+  });
+
+  test("a script made in the job form on a near schedule runs; pomade-runner check accepts the file the form writes for every schedule shape", async () => {
+    test.setTimeout(150_000);
+    scheduler ??= await startTheScheduler();
+    const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
+    const jobs = join(folders.workspace, "Apps/pomade-runner/jobs");
+    const runner = await connectAsRunner();
+    try {
+      await runner.tabs.openApp({ route: "", projectId: WORKSPACE_PROJECT_ID });
+      await runner.tabs.openApp({ route: "new", projectId: WORKSPACE_PROJECT_ID });
+      await tab.getByTestId("kind-script").click();
+      const form = tab.getByTestId("form-script");
+      await form.getByRole("textbox", { name: "Name", exact: true }).fill("Form tick");
+      await form.getByRole("textbox", { name: "Command", exact: true }).fill("echo form-tick");
+      await form.getByRole("textbox", { name: "Folder", exact: true }).fill(".");
+      await form.getByTestId("schedule-shape").getByRole("button", { name: "Every…" }).click();
+      await form.getByRole("textbox", { name: "Interval" }).fill("1");
+      await expect(form.getByTestId("schedule-in-words")).toHaveText("Runs every minute");
+      await shoot(page, "pomade-form-script");
+      await tab.getByTestId("form-save").click();
+      await expect(tab.getByTestId("toast").last()).toHaveText("RunnerCreated Apps/pomade-runner/jobs/form-tick.md");
+      expect(await readFile(join(jobs, "form-tick.md"), "utf8")).toBe("---\nkind: script\nname: Form tick\nfolder: .\nenabled: true\ncommand: echo form-tick\nschedule:\n  every: { minutes: 1 }\n---\n");
+      // Within the next minute the scheduler runs it, on schedule.
+      await expect.poll(() => history("form-tick"), { timeout: 100_000 }).toEqual([expect.objectContaining({ state: "done", trigger: "scheduled" }) as RunRecord]);
+      // Off again: it runs no more in the rest of the run.
+      await writeFile(join(jobs, "form-tick.md"), (await readFile(join(jobs, "form-tick.md"), "utf8")).replace("enabled: true", "enabled: false"));
+    } finally {
+      runner.close();
+    }
+
+    // Every shape, as the form writes it (its own writer, `wouldBe`), checked by the built command.
+    const base = setFolder(setValue(setValue(switchKind(newForm("service"), "script"), "name", "Shape"), "command", "./shape.sh"), ".", []);
+    const shapes: Record<string, Partial<ScheduleValues>> = {
+      once: { shape: "once", onceDate: "2027-01-05", onceTime: "23:00" },
+      every: { shape: "every", every: "30", within: true, from: "9:00", to: "19:00", filter: "weekdays" },
+      "every-hours": { shape: "every", every: "2", unit: "hours", filter: "weekends" },
+      daily: { shape: "daily", times: ["13:00", "20:00"], filter: "weekdays" },
+      weekly: { shape: "weekly", days: ["mon", "sat"], times: ["7:00"] },
+      monthly: { shape: "monthly", monthDays: [15, "last", { nth: 1, weekday: "mon" }, { nth: "last", weekday: "fri" }], times: ["9:00", "18:00"] },
+    };
+    // Disabled: checked, never run.
+    const paths: string[] = [];
+    for (const [slug, schedule] of Object.entries(shapes)) {
+      const state = setValue(setValue(setValue(base, "name", `Shape ${slug}`), "enabled", false), "schedule", { ...blankSchedule(), ...schedule });
+      const path = join(jobs, `shape-${slug}.md`);
+      await writeFile(path, wouldBe(state, { workspace: folders.workspace, projectsChecked: false, jobs: [] }, []).text);
+      paths.push(path);
+    }
+    const checked = await command("check", ...paths);
+    expect(checked).toEqual({ code: 0, stdout: "6 job files: no problems.\n", stderr: "" });
   });
 });
