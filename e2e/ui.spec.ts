@@ -287,6 +287,7 @@ test.describe("runs", () => {
     await page.goto(harness({ surface: "panel" }));
     await expect(app(page).getByTestId("panel-empty")).toBeVisible();
     await writeJob(page, "backup.md", SCRIPT);
+    await writeJob(page, "web.md", "---\nkind: service\nname: Web\nfolder: .\ncommand: ./web.sh\n---\n");
     await expect(app(page).getByTestId("panel-jobs")).toBeVisible();
     await expect(app(page).getByTestId("needs-you")).toContainText("Nothing needs you.");
     await expect(app(page).getByTestId("next-up")).toContainText("Nothing is scheduled.");
@@ -294,7 +295,7 @@ test.describe("runs", () => {
     const items = app(page).getByTestId("needs-you-item");
     await expect(items).toHaveCount(2);
     await expect(items.first()).toContainText("Failed: exit 2 · 2×");
-    await expect(items.last()).toContainText("Gave up: crashed 5 times within a minute");
+    await expect(items.last()).toContainText("Crashed 5× in 1 min — gave up.");
     await expect(app(page).getByTestId("next-up-item")).toHaveText(/in 4[01] min\s*Backup/);
     const needsCount = app(page).getByTestId("section-needs-you-head-count");
     await expect(needsCount).toHaveText("2");
@@ -304,9 +305,12 @@ test.describe("runs", () => {
     await items.first().getByRole("button", { name: "Open" }).click();
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "app", projectId: "alpha", route: `run/backup/${RUN}` }]);
     await items.first().getByRole("button", { name: "Run now" }).click();
+    await expect(app(page).getByTestId("toast")).toHaveText("RunnerBackup started");
     await items.last().getByRole("button", { name: "Start" }).click();
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerWeb started");
     await items.first().getByRole("button", { name: "Dismiss" }).click();
     await expect(items).toHaveCount(1);
+    await expect(needsCount).toHaveText("1");
     expect(await page.evaluate(() => window.runnerCalls)).toEqual([
       { method: "jobs.run", params: { job: "backup" } },
       { method: "services.start", params: { job: "web" } },
@@ -534,9 +538,10 @@ test.describe("missed runs and load", () => {
   test("a missed run waits for you: Run now · Run at… · Skip", async ({ page }) => {
     await open(page, { surface: "panel" });
     const item = app(page).locator('[data-testid="needs-you-item"][data-kind="missed"]');
-    await expect(item.getByTestId("needs-you-words")).toHaveText("Missed Sun 03:00 — it waits for you to pick a time.");
+    await expect(item.getByTestId("needs-you-words")).toHaveText("Missed — it waits for you to pick a time.");
     await item.getByRole("button", { name: "Run at…" }).click();
     await item.getByRole("textbox", { name: "Run at" }).fill("23:00");
+    await expect(item.getByTestId("run-at-hint")).toHaveText(/^→ (today|tomorrow) 23:00$/);
     await shoot(page, "panel-missed");
     await item.getByRole("button", { name: "Set" }).click();
     await item.getByRole("button", { name: "Run now" }).click();
@@ -550,8 +555,10 @@ test.describe("missed runs and load", () => {
 
   test("a long run asks whether it is still expected: Open · Stop · Dismiss", async ({ page }) => {
     await open(page, { surface: "panel" });
+    const started = await page.evaluate(() => Date.now() - (3 * 60 + 2) * 60_000);
+    await page.evaluate((r) => window.setRuns({ report: r, history: [] }), { ...report, needsYou: [{ ...longRun, at: started + 3 * 3_600_000, startedAt: started }, missed] });
     const item = app(page).locator('[data-testid="needs-you-item"][data-kind="long-run"]');
-    await expect(item.getByTestId("needs-you-words")).toHaveText("Has been running 3 h — still expected?");
+    await expect(item.getByTestId("needs-you-words")).toHaveText("Running 3h — still expected?");
     await item.getByRole("button", { name: "Open" }).click();
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: base.session }, title: "Summary" }]);
     await item.getByRole("button", { name: "Stop" }).click();
@@ -732,7 +739,7 @@ test.describe("hooks and chains", () => {
     await expect(app(page).getByTestId("panel-jobs")).toBeVisible();
     await page.evaluate((r) => window.setRuns({ report: r, history: [] }), { ...quiet, needsYou: [paused] });
     const item = app(page).locator('[data-testid="needs-you-item"][data-kind="loop-paused"]');
-    await expect(item.getByTestId("needs-you-words")).toHaveText("Paused: triggered 10× in 10 min — looks like a loop");
+    await expect(item.getByTestId("needs-you-words")).toHaveText("Paused: triggered 10× in 10 min.");
     await shoot(page, "panel-loop-paused");
     await item.getByRole("button", { name: "Resume" }).click();
     await expect(item).toHaveCount(0);
@@ -1664,4 +1671,267 @@ test.describe("the Script form and the schedule picker", () => {
     await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).hover();
     await expect(tip).toHaveText("A hook or a chain is set in the job file: hook: or after:");
   });
+});
+
+test.describe("the panel: Needs you, Next up, Running now", () => {
+  test.use({ viewport: { width: 240, height: 1100 } });
+  const SCRIPT = (name: string): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ./run.sh\nschedule:\n  daily: { at: 13:00 }\n---\n`;
+  const SERVICE = "---\nkind: service\nname: Web\nfolder: .\ncommand: ./web.sh\n---\n";
+  const minutes = (n: number): number => n * 60_000;
+
+  const run = (job: string, name: string, id: string, extra: Partial<ActiveRun> = {}, now = Date.now()): ActiveRun => ({
+    job,
+    name,
+    kind: "script",
+    project: null,
+    folder: "",
+    run: id,
+    trigger: "scheduled",
+    cause: null,
+    dueAt: now,
+    state: "running",
+    lowPriority: true,
+    runAt: null,
+    deadline: null,
+    waits: null,
+    startedAt: now - minutes(3) - 5000,
+    session: `run:${job}:${id}`,
+    log: null,
+    limitHit: null,
+    warnedAt: null,
+    warningDismissed: false,
+    ...extra,
+  });
+
+  /** One item of each kind, with times relative to `now`. */
+  const items = (now: number): NeedsYouItem[] => [
+    { id: "run-failed:backup", kind: "run-failed", job: "backup", name: "Backup", project: null, run: "20261117-130000-aaaaaa", at: now - minutes(20), count: 2, detail: "exit 2" },
+    { id: "service-failed:web", kind: "service-failed", job: "web", name: "Web", project: null, at: now - minutes(30), detail: "crashed 5 times within a minute" },
+    { id: "missed:weekly", kind: "missed", job: "weekly", name: "Weekly", project: null, run: "20261117-030000-bbbbbb", at: now - 2 * 86_400_000, detail: "missed" },
+    { id: "long-run:lint:20261117-100000-cccccc", kind: "long-run", job: "lint", name: "Lint", project: null, run: "20261117-100000-cccccc", at: now, startedAt: now - minutes(3 * 60 + 2), detail: "running 3 h" },
+    { id: "loop-paused:echo", kind: "loop-paused", job: "echo", name: "Echo", project: null, at: now - 86_400_000, detail: "triggered 10× in 10 min — looks like a loop" },
+  ];
+
+  async function panel(page: Page, report: (now: number) => RunsReport): Promise<void> {
+    await page.goto(harness({ surface: "panel" }));
+    await page.waitForFunction(() => typeof window.setServiceStatus === "function");
+    await writeJob(page, "backup.md", SCRIPT("Backup"));
+    await writeJob(page, "lint.md", SCRIPT("Lint"));
+    await writeJob(page, "web.md", SERVICE);
+    await expect(app(page).getByTestId("panel-jobs")).toBeVisible();
+    const now = await page.evaluate(() => Date.now());
+    await page.evaluate((r) => window.setRuns({ report: r, history: [] }), report(now));
+  }
+
+  const quiet = (now: number): RunsReport => ({ active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: now - now } });
+  const withItems = (now: number): RunsReport => ({ ...quiet(now), needsYou: items(now) });
+  const card = (page: Page, kind: string): ReturnType<FrameLocator["locator"]> => app(page).locator(`[data-testid="needs-you-item"][data-kind="${kind}"]`);
+  const toasts = (page: Page): ReturnType<FrameLocator["getByTestId"]> => app(page).getByTestId("toast");
+  const calls = (page: Page): Promise<{ method: string; params: unknown }[]> => page.evaluate(() => window.runnerCalls);
+
+  test("every kind of item is a card: the dot, the name, the (i), the time, the line of text, and its actions", async ({ page }) => {
+    await panel(page, withItems);
+    await expect(app(page).getByTestId("needs-you-item")).toHaveCount(5);
+    await expect(app(page).getByTestId("section-needs-you-head-count")).toHaveText("5");
+    const look: Record<string, { help: string; words: string; when: RegExp; buttons: string[] }> = {
+      "run-failed": { help: "need.failed", words: "Failed: exit 2 · 2×", when: /^\d{1,2}:\d{2}$/, buttons: ["Backup", "", "Open", "Run now", "Dismiss"] },
+      "service-failed": { help: "need.crashloop", words: "Crashed 5× in 1 min — gave up.", when: /^\d{1,2}:\d{2}$/, buttons: ["Web", "", "Start", "View output"] },
+      missed: { help: "need.waitforme", words: "Missed — it waits for you to pick a time.", when: /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d{1,2}:\d{2}$/, buttons: ["Weekly", "", "Run now", "Run at…", "Skip"] },
+      "long-run": { help: "need.longrun", words: "Running 3h — still expected?", when: /^3h 0[23]m$/, buttons: ["Lint", "", "Open", "Stop", "Dismiss"] },
+      "loop-paused": { help: "need.loopguard", words: "Paused: triggered 10× in 10 min.", when: /^yesterday$/, buttons: ["Echo", "", "Resume", "Edit job"] },
+    };
+    for (const [kind, expected] of Object.entries(look)) {
+      const item = card(page, kind);
+      await expect(item.getByTestId("needs-you-words")).toHaveText(expected.words);
+      await expect(item.getByTestId(`help-${expected.help}`)).toBeVisible();
+      await expect(item.getByRole("button")).toHaveText(expected.buttons);
+      await expect(item.locator("h2 ~ span")).toHaveText(expected.when);
+    }
+    // The first action of each card but the long run's is the primary one.
+    for (const kind of ["run-failed", "service-failed", "missed", "loop-paused"]) await expect(card(page, kind).getByRole("button").nth(2)).toHaveCSS("background-color", "rgb(47, 146, 178)");
+    await expect(card(page, "long-run").getByRole("button").nth(2)).not.toHaveCSS("background-color", "rgb(47, 146, 178)");
+    await shoot(page, "panel-needs-you");
+
+    await card(page, "service-failed").getByTestId("help-need.crashloop").hover();
+    await expect(app(page).getByTestId("tooltip")).toHaveText("The service crashed 5 times within a minute, so Runner stopped restarting it.Example: fix the port clash, then press Start.");
+  });
+
+  test("a card's name opens what it is about: the run's card, the service's terminal, the job in Jobs", async ({ page }) => {
+    await panel(page, withItems);
+    const opened = (): Promise<unknown[]> => page.evaluate(() => window.fakeHost.openedTabs);
+    await card(page, "run-failed").getByRole("button", { name: "Backup" }).click();
+    await card(page, "service-failed").getByRole("button", { name: "Web" }).click();
+    await card(page, "missed").getByRole("button", { name: "Weekly" }).click();
+    await card(page, "long-run").getByRole("button", { name: "Lint" }).click();
+    await card(page, "loop-paused").getByRole("button", { name: "Echo" }).click();
+    await expect.poll(opened).toEqual([
+      { kind: "app", projectId: "alpha", route: "run/backup/20261117-130000-aaaaaa" },
+      { kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:web" }, title: "Web" },
+      { kind: "app", projectId: "alpha", route: "run/weekly/20261117-030000-bbbbbb" },
+      { kind: "app", projectId: "alpha", route: "run/lint/20261117-100000-cccccc" },
+      { kind: "app", projectId: "alpha", route: "jobs/echo" },
+    ]);
+  });
+
+  test("a service that gave up: Start runs it, View output opens its terminal; a loop-paused job: Resume, Edit job opens its form", async ({ page }) => {
+    await panel(page, withItems);
+    await card(page, "service-failed").getByRole("button", { name: "View output" }).click();
+    await card(page, "service-failed").getByRole("button", { name: "Start" }).click();
+    await expect(toasts(page)).toHaveText("RunnerWeb started");
+    await card(page, "loop-paused").getByRole("button", { name: "Edit job" }).click();
+    await card(page, "loop-paused").getByRole("button", { name: "Resume" }).click();
+    await expect(toasts(page).last()).toHaveText("RunnerEcho resumed");
+    await expect(card(page, "loop-paused")).toHaveCount(0);
+    expect(await page.evaluate(() => window.fakeHost.openedTabs)).toEqual([
+      { kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:web" }, title: "Web" },
+      { kind: "app", projectId: "alpha", route: "edit/echo" },
+    ]);
+    expect(await calls(page)).toEqual([
+      { method: "services.start", params: { job: "web" } },
+      { method: "jobs.resume", params: { job: "echo" } },
+    ]);
+  });
+
+  test("a failed run: Run now says it started, Dismiss clears the card and counts down; a long run: Open its terminal, Stop, Dismiss", async ({ page }) => {
+    await panel(page, withItems);
+    const count = app(page).getByTestId("section-needs-you-head-count");
+    await card(page, "run-failed").getByRole("button", { name: "Run now" }).click();
+    await expect(toasts(page)).toHaveText("RunnerBackup started");
+    await card(page, "run-failed").getByRole("button", { name: "Dismiss" }).click();
+    await expect(card(page, "run-failed")).toHaveCount(0);
+    await expect(count).toHaveText("4");
+
+    await card(page, "long-run").getByRole("button", { name: "Open" }).click();
+    await card(page, "long-run").getByRole("button", { name: "Stop" }).click();
+    await expect(toasts(page).last()).toHaveText("RunnerLint stopped by you");
+    await card(page, "long-run").getByRole("button", { name: "Dismiss" }).click();
+    await expect(toasts(page).last()).toHaveText("RunnerOK — it keeps running. No more reminders for this run.");
+    await expect(card(page, "long-run")).toHaveCount(0);
+    await expect(count).toHaveText("3");
+    expect((await calls(page)).map((call) => call.method)).toEqual(["jobs.run", "needsYou.dismiss", "runs.stop", "needsYou.dismiss"]);
+    expect((await page.evaluate(() => window.fakeHost.openedTabs))[0]).toEqual({ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "run:lint:20261117-100000-cccccc" }, title: "Lint" });
+  });
+
+  test("a missed run: Run now, Skip, and Run at… with its field, what the time comes to, and Set", async ({ page }) => {
+    await panel(page, withItems);
+    const item = card(page, "missed");
+    await item.getByRole("button", { name: "Run at…" }).click();
+    const field = item.getByRole("textbox", { name: "Run at" });
+    await expect(field).toHaveValue("tonight 23:00");
+    await expect(field).toBeFocused();
+    await field.fill("soon");
+    await expect(item.getByTestId("run-at-hint")).toHaveText("Try: tonight 23:00 · tomorrow 7:00 · +2h");
+    await field.fill("+2h");
+    await expect(item.getByTestId("run-at-hint")).toHaveText(/^→ (today|tomorrow) \d{1,2}:\d{2}$/);
+    await shoot(page, "panel-needs-you-run-at");
+    await field.fill("23:00");
+    await item.getByRole("button", { name: "Set" }).click();
+    await expect(toasts(page)).toHaveText(/^RunnerWeekly will run (today|tomorrow) 23:00$/);
+    await item.getByRole("button", { name: "Run now" }).click();
+    await item.getByRole("button", { name: "Skip" }).click();
+    await expect(toasts(page).last()).toHaveText("RunnerRecorded as “missed · skipped”");
+    expect(await calls(page)).toEqual([
+      { method: "runs.missed", params: { job: "weekly", choice: "run-at", at: "23:00" } },
+      { method: "runs.missed", params: { job: "weekly", choice: "run-now" } },
+      { method: "runs.missed", params: { job: "weekly", choice: "skip" } },
+    ]);
+    await field.press("Escape");
+    await expect(field).toHaveCount(0);
+  });
+
+  test("a refusal is a toast that names the job and why", async ({ page }) => {
+    await panel(page, withItems);
+    await page.evaluate(() => {
+      window.refuse = { "jobs.run": "a run of Backup is going", "services.start": "the keeper is not connected", "needsYou.dismiss": "no such item" };
+    });
+    await card(page, "run-failed").getByRole("button", { name: "Run now" }).click();
+    await expect(toasts(page)).toHaveText("RunnerCould not run Backup: a run of Backup is going");
+    await card(page, "service-failed").getByRole("button", { name: "Start" }).click();
+    await expect(toasts(page).last()).toHaveText("RunnerCould not start Web: the keeper is not connected");
+    await card(page, "run-failed").getByRole("button", { name: "Dismiss" }).click();
+    await expect(toasts(page).last()).toHaveText("RunnerCould not dismiss Backup: no such item");
+    await expect(card(page, "run-failed")).toHaveCount(1);
+  });
+
+  test("a quiet panel: Needs you is a grey 0 and says so; with items the count is a red badge", async ({ page }) => {
+    await panel(page, quiet);
+    const count = app(page).getByTestId("section-needs-you-head-count");
+    await expect(count).toHaveText("0");
+    await expect(count).not.toHaveCSS("background-color", "rgb(209, 73, 91)");
+    await expect(app(page).getByTestId("needs-you")).toHaveText("Nothing needs you.");
+    await shoot(page, "panel-quiet");
+    await page.evaluate((r) => window.setRuns({ report: r, history: [] }), withItems(Date.now()));
+    await expect(count).toHaveText("5");
+    await expect(count).toHaveCSS("background-color", "rgb(209, 73, 91)");
+  });
+
+  test("Next up: the next runs — in N min, then the time — with the job's kind; a row opens the job in Jobs", async ({ page }) => {
+    await panel(page, (now) => ({
+      ...quiet(now),
+      nextUp: [
+        { job: "backup", name: "Backup", project: null, at: now + minutes(40) + 30_000 },
+        { job: "lint", name: "Lint", project: null, at: now + minutes(95) },
+        { job: "web", name: "Web", project: null, at: now + 30 * 3_600_000 },
+        { job: "a", name: "A", project: null, at: now + 31 * 3_600_000 },
+        { job: "b", name: "B", project: null, at: now + 32 * 3_600_000 },
+        { job: "c", name: "C", project: null, at: now + 33 * 3_600_000 },
+      ],
+    }));
+    const rows = app(page).getByTestId("next-up-item");
+    await expect(rows).toHaveCount(5);
+    await expect(rows.nth(0)).toHaveText(/^in 4[01] minBackup$/);
+    await expect(rows.nth(1)).toHaveText(/^(\d{1,2}:\d{2}|tmrw \d{1,2}:\d{2})Lint$/);
+    await expect(rows.nth(2)).toHaveText(/^(tmrw|Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2}:\d{2}Web$/);
+    await rows.nth(1).locator("span").first().hover();
+    await expect(app(page).getByTestId("tooltip")).toHaveText(/^(Today|Tomorrow) \d{1,2}:\d{2}$/);
+    await shoot(page, "panel-next-up");
+    await rows.nth(0).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "app", projectId: "alpha", route: "jobs/backup" }]);
+  });
+
+  test("Running now: a running run's row opens its terminal, a queued run's its card; statuses explain themselves on hover, with no (i)", async ({ page }) => {
+    await panel(page, (now) => ({
+      ...quiet(now),
+      active: [run("backup", "Backup", "20261120-120000-aaaaaa", {}, now), run("lint", "Lint", "20261120-120000-bbbbbb", { state: "queued", startedAt: null, session: null, waits: { kind: "slot", ahead: 1 } }, now)],
+    }));
+    const rows = app(page).getByTestId("active-run");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0)).toHaveText(/^Backuprunning 3mworkspace · /);
+    await expect(rows.nth(1)).toHaveText(/^Lintqueued · 1 aheadworkspace · /);
+    await expect(rows.nth(0)).toHaveAttribute("data-state", "running");
+    await expect(rows.nth(1)).toHaveAttribute("data-state", "queued");
+    await expect(app(page).getByTestId("active-runs").locator('[data-testid^="help-"]')).toHaveCount(0);
+    await rows.nth(0).locator('[data-help="st.running"]').hover();
+    await expect(app(page).getByTestId("tooltip")).toHaveText("The process is alive right now. Click the row to open its terminal.Example: running · 3m.");
+    await rows.nth(1).locator('[data-help="st.queued"]').hover();
+    await expect(app(page).getByTestId("tooltip")).toContainText("Waiting for a free slot");
+    await shoot(page, "panel-running-runs");
+
+    await rows.nth(0).click();
+    await rows.nth(1).click();
+    await expect
+      .poll(() => page.evaluate(() => window.fakeHost.openedTabs))
+      .toEqual([
+        { kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "run:backup:20261120-120000-aaaaaa" }, title: "Backup" },
+        { kind: "app", projectId: "alpha", route: "run/lint/20261120-120000-bbbbbb" },
+      ]);
+  });
+
+  for (const width of [240, 300]) {
+    test(`at ${width} px nothing in the panel clips or scrolls sideways`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 1100 });
+      await panel(page, (now) => ({
+        ...withItems(now),
+        active: [run("backup", "A job with a really long name that cannot fit the panel", "20261120-120000-aaaaaa", {}, now)],
+        nextUp: [{ job: "backup", name: "A job with a really long name that cannot fit the panel", project: null, at: now + minutes(40) }],
+      }));
+      await expect(app(page).getByTestId("needs-you-item")).toHaveCount(5);
+      const overflow = await app(page).locator("body").evaluate(() => {
+        const wide = [...document.querySelectorAll("*")].filter((el) => el.getBoundingClientRect().right > document.documentElement.clientWidth + 0.5 || el.getBoundingClientRect().left < -0.5);
+        return { wide: wide.map((el) => el.tagName + "." + el.className), scroll: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+      });
+      expect(overflow).toEqual({ wide: [], scroll: 0 });
+      await shoot(page, `panel-${width}`);
+    });
+  }
 });

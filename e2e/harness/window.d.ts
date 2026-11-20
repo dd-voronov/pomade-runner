@@ -22,5 +22,7 @@ declare global {
     refuseDelete: string | null;
     /** While set, the stand-in scheduler refuses Run now and Enable / Disable with this reason. */
     refuseActions: string | null;
+    /** The stand-in scheduler refuses an action (a method of `runner-api.ts`) with its reason while one is set. */
+    refuse: Record<string, string>;
   }
 }

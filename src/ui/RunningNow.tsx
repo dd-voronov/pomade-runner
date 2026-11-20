@@ -32,8 +32,23 @@ export function useOpenServiceTab(host: HostClient): (status: ServiceStatus) => 
   };
 }
 
+/** Opens a run's tab: a running run's terminal (its session, attached — Pomade focuses the one
+ *  already open), a queued run's result card, which has no session yet. */
+export function useOpenRun(host: HostClient): (run: ActiveRun) => void {
+  const toast = useToast();
+  return (run) => {
+    const failed = (err: unknown): void => toast(`Could not open ${run.name}: ${err instanceof Error ? err.message : String(err)}`);
+    if (run.state === "running") {
+      const session = run.session ?? sessionIdOf({ kind: "run", job: run.job, run: run.run }) ?? "";
+      host.tabs.openAttached({ session: { app: APP_ID, session }, title: run.name }).catch(failed);
+    } else {
+      host.tabs.openApp({ route: runRoute(run.job, run.run) }).catch(failed);
+    }
+  };
+}
+
 /** The panel's Running now: the services that run, then the runs going, as one list; a service's row
- *  opens its attached tab, a run's its card. */
+ *  opens its attached tab, a running run's its terminal, a queued run's its card. */
 export function RunningNow({
   host,
   services,
@@ -50,6 +65,7 @@ export function RunningNow({
   const now = useNow();
   const projectName = useProjectNames(host);
   const openTab = useOpenServiceTab(host);
+  const openRun = useOpenRun(host);
   const up = runningServices(services);
   const going = goingRuns(runs);
   const jobOf = (id: string): { folder: string; ready: Readiness | null } => {
@@ -91,7 +107,7 @@ export function RunningNow({
           run={run}
           now={now}
           place={placeWords(run.project, projectName, run.folder, workspace)}
-          onOpen={() => void host.tabs.openApp({ route: runRoute(run.job, run.run) }).catch(() => undefined)}
+          onOpen={openRun}
         />
       ))}
     </div>

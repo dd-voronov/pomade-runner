@@ -5,8 +5,8 @@ import { newRoute } from "../integrations/runner-api";
 import { goingRuns } from "./ActiveRunsList";
 import { JobsProblem } from "./JobsProblem";
 import { Button, PanelCard, PanelSection } from "./kit";
-import { NeedsYouList } from "./NeedsYouList";
-import { NextUpList } from "./NextUpList";
+import { NeedsYou } from "./NeedsYou";
+import { NextUp } from "./NextUp";
 import styles from "./Panel.module.css";
 import { RunningNow, runningServices } from "./RunningNow";
 import { PanelShell } from "./shell/PanelShell";
@@ -78,13 +78,13 @@ export function Panel({ host }: { host: HostClient }): React.JSX.Element {
   return (
     <PanelShell testId="panel-jobs" top={top} foot={open}>
       <PanelSection title="Needs you" count={needs.length} urgent={needs.length > 0} testId="section-needs-you">
-        <NeedsYouList host={host} items={needs} />
+        <NeedsYou host={host} items={needs} />
       </PanelSection>
       <PanelSection title="Running now" count={runningCount} testId="section-running">
         {running}
       </PanelSection>
       <PanelSection title="Next up" testId="section-next-up">
-        <NextUpList next={report?.nextUp ?? []} now={Date.now()} />
+        <NextUp host={host} next={report?.nextUp ?? []} jobs={jobs.value.jobs} />
       </PanelSection>
     </PanelShell>
   );

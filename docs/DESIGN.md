@@ -659,9 +659,10 @@ history-days: 30           # run history and output logs kept
   - **A failed run** is its job's item — one per job, the latest failure and how many since the
     item came — unless the job says `notify: never`. It goes when the person opens the run's result
     card or dismisses it (`needsYou.dismiss`), when a run of the job is done, or when the job's file
-    is gone. Actions: Open · Run now · Dismiss.
+    is gone. Actions: Open (its result card) · Run now · Dismiss.
   - **A service that gave up** after a crash loop is an item while it stays `failed`; Start, a
-    fixed or disabled file, or its removal end it. It is noticed once per giving-up. Action: Start.
+    fixed or disabled file, or its removal end it. It is noticed once per giving-up. Actions: Start ·
+    View output (the service's attached tab with its last output).
   - **A missed run that waits for you** (`missed:<job>`, one per job) is an item while it waits;
     noticed when it comes ("Inbox triage · missed Sun 03:00"), its click opening the run's card.
     Actions: Run now · Run at… · Skip (`runs.missed`).
@@ -669,7 +670,7 @@ history-days: 30           # run history and output logs kept
     noticed once. Actions: Open · Stop (`runs.stop`) · Dismiss (`needsYou.dismiss`).
   - **A job the loop guard paused** (`loop-paused:<job>`) is an item while it is paused and its file
     is there: *"Paused: triggered 10× in 10 min — looks like a loop"*; noticed once, when it
-    pauses. Action: Resume (`jobs.resume`). It cannot be dismissed.
+    pauses. Actions: Resume (`jobs.resume`) · Edit job (its form). It cannot be dismissed.
   - The failed runs' items, and the giving-ups already noticed, are in `needs-you.json` in Runner's
     state folder; the missed runs, the warnings and the loop guard's pauses are the runs' own, in
     `runs.json`: a restarted scheduler neither forgets an item nor notices one twice.
@@ -691,15 +692,40 @@ to it, light theme only.
 
 **Side panel** (the Runner icon on the left strip):
 1. the three-position switch;
-2. **Needs you**, with actions inline;
+2. **Needs you** (`src/ui/NeedsYou.tsx`): a card per item (`PanelCard`) — the status dot (red: a failed
+   run, a service that gave up · amber: a missed run, a paused job · accent: a long run), the
+   job's name, the (i) help of that kind, the time at the card's end, one line of text, and the
+   actions inline, the first one primary (`needLook`, `src/ui/panelWords.ts`):
+
+   | Item | Time | Text | Actions |
+   |---|---|---|---|
+   | failed run | when it failed | "Failed: exit 1 · 2×" (the count when more than one) | Open · Run now · Dismiss |
+   | service gave up | its last crash | "Crashed 5× in 1 min — gave up." | Start · View output |
+   | missed run waits | when it was missed | "Missed — it waits for you to pick a time." | Run now · Run at… · Skip |
+   | long run | how long it has gone ("3h 02m") | "Running 3h — still expected?" | Open (its terminal) · Stop · Dismiss |
+   | job paused by the loop guard | when it paused | "Paused: triggered 10× in 10 min." | Resume · Edit job |
+
+   The time reads "11:20" today, "yesterday", "Sun 3:00" within the week, else "13 Nov". The
+   job's name is a link to what the card is about: the run's result card (a failed run, a missed
+   run, a long run), the service's terminal tab, the job in the Jobs view (a paused job). **Run
+   at…** opens a field below the buttons, filled with "tonight 23:00" and focused; under it what the
+   text comes to ("→ today 23:00") or "Try: tonight 23:00 · tomorrow 7:00 · +2h"; Set (or Enter)
+   sends it as typed, Esc closes it. Every outcome is a toast ("<job> started", "<job> will run
+   today 23:00", "<job> stopped by you", "<job> resumed"); a refusal is "Could not <do it> <job>:
+   <why>". The section's count is a red badge while any item waits, a grey 0 and "Nothing needs
+   you." otherwise;
 3. **Running now** (`src/ui/RunningNow.tsx`): the services that are up or starting, in start
    order, then the runs going, as one list of rows (`PanelRow`): the status dot, the name and at
    its end where it stands with its help ("up 3d 4h", "starting", "running 3m", "queued · 1
    ahead"); project · folder below ("workspace · git-base" for the workspace root); a third line
    only for news ("waiting for port 5173", "restarted 3× · last crash 14:02", "restart to apply
-   its file"). A service's row opens its attached tab, titled with its name; a run's row its
-   result card;
-4. **Next up** (the next ~5 runs, Run at… ones included);
+   its file"). A row's status words explain themselves on hover (no (i) in rows). A service's row
+   opens its attached tab, titled with its name; a running run's row its terminal (the run's
+   attached session); a queued run's row — it has no session yet — its result card;
+4. **Next up** (`src/ui/NextUp.tsx`): the next five runs, soonest first — "in 40 min" within the
+   hour, then the time ("13:00", "tmrw 7:00", "Thu 7:00"; the full moment on hover), the job's
+   kind icon and its name; a row opens the job in the Jobs view (`jobs/<encoded job id>`);
+   "Nothing is scheduled." when none;
 5. **Open Runner**.
 
 **Runner tab:**
@@ -851,7 +877,7 @@ One confirm (`DeleteJobDialog`, `src/ui/DeleteJobDialog.tsx`) serves both; it na
 **Help.** Every non-obvious field, policy and status carries an (i) tooltip with a one-line
 example. This is a product requirement, not polish. Every text is in `src/ui/help.ts`, keyed
 `<area>.<what>` (`st.*` statuses, `f.*` form fields, `p.*` policies, `s.*` settings, `c.*` result
-cards); `Help` shows one by its key.
+cards, `need.*` Needs-you cards); `Help` shows one by its key.
 
 ## Data and locations
 

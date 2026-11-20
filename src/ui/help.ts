@@ -35,6 +35,7 @@ export const HELP = {
   'need.crashloop': ['The service crashed 5 times within a minute, so Runner stopped restarting it.', 'Example: fix the port clash, then press Start.'],
   'need.loopguard': ['Triggered more than 10 times in 10 minutes — almost always a loop. Resume when the trigger is fixed.', 'Example: a "session finished" hook that starts a session.'],
   'need.longrun': ['A reminder only — Runner never stops a run for running long. The threshold (3h) is in Settings.', 'Example: a lint that usually takes 5 minutes.'],
+  'need.failed': ['The job\'s latest run ended with an error. Opening its result, Dismiss and the job\'s next done run clear this.', 'Example: exit 1 — the card shows the last lines of its output.'],
   'jobs.this': ['Shows only the jobs of the project you have open.', 'Example: in coda-helper — Coda web, Pull coda-helper, Health check.'],
   'jobs.last': ['The most recent run. Click it to open its result card.', 'Example: done · today 8:32 · 4m 12s.'],
   'jobs.next': ['The next time the schedule fires, in the Mac\'s local time.', 'Example: tomorrow 7:00. Hook jobs show "on event".'],

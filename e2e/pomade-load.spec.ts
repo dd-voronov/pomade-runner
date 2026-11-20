@@ -128,7 +128,7 @@ test.describe("missed runs in Pomade", () => {
     await page.getByTestId(`strip-${STRIP_KEY}`).click();
     const panel = page.frameLocator(`[data-testid="panel-frame-${STRIP_KEY}"]`);
     const item = (name: string) => panel.locator('[data-testid="needs-you-item"][data-kind="missed"]', { hasText: name });
-    await expect(item("Nightly").getByTestId("needs-you-words")).toHaveText("Missed Wed 22:00 — it waits for you to pick a time.");
+    await expect(item("Nightly").getByTestId("needs-you-words")).toHaveText("Missed — it waits for you to pick a time.");
     await shoot(page, "pomade-missed");
     await item("Nightly").getByRole("button", { name: "Run at…" }).click();
     await item("Nightly").getByRole("textbox", { name: "Run at" }).fill("23:00");

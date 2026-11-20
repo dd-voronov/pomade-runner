@@ -220,6 +220,36 @@ test.describe("Runner in Pomade", () => {
     expect(await runnerNotices()).toEqual(["Fail failed"]);
   });
 
+  test("a failed run is a card in the panel's Needs you, counted by the badge; Open shows its red result card, which clears the card and the badge", async () => {
+    const running = scheduler ?? (await startTheScheduler());
+    expect((await command("run", "fail")).code).toBe(0);
+    await expect.poll(async () => (await history("fail")).length).toBe(2);
+    await expect(badge()).toHaveText("1");
+    // The Notices panel is open since the test before: the Runner icon brings Runner's back.
+    await page.getByTestId(`strip-${STRIP_KEY}`).click();
+    await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
+    const item = panel().locator('[data-testid="needs-you-item"][data-kind="run-failed"]');
+    await expect(item).toHaveCount(1);
+    await expect(item.getByRole("button", { name: "Fail" })).toBeVisible();
+    await expect(item.getByTestId("needs-you-words")).toHaveText("Failed: exit 3");
+    await expect(panel().getByTestId("section-needs-you-head-count")).toHaveText("1");
+    await shoot(page, "pomade-panel-needs-you");
+
+    // A panel frame just shown again may still be re-handshaking with Pomade, which drops a call
+    // made across the handshake unanswered: click again until the card opens.
+    const card = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`).getByTestId("run-card");
+    await expect(async () => {
+      await item.getByRole("button", { name: "Open", exact: true }).click();
+      await expect(card).toBeVisible({ timeout: 1500 });
+    }).toPass({ intervals: [500, 1000] });
+    await expect(card).toHaveAttribute("data-state", "failed");
+    await expect(card.getByTestId("run-result")).toHaveText("failed · exit 3");
+    await expect(badge()).toHaveCount(0);
+    await expect(item).toHaveCount(0);
+    await expect(panel().getByTestId("section-needs-you-head-count")).toHaveText("0");
+    expect(running.output()).toContain("needs you: fail failed");
+  });
+
   const TICKER = 'i=0; while :; do i=$((i+1)); echo "tick $i"; if read -t 1 line; then echo "got: $line"; fi; done';
 
   function schedulerSocket(): string {
@@ -581,5 +611,30 @@ test.describe("Runner in Pomade", () => {
     }
     const checked = await command("check", ...paths);
     expect(checked).toEqual({ code: 0, stdout: "6 job files: no problems.\n", stderr: "" });
+  });
+
+  test("a running script is a Running now row in the panel; a click opens its terminal, with the run's output", async () => {
+    const running = scheduler ?? (await startTheScheduler());
+    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/slow.md"), scriptFile("Slow", "echo slow-start; sleep 600"));
+    await expect.poll(() => running.output()).toContain("job files, 0 invalid\n");
+    expect((await command("run", "slow")).code).toBe(0);
+    await page.getByTestId(`strip-${STRIP_KEY}`).click();
+    await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
+    const row = panel().getByTestId("active-run").filter({ hasText: "Slow" });
+    await expect(row).toHaveAttribute("data-state", "running");
+    await expect(row).toContainText("running");
+    await shoot(page, "pomade-panel-running-run");
+    // A panel frame just shown again may still be re-handshaking with Pomade: click until the tab opens.
+    await expect(async () => {
+      await row.click();
+      expect(await attachedTabIds()).toHaveLength(1);
+    }).toPass({ intervals: [500, 1000] });
+    const [id = ""] = await attachedTabIds();
+    await expect(page.getByTestId(`tab-title-${id}`)).toHaveText("Slow · Runner");
+    await expect.poll(() => buffer(id)).toContain("slow-start");
+    await page.getByTestId(`close-${id}`).click();
+    await expect.poll(() => attachedTabIds()).toHaveLength(0);
+    // Closing the tab only detaches: the run goes on.
+    await expect(row).toHaveAttribute("data-state", "running");
   });
 });

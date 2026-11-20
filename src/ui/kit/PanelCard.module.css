@@ -49,8 +49,13 @@
   margin-top: 6px;
 }
 
-/* Under a dot, the text and actions line up with the name. */
+.extra {
+  margin-top: 6px;
+}
+
+/* Under a dot, the text, actions and what they open line up with the name. */
 .dotted .text,
-.dotted .actions {
+.dotted .actions,
+.dotted .extra {
   margin-left: 13px;
 }

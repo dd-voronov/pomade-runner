@@ -6,7 +6,7 @@ import styles from "./PanelCard.module.css";
 import { Dot, type DotTone } from "./Status";
 
 /** A card in the side panel — a Needs-you item, the no-jobs explanation: the head (a dot, the
- *  title, its help, `when` at the end), a line or two of text, then the actions. */
+ *  title, its help, `when` at the end), a line or two of text, then the actions and what they open. */
 export function PanelCard({
   title,
   dot,
@@ -14,6 +14,7 @@ export function PanelCard({
   when,
   children,
   actions,
+  extra,
   testId,
 }: {
   title: ReactNode;
@@ -22,6 +23,8 @@ export function PanelCard({
   when?: ReactNode | undefined;
   children?: ReactNode | undefined;
   actions?: ReactNode | undefined;
+  /** What an action opens below the buttons (Run at…'s field and its hint). */
+  extra?: ReactNode | undefined;
   testId?: string | undefined;
 }): React.JSX.Element {
   return (
@@ -34,6 +37,7 @@ export function PanelCard({
       </div>
       {children !== undefined && <div className={styles.text}>{children}</div>}
       {actions !== undefined && <div className={styles.actions}>{actions}</div>}
+      {extra !== undefined && <div className={styles.extra}>{extra}</div>}
     </div>
   );
 }

@@ -8,7 +8,8 @@
 // `window.setServiceStatus`, the runs with `window.setRuns`, the settings with
 // `window.setSettings`, and reads the actions the UI asked for in `window.runnerCalls`. Delete
 // removes the job's file — refused with `window.refuseDelete`'s reason while one is set; Run now and
-// Enable / Disable are refused with `window.refuseActions`'s.
+// Enable / Disable are refused with `window.refuseActions`'s. Any action is refused with
+// `window.refuse[<method>]` while one is set.
 
 import type { FakeHost } from "pomade-kit/fake-host";
 import type { JsonValue } from "pomade-kit/protocol";
@@ -40,6 +41,7 @@ import {
 import { checkJobs } from "../../src/jobs/check";
 import { entryId, entryPath, JOBS_FOLDER, type JobKind, type JobsSnapshot } from "../../src/jobs/model";
 import type { ServicesReport, ServiceStatus } from "../../src/keeper/model";
+import { parseRunAt } from "../../src/scheduler/missed";
 import type { ActiveRun, RunRecord, RunsReport, RunView, SwitchPosition } from "../../src/scheduler/model";
 import { checkSettings, type SettingsReport } from "../../src/scheduler/settings";
 
@@ -51,7 +53,9 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
   const read = async (): Promise<JobsSnapshot> => {
     const { entries } = await host.files.readFolder({ path: "", recursive: true });
     const paths = entries.filter((e) => e.kind === "file" && e.path.startsWith(`${JOBS_FOLDER}/`) && e.path.endsWith(".md")).map((e) => e.path);
-    const files = await Promise.all(paths.map(async (path) => ({ path: path.slice(JOBS_FOLDER.length + 1), text: (await host.files.readFile({ path })).content })));
+    // A file deleted between the listing and the read is gone from the next listing too.
+    const read = await Promise.all(paths.map((path) => host.files.readFile({ path }).then((file) => ({ path: path.slice(JOBS_FOLDER.length + 1), text: file.content }), () => null)));
+    const files = read.filter((file) => file !== null);
     const { projects } = await host.project.list();
     return checkJobs(files, { workspace: "/fake/workspace", projects: projects.map(({ id, name, root }) => ({ id, name, root })) });
   };
@@ -80,6 +84,8 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     (method: string, answer: (params: JsonValue) => unknown = () => ({ ok: true })) =>
     (params: JsonValue): JsonValue => {
       window.runnerCalls.push({ method, params });
+      const refusal = window.refuse[method];
+      if (refusal !== undefined) return { ok: false, reason: refusal };
       return json(answer(params));
     };
   const find = (params: JsonValue): RunView | undefined => {
@@ -118,6 +124,7 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
   window.runnerCalls = [];
   window.refuseDelete = null;
   window.refuseActions = null;
+  window.refuse = {};
   await host.api.serve({
     [JOBS_LIST_METHOD]: () => json(snapshot),
     [SERVICES_LIST_METHOD]: () => json(services(snapshot)),
@@ -136,7 +143,12 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     [SERVICE_METHODS.start]: action(SERVICE_METHODS.start, serviceAnswer),
     [SERVICE_METHODS.stop]: action(SERVICE_METHODS.stop, serviceAnswer),
     [SERVICE_METHODS.restart]: action(SERVICE_METHODS.restart, () => ({ ok: false, reason: "the keeper is not connected" })),
-    [MISSED_METHOD]: action(MISSED_METHOD, () => ({ ok: true, at: null })),
+    [MISSED_METHOD]: action(MISSED_METHOD, (params) => {
+      const { choice, at } = params as { choice: string; at?: string };
+      if (choice !== "run-at") return { ok: true, at: null };
+      const when = parseRunAt(at ?? "", new Date());
+      return when.ok ? { ok: true, at: when.at } : { ok: false, reason: when.reason };
+    }),
     [RUN_STOP_METHOD]: action(RUN_STOP_METHOD),
     [RESUME_METHOD]: action(RESUME_METHOD, (params) => {
       const { job } = params as { job: string };
