@@ -57,6 +57,21 @@ A job has a **kind**, a **trigger**, a **folder** and **policies**.
   it; Runner renames the sub-folder to match. `pomade-runner projects` prints each project's id and
   sub-folder.
 
+**Why md with YAML frontmatter, not JSON.** People and agents both write and read these files:
+- an agent job's prompt is prose, and it is the file body: multi-line and diff-friendly, where
+  JSON would hold it as one escaped string;
+- YAML keeps comments (`# runs at 3:00 — after the backup`), and the form's field-only writes
+  keep them in place; JSON has no comments;
+- it is the Pomade family's item format (Planner, Board, the editor's properties): one parser
+  and one format-preserving writer, `pomade-kit/frontmatter`, and the file opens in Pomade's
+  editor or Obsidian as properties plus notes;
+- agents already write md with frontmatter across the workspace, so the skill teaches fields,
+  not a format.
+
+The costs are YAML's ambiguous values, answered by reading YAML 1.2 core (see "Format rules"),
+and nested fields (`git`, `hook`, `schedule`) that are plainer in JSON; Runner's own validation
+stands in for an editor-side JSON Schema.
+
 **Readers and writers.** The file is the agents' interface. Daniil edits through the form, which
 writes field-only changes, so comments and the body survive. The file on disk is the truth:
 - an edit by hand or by an agent applies within a second;
@@ -344,7 +359,8 @@ attaches at the keeper's socket directly and never calls Runner to do it:
 - closing the tab only detaches;
 - Ctrl+C typed through a tab followed by an exit within 5 s, or the tab's Stop, ends the process as
   **stopped by you**;
-- header actions (Restart) are set by Runner per session; a click arrives as the platform event
+- a stopped or failed service's tab keeps its last output, with **Start** as its header action;
+- header actions (Restart · Stop while running, Start otherwise) are set by Runner per session; a click arrives as the platform event
   `attachedTab.action`, delivered to Runner only — the scheduler subscribes while connected to
   Pomade and restarts the service.
 
@@ -664,7 +680,8 @@ to it, light theme only.
 
 **Runner tab:**
 - **Jobs:** grouped by project, workspace jobs first, "This project" chip. Each row: trigger in
-  words, last result, next run, Run now · Edit · Disable · Open file.
+  words, last result, next run, Run now · Edit · Delete, and the Disable toggle. An invalid file's
+  row shows its error and Open file.
 - **History:** the runs going on top, queued ones with what they wait for; then every run, with
   time, job, result, duration and what started it (scheduled · caught up · manual · hook: Mac login
   · chain: after Pull); opens the result card — a chain run's card opens the run it followed — or
@@ -680,6 +697,9 @@ opens; a missed run's card offers Run now · Run at… · Skip, a running run's 
 
 **Job form.** Creating and editing a job happens in a form, never by hand-editing md. Order: kind
 → trigger → folder and project (agent: agent → folder → mode) → policies.
+
+**Deleting a job.** Delete is on a job's row in the Jobs view and in the form, next to Open file.
+A confirm names the file; a running service is stopped first, then the file is removed.
 
 **Help.** Every non-obvious field, policy and status carries an (i) tooltip with a one-line
 example. This is a product requirement, not polish.
