@@ -32,22 +32,50 @@ export function TextArea({ mono = false, bad = false, className, ...rest }: { mo
   return <textarea className={join(styles.input, mono && styles.mono, bad && styles.bad, className)} aria-invalid={bad || undefined} {...rest} />;
 }
 
-/** A drop-down of `options`; `auto` sizes it to its content instead of filling the field. */
+/** A drop-down's option; options in a row with the same `group` show under its heading. */
+export interface SelectOption {
+  value: string;
+  label: string;
+  group?: string | undefined;
+}
+
+/** `options` as runs of the same group: an ungrouped run, or one group's options. */
+function optionRuns(options: readonly SelectOption[]): { group: string | undefined; options: SelectOption[] }[] {
+  const runs: { group: string | undefined; options: SelectOption[] }[] = [];
+  for (const option of options) {
+    const last = runs.at(-1);
+    if (last !== undefined && last.group === option.group) last.options.push(option);
+    else runs.push({ group: option.group, options: [option] });
+  }
+  return runs;
+}
+
+/** A drop-down of `options`, grouped under their `group` headings; `auto` sizes it to its content
+ *  instead of filling the field. */
 export function Select({
   options,
   auto = false,
   bad = false,
   className,
   ...rest
-}: { options: readonly { value: string; label: string }[]; auto?: boolean | undefined; bad?: boolean | undefined } & SelectHTMLAttributes<HTMLSelectElement>): React.JSX.Element {
+}: { options: readonly SelectOption[]; auto?: boolean | undefined; bad?: boolean | undefined } & SelectHTMLAttributes<HTMLSelectElement>): React.JSX.Element {
+  const item = (option: SelectOption): React.JSX.Element => (
+    <option key={option.value} value={option.value}>
+      {option.label}
+    </option>
+  );
   return (
     <span className={join(styles.select, auto && styles.auto, className)}>
       <select className={join(styles.input, bad && styles.bad)} aria-invalid={bad || undefined} {...rest}>
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
+        {optionRuns(options).map((run, index) =>
+          run.group === undefined ? (
+            run.options.map(item)
+          ) : (
+            <optgroup key={`${run.group}-${index}`} label={run.group}>
+              {run.options.map(item)}
+            </optgroup>
+          ),
+        )}
       </select>
       <svg className={styles.chevron} width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M2 3.5l3 3 3-3" />

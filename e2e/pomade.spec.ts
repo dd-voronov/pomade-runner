@@ -358,4 +358,54 @@ test.describe("Runner in Pomade", () => {
     await expect.poll(() => running.output()).toContain("connected to Pomade");
     await expect(badge()).toHaveText("1");
   });
+
+  test("a service made in the job form appears and starts; edited, its file keeps its comments and body; deleted while running, it is stopped and its file is gone", async () => {
+    const running = scheduler ?? (await startTheScheduler());
+    const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
+    const file = join(folders.workspace, "Apps/pomade-runner/jobs/form-web.md");
+    const runner = await connectAsRunner();
+    try {
+      await runner.tabs.openApp({ route: "new", projectId: WORKSPACE_PROJECT_ID });
+      const form = tab.getByTestId("form-service");
+      await form.getByRole("textbox", { name: "Name", exact: true }).fill("Form web");
+      await form.getByRole("textbox", { name: "Command", exact: true }).fill(TICKER);
+      await form.getByRole("textbox", { name: "Folder", exact: true }).fill(".");
+      await expect(tab.getByTestId("form-path")).toHaveText("Apps/pomade-runner/jobs/form-web.md");
+      await shoot(page, "pomade-form-new");
+      await tab.getByTestId("form-save").click();
+      await expect(tab.getByTestId("toast")).toHaveText("RunnerCreated Apps/pomade-runner/jobs/form-web.md · started");
+      await expect(tab.getByTestId("tab-jobs").getByTestId("job-row").filter({ hasText: "Form web" })).toBeVisible();
+      const started = await runningSession(schedulerSocket(), "svc:form-web");
+      pids.push(started.info.pid ?? 0);
+      const created = await readFile(file, "utf8");
+      expect(created).toBe(`---\nkind: service\nname: Form web\nfolder: .\nenabled: true\ncommand: ${JSON.stringify(TICKER)}\n---\n`);
+
+      // A comment and notes, written by hand; the form changes only the name.
+      const hand = created.replace("kind: service\n", "kind: service # made in the form\n") + "Notes kept.\n";
+      await writeFile(file, hand);
+      await runner.tabs.openApp({ route: "edit/form-web", projectId: WORKSPACE_PROJECT_ID });
+      await expect(form.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Form web");
+      await form.getByRole("textbox", { name: "Name", exact: true }).fill("Form site");
+      await tab.getByTestId("form-save").click();
+      await expect(tab.getByTestId("tab-jobs").getByTestId("job-row").filter({ hasText: "Form site" })).toBeVisible();
+      expect(await readFile(file, "utf8")).toBe(hand.replace("name: Form web", "name: Form site"));
+
+      // Delete while it runs: Runner stops it, waits for its end, then removes the file.
+      await runner.tabs.openApp({ route: "", projectId: WORKSPACE_PROJECT_ID });
+      await runner.tabs.openApp({ route: "edit/form-web", projectId: WORKSPACE_PROJECT_ID });
+      await tab.getByTestId("form-delete").click();
+      const confirm = tab.getByTestId("delete-confirm");
+      await expect(confirm).toContainText("The service is running: Runner stops it first, then removes the file.");
+      await shoot(page, "pomade-form-delete");
+      await confirm.getByRole("button", { name: "Delete job" }).click();
+      await expect(tab.getByTestId("toast").last()).toHaveText("RunnerDeleted Apps/pomade-runner/jobs/form-web.md · stopped first", { timeout: 15_000 });
+      await expect(readFile(file, "utf8")).rejects.toThrow(/ENOENT/);
+      expect(running.output()).toContain("service form-web: Stop\n");
+      expect(running.output()).toContain("job form-web: deleted, its service stopped first\n");
+      expect((await sessionInfo(schedulerSocket(), "svc:form-web"))?.state).not.toBe("running");
+      await expect(tab.getByTestId("tab-jobs").getByTestId("job-row").filter({ hasText: "Form site" })).toHaveCount(0);
+    } finally {
+      runner.close();
+    }
+  });
 });

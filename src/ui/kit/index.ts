@@ -6,7 +6,7 @@ export { Button, LinkButton, type ButtonSize, type ButtonVariant } from "./Butto
 export { Chip } from "./Chip";
 export { ConfirmDialog, Dialog, DialogBody, DialogFoot, DialogHead, type DialogTone } from "./Dialog";
 export { EmptyBlock } from "./EmptyBlock";
-export { Field, FieldError, Select, TextArea, TextInput, type InputWidth } from "./Field";
+export { Field, FieldError, Select, TextArea, TextInput, type InputWidth, type SelectOption } from "./Field";
 export { Help } from "./Help";
 export { Icon } from "./Icon";
 export { IconButton } from "./IconButton";

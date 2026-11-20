@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { jobsRoute, outputRoute, parseRoute, runRoute } from "../integrations/runner-api";
+import { editRoute, jobsRoute, newRoute, outputRoute, parseRoute, runRoute } from "../integrations/runner-api";
 import { clockTime, dayTime, durationWords, isActiveRun, isRunsReport, runWords, type ActiveRun, type RunRecord } from "./model";
 
 const base = { job: "coda/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/coda", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1 };
@@ -90,6 +90,15 @@ describe("routes", () => {
     expect(jobsRoute("coda/knowledge")).toBe("jobs/coda.knowledge");
     expect(parseRoute(jobsRoute("coda/knowledge"))).toEqual({ view: "jobs", job: "coda/knowledge" });
     expect(parseRoute("jobs/a_zz")).toEqual({ view: "jobs", job: null });
+  });
+
+  it("name the job form: a new job, or a job by its id, and read back", () => {
+    expect(newRoute()).toBe("new");
+    expect(parseRoute(newRoute())).toEqual({ view: "new" });
+    expect(editRoute("coda-helper/coda-web")).toBe("edit/coda-helper.coda-web");
+    expect(parseRoute(editRoute("coda-helper/coda-web"))).toEqual({ view: "edit", job: "coda-helper/coda-web" });
+    expect(parseRoute(editRoute("Café"))).toEqual({ view: "edit", job: "Café" });
+    for (const route of ["edit", "edit/", "edit/a_zz", "edit/a/b", "new/x"]) expect(parseRoute(route)).toEqual({ view: "jobs", job: null });
   });
 });
 

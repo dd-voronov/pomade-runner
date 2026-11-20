@@ -6,13 +6,15 @@
 // checks it with the real validator, so the UI specs drive it by writing files
 // (`fakeHost.writeFile`). Every valid service runs; a spec sets another state with
 // `window.setServiceStatus`, the runs with `window.setRuns`, the settings with
-// `window.setSettings`, and reads the actions the UI asked for in `window.runnerCalls`.
+// `window.setSettings`, and reads the actions the UI asked for in `window.runnerCalls`. Delete
+// removes the job's file — refused with `window.refuseDelete`'s reason while one is set.
 
 import type { FakeHost } from "pomade-kit/fake-host";
 import type { JsonValue } from "pomade-kit/protocol";
 import { connect } from "pomade-kit/sdk";
 
 import {
+  DELETE_JOB_METHOD,
   DISMISS_METHOD,
   HISTORY_LIST_METHOD,
   JOBS_CHANGED_EVENT,
@@ -35,7 +37,7 @@ import {
   SWITCH_METHOD,
 } from "../../src/integrations/runner-api";
 import { checkJobs } from "../../src/jobs/check";
-import { JOBS_FOLDER, type JobsSnapshot } from "../../src/jobs/model";
+import { entryId, entryPath, JOBS_FOLDER, type JobsSnapshot } from "../../src/jobs/model";
 import type { ServicesReport, ServiceStatus } from "../../src/keeper/model";
 import type { RunRecord, RunsReport, RunView, SwitchPosition } from "../../src/scheduler/model";
 import { checkSettings, type SettingsReport } from "../../src/scheduler/settings";
@@ -84,6 +86,7 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     return [...runs.report.active, ...runs.history].find((view) => view.job === job && view.run === run);
   };
   window.runnerCalls = [];
+  window.refuseDelete = null;
   await host.api.serve({
     [JOBS_LIST_METHOD]: () => json(snapshot),
     [SERVICES_LIST_METHOD]: () => json(services(snapshot)),
@@ -110,6 +113,14 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     }),
     [SETTINGS_GET_METHOD]: () => json(settings),
     [SETTINGS_SET_METHOD]: action(SETTINGS_SET_METHOD, () => ({ ok: true, settings })),
+    [DELETE_JOB_METHOD]: action(DELETE_JOB_METHOD, (params) => {
+      const { job } = params as { job: string };
+      if (window.refuseDelete !== null) return { ok: false, reason: window.refuseDelete };
+      const entry = snapshot.jobs.find((candidate) => entryId(candidate) === job);
+      if (entry === undefined) return { ok: false, reason: `no job "${job}"` };
+      fake.deleteFile(entryPath(entry));
+      return { ok: true, job, path: entryPath(entry), stopped: entry.valid && entry.job.kind === "service" };
+    }),
     [DISMISS_METHOD]: action(DISMISS_METHOD, (params) => {
       const { id } = params as { id: string };
       runs = { ...runs, report: { ...runs.report, needsYou: runs.report.needsYou.filter((item) => item.id !== id) } };

@@ -72,6 +72,13 @@ export const SWITCH_METHOD = "switch.set";
  *  or name, so hooks and chains fire it again. Runner's own frames only. */
 export const RESUME_METHOD = "jobs.resume";
 
+/** `{ job }` → `DeleteResult` (`isDeleteResult`): delete a job, by its id or name — a running
+ *  service stopped first, as Stop does, and its session's end waited for; then its file removed.
+ *  Refused while a run of the job is going. Runner's own frames only: call with `timeoutMs` of
+ *  `DELETE_JOB_TIMEOUT_MS`. */
+export const DELETE_JOB_METHOD = "jobs.delete";
+export const DELETE_JOB_TIMEOUT_MS = 15_000;
+
 /** `settings.get` → `SettingsReport` (`isSettingsReport`): the workspace settings that apply, and the
  *  settings file's problems. */
 export const SETTINGS_GET_METHOD = "settings.get";
@@ -122,7 +129,11 @@ export type RunnerRoute =
   /** A run's result card. */
   | { view: "run"; job: string; run: string }
   /** A run's full output. */
-  | { view: "output"; job: string; run: string };
+  | { view: "output"; job: string; run: string }
+  /** The job form, for a new job. */
+  | { view: "new" }
+  /** The job form, editing a job. */
+  | { view: "edit"; job: string };
 
 /** The Jobs view at one job: `jobs/<encoded job id>` — what a repo row's Scheduled line opens. */
 export function jobsRoute(job: string): string {
@@ -139,8 +150,22 @@ export function outputRoute(job: string, run: string): string {
   return `output/${encodeJobId(job)}/${run}`;
 }
 
+/** The job form for a new job: `new` — what "New job" opens. */
+export function newRoute(): string {
+  return "new";
+}
+
+/** The job form editing a job: `edit/<encoded job id>`. */
+export function editRoute(job: string): string {
+  return `edit/${encodeJobId(job)}`;
+}
+
 /** The view a route names; an unknown route is the Jobs view. */
 export function parseRoute(route: string): RunnerRoute {
+  if (route === "new") return { view: "new" };
+  const edit = /^edit\/([^/]+)$/.exec(route);
+  const editing = edit === null ? null : decodeJobId(edit[1] ?? "");
+  if (editing !== null) return { view: "edit", job: editing };
   if (route === "history") return { view: "history" };
   if (route === "services") return { view: "services" };
   if (route === "settings") return { view: "settings" };

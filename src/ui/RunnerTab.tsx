@@ -1,12 +1,13 @@
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_NAME, APP_VERSION } from "../app";
-import { parseRoute, type RunnerRoute } from "../integrations/runner-api";
+import { newRoute, parseRoute, type RunnerRoute } from "../integrations/runner-api";
 import { ActiveRunsList, goingRuns } from "./ActiveRunsList";
+import { JobForm } from "./form/JobForm";
 import { HistoryView } from "./HistoryView";
 import { JobsList } from "./JobsList";
 import { JobsProblem } from "./JobsProblem";
-import { EmptyBlock, GroupHead } from "./kit";
+import { Button, EmptyBlock, GroupHead } from "./kit";
 import { OutputView, RunDialog } from "./RunCard";
 import styles from "./RunnerTab.module.css";
 import { ServicesView } from "./ServicesView";
@@ -14,10 +15,14 @@ import { SettingsView } from "./SettingsView";
 import { TabShell, ViewFilters, type TabView } from "./shell/TabShell";
 import { useJobs, useRoute, useRuns, useServices } from "./useRunnerApi";
 
-/** The header's view for a route: a run's card and its output belong to History. */
+/** The header's view for a route: a run's card and its output belong to History; the job form, to Jobs. */
 function tabView(route: RunnerRoute): TabView {
+  if (route.view === "new" || route.view === "edit") return "jobs";
   return route.view === "run" || route.view === "output" ? "history" : route.view;
 }
+
+/** The services that run now, by state: what Delete stops first. */
+const SERVICE_RUNS: readonly string[] = ["starting", "running", "restarting"];
 
 /** The Runner tab: the shell's four views by its route — every job (at one job, from a repo row's
  *  Scheduled line), the history with the runs going — a run's result card over it — a run's output,
@@ -39,8 +44,13 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   const report = runs.status === "ready" ? runs.value : null;
   const serviceStates = services.status === "ready" ? services.value.services : [];
   const counts = jobs.status === "ready" ? { jobs: entries.length, services: entries.filter((entry) => entry.valid && entry.job.kind === "service").length } : {};
+  const newJob = (testId: string): React.JSX.Element => (
+    <Button variant="primary" icon="plus" onClick={() => open(newRoute())} data-testid={testId}>
+      New job
+    </Button>
+  );
   const shell = (testId: string, children: React.ReactNode): React.JSX.Element => (
-    <TabShell current={tabView(view)} counts={counts} open={open} testId={testId}>
+    <TabShell current={tabView(view)} counts={counts} open={open} testId={testId} actions={newJob("new-job")}>
       {children}
     </TabShell>
   );
@@ -58,12 +68,17 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   );
 
   if (jobs.status === "loading") return shell("tab-loading", null);
+  if (view.view === "new" || view.view === "edit") {
+    const target = view.view === "new" ? ({ kind: "new" } as const) : ({ kind: "edit", job: view.job } as const);
+    const running = view.view === "edit" && serviceStates.some((service) => service.job === view.job && SERVICE_RUNS.includes(service.state));
+    return <JobForm host={host} target={target} jobs={jobs.value} serviceRunning={running} open={open} />;
+  }
   switch (view.view) {
     case "jobs": {
       if (entries.length === 0) {
         return shell(
           "tab-jobs",
-          <EmptyBlock title="No jobs yet" testId="tab-empty">
+          <EmptyBlock title="No jobs yet" testId="tab-empty" action={newJob("empty-new-job")}>
             <p>
               A job is something Runner does without you. A <b>service</b> keeps a command running — it starts at login, restarts on a crash and outlives Pomade. A{" "}
               <b>script</b>, an <b>agent</b> or a <b>git</b> operation runs on a schedule, on a hook, or after another job.

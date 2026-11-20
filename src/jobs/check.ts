@@ -106,6 +106,44 @@ function entry(file: ParsedJobFile): JobEntry {
   };
 }
 
+/** What the checks across files read of a job already in a snapshot: its id, path, name, kind,
+ *  project and the job it follows. */
+function knownFile(known: JobEntry): ParsedJobFile {
+  const job = known.valid ? known.job : null;
+  const id = known.valid ? known.job.id : known.invalid.id;
+  const name = known.valid ? known.job.name : known.invalid.name;
+  const project = known.valid ? known.job.project : known.invalid.project;
+  const after = job === null ? null : job.kind === "service" ? job.after : job.trigger.kind === "chain" ? job.trigger.chain : null;
+  return {
+    id,
+    path: known.valid ? known.job.path : known.invalid.path,
+    folder: id.includes("/") ? (id.split("/")[0] ?? null) : null,
+    name: name === null ? null : { value: name, line: 1 },
+    kind: known.valid ? known.job.kind : known.invalid.kind,
+    project: project === null ? null : { value: project, line: 1 },
+    after: after === null ? null : { job: after.job, line: 1 },
+    hookProject: null,
+    errors: [],
+    job,
+  };
+}
+
+/**
+ * Check one job file as it would be among the jobs of `snapshot` — the job form's check of the
+ * file it is about to write: the file on its own, then against the others (names, chains) and
+ * Pomade's projects when known. The snapshot's entry at the file's path, and at `replaces` (the
+ * path a move leaves), stand aside. Every problem of the file, in line order.
+ */
+export function checkJobAmong(input: JobFileInput, snapshot: JobsSnapshot, context: { projects: readonly ProjectRecord[] | null; replaces?: string | undefined }): JobError[] {
+  const candidate = parseJobFile(input);
+  const others = snapshot.jobs.map(knownFile).filter((file) => file.path !== candidate.path && file.path !== context.replaces);
+  const files = [candidate, ...others];
+  checkChains(files);
+  checkNames(files);
+  if (context.projects !== null) checkProjects([candidate], context.projects);
+  return [...candidate.errors].sort((a, b) => a.line - b.line);
+}
+
 /** Check the job files of a workspace together; `files` are paths inside the jobs folder. */
 export function checkJobs(files: readonly JobFileInput[], context: CheckContext): JobsSnapshot {
   const parsed = files.map(parseJobFile).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));

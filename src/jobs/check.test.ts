@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { checkJobs } from "./check";
+import { checkJobAmong, checkJobs } from "./check";
 import { formatJobError } from "./format";
 import type { Job, JobError, JobsSnapshot, ProjectRecord } from "./model";
 import { closest, parseDuration } from "./parse";
@@ -384,4 +384,50 @@ it("formats an error as one line an agent can act on", () => {
   const error: JobError = { path: "Apps/pomade-runner/jobs/a.md", line: 7, field: "schedule.daily.at", problem: '"25:00" is not a time', fix: "write a time like 7:00" };
   expect(formatJobError(error)).toBe('Apps/pomade-runner/jobs/a.md:7: schedule.daily.at — "25:00" is not a time. Fix: write a time like 7:00.');
   expect(formatJobError({ ...error, field: "" }, "a.md")).toBe('a.md:7: "25:00" is not a time. Fix: write a time like 7:00.');
+});
+
+describe("one file among the others (the job form's check)", () => {
+  const snapshot = check({
+    "coda-helper/coda-web.md": file(SERVICE),
+    "backup.md": file(SCRIPT),
+    "pull.md": file("kind: script\nname: Pull\nfolder: .\ncommand: ./pull.sh\nafter: { job: backup }"),
+  });
+  const among = (path: string, text: string, replaces?: string): string[] =>
+    checkJobAmong({ path, text }, snapshot, { projects: PROJECTS, replaces }).map((e) => formatJobError(e));
+
+  it("says what checkJobs says of the file: its own problems, in line order", () => {
+    const text = file("kind: service\nname: Web\nfolder: ../out\ncommand:\nready: { port: 99999 }");
+    const alone = errors({ "web.md": text }).map((e) => formatJobError(e));
+    expect(among("web.md", text)).toEqual(alone);
+    expect(alone).toHaveLength(3);
+  });
+
+  it("refuses a name another job has, ignoring case — but not its own entry's", () => {
+    expect(among("web.md", file("kind: service\nname: backup\nfolder: .\ncommand: ./a.sh"))).toEqual([
+      "Apps/pomade-runner/jobs/web.md:3: name — backup is also the name of Apps/pomade-runner/jobs/backup.md. Fix: give each job its own name — History, notices and `pomade-runner run` tell jobs apart by name.",
+    ]);
+    expect(among("backup.md", file(SCRIPT))).toEqual([]);
+  });
+
+  it("checks the project and the sub-folder the file sits in", () => {
+    expect(among("coda-web-2.md", file("kind: service\nname: Web\nproject: p7Kx2_coda\nfolder: .\ncommand: ./a.sh"))).toEqual([
+      "Apps/pomade-runner/jobs/coda-web-2.md:4: project — a project job sits in its project's sub-folder, and this file is at the top of the jobs folder. Fix: move the file into the project's sub-folder (`pomade-runner projects` shows it), or remove project: for a workspace job.",
+    ]);
+    expect(among("job-hunt/web.md", file("kind: service\nname: Web\nproject: p9Lq4_hunt\nfolder: .\ncommand: ./a.sh"))).toEqual([]);
+  });
+
+  it("follows chains through the others: a loop back through them is refused", () => {
+    expect(among("backup.md", file("kind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\nafter: { job: pull }"))).toEqual([
+      "Apps/pomade-runner/jobs/backup.md:6: after.job — the chain loops back: backup → pull → backup. Fix: remove after: from one of these jobs, or point it at a job outside the loop.",
+    ]);
+    expect(among("web.md", file("kind: script\nname: Web\nfolder: .\ncommand: ./a.sh\nafter: { job: coda-helper/coda-web }"))).toEqual([
+      "Apps/pomade-runner/jobs/web.md:6: after.job — coda-helper/coda-web is a service, and a service never finishes. Fix: follow a script, agent or git job.",
+    ]);
+  });
+
+  it("a moved file leaves its old entry: its name is free", () => {
+    const moved = file("kind: service\nname: Coda web\nproject: p9Lq4_hunt\nfolder: .\ncommand: ./a.sh");
+    expect(among("job-hunt/coda-web.md", moved)).toHaveLength(1);
+    expect(among("job-hunt/coda-web.md", moved, "Apps/pomade-runner/jobs/coda-helper/coda-web.md")).toEqual([]);
+  });
 });

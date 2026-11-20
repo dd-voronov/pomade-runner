@@ -9,6 +9,7 @@ import { expect, test, type FrameLocator, type Page } from "@playwright/test";
 import manifest from "../app/manifest.json" with { type: "json" };
 import type { ActiveRun, NeedsYouItem, RunRecord, RunsReport } from "../src/scheduler/model";
 import { clockTime } from "../src/scheduler/model";
+import { HELP } from "../src/ui/help";
 import { APP_PORT, HARNESS_PORT } from "./support/ports";
 
 const APP = `http://localhost:${APP_PORT}/`;
@@ -725,5 +726,254 @@ test.describe("hooks and chains", () => {
     await expect(runs).toContainText(["at Mac login", "daily at 13:00", "after pull finishes"]);
     await expect(app(page).getByTestId("service-chain")).toHaveText("always on, from login; restarts after pull is done");
     await shoot(page, "tab-jobs-chains");
+  });
+});
+
+test.describe("the job form", () => {
+  test.use({ viewport: { width: 1040, height: 760 } });
+  const WEB = "Apps/pomade-runner/jobs/alpha/coda-web.md";
+  const HAND = "---\nkind: service # the dev server\nname: Coda web\nproject: alpha\nfolder: Projects/alpha\ncommand: ./start.sh\nready: { port: 5173 } # vite\n---\nNotes for humans.\n";
+
+  async function start(page: Page, query: Record<string, string> = {}): Promise<void> {
+    await page.goto(harness(query));
+    // The stand-in scheduler watches the jobs folder by the time it can set a service's state.
+    await page.waitForFunction(() => typeof window.setServiceStatus === "function");
+  }
+
+  /** Pomade navigates the tab to `route` (from Jobs first: the host tells the tab only of a change). */
+  async function navigate(page: Page, route: string): Promise<void> {
+    await page.evaluate((r) => {
+      window.mounted.navigate("");
+      window.mounted.navigate(r);
+    }, route);
+  }
+
+  /** The text of a file in the fake workspace; `null` when there is none. */
+  function fileText(page: Page, path: string): Promise<string | null> {
+    return page.evaluate((p) => {
+      try {
+        return window.fakeHost.readFile(p);
+      } catch {
+        return null;
+      }
+    }, path);
+  }
+
+  test("New job opens the form; a service made in it is a job file in its project's sub-folder, and the tab goes back to Jobs with a toast", async ({ page }) => {
+    await start(page, { projects: "prototype" });
+    await app(page).getByTestId("empty-new-job").click();
+    const form = app(page).getByTestId("form-service");
+    await expect(app(page).getByTestId("form-title")).toHaveText("Jobs / New job");
+    // Only the kinds the form builds are offered; the others show, with their help.
+    await expect(form.getByTestId("kind-service")).toHaveAttribute("aria-checked", "true");
+    for (const kind of ["script", "agent", "git"]) await expect(form.getByTestId(`kind-${kind}`)).toHaveAttribute("aria-disabled", "true");
+    await form.getByTestId("kind-script").dispatchEvent("click");
+    await expect(form.getByTestId("kind-service")).toHaveAttribute("aria-checked", "true");
+
+    await form.getByRole("textbox", { name: "Name", exact: true }).fill("Coda web");
+    await form.getByRole("textbox", { name: "Command", exact: true }).fill("./start.sh");
+    // Choose…: a project's folder fills in the folder and the project.
+    await form.getByRole("button", { name: "Choose…" }).click();
+    const menu = app(page).getByTestId("folder-menu");
+    await expect(menu.getByRole("menuitem")).toHaveText(["workspaceworkspace root", "KnowledgeKnowledge", "PomadeProjects/Pomade", "pomade-kitProjects/pomade-kit", "pomade-runnerProjects/pomade-runner", "AlphaProjects/alpha", "coda-helperProjects/coda-helper", "job-huntProjects/job-hunt", "Other folder…Pomade's folder picker"]);
+    await menu.getByRole("menuitem", { name: /^coda-helper/ }).click();
+    await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("Projects/coda-helper");
+    const project = form.getByRole("combobox", { name: "Project" });
+    await expect(project).toHaveValue("coda-helper");
+    // The projects under their groups, after the Workspace.
+    await expect(project.locator("optgroup")).toHaveCount(3);
+    await expect(project.locator('optgroup[label="Side projects"] option')).toHaveText(["Alpha", "coda-helper", "job-hunt"]);
+    // Other folder…: Pomade's folder picker; a folder outside every project keeps the project.
+    await page.evaluate(() => {
+      window.fakeHost.writeFile("Projects/coda-helper/web/index.html", "");
+      window.fakeHost.answerPick("Projects/coda-helper/web");
+    });
+    await form.getByRole("button", { name: "Choose…" }).click();
+    await menu.getByRole("menuitem", { name: /^Other folder/ }).click();
+    await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("Projects/coda-helper/web");
+    expect(await page.evaluate(() => window.fakeHost.pickRequests)).toEqual([{ root: "", initial: "Projects/coda-helper" }]);
+    await form.getByRole("textbox", { name: "Folder", exact: true }).fill("Projects/coda-helper");
+
+    // Readiness: collapsed to a line until asked for.
+    await form.getByRole("button", { name: "Check a port or URL instead" }).click();
+    await form.getByRole("button", { name: "A port is open" }).click();
+    await form.getByRole("textbox", { name: "Port" }).fill("5173");
+    // Policies: one sentence until Change.
+    await expect(form.getByTestId("policy-summary")).toHaveText("Normal priority · notifies on failure");
+    await form.getByTestId("form-policies").getByRole("button", { name: "Change" }).click();
+    await form.getByRole("button", { name: "Always" }).click();
+    await expect(form.getByTestId("form-policies")).toContainText("customised");
+    await expect(app(page).getByTestId("form-path")).toHaveText("Apps/pomade-runner/jobs/coda-helper/coda-web.md");
+    await shoot(page, "tab-form-new");
+
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("toast")).toHaveText("RunnerCreated Apps/pomade-runner/jobs/coda-helper/coda-web.md · started");
+    await expect(app(page).getByTestId("tab-jobs").getByTestId("job-row")).toContainText("Coda web");
+    expect(await fileText(page, "Apps/pomade-runner/jobs/coda-helper/coda-web.md")).toBe(
+      "---\nkind: service\nname: Coda web\nproject: coda-helper\nfolder: Projects/coda-helper\nenabled: true\ncommand: ./start.sh\nready: { port: 5173 }\nnotify: always\n---\n",
+    );
+  });
+
+  test("validation: Save shows the checker's words on each field, the count in the Save bar, and focuses the first; a filled-in field's error shows at once", async ({ page }) => {
+    await start(page);
+    await writeJob(page, "alpha/coda-web.md", VALID);
+    await app(page).getByTestId("new-job").click();
+    const form = app(page).getByTestId("form-service");
+    // Nothing is wrong before a Save: an empty field is not an error yet.
+    await expect(form.getByRole("alert")).toHaveCount(0);
+    await app(page).getByTestId("form-save").click();
+    await expect(form.getByRole("alert")).toHaveText([
+      "name — is empty. Fix: write it, e.g. name: Coda web.",
+      "command — is empty. Fix: write it, e.g. command: ./start.sh.",
+      "folder — is empty. Fix: write it, e.g. folder: Projects/my-project.",
+    ]);
+    await expect(app(page).getByTestId("form-error-count")).toHaveText("3 things to fix before saving");
+    await expect(form.getByRole("textbox", { name: "Name", exact: true })).toBeFocused();
+    await shoot(page, "tab-form-errors");
+
+    // The checker's cross-file checks: a name another job has.
+    await form.getByRole("textbox", { name: "Name", exact: true }).fill("coda WEB");
+    await expect(form.getByRole("alert").first()).toHaveText("name — coda WEB is also the name of Apps/pomade-runner/jobs/alpha/coda-web.md. Fix: give each job its own name — History, notices and `pomade-runner run` tell jobs apart by name.");
+    await form.getByRole("textbox", { name: "Name", exact: true }).fill("Docs");
+    await form.getByRole("textbox", { name: "Command", exact: true }).fill("npm run docs");
+    await form.getByRole("textbox", { name: "Folder", exact: true }).fill("../outside");
+    await expect(form.getByRole("alert")).toHaveText(['folder — "../outside" is outside the workspace. Fix: write a folder inside the workspace, relative to its root, e.g. folder: Projects/my-project (. is the workspace root).']);
+    await expect(app(page).getByTestId("form-error-count")).toHaveText("1 thing to fix before saving");
+    await form.getByRole("textbox", { name: "Folder", exact: true }).fill(".");
+    await expect(form.getByText("“.” is the workspace root, workspace.")).toBeVisible();
+    // A start on the first open of a project needs one: said on Starts.
+    await form.getByRole("button", { name: "On first open of a project" }).click();
+    await expect(form.getByRole("alert")).toHaveText(["start — starts on the first open of its project, and the job has no project. Fix: add project: <the project's id>, or write start: login."]);
+    await form.getByRole("combobox", { name: "Project" }).selectOption("alpha");
+    await expect(form.getByTestId("start-project")).toHaveText("Alpha, the job's project");
+    await expect(form.getByRole("alert")).toHaveCount(0);
+    // A port that is not one, as the checker words it.
+    await form.getByRole("button", { name: "Check a port or URL instead" }).click();
+    await form.getByRole("button", { name: "A port is open" }).click();
+    await form.getByRole("textbox", { name: "Port" }).fill("99999");
+    await expect(form.getByRole("alert")).toHaveText(["ready.port — 99999 is not a port. Fix: write a whole number from 1 to 65535, e.g. ready: { port: 5173 }."]);
+    await form.getByRole("textbox", { name: "Port" }).fill("8080");
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, "Apps/pomade-runner/jobs/alpha/docs.md")).toBe("---\nkind: service\nname: Docs\nproject: alpha\nfolder: .\nenabled: true\ncommand: npm run docs\nstart: project-first-open\nready: { port: 8080 }\n---\n");
+  });
+
+  test("editing writes only the changed fields — comments, the body stay — and a project moves the file to its sub-folder", async ({ page }) => {
+    await start(page, { route: "edit/alpha.coda-web" });
+    await writeJob(page, "alpha/coda-web.md", HAND);
+    const form = app(page).getByTestId("form-service");
+    await expect(form.getByRole("textbox", { name: "Command", exact: true })).toHaveValue("./start.sh");
+    await expect(app(page).getByTestId("form-title")).toHaveText("Jobs / Coda web");
+    await expect(form.getByRole("textbox", { name: "Port" })).toHaveValue("5173");
+    // Nothing changed: nothing to save.
+    await expect(app(page).getByTestId("form-save")).toHaveText("Saved");
+    await expect(app(page).getByTestId("form-save")).toBeDisabled();
+    await shoot(page, "tab-form-edit");
+
+    await form.getByRole("textbox", { name: "Command", exact: true }).fill("npm run dev");
+    await app(page).getByTestId("form-enabled").click();
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("toast")).toHaveText(`RunnerSaved ${WEB}`);
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+    // A field the file did not have goes at the end of its block.
+    expect(await fileText(page, WEB)).toBe(HAND.replace("./start.sh", "npm run dev").replace("# vite\n", "# vite\nenabled: false\n"));
+
+    // Open file opens the file in Pomade.
+    await navigate(page, "edit/alpha.coda-web");
+    await app(page).getByTestId("form-open-file").click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: WEB }]);
+
+    // To the Workspace: the file moves to the top of the jobs folder, its text kept.
+    await app(page).getByTestId("form-service").getByRole("combobox", { name: "Project" }).selectOption("");
+    await expect(app(page).getByTestId("form-path")).toHaveText("Apps/pomade-runner/jobs/coda-web.md");
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, WEB)).toBeNull();
+    expect(await fileText(page, "Apps/pomade-runner/jobs/coda-web.md")).toBe(HAND.replace("./start.sh", "npm run dev").replace("project: alpha\n", "").replace("# vite\n", "# vite\nenabled: false\n"));
+  });
+
+  test("the form follows the file on disk: untouched fields take its values, the person's edits stay with a notice", async ({ page }) => {
+    await start(page, { route: "edit/alpha.coda-web" });
+    await writeJob(page, "alpha/coda-web.md", HAND);
+    const form = app(page).getByTestId("form-service");
+    await form.getByRole("textbox", { name: "Command", exact: true }).fill("npm run dev");
+    await writeJob(page, "alpha/coda-web.md", HAND.replace("name: Coda web", "name: Coda site").replace("./start.sh", "./serve.sh"));
+    await expect(form.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Coda site");
+    await expect(form.getByRole("textbox", { name: "Command", exact: true })).toHaveValue("npm run dev");
+    await expect(app(page).getByTestId("form-clash")).toHaveText("The file changed on disk while you edited it: command. Your edits stay, and Save writes them over the file's.");
+    await shoot(page, "tab-form-clash");
+    // A problem the form has no field for is the file's: shown, and Save still writes.
+    await writeJob(page, "alpha/coda-web.md", HAND.replace("name: Coda web", "name: Coda site\nowner: me"));
+    await expect(app(page).getByTestId("form-file-errors")).toContainText("line 4: owner — owner is not a job field. Fix: remove it — the pomade-runner-jobs skill lists every field.");
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, WEB)).toBe(HAND.replace("name: Coda web", "name: Coda site\nowner: me").replace("./start.sh", "npm run dev"));
+    // The file deleted while the form is open: it says so, and Save has nothing to write to.
+    await navigate(page, "edit/alpha.coda-web");
+    await expect(app(page).getByTestId("form-service")).toBeVisible();
+    await page.evaluate((p) => window.fakeHost.deleteFile(p), WEB);
+    await expect(app(page).getByTestId("form-gone")).toBeVisible();
+    await expect(app(page).getByTestId("form-save")).toBeDisabled();
+  });
+
+  test("Delete sits next to Open file; it confirms with the file's name, and a running service is said to be stopped first", async ({ page }) => {
+    await start(page, { route: "edit/alpha.coda-web" });
+    await writeJob(page, "alpha/coda-web.md", HAND);
+    const actions = app(page).getByTestId("form-head").getByRole("button");
+    await expect(actions.last()).toHaveText("Delete");
+    expect(await actions.evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label") ?? button.textContent))).toEqual(["Back to Jobs", "Help", "Open file", "Delete"]);
+    await app(page).getByTestId("form-delete").click();
+    const confirm = app(page).getByTestId("delete-confirm");
+    await expect(confirm.getByRole("heading")).toHaveText("Delete “Coda web”?");
+    await expect(confirm.getByTestId("delete-path")).toHaveText(WEB);
+    await expect(confirm).toContainText("The service is running: Runner stops it first, then removes the file. This can't be undone.");
+    await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await shoot(page, "tab-form-delete");
+    await confirm.getByRole("button", { name: "Cancel" }).click();
+    await expect(confirm).toHaveCount(0);
+    expect(await fileText(page, WEB)).toBe(HAND);
+
+    // A refusal stays in the dialog, in the scheduler's words.
+    await page.evaluate(() => (window.refuseDelete = '"Coda web" did not stop, so its file is kept'));
+    await app(page).getByTestId("form-delete").click();
+    await confirm.getByRole("button", { name: "Delete job" }).click();
+    await expect(confirm.getByRole("alert")).toHaveText('"Coda web" did not stop, so its file is kept');
+    await page.evaluate(() => (window.refuseDelete = null));
+    await confirm.getByRole("button", { name: "Delete job" }).click();
+    await expect(app(page).getByTestId("toast").last()).toHaveText(`RunnerDeleted ${WEB} · stopped first`);
+    await expect(app(page).getByTestId("tab-empty")).toBeVisible();
+    expect(await fileText(page, WEB)).toBeNull();
+    expect(await page.evaluate(() => window.runnerCalls)).toEqual([
+      { method: "jobs.delete", params: { job: "alpha/coda-web" } },
+      { method: "jobs.delete", params: { job: "alpha/coda-web" } },
+    ]);
+  });
+
+  test("every field of the Service form has a working (i)", async ({ page }) => {
+    await start(page, { route: "new" });
+    const form = app(page).getByTestId("job-form");
+    await form.getByRole("button", { name: "Check a port or URL instead" }).click();
+    await form.getByTestId("form-policies").getByRole("button", { name: "Change" }).click();
+    const tip = app(page).getByRole("tooltip");
+    const keys = ["f.enabled", "f.name", "f.start", "f.ready", "f.command", "f.folder", "f.project", "p.low", "p.notify", "f.file"] as const;
+    for (const key of keys) {
+      await form.getByTestId(`help-${key}`).hover();
+      await expect(tip).toHaveText(HELP[key].join(""));
+    }
+    await form.getByTestId("kind-service").hover();
+    await expect(tip).toHaveText("Keeps a command running: starts it at login, restarts it on a crash, outlives Pomade.Example: Coda web — ./start.sh.");
+  });
+
+  test("an unknown job's route says so; a job of a kind the form does not build yet offers Open file", async ({ page }) => {
+    await start(page, { route: "edit/nope" });
+    await writeJob(page, "alpha/coda-web.md", VALID);
+    await expect(app(page).getByTestId("form-missing")).toContainText("No job file has the id nope.");
+    await writeJob(page, "backup.md", "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./b.sh\nschedule:\n  daily: { at: 13:00 }\n---\n");
+    await navigate(page, "edit/backup");
+    await expect(app(page).getByTestId("form-unsupported")).toContainText("It is a script job, and this build's form edits services only. Open its file to change it.");
+    await app(page).getByTestId("form-unsupported").getByRole("button", { name: "Open file" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/backup.md" }]);
+    await app(page).getByTestId("form-back").click();
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
   });
 });

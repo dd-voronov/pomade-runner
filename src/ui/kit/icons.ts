@@ -33,6 +33,7 @@ export const ICONS = {
   bell: '<path d="M4 11.1V7.6a4 4 0 0 1 8 0v3.5l1.1 1.3H2.9z" stroke-linejoin="round"/><path d="M6.4 13.8a1.7 1.7 0 0 0 3.2 0"/>',
   board: '<rect x="2.5" y="3" width="3" height="10" rx=".8"/><rect x="6.5" y="3" width="3" height="6.5" rx=".8"/><rect x="10.5" y="3" width="3" height="4" rx=".8"/>',
   people: '<circle cx="6" cy="6" r="2.2"/><path d="M2.2 13c.3-2.2 1.8-3.4 3.8-3.4s3.5 1.2 3.8 3.4"/><path d="M10.4 4.2a2.1 2.1 0 0 1 0 3.9M11.8 9.9c1.2.5 1.9 1.5 2.1 3.1"/>',
+  trash: '<path d="M2.8 4.5h10.4M6.3 4.5V3a.5.5 0 0 1 .5-.5h2.4a.5.5 0 0 1 .5.5v1.5M4.2 4.5l.6 8.1a1 1 0 0 0 1 .9h4.4a1 1 0 0 0 1-.9l.6-8.1M6.8 7v4M9.2 7v4" stroke-linejoin="round"/>',
   ext: '<path d="M6.5 3.5h-3v9h9v-3M9.3 3.5h3.2v3.2M12.5 3.5L7.6 8.4" stroke-linejoin="round"/>',
 } as const satisfies Record<string, string>;
 

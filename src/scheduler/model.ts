@@ -626,3 +626,13 @@ export function plainLines(text: string): string[] {
       return trimmed.slice(trimmed.lastIndexOf("\r") + 1);
     });
 }
+
+/** The answer to Delete on a job: its id and the file removed — `stopped` when its service was
+ *  running and was stopped first — or why it was refused. */
+export type DeleteResult = { ok: true; job: string; path: string; stopped: boolean } | { ok: false; reason: string };
+
+export function isDeleteResult(value: unknown): value is DeleteResult {
+  if (!isRecord(value)) return false;
+  if (value.ok === false) return typeof value.reason === "string";
+  return value.ok === true && typeof value.job === "string" && typeof value.path === "string" && typeof value.stopped === "boolean";
+}

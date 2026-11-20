@@ -12,6 +12,7 @@ import { APP_ID } from "../app";
 import type { ServiceActionResult, ServicesReport } from "../keeper/model";
 import {
   SWITCH_POSITIONS,
+  type DeleteResult,
   type EnableResult,
   type HistoryPage,
   type MissedChoice,
@@ -47,6 +48,7 @@ import {
   SETTINGS_GET_METHOD,
   SETTINGS_SET_METHOD,
   SWITCH_METHOD,
+  DELETE_JOB_METHOD,
   type ServiceVerb,
 } from "./runner-api";
 
@@ -122,6 +124,8 @@ export interface RunnerOffer {
   settings(): SettingsReport;
   /** Write one setting. */
   setSetting(field: SettingsField, value: SettingsValue): Promise<SettingsWriteResult>;
+  /** Delete a job: a running service stopped first, then its file removed. */
+  deleteJob(job: string): Promise<DeleteResult>;
   /** Pomade restored its tabs (`pomade.ready`, sticky: heard at once when it already did). */
   ready(): void;
   log(message: string): void;
@@ -260,6 +264,10 @@ export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise
         const { field, value } = given;
         if (typeof field !== "string" || !isSettingsField(field) || (value !== null && typeof value !== "number")) throw new HostError("invalid-params", `${SETTINGS_SET_METHOD} takes ${takes}`);
         return offer.setSetting(field, value);
+      }),
+      [DELETE_JOB_METHOD]: own(DELETE_JOB_METHOD, (params) => {
+        const takes = "{ job: <a job's id or name> }";
+        return offer.deleteJob(text(DELETE_JOB_METHOD, paramsOf(DELETE_JOB_METHOD, params, takes), "job", takes));
       }),
     });
     await host.events.subscribe("project.created", reloadProjects);

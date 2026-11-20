@@ -1,0 +1,343 @@
+// The job form's state, pure: the values the person sees, which of them they set, and the job file
+// they become. The form never keeps its own copy of the format's rules: a kind turns the values into
+// the file's fields (`FORM_KINDS`), the file the form would write is checked by the one validator
+// (`checkJobAmong`), and each error lands on the field it names. An edit writes only the fields
+// whose value changed against the file as last read, so comments, unknown fields and the body stay.
+
+import { baseName } from "pomade-kit/protocol";
+
+import { checkJobAmong, projectJobsFolder } from "../../jobs/check";
+import { readJobDocument } from "../../jobs/document";
+import { FIELD_ORDER, jobFileCandidates, newJobText, setJobFields, type FieldChanges, type FieldInput } from "../../jobs/edit";
+import { JOB_KINDS, JOBS_FOLDER, NOTIFY_VALUES, SERVICE_STARTS, type JobError, type JobKind, type JobsSnapshot, type Notify, type ProjectRecord, type ServiceStart } from "../../jobs/model";
+import { KIND_DEFAULTS } from "../../jobs/parse";
+
+/** How a service tells it is up, as the form offers it. */
+export type ReadyCheck = "alive" | "port" | "url";
+
+/** Every value the form shows. A kind writes the ones it takes; the others are kept for a switch back. */
+export interface FormValues {
+  kind: JobKind;
+  name: string;
+  /** The stable project id; `null` for the Workspace (no project). */
+  project: string | null;
+  /** Workspace-relative, as typed; `.` is the root. */
+  folder: string;
+  enabled: boolean;
+  command: string;
+  start: ServiceStart;
+  ready: ReadyCheck;
+  /** The port and the URL as typed; one of them is written, by `ready`. */
+  port: string;
+  url: string;
+  lowPriority: boolean;
+  notify: Notify;
+}
+
+export type FormField = keyof FormValues;
+
+/** What a kind makes of the form: the file's fields, and which form field an error about a file
+ *  field belongs to. Registering a kind here (and its sections in `kinds.tsx`) is what makes the
+ *  form build it. */
+export interface KindFile {
+  /** The job file's fields from the values; `undefined` leaves a field out. */
+  fields(values: FormValues): Record<string, FieldInput | undefined>;
+  /** File field (its top-level name) → the form field that shows its errors. */
+  errorFields: Readonly<Record<string, FormField>>;
+}
+
+/** The values whose default depends on the kind: switching kind resets them unless the person set them. */
+export const KIND_DEFAULT_FIELDS = ["lowPriority", "notify"] as const satisfies readonly FormField[];
+
+function kindDefaults(kind: JobKind): Pick<FormValues, (typeof KIND_DEFAULT_FIELDS)[number]> {
+  return { lowPriority: KIND_DEFAULTS[kind].lowPriority, notify: KIND_DEFAULTS[kind].notify };
+}
+
+/** The fields every kind writes the same way. */
+function commonFields(values: FormValues): Record<string, FieldInput | undefined> {
+  const defaults = kindDefaults(values.kind);
+  return {
+    kind: values.kind,
+    name: values.name.trim(),
+    project: values.project ?? undefined,
+    folder: values.folder.trim(),
+    enabled: values.enabled,
+    "low-priority": values.lowPriority === defaults.lowPriority ? undefined : values.lowPriority,
+    notify: values.notify === defaults.notify ? undefined : values.notify,
+  };
+}
+
+const COMMON_ERROR_FIELDS: Readonly<Record<string, FormField>> = {
+  kind: "kind",
+  name: "name",
+  project: "project",
+  folder: "folder",
+  enabled: "enabled",
+  "low-priority": "lowPriority",
+  notify: "notify",
+};
+
+/** A port as typed: a number when it is digits, else the text, so the validator says what is wrong. */
+function portValue(text: string): number | string | null {
+  const trimmed = text.trim();
+  if (trimmed === "") return null;
+  return /^\d+$/.test(trimmed) ? Number(trimmed) : trimmed;
+}
+
+const SERVICE: KindFile = {
+  fields: (values) => ({
+    ...commonFields(values),
+    command: values.command.trim(),
+    start: values.start === "login" ? undefined : values.start,
+    ready: values.ready === "alive" ? undefined : values.ready === "port" ? { port: portValue(values.port) } : { url: values.url.trim() === "" ? null : values.url.trim() },
+  }),
+  errorFields: { ...COMMON_ERROR_FIELDS, command: "command", start: "start", ready: "ready" },
+};
+
+/** The kinds the form builds. */
+export const FORM_KINDS: Partial<Record<JobKind, KindFile>> = { service: SERVICE };
+
+export function formKind(kind: JobKind): KindFile | null {
+  return FORM_KINDS[kind] ?? null;
+}
+
+/** A form's state: the values, what the person set, and the file it edits. */
+export interface FormState {
+  values: FormValues;
+  /** The fields the person set in this form. */
+  touched: readonly FormField[];
+  /** The values of the file as last read — a new job's: the blank form's. An edit writes what
+   *  differs from them. */
+  base: FormValues;
+  /** The file's text as last read; `null` for a new job. */
+  text: string | null;
+  /** The file's path, workspace-relative, as last read; `null` for a new job. */
+  path: string | null;
+  /** Fields the file changed on disk after the person set them; their edits stay. */
+  clashes: readonly FormField[];
+  /** Save was pressed: every error shows. */
+  tried: boolean;
+}
+
+export function blankValues(kind: JobKind): FormValues {
+  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", ready: "alive", port: "", url: "", ...kindDefaults(kind) };
+}
+
+/** A new job's form. */
+export function newForm(kind: JobKind): FormState {
+  const values = blankValues(kind);
+  return { values, touched: [], base: values, text: null, path: null, clashes: [], tried: false };
+}
+
+const asText = (value: unknown): string => (typeof value === "string" ? value : typeof value === "number" ? String(value) : "");
+const isMapping = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** The values a job file's text says; `null` when its frontmatter cannot be read or its kind is not
+ *  one the format has. A value the form cannot show stands at its default. */
+export function valuesFromText(text: string): FormValues | null {
+  const read = readJobDocument(text);
+  if (!read.ok) return null;
+  const fields = read.doc.fields;
+  const kind = JOB_KINDS.find((candidate) => candidate === fields.kind);
+  if (kind === undefined) return null;
+  const values = blankValues(kind);
+  const ready = fields.ready;
+  const choice = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T => (allowed.find((candidate) => candidate === value) ?? fallback);
+  return {
+    ...values,
+    name: asText(fields.name),
+    project: typeof fields.project === "string" && fields.project.trim() !== "" ? fields.project.trim() : null,
+    folder: asText(fields.folder),
+    enabled: typeof fields.enabled === "boolean" ? fields.enabled : true,
+    command: asText(fields.command),
+    start: choice(fields.start, SERVICE_STARTS, "login"),
+    ready: isMapping(ready) && ready.port != null ? "port" : isMapping(ready) && ready.url != null ? "url" : "alive",
+    port: isMapping(ready) ? asText(ready.port) : "",
+    url: isMapping(ready) ? asText(ready.url) : "",
+    lowPriority: typeof fields["low-priority"] === "boolean" ? fields["low-priority"] : values.lowPriority,
+    notify: choice(fields.notify, NOTIFY_VALUES, values.notify),
+  };
+}
+
+/** The form editing the job file at `path` with `text`; `null` when the form cannot show it. */
+export function editForm(path: string, text: string): FormState | null {
+  const values = valuesFromText(text);
+  if (values === null) return null;
+  return { values, touched: [], base: values, text, path, clashes: [], tried: false };
+}
+
+const touch = (touched: readonly FormField[], field: FormField): readonly FormField[] => (touched.includes(field) ? touched : [...touched, field]);
+
+/** The person sets a value. */
+export function setValue<F extends FormField>(state: FormState, field: F, value: FormValues[F]): FormState {
+  return { ...state, values: { ...state.values, [field]: value }, touched: touch(state.touched, field) };
+}
+
+/** The project a folder belongs to: the one whose root holds it, the deepest; `undefined` for none. */
+export function projectOfFolder(folder: string, projects: readonly ProjectRecord[]): ProjectRecord | undefined {
+  const path = folder.trim().replace(/\/+$/, "");
+  let best: ProjectRecord | undefined;
+  for (const project of projects) {
+    if (project.root === "" || !(path === project.root || path.startsWith(`${project.root}/`))) continue;
+    if (best === undefined || project.root.length > best.root.length) best = project;
+  }
+  return best;
+}
+
+/** The person sets the folder: a folder inside a project fills in that project. */
+export function setFolder(state: FormState, folder: string, projects: readonly ProjectRecord[]): FormState {
+  const next = setValue(state, "folder", folder);
+  const project = projectOfFolder(folder, projects);
+  return project === undefined || project.id === next.values.project ? next : setValue(next, "project", project.id);
+}
+
+/** The person picks another kind: what they set stays; the defaults they left alone become the new kind's. */
+export function switchKind(state: FormState, kind: JobKind): FormState {
+  if (state.values.kind === kind) return state;
+  const values: FormValues = { ...state.values, kind };
+  const defaults = kindDefaults(kind);
+  for (const field of KIND_DEFAULT_FIELDS) if (!state.touched.includes(field)) Object.assign(values, { [field]: defaults[field] });
+  return { ...state, values, touched: touch(state.touched, "kind") };
+}
+
+/** The file changed on disk: the fields the person left alone follow it; the ones they set stay, and
+ *  those the file changed too are clashes. A text the form cannot read keeps the values. */
+export function followText(state: FormState, text: string): FormState {
+  const read = valuesFromText(text);
+  if (read === null) return { ...state, text };
+  const values = { ...state.values };
+  const clashes = [...state.clashes];
+  for (const field of Object.keys(read) as FormField[]) {
+    if (!state.touched.includes(field)) Object.assign(values, { [field]: read[field] });
+    else if (read[field] !== state.base[field] && !clashes.includes(field)) clashes.push(field);
+  }
+  return { ...state, values, base: read, text, clashes };
+}
+
+function sameInput(a: FieldInput | undefined, b: FieldInput | undefined): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** The field changes an edit writes: every file field whose value differs from the file as read,
+ *  in the order fields are written; `undefined` removes one. */
+export function fieldChanges(state: FormState): FieldChanges {
+  const kind = formKind(state.values.kind);
+  if (kind === null) return {};
+  const now = kind.fields(state.values);
+  const was = (formKind(state.base.kind) ?? kind).fields(state.base);
+  const keys = [...FIELD_ORDER, ...Object.keys({ ...was, ...now }).filter((key) => !(FIELD_ORDER as readonly string[]).includes(key))];
+  const changes: Record<string, FieldInput | undefined> = {};
+  for (const key of keys) if ((key in now || key in was) && !sameInput(now[key], was[key])) changes[key] = now[key];
+  return changes;
+}
+
+/** A new job's fields: the ones its kind writes. */
+function newFields(values: FormValues): Record<string, FieldInput> {
+  const fields = formKind(values.kind)?.fields(values) ?? {};
+  return Object.fromEntries(Object.entries(fields).filter((entry): entry is [string, FieldInput] => entry[1] !== undefined));
+}
+
+/** The sub-folder of the jobs folder a project's jobs sit in; `null` for the Workspace. A project
+ *  Pomade does not list keeps `fallback`. */
+function subFolderOf(project: string | null, projects: readonly ProjectRecord[], fallback: string | null): string | null {
+  if (project === null) return null;
+  const record = projects.find((candidate) => candidate.id === project);
+  return record === undefined ? fallback : projectJobsFolder(record);
+}
+
+/** The sub-folder a job file sits in (`Apps/pomade-runner/jobs/<sub>/x.md`); `null` at the top. */
+function subFolderOfPath(path: string): string | null {
+  const parts = path.slice(JOBS_FOLDER.length + 1).split("/");
+  return parts.length > 1 ? (parts[0] ?? null) : null;
+}
+
+/** The file the form would write: its path, its whole text, and the path it leaves when the project
+ *  moves it to another sub-folder. */
+export interface WouldBe {
+  path: string;
+  text: string;
+  /** The file's path now, when the save moves it; `null` otherwise. */
+  movesFrom: string | null;
+}
+
+export function wouldBe(state: FormState, snapshot: JobsSnapshot, projects: readonly ProjectRecord[]): WouldBe {
+  if (state.path === null || state.text === null) {
+    const taken = new Set(snapshot.jobs.map((entry) => (entry.valid ? entry.job.path : entry.invalid.path)));
+    let path = "";
+    for (const candidate of jobFileCandidates(subFolderOf(state.values.project, projects, null), state.values.name)) {
+      if (!taken.has(candidate)) {
+        path = candidate;
+        break;
+      }
+    }
+    return { path, text: newJobText(newFields(state.values), ""), movesFrom: null };
+  }
+  const written = setJobFields(state.text, fieldChanges(state));
+  const text = written.ok ? written.text : state.text;
+  if (state.values.project === state.base.project) return { path: state.path, text, movesFrom: null };
+  const sub = subFolderOf(state.values.project, projects, subFolderOfPath(state.path));
+  const path = `${JOBS_FOLDER}/${sub === null ? "" : `${sub}/`}${baseName(state.path)}`;
+  return { path, text, movesFrom: path === state.path ? null : state.path };
+}
+
+/** The validator's errors of the file the form would write. */
+export function formErrors(state: FormState, snapshot: JobsSnapshot, projects: readonly ProjectRecord[] | null): JobError[] {
+  const file = wouldBe(state, snapshot, projects ?? []);
+  return checkJobAmong({ path: file.path.slice(JOBS_FOLDER.length + 1), text: file.text }, snapshot, { projects, replaces: file.movesFrom ?? undefined });
+}
+
+/** Where an error shows: on a form field, or — about something the form has no field for — on the file. */
+export type ErrorPlace = FormField | "file";
+
+export function errorPlace(error: JobError, kind: JobKind): ErrorPlace {
+  const top = error.field.split(/[.[]/)[0] ?? "";
+  return formKind(kind)?.errorFields[top] ?? "file";
+}
+
+/** Errors by where they show, each in the validator's order. */
+export function errorsByPlace(errors: readonly JobError[], kind: JobKind): Map<ErrorPlace, JobError[]> {
+  const places = new Map<ErrorPlace, JobError[]>();
+  for (const error of errors) {
+    const place = errorPlace(error, kind);
+    places.set(place, [...(places.get(place) ?? []), error]);
+  }
+  return places;
+}
+
+function filled(values: FormValues, field: FormField): boolean {
+  if (field === "ready") return values.ready === "alive" || (values.ready === "port" ? values.port : values.url).trim() !== "";
+  const value = values[field];
+  return typeof value !== "string" || value.trim() !== "";
+}
+
+/**
+ * Whether a place's errors show now. Editing a job, always: the file on disk has them. A new job's
+ * show once Save was pressed, or on a field the person filled in — an empty field is not an error
+ * before they try to save.
+ */
+export function errorShows(state: FormState, place: ErrorPlace): boolean {
+  if (state.path !== null || state.tried) return true;
+  return place !== "file" && state.touched.includes(place) && filled(state.values, place);
+}
+
+/** Whether the errors keep Save from writing: a new job's all do; an edit's, those on the form's
+ *  fields — a problem the form has no field for is the file's, and stays as it is. */
+export function blocksSave(state: FormState, place: ErrorPlace): boolean {
+  return state.path === null || place !== "file";
+}
+
+/** Whether the person changed anything the file would get. */
+export function hasChanges(state: FormState): boolean {
+  return state.path === null || Object.keys(fieldChanges(state)).length > 0;
+}
+
+/** Whether the policies are other than the kind's defaults. */
+export function customised(values: FormValues): boolean {
+  const defaults = kindDefaults(values.kind);
+  return KIND_DEFAULT_FIELDS.some((field) => values[field] !== defaults[field]);
+}
+
+/** The project and folder choices Pomade gives, as the checks need them. */
+export function projectRecords(projects: readonly { id: string; name: string; root: string }[]): ProjectRecord[] {
+  return projects.map(({ id, name, root }) => ({ id, name, root }));
+}

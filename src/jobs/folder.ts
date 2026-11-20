@@ -62,6 +62,12 @@ export async function writeEnabled(workspace: string, path: string, enabled: boo
   if (result.changed) await replaceFile(file, result.text);
 }
 
+/** Remove the job file at `path` (workspace-relative) — a linked one's link, never what it points
+ *  to; one already gone is removed. */
+export async function removeJobFile(workspace: string, path: string): Promise<void> {
+  await rm(join(workspace, path), { force: true });
+}
+
 /** Replace a file whole — a link's target, for a linked one — through a hidden file beside it,
  *  which the job loader never reads as a job; its folder is made when missing. */
 export async function replaceFile(path: string, text: string): Promise<void> {

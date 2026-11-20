@@ -2,6 +2,7 @@ import { createContext, Fragment, useContext, useId, useRef, type ReactNode } fr
 import { createPortal } from "react-dom";
 
 import { Button } from "./Button";
+import { FieldError } from "./Field";
 import styles from "./Dialog.module.css";
 import { Icon } from "./Icon";
 import { IconButton } from "./IconButton";
@@ -137,12 +138,15 @@ export function DialogFoot({ children, end }: { children?: ReactNode | undefined
 }
 
 /** A yes-or-no question before something that cannot be undone: the title, what happens, Cancel and
- *  the confirming action — red for a destructive one. Cancel has the first focus. */
+ *  the confirming action — red for a destructive one. Cancel has the first focus. While `busy` the
+ *  action is under way: the confirming button says `busy` and waits; `error` says why it failed. */
 export function ConfirmDialog({
   title,
   children,
   confirm,
   danger = false,
+  busy,
+  error,
   onConfirm,
   onCancel,
   testId,
@@ -152,6 +156,9 @@ export function ConfirmDialog({
   /** The confirming button's words: what it does ("Delete job"). */
   confirm: string;
   danger?: boolean | undefined;
+  /** The confirming button's words while the action runs ("Deleting…"); absent when it does not. */
+  busy?: string | undefined;
+  error?: ReactNode | undefined;
   onConfirm: () => void;
   onCancel: () => void;
   testId?: string | undefined;
@@ -160,15 +167,18 @@ export function ConfirmDialog({
   return (
     <Dialog narrow onClose={onCancel} testId={testId} initialFocus={cancel}>
       <DialogHead title={title} onClose={onCancel} />
-      <DialogBody>{children}</DialogBody>
+      <DialogBody>
+        {children}
+        {error !== undefined && error !== null && <FieldError>{error}</FieldError>}
+      </DialogBody>
       <DialogFoot
         end={
           <>
             <Button ref={cancel} onClick={onCancel}>
               Cancel
             </Button>
-            <Button variant={danger ? "danger" : "primary"} onClick={onConfirm}>
-              {confirm}
+            <Button variant={danger ? "danger" : "primary"} onClick={onConfirm} disabled={busy !== undefined}>
+              {busy ?? confirm}
             </Button>
           </>
         }

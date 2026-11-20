@@ -65,7 +65,8 @@
     "jobs.resume",
     "settings.get",
     "settings.set",
-    "jobs.forRepo"
+    "jobs.forRepo",
+    "jobs.delete"
   ],
   "commands": [
     {

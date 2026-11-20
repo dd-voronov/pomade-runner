@@ -700,8 +700,9 @@ to it, light theme only.
 `jobs/<encoded job id>` Jobs at one job, its row marked and scrolled to (what a repo row's Scheduled
 line opens) · `history` · `services` · `settings` · `run/<encoded job id>/<run id>` a run's result
 card, a dialog over History (what a run's notice opens; a missed run's card offers Run now · Run at…
-· Skip, a running run's Stop) · `output/<encoded job id>/<run id>` its full output. An unknown route
-is Jobs. The tab follows Pomade's `route.changed`.
+· Skip, a running run's Stop) · `output/<encoded job id>/<run id>` its full output · `new` the job form for a new job (what
+**New job** opens; `newRoute`) · `edit/<encoded job id>` the job form editing a job (`editRoute`).
+An unknown route is Jobs. The tab follows Pomade's `route.changed`.
 
 **Frames and the design system.** Runner draws only inside the two frames Pomade hosts; Pomade's
 chrome around them (the panel's header with its title and collapse, the tab bar) is Pomade's.
@@ -722,11 +723,51 @@ chrome around them (the panel's header with its title and collapse, the tab bar)
 - **Tooltips:** one per surface (`TooltipLayer`): any element with `data-tip` (a plain line) or
   `data-help` (a key of `src/ui/help.ts`) shows it on hover and on keyboard focus.
 
-**Job form.** Creating and editing a job happens in a form, never by hand-editing md. Order: kind
-→ trigger → folder and project (agent: agent → folder → mode) → policies.
+**Job form** (`src/ui/form/`). Creating and editing a job happens in a form, never by hand-editing
+md. A full page in the Runner tab: its head (back to Jobs, "Jobs / <name>", **Enabled**, and —
+editing — **Open file** and **Delete**), the sections, and the Save bar ("Saves to <path>",
+**Cancel**, **Create and start** for a service / **Create job** / **Save**, **Saved** while nothing
+changed). Order: kind → trigger → folder and project (agent: agent → folder → mode) → policies; the
+policies show as one sentence, non-defaults in bold, until **Change**.
+- **State** (`state.ts`, pure): the values the form shows, the fields the person set (`touched`),
+  and the file as last read (`base`). Switching kind keeps what the person set and resets the
+  kind-dependent defaults they left alone (low priority, notify). A folder inside a project fills
+  in that project.
+- **Kinds**: a kind the form builds is registered in `FORM_KINDS` (`state.ts`: the file's fields
+  from the values, and which form field each file field's errors belong to) and in `KIND_UI`
+  (`kinds.tsx`: its sections between Kind and Policies, its policy rows, its Create button). The
+  picker shows every kind; the ones not registered are shown faded, with their help, and cannot be
+  chosen. A job of such a kind opens a page saying so, with **Open file**.
+- **The file it writes.** A new job: its kind's fields, defaults left out (`enabled` always
+  written), in the project's sub-folder (`projectJobsFolder`) or at the top for the Workspace,
+  under the first free slug of its name (`createJobFile`). An edit writes only the fields whose
+  value differs from the file as last read (`fieldChanges` → `updateJobFile`), so comments,
+  unknown fields and the body stay; a field the file lacked is added at the end of its block. A
+  new name keeps the file name (the id stays). A new project moves the file to that project's
+  sub-folder under the same file name (`files.move`), after writing the fields.
+- **Validation.** The text the form would write is checked by the one validator, among the other
+  jobs (`checkJobAmong`, `src/jobs/check.ts`): the file on its own, names and chains against the
+  snapshot, project ids against Pomade's projects. Each error shows on its field in
+  `describeJobError`'s words — `pomade-runner check`'s — the field in bold; one the form has no
+  field for shows in a note at the top with its line. A new job's errors show once Save was
+  pressed, or at once on a field the person filled in; an edit's, at once. Save with errors shows
+  "N things to fix before saving" and focuses the first field in error. A new job's errors all
+  block Save; an edit's block it only on the form's fields — the file's own other problems stay
+  as they are.
+- **Following the file.** Editing, the form follows its file on disk (`followJobFile`): a field
+  the person left alone takes the file's value; one they set keeps their edit, and when the file
+  changed it too a note says so — Save writes theirs. The file gone: the form says so and Save is
+  off.
 
 **Deleting a job.** Delete is on a job's row in the Jobs view and in the form, next to Open file.
-A confirm names the file; a running service is stopped first, then the file is removed.
+A confirm names the file; on it the scheduler's `jobs.delete` (`src/scheduler/delete.ts`):
+- a running service is stopped first, as Stop does, and its session's end waited for (up to
+  `STOP_WAIT_MS`, 8 s); one that does not end keeps its file, and the confirm says why;
+- a run of the job that is going refuses the delete — stop it first — so a run is never cut off
+  and its result never lost; queued runs and missed runs waiting for you settle as "its job file
+  is gone";
+- then the file is removed — a linked one's link, never its target — and the jobs are read again.
+  The service's supervision record goes with the file, after its 2 s grace.
 
 **Help.** Every non-obvious field, policy and status carries an (i) tooltip with a one-line
 example. This is a product requirement, not polish. Every text is in `src/ui/help.ts`, keyed
@@ -781,7 +822,9 @@ cards); `Help` shows one by its key.
     "run-now" | "run-at" | "skip", at? }` → `MissedChoiceResult` (when it runs, or why not) ·
     **`runs.stop`** `{ job, run }` → `RunStopResult` · **`switch.set`** `{ position }` →
     `SwitchState` · **`jobs.resume`** `{ job }` → `ResumeResult`: the loop guard's pause lifted, or
-    why not.
+    why not. · **`jobs.delete`** `{ job }` → `DeleteResult` (`isDeleteResult`): the job
+    deleted as "Deleting a job" says — its id, its file's path, and whether its service was stopped
+    first — or why not; callers give it `DELETE_JOB_TIMEOUT_MS`.
 - **Settings**, through the broker: **`settings.get`** → `SettingsReport` (`isSettingsReport`);
   from Runner's own frames only **`settings.set`** `{ field, value }` → `SettingsWriteResult`;
   **`settings.changed`** tells Runner's frames to ask again.

@@ -18,5 +18,7 @@ declare global {
     setSettings(text: string | null): void;
     /** The actions the UI asked of the stand-in scheduler, in order. */
     runnerCalls: { method: string; params: JsonValue }[];
+    /** While set, the stand-in scheduler refuses Delete with this reason. */
+    refuseDelete: string | null;
   }
 }

@@ -27,12 +27,12 @@ import {
 } from "../integrations/runner-api";
 import { formatJobError } from "../jobs/format";
 import { gitResultPath } from "../locations";
-import { writeEnabled } from "../jobs/folder";
+import { removeJobFile, writeEnabled } from "../jobs/folder";
 import { createJobsLoader } from "../jobs/loader";
 import { entryId, entryPath, type JobsSnapshot } from "../jobs/model";
 import { jobTriggerWords } from "../jobs/words";
 import { KIND_DEFAULTS } from "../jobs/parse";
-import { sessionOwner } from "../keeper/ids";
+import { sessionIdOf, sessionOwner } from "../keeper/ids";
 import { exitWords, type ServiceActionResult, type ServiceStatus } from "../keeper/model";
 import type { NetworkReadiness } from "../keeper/readiness";
 import { jobIdOf, RESTART_ACTION } from "../keeper/services";
@@ -41,9 +41,10 @@ import { createSupervisor, type SupervisionStore } from "../keeper/supervisor";
 import type { Clock } from "./clock";
 import type { JobEnabled, PomadeLinkState, RunStarted, SchedulerStatus } from "./control/protocol";
 import { ControlRefused, serveControl } from "./control/server";
+import { deleteJob } from "./delete";
 import { createHistory, readOutput } from "./history";
 import type { Log } from "./log";
-import type { ActiveRun, EnableResult, JobListing, RunActionResult, RunRecord, RunsReport } from "./model";
+import type { ActiveRun, DeleteResult, EnableResult, JobListing, RunActionResult, RunRecord, RunsReport } from "./model";
 import { createNeedsYou, fileNeedsYouStore } from "./needs-you";
 import { projectsMemory } from "./projects";
 import { repoJobs } from "./git-runs";
@@ -231,6 +232,24 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     return { ok: true, job: entryId(entry), enabled };
   };
 
+  /** Delete: a running service stopped first, then the file removed; refused while a run goes. */
+  const removeJob = (ref: string): Promise<DeleteResult> =>
+    deleteJob(ref, {
+      jobs: jobs.snapshot,
+      active: runs.active,
+      serviceRunning: (job) => {
+        const id = sessionIdOf({ kind: "service", job });
+        return sessions.list().some((session) => session.id === id && session.info.state === "running");
+      },
+      stopService: (job) => supervisor.stop(job),
+      refreshSessions: () => sessions.refresh(),
+      removeFile: removeJobFile,
+      refreshJobs: () => jobs.refresh(),
+      log,
+      now: () => performance.now(),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    });
+
   /** Every job as `pomade-runner list` shows it. */
   const listings = (): JobListing[] => {
     const snapshot = jobs.snapshot();
@@ -336,6 +355,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         resume: runs.resume,
         settings: settings.report,
         setSetting: settings.write,
+        deleteJob: removeJob,
         ready: () => showBadge(needsYou.items().length),
         log,
       });
