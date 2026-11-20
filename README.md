@@ -5,7 +5,7 @@ scripts, git operations and unattended agent runs on schedules, hooks and chains
 
 It is one piece of the Pomade family. The platform and its rules live in the sibling repo `Pomade`
 (`docs/PLATFORM.md`); the shared library is `pomade-kit`. The design is `docs/DESIGN.md`, the
-backlog `docs/BACKLOG.md`.
+plan `docs/PLAN.md`.
 
 ## What is in the box
 
@@ -111,7 +111,7 @@ After it:
   find the command once Pomade's command folder is on `PATH` (Pomade ▸ Settings ▸ General ▸
   Commands).
 
-`./install --stable` installs into the stable Pomade. That happens only on Daniil's explicit word.
+`./install --stable` installs into the stable Pomade. That happens only on the Owner's explicit word.
 
 To remove Runner: `./uninstall` — it removes the skill links, then the app
 (`pomade apps remove pomade-runner`). `./uninstall --stable` is for the stable Pomade.

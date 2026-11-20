@@ -1,11 +1,18 @@
+---
+doc: docs/DESIGN.md
+audience: engineers, product; every worker on a Runner ticket
+holds: the living design of Runner — its parts, jobs and job files, triggers, runs, missed runs and load, settings, notifications, UI, data, interfaces and stack
+kind: reference
+---
+
 # Runner — design
 
-`pomade-runner` ("Runner" in the UI) is the Pomade app that runs things without Daniil. It runs:
+`pomade-runner` ("Runner" in the UI) is the Pomade app that runs things without the Owner. It runs:
 - **always-on services** that outlive Pomade;
 - **scripts, git operations and unattended agent runs**, on schedules, hooks and chains.
 
 It keeps runs going when the Mac sleeps or Pomade is closed, and keeps the Mac responsive while
-they run. Every result reaches Daniil as a notification and a result card. It is a
+they run. Every result reaches the Owner as a notification and a result card. It is a
 workspace-level app: one list of every job, filterable to the current project.
 
 - **Reasoning and history:** the G3 grill outcome
@@ -72,7 +79,7 @@ The costs are YAML's ambiguous values, answered by reading YAML 1.2 core (see "F
 and nested fields (`git`, `hook`, `schedule`) that are plainer in JSON; Runner's own validation
 stands in for an editor-side JSON Schema.
 
-**Readers and writers.** The file is the agents' interface. Daniil edits through the form, which
+**Readers and writers.** The file is the agents' interface. The Owner edits through the form, which
 writes field-only changes, so comments and the body survive. The file on disk is the truth:
 - an edit by hand or by an agent applies within a second;
 - an invalid file is shown with its error and never runs.
@@ -131,7 +138,7 @@ Notes for humans and agents.
 **Validation.** `pomade-runner check`, the scheduler and the form share one validator
 (`src/jobs/check.ts`). Every error names:
 - the file, field (a path for nested ones: `schedule.weekly.days[1]`) and line;
-- the fix, worded so an agent or Daniil can act on it without the docs — a misspelled field or
+- the fix, worded so an agent or the Owner can act on it without the docs — a misspelled field or
   value gets the closest correct one.
 
 Errors are one line each: `path:line: field — problem. Fix: …`. Every problem of a file is
@@ -274,7 +281,7 @@ you`. A run that never started is `skipped` or `missed`, with a reason ("missed 
 
 **Execution:**
 - Every run and every service is a keeper session, in the job's folder — a git run's in the
-  workspace root — in the user's login-shell environment (same PATH and keys as Daniil's
+  workspace root — in the user's login-shell environment (same PATH and keys as the Owner's
   terminals).
 - Low-priority runs start with macOS background priority (`taskpolicy -b`).
 
