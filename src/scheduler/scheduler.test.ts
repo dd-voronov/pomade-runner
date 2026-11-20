@@ -133,6 +133,11 @@ function stubSessions(): StubSessions {
       held.delete(id);
       return Promise.resolve();
     },
+    setActions(id, actions) {
+      const known = held.get(id);
+      if (known !== undefined) held.set(id, { ...known, info: { ...known.info, actions } });
+      return Promise.resolve();
+    },
     onExit(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -549,6 +554,24 @@ describe("scheduler and the job files", () => {
     fake.emitEvent("attachedTab.action", { session: { app: "pomade-runner", session: "svc:web" }, action: "restart", projectId: "__workspace__" });
     await vi.waitFor(() => expect(sessions.restarted).toHaveLength(1));
     expect(sessions.restarted[0]).toEqual({ job: "web", command: { title: "Web", command: "./web.sh", cwd: workspace, background: false, actions: [{ id: "restart", title: "Restart" }] } });
+  });
+
+  it("starts a service when Start is clicked on its attached tab", async () => {
+    const jobs = join(dir, "ws/Apps/pomade-runner/jobs");
+    // Started on its project's first open: nothing but Start runs it here.
+    await mkdir(join(jobs, "alpha"));
+    await writeFile(join(jobs, "alpha/web.md"), "---\nkind: service\nname: Web\nproject: alpha\nfolder: .\ncommand: ./web.sh\nstart: project-first-open\n---\n");
+    const fake = createFakeHost({ manifest, projects: [{ id: "alpha", name: "Alpha", root: "Projects/alpha" }] });
+    const heard: unknown[] = [];
+    await (await frame(fake)).events.subscribe(`pomade-runner:${JOBS_CHANGED_EVENT}`, (payload) => heard.push(payload));
+    await start();
+    link?.connected(await frame(fake, "backend"));
+    await vi.waitFor(() => expect(heard.length).toBeGreaterThan(0));
+    expect(sessions.spawned).toHaveLength(0);
+
+    fake.emitEvent("attachedTab.action", { session: { app: "pomade-runner", session: "svc:alpha.web" }, action: "start", projectId: "alpha" });
+    await vi.waitFor(() => expect(sessions.spawned).toHaveLength(1));
+    expect(sessions.spawned[0]?.job).toBe("alpha/web");
   });
 });
 

@@ -82,6 +82,8 @@ export interface Sessions {
   restartService(job: string, command: SessionCommand): Promise<RunnerSession>;
   /** Drop an ended session from the keeper and from Runner's records. */
   forget(id: string): Promise<void>;
+  /** Set a session's header actions; its attached tabs show them at once. */
+  setActions(id: string, actions: SessionAction[]): Promise<void>;
   /** Called once for each session's end. */
   onExit(listener: (session: RunnerSession) => void): () => void;
   /** Close the connection, once the records are written; the keeper and its sessions keep running. */
@@ -418,6 +420,12 @@ export function createSessions(options: SessionsOptions): Sessions {
       (await loadRecords()).delete(id);
       view.delete(id);
       saveRecords();
+    },
+
+    async setActions(id, actions) {
+      const info = await connected().update(id, { actions });
+      const known = view.get(id);
+      if (known !== undefined) view.set(id, { ...known, info });
     },
 
     onExit(listener) {

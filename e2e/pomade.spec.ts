@@ -316,6 +316,68 @@ test.describe("Runner in Pomade", () => {
     }
   });
 
+  test("a stopped service's tab keeps its last output with Start; Start and Stop from its header; a Running now row opens its tab, and closing it leaves the service running", async () => {
+    const running = scheduler ?? (await startTheScheduler());
+    const runner = await connectAsRunner();
+    const services = async (): Promise<string> => (await command("services")).stdout;
+    try {
+      // Stopped by you in the test before: its tab shows its last output, and Start.
+      const id = await openTab(runner, "svc:ticker");
+      const pane = page.getByTestId(`attached-${id}`);
+      await expect(page.getByTestId(`attached-status-${id}`)).toHaveText("Stopped by you");
+      await expect.poll(() => buffer(id)).toContain("tick");
+      await expect(pane.getByTestId("attached-action-start")).toHaveText("Start");
+      await expect(pane.getByTestId("attached-action-restart")).toHaveCount(0);
+      await expect(pane.getByTestId("attached-stop")).toHaveCount(0);
+      await shoot(page, "pomade-attached-stopped");
+
+      await pane.getByTestId("attached-action-start").click();
+      await expect.poll(() => running.output()).toContain("session svc:ticker: Start from its tab\n");
+      await expect(page.getByTestId(`attached-status-${id}`)).toHaveText("Running");
+      pids.push((await sessionInfo(schedulerSocket(), "svc:ticker"))?.pid ?? 0);
+      await expect(pane.getByTestId("attached-action-restart")).toBeVisible();
+      await expect(pane.getByTestId("attached-stop")).toBeVisible();
+      await expect(pane.getByTestId("attached-action-start")).toHaveCount(0);
+      await page.getByTestId(`close-${id}`).click();
+      await expect.poll(() => attachedTabIds()).toHaveLength(0);
+
+      // Running now's row opens the service's tab; closing it leaves the service running.
+      // The Notices panel is open since the failing script's test: the Runner icon brings Runner's back.
+      await page.getByTestId(`strip-${STRIP_KEY}`).click();
+      await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
+      const row = panel().getByTestId("running-service").filter({ hasText: "Ticker" });
+      await expect(row).toContainText("workspace · ws");
+      // A panel frame just shown again may still be re-handshaking with Pomade, which drops a call
+      // made across the handshake unanswered: click again until the tab opens.
+      await expect(async () => {
+        await row.click();
+        expect(await attachedTabIds()).toHaveLength(1);
+      }).toPass({ intervals: [500, 1000] });
+      const [fromRow = ""] = await attachedTabIds();
+      await expect(page.getByTestId(`tab-title-${fromRow}`)).toHaveText("Ticker · Runner");
+      await expect(page.getByTestId(`attached-status-${fromRow}`)).toHaveText("Running");
+      await shoot(page, "pomade-running-now-tab");
+      await page.getByTestId(`close-${fromRow}`).click();
+      await expect.poll(() => attachedTabIds()).toHaveLength(0);
+      expect(await sessionInfo(schedulerSocket(), "svc:ticker")).toMatchObject({ state: "running" });
+      await expect.poll(services).toMatch(/\nticker {2}Ticker {2}(starting|running)/);
+
+      // Stop from the header stops it as stopped by you; Start comes back.
+      await row.click();
+      await expect.poll(() => attachedTabIds()).toHaveLength(1);
+      const [again = ""] = await attachedTabIds();
+      await page.getByTestId(`attached-${again}`).getByTestId("attached-stop").click();
+      await expect(page.getByTestId(`attached-status-${again}`)).toHaveText("Stopped by you");
+      await expect.poll(() => running.output()).toContain("session svc:ticker: ended: stopped-by-you");
+      await expect.poll(services).toContain("ticker  Ticker  stopped by you\n");
+      await expect(page.getByTestId(`attached-${again}`).getByTestId("attached-action-start")).toBeVisible();
+      await expect(row).toHaveCount(0);
+      await page.getByTestId(`close-${again}`).click();
+    } finally {
+      runner.close();
+    }
+  });
+
   test("the scheduler and the services' sessions outlive Pomade; a restarted scheduler lists them with their jobs", async () => {
     const running = scheduler ?? (await startTheScheduler());
     await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/stay.md"), `---\nkind: service\nname: Stay\nfolder: .\ncommand: ${JSON.stringify(TICKER)}\n---\n`);

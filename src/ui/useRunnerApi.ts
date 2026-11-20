@@ -7,7 +7,7 @@
 // And Runner's own tab route, which Pomade sets when it opens or navigates the tab.
 
 import { useEffect, useState } from "react";
-import type { GitRepoState, JsonValue } from "pomade-kit/protocol";
+import type { GitRepoState, JsonValue, ProjectRef } from "pomade-kit/protocol";
 import { HostError, type HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
@@ -155,4 +155,27 @@ export function useRoute(host: HostClient): [string, (route: string) => void] {
   const [route, setRoute] = useState(host.welcome.route);
   useEffect(() => host.onRouteChange(setRoute), [host]);
   return [route, setRoute];
+}
+
+/** The project Pomade has open — the Workspace scope for none — followed as it changes; `null` until
+ *  Pomade answers. */
+export function useActiveProject(host: HostClient): ProjectRef | null {
+  const [project, setProject] = useState<ProjectRef | null>(null);
+  useEffect(() => {
+    let live = true;
+    const off = host.project.onChange((next) => {
+      if (live) setProject(next);
+    });
+    host.project.getActive().then(
+      (active) => {
+        if (live) setProject((known) => known ?? active);
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+      off();
+    };
+  }, [host]);
+  return project;
 }

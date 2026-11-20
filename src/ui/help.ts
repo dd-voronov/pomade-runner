@@ -23,6 +23,8 @@ export const HELP = {
   'st.missed': ['The Mac was asleep or off at the scheduled time. What happens next is the job\'s "If a run is missed" policy.', 'Example: missed · skipped — past "still worth it until 12:00".'],
   'st.paused': ['Runner paused this job: it was triggered more than 10 times in 10 minutes by hooks or chains.', 'Example: a hook whose script triggers the same hook.'],
   'st.disabled': ['The job is kept but never runs until you enable it.', 'Example: a seasonal script.'],
+  'st.svcqueued': ['Waiting its turn: services start one at a time, the next once the one before it is up.', 'Example: Graph viewer starts once Coda web answers on its port.'],
+  'st.svcwaiting': ['It starts the first time you open its project after Pomade starts. Start runs it now.', 'Example: Docs preview — on first open of Pomade.'],
   'tr.scheduled': ['Started by the job\'s schedule, on time.', 'Example: the 13:00 commit at 13:00.'],
   'tr.caught up': ['A missed run that ran after wake, once, however many were missed.', 'Example: the 7:00 summary at 8:32, after you opened the Mac at 8:30.'],
   'tr.manual': ['Started by you with Run now, or by `pomade-runner run <job>`.', 'Example: Run now on Wiki lint.'],

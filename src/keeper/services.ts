@@ -1,4 +1,4 @@
-// A service job as a keeper session: what it runs, its Restart header action, and finding a
+// A service job as a keeper session: what it runs, its header actions, and finding a
 // service by what a person or a command calls it. Supervision (`supervisor.ts`) builds on these.
 
 import { join } from "node:path";
@@ -8,8 +8,10 @@ import type { SessionAction } from "pomade-kit/protocol";
 import { entryId, type JobsSnapshot, type ServiceJob } from "../jobs/model";
 import type { SessionCommand } from "./sessions";
 
-/** The header action every service's attached tab carries; a click arrives as `attachedTab.action`. */
+/** The header actions of a service's attached tab — a click arrives as `attachedTab.action`:
+ *  Restart while its session runs (Pomade adds Stop beside it), Start once it ended. */
 export const RESTART_ACTION: SessionAction = { id: "restart", title: "Restart" };
+export const START_ACTION: SessionAction = { id: "start", title: "Start" };
 
 /** What a service's session runs: its command in its folder, titled with its name. */
 export function serviceCommand(job: ServiceJob, workspace: string): SessionCommand {

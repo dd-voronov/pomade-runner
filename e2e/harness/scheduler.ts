@@ -4,7 +4,7 @@
 // announces `jobs.changed`, `services.changed`, `runs.changed` and `settings.changed`, as the real
 // scheduler does through Pomade. It reads the fake workspace's jobs folder through the Host API and
 // checks it with the real validator, so the UI specs drive it by writing files
-// (`fakeHost.writeFile`). Every valid service runs; a spec sets another state with
+// (`fakeHost.writeFile`). Every valid service runs; Restart is refused; a spec sets another state with
 // `window.setServiceStatus`, the runs with `window.setRuns`, the settings with
 // `window.setSettings`, and reads the actions the UI asked for in `window.runnerCalls`. Delete
 // removes the job's file — refused with `window.refuseDelete`'s reason while one is set.
@@ -85,6 +85,12 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     const { job, run } = params as { job: string; run: string };
     return [...runs.report.active, ...runs.history].find((view) => view.job === job && view.run === run);
   };
+  /** Start and Stop: the service as it stands (a spec sets what follows with `setServiceStatus`). */
+  const serviceAnswer = (params: JsonValue): unknown => {
+    const { job } = params as { job: string };
+    const service = services(snapshot).services.find((status) => status.job === job);
+    return service === undefined ? { ok: false, reason: `no service "${job}"` } : { ok: true, service };
+  };
   window.runnerCalls = [];
   window.refuseDelete = null;
   await host.api.serve({
@@ -96,7 +102,9 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     [RUN_OUTPUT_METHOD]: () => json({ text: runs.output, truncated: false }),
     [RUN_NOW_METHOD]: action(RUN_NOW_METHOD),
     [SET_ENABLED_METHOD]: action(SET_ENABLED_METHOD),
-    [SERVICE_METHODS.start]: action(SERVICE_METHODS.start),
+    [SERVICE_METHODS.start]: action(SERVICE_METHODS.start, serviceAnswer),
+    [SERVICE_METHODS.stop]: action(SERVICE_METHODS.stop, serviceAnswer),
+    [SERVICE_METHODS.restart]: action(SERVICE_METHODS.restart, () => ({ ok: false, reason: "the keeper is not connected" })),
     [MISSED_METHOD]: action(MISSED_METHOD, () => ({ ok: true, at: null })),
     [RUN_STOP_METHOD]: action(RUN_STOP_METHOD),
     [RESUME_METHOD]: action(RESUME_METHOD, (params) => {

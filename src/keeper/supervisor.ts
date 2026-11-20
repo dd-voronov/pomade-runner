@@ -10,9 +10,17 @@
 //
 // Every action — a tick, Start, Stop, Restart — runs in one lane, one after another. Time comes from
 // the clock and the network checks from `probe`, both given, so every rule is tested without waiting.
+//
+// One timebase: the scheduler's clock. The keeper stamps a session's start and end on the system
+// clock; supervision takes each stamp onto its own clock once, when it first hears of it — its clock's
+// now, less how long ago it was on the system clock — and measures every age, back-off and crash
+// window there. In production both clocks are the system's and a stamp stays as it is; under a test
+// clock, a session started a moment ago is a moment old whatever the real date.
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+
+import type { SessionAction } from "pomade-kit/protocol";
 
 import type { JobsSnapshot, ServiceAction, ServiceJob } from "../jobs/model";
 import { entryId } from "../jobs/model";
@@ -20,7 +28,7 @@ import type { Clock } from "../scheduler/clock";
 import type { Log } from "../scheduler/log";
 import type { ChainActionOutcome, RunnerSession, ServiceActionResult, ServicesReport, ServiceState, ServiceStatus } from "./model";
 import type { NetworkReadiness } from "./readiness";
-import { findService, jobIdOf, serviceCommand } from "./services";
+import { findService, jobIdOf, RESTART_ACTION, serviceCommand, START_ACTION } from "./services";
 import type { Sessions } from "./sessions";
 
 /** A service with the default readiness is up once it has run this long. */
@@ -131,6 +139,8 @@ export interface SupervisorOptions {
   /** The checked jobs now. */
   jobs(): JobsSnapshot;
   clock: Clock;
+  /** The system clock the keeper stamps sessions with (epoch ms); default `Date.now`. */
+  systemNow?: () => number;
   log: Log;
   store: SupervisionStore;
   /** Whether a port or URL check passes now. */
@@ -188,6 +198,8 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
   let current: { job: string; startedAt: number; since: number } | null = null;
   /** The session start (`startedAt`) of each service known to be up. */
   const up = new Map<string, number>();
+  /** Each service's running session: its start as the keeper stamped it, and on the clock. */
+  const starts = new Map<string, { stamp: number; at: number }>();
   /** Services whose network check is under way. */
   const probing = new Set<string>();
   /** Services asked to stop, by the session start asked. */
@@ -200,6 +212,17 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
   let settled = false;
 
   const now = (): number => clock.now().getTime();
+  const systemNow = options.systemNow ?? Date.now;
+  /** A keeper stamp on the clock: now, less how long ago it was on the system clock. */
+  const onClock = (stamp: number): number => now() - Math.max(0, systemNow() - stamp);
+  /** When a session started, on the clock; taken once per session start. */
+  const startOf = (job: string, session: RunnerSession): number => {
+    const known = starts.get(job);
+    if (known?.stamp === session.info.startedAt) return known.at;
+    const at = onClock(session.info.startedAt);
+    starts.set(job, { stamp: session.info.startedAt, at });
+    return at;
+  };
   const save = (): void => store.save(records);
   const recordOf = (job: string): SupervisionRecord => {
     let record = records.get(job);
@@ -316,14 +339,16 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     const { exit } = session.info;
     if (session.kind !== "service" || exit === null) return;
     const { job } = session;
+    const at = onClock(exit.at);
     up.delete(job);
+    starts.delete(job);
     stopping.delete(job);
     if (current?.job === job) current = null;
     switch (exit.reason) {
       case "crashed":
       case "exited": {
         const record = recordOf(job);
-        if (record.hold === null) crashed(job, record, exit.at, exit.reason === "exited" ? "exited on its own" : "crashed");
+        if (record.hold === null) crashed(job, record, at, exit.reason === "exited" ? "exited on its own" : "crashed");
         break;
       }
       case "stopped-by-you": {
@@ -364,6 +389,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     } else {
       if (restart) record.restarts++;
       record.retryAt = null;
+      startOf(entry.job, started);
       current = { job: entry.job, startedAt: started.info.startedAt, since: at };
       log(`service ${entry.job}: ${restart ? `restarted (${record.restarts}×)` : "starting"}`);
     }
@@ -374,13 +400,14 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
   function checkReady(entry: Entry, service: ServiceJob, session: RunnerSession, at: number): void {
     const { startedAt } = session.info;
     if (up.get(entry.job) === startedAt) return;
+    const age = at - startOf(entry.job, session);
     const markUp = (): void => {
       up.set(entry.job, startedAt);
       log(`service ${entry.job}: up`);
     };
     const { ready } = service;
     if (ready.kind === "alive") {
-      if (at - startedAt >= ALIVE_MS) markUp();
+      if (age >= ALIVE_MS) markUp();
       return;
     }
     if (probing.has(entry.job)) return;
@@ -407,6 +434,21 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     }
   }
 
+  /** Keep a session's header actions in step with the service: Restart while it runs; Start once it
+   *  ended, when Start would start it (its file valid and enabled); none otherwise. */
+  async function syncActions(entry: Entry): Promise<void> {
+    const { session } = entry;
+    if (session === null) return;
+    const want = live(session) !== null ? [RESTART_ACTION] : entry.service?.enabled === true ? [START_ACTION] : [];
+    const words = (actions: readonly SessionAction[]): string => actions.map((action) => `${action.id}:${action.title}`).join(" ");
+    if (words(session.info.actions) === words(want)) return;
+    try {
+      await sessions.setActions(session.id, want);
+    } catch (err) {
+      log(`service ${entry.job}: cannot set its tab's actions — ${errorText(err)}`);
+    }
+  }
+
   async function reconcile(): Promise<void> {
     const workspace = options.jobs().workspace;
     if (!sessions.followed() || workspace === null) return;
@@ -417,6 +459,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     for (const entry of list) {
       const { job, session, service } = entry;
       const runs = live(session);
+      if (entry.file !== "gone") await syncActions(entry);
       if (entry.file === "gone") {
         const since = goneSince.get(job) ?? at;
         goneSince.set(job, since);
@@ -441,7 +484,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
       if (runs !== null) {
         checkReady(entry, service, runs, at);
         const record = records.get(job);
-        if (record !== undefined && isUp(entry) && at - runs.info.startedAt >= RESET_UPTIME_MS && (record.restarts > 0 || record.lastCrashAt !== null || record.crashes.length > 0)) {
+        if (record !== undefined && isUp(entry) && at - startOf(job, runs) >= RESET_UPTIME_MS && (record.restarts > 0 || record.lastCrashAt !== null || record.crashes.length > 0)) {
           Object.assign(record, { restarts: 0, lastCrashAt: null, crashes: [] });
           changed = true;
         }
@@ -461,6 +504,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
       if (at - since < REMOVED_GRACE_MS) continue;
       records.delete(job);
       up.delete(job);
+      starts.delete(job);
       changed = true;
     }
     for (const job of goneSince.keys()) if (listed.has(job) || (!records.has(job) && !list.some((entry) => entry.job === job))) goneSince.delete(job);

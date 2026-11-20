@@ -3,7 +3,8 @@
 // side panel of the strip icon, otherwise as a tab, at `?route=<route>` when given;
 // `?hostApi=<n>` makes the host speak another Host API version, so the handshake is refused;
 // `?scheduler=none` leaves out the stand-in scheduler that serves Runner's API; `?projects=prototype`
-// gives it the prototype's projects. The fake host is
+// gives Pomade the prototype's projects and groups, `?projects=<json>` other projects
+// (`[{ id, name, root }]`), and `?active=<id>` the one open. The fake host is
 // on `window.fakeHost` for the specs to read what the app did and to write job files, the mounted
 // frame on `window.mounted` to navigate it.
 
@@ -17,6 +18,7 @@ const query = new URLSearchParams(location.search);
 const app = query.get("app");
 if (!app) throw new Error("harness: missing ?app=<url>");
 const hostApi = query.get("hostApi");
+const projects = query.get("projects");
 
 // `?projects=prototype` gives the host the approved prototype's projects and groups, for the
 // screenshots that compare with it (`scripts/shots.mjs`).
@@ -40,8 +42,8 @@ const PROTOTYPE_PROJECTS = {
 const fakeHost = createFakeHost({
   manifest,
   pomadeVersion: "0.0.0-e2e",
-  ...(query.get("projects") === "prototype" ? PROTOTYPE_PROJECTS : { projects: [{ id: "alpha", name: "Alpha", root: "Projects/alpha" }] }),
-  activeProject: "alpha",
+  ...(projects === "prototype" ? PROTOTYPE_PROJECTS : { projects: projects === null ? [{ id: "alpha", name: "Alpha", root: "Projects/alpha" }] : (JSON.parse(projects) as { id: string; name: string; root: string }[]) }),
+  activeProject: query.get("active") ?? "alpha",
   // The workspace's one repo, as Pomade's git state reads it: the name git jobs name it by.
   git: [{ name: "Knowledge", root: "Knowledge", absPath: "/fake/workspace/Knowledge", remoteUrl: null, branch: "main", upstream: null, ahead: 0, behind: 0, hasCommits: true, changes: [] }],
   ...(hostApi === null ? {} : { hostApi: Number(hostApi) }),

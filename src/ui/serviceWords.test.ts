@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ServiceStatus } from "../keeper/model";
-import { serviceWords } from "./serviceWords";
+import { serviceLook, serviceWords, upWords, whenWords } from "./serviceWords";
 
 const base: ServiceStatus = { job: "web", name: "Web", project: null, state: "running", session: null, restarts: 0, lastCrashAt: null, retryAt: null, needsRestart: false, problem: null };
 
@@ -17,5 +17,80 @@ describe("a service in words", () => {
     expect(serviceWords({ ...base, restarts: 3, lastCrashAt: crash })).toBe("Running · restarted 3× · last crash 14:02");
     expect(serviceWords({ ...base, state: "failed", restarts: 4, lastCrashAt: crash })).toBe("Failed: crashed 5 times in a minute · restarted 4× · last crash 14:02");
     expect(serviceWords({ ...base, needsRestart: true })).toBe("Running · restart to apply its file");
+  });
+});
+
+describe("a service's look in the Services view and Running now", () => {
+  const now = new Date(2026, 10, 17, 12, 48).getTime();
+  const session = (startedAt: number, exitAt: number | null = null): NonNullable<ServiceStatus["session"]> => ({
+    id: "svc:web",
+    job: "web",
+    kind: "service",
+    run: null,
+    log: null,
+    info: {
+      id: "svc:web",
+      title: "Web",
+      command: "./web.sh",
+      cwd: "/ws",
+      pid: exitAt === null ? 7 : null,
+      startedAt,
+      cols: 80,
+      rows: 24,
+      state: exitAt === null ? "running" : "exited",
+      exit: exitAt === null ? null : { code: 0, signal: null, reason: "stopped-by-you", at: exitAt },
+      clients: 0,
+      actions: [],
+    },
+  });
+  const port = { kind: "port", port: 5173 } as const;
+
+  it("running: up for how long, with its crashes on the second line — and in the panel only as news", () => {
+    const up = now - (3 * 24 + 4) * 3_600_000;
+    const crash = new Date(2026, 10, 16, 14, 2).getTime();
+    expect(serviceLook({ ...base, session: session(up), restarts: 3, lastCrashAt: crash }, port, now)).toMatchObject({
+      on: true,
+      tone: "ok",
+      help: "st.up",
+      words: "running · up 3d 4h",
+      sub: "restarted 3× · last crash 14:02",
+      subHelp: "st.restarted",
+      short: "up 3d 4h",
+      news: "restarted 3× · last crash 14:02",
+    });
+    expect(serviceLook({ ...base, session: session(now - 125_000) }, port, now)).toMatchObject({ words: "running · up 2m", sub: "no crashes", subHelp: null, news: null });
+    expect(serviceLook({ ...base, session: session(now - 7_500_000), needsRestart: true }, port, now)).toMatchObject({ sub: "no crashes · restart to apply its file", news: "restart to apply its file" });
+  });
+
+  it("starting: what it waits for, by its readiness", () => {
+    expect(serviceLook({ ...base, state: "starting" }, port, now)).toMatchObject({ on: true, tone: "accent", live: true, help: "st.starting", words: "starting", sub: "waiting for port 5173", news: "waiting for port 5173" });
+    expect(serviceLook({ ...base, state: "starting" }, { kind: "url", url: "http://localhost:4000/health" }, now).sub).toBe("waiting for http://localhost:4000/health");
+    expect(serviceLook({ ...base, state: "starting" }, { kind: "alive" }, now).sub).toBe("up once it has run 5 s");
+  });
+
+  it("failed, stopped by you, and the rest: Start, each with its help and when", () => {
+    const crash = new Date(2026, 10, 17, 11, 20).getTime();
+    expect(serviceLook({ ...base, state: "failed", restarts: 4, lastCrashAt: crash }, port, now)).toMatchObject({ on: false, tone: "danger", help: "st.svcfailed", words: "failed · gave up", sub: "crashed 5× in 1 min · today 11:20" });
+    expect(serviceLook({ ...base, state: "failed", problem: "no folder Projects/x" }, port, now).sub).toBe("no folder Projects/x");
+    const stopped = new Date(2026, 10, 16, 18, 10).getTime();
+    expect(serviceLook({ ...base, state: "stopped-by-you", session: session(stopped - 60_000, stopped) }, port, now)).toMatchObject({ tone: "hollow", help: "st.stopped", words: "stopped by you", sub: "yesterday 18:10" });
+    expect(serviceLook({ ...base, state: "queued" }, port, now)).toMatchObject({ on: false, help: "st.svcqueued", words: "queued" });
+    expect(serviceLook({ ...base, state: "waiting" }, port, now)).toMatchObject({ help: "st.svcwaiting", words: "waiting for its project" });
+    expect(serviceLook({ ...base, state: "disabled" }, port, now)).toMatchObject({ help: "st.disabled", words: "disabled", sub: "" });
+    expect(serviceLook({ ...base, state: "restarting", restarts: 1, lastCrashAt: crash }, port, now)).toMatchObject({ tone: "warning", words: "restarting", sub: "restarted 1× · last crash 11:20" });
+  });
+});
+
+describe("times in words", () => {
+  const now = new Date(2026, 10, 17, 12, 48).getTime();
+  it("a past moment by its day", () => {
+    expect(whenWords(new Date(2026, 10, 17, 9, 2).getTime(), now)).toBe("today 9:02");
+    expect(whenWords(new Date(2026, 10, 16, 18, 10).getTime(), now)).toBe("yesterday 18:10");
+    expect(whenWords(new Date(2026, 10, 13, 6, 58).getTime(), now)).toBe("Fri 6:58");
+    expect(whenWords(new Date(2026, 10, 2, 9, 10).getTime(), now)).toBe("2 Nov 9:10");
+  });
+
+  it("how long, in its two largest units", () => {
+    expect([0, 59_999, 180_000, 3_600_000 * 3 + 120_000, 86_400_000 * 3 + 3_600_000 * 4 + 59_000].map(upWords)).toEqual(["0s", "59s", "3m", "3h 02m", "3d 4h"]);
   });
 });

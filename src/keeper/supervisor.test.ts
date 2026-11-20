@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ExitReason } from "pomade-kit/protocol";
+import type { ExitReason, SessionAction } from "pomade-kit/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { checkJobs } from "../jobs/check";
@@ -104,6 +104,18 @@ class FakeSessions implements Sessions {
     return Promise.resolve();
   }
 
+  setActions(id: string, actions: SessionAction[]): Promise<void> {
+    const session = this.sessions.get(id);
+    if (session === undefined) return Promise.reject(new Error(`no session ${id}`));
+    this.sessions.set(id, { ...session, info: { ...session.info, actions } });
+    return Promise.resolve();
+  }
+
+  /** The header actions a service's session carries now. */
+  actions(job: string): string[] {
+    return this.sessions.get(sessionIdOf({ kind: "service", job }) ?? "")?.info.actions.map((action) => action.id) ?? [];
+  }
+
   onExit(listener: (session: RunnerSession) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -148,6 +160,8 @@ function memoryStore(): SupervisionStore & { saved: Map<string, SupervisionRecor
 
 describe("service supervision", () => {
   let now: number;
+  /** How far the system clock — the keeper's — is ahead of the scheduler's clock. */
+  let skew: number;
   let files: Record<string, string>;
   let snapshot: JobsSnapshot;
   let workspace: string | null;
@@ -171,6 +185,7 @@ describe("service supervision", () => {
       sessions,
       jobs: () => snapshot,
       clock: { now: () => new Date(now) },
+      systemNow: () => now + skew,
       log: (line) => lines.push(line),
       store,
       probe: (ready) => new Promise((resolve) => probes.push({ ready, answer: resolve })),
@@ -203,9 +218,10 @@ describe("service supervision", () => {
 
   beforeEach(async () => {
     now = T0;
+    skew = 0;
     workspace = WS;
     files = {};
-    sessions = new FakeSessions(() => now);
+    sessions = new FakeSessions(() => now + skew);
     store = memoryStore();
     lines = [];
     reports = [];
@@ -551,6 +567,41 @@ describe("service supervision", () => {
     });
   });
 
+  describe("the attached tab's header actions", () => {
+    it("Restart while it runs; Start once it ended — stopped by you, failed, between crashes; Restart again after Start", async () => {
+      files = { "web.md": service("Web") };
+      load();
+      await at(0);
+      expect(sessions.actions("web")).toEqual(["restart"]);
+      sessions.end("web", "stopped-by-you", 130);
+      await at(1000);
+      expect(sessions.actions("web")).toEqual(["start"]);
+      await supervisor.start("web");
+      await at(2000);
+      expect(sessions.actions("web")).toEqual(["restart"]);
+      now = T0 + 3000;
+      sessions.end("web", "crashed");
+      await at(3000);
+      expect(status("web").state).toBe("restarting");
+      expect(sessions.actions("web")).toEqual(["start"]);
+    });
+
+    it("none on an ended session whose service is disabled or invalid: Start would be refused", async () => {
+      files = { "web.md": service("Web"), "api.md": service("Api") };
+      load();
+      await at(0);
+      await at(ALIVE_MS);
+      files = { "web.md": service("Web", "enabled: false\n"), "api.md": "---\nkind: service\nname: Api\n---\n" };
+      load();
+      sessions.end("api", "stopped-by-you", 130);
+      await at(ALIVE_MS + 1000);
+      await at(ALIVE_MS + 5000);
+      expect(states()).toMatchObject({ web: "disabled", api: "invalid" });
+      expect(sessions.actions("web")).toEqual([]);
+      expect(sessions.actions("api")).toEqual([]);
+    });
+  });
+
   describe("Start and Restart", () => {
     beforeEach(async () => {
       files = { "web.md": service("Web"), "off.md": service("Off", "enabled: false\n"), "job.md": "---\nkind: script\nname: Job\nfolder: .\ncommand: ./j.sh\nhook: { event: project-created }\n---\n", "bad.md": "---\nkind: service\n---\n" };
@@ -734,6 +785,51 @@ describe("service supervision", () => {
       await at(7000 + 3 * REMOVED_GRACE_MS);
       expect(status("web").state).toBe("stopped-by-you");
       expect(sessions.forgotten).toEqual([]);
+    });
+  });
+
+  describe("one timebase: the scheduler's clock, whatever the system clock says", () => {
+    for (const [what, days] of [
+      ["the system clock ahead (a test clock set in the past)", 2],
+      ["the system clock behind (a test clock set in the future)", -2],
+    ] as const) {
+      it(`${what}: up after 5 s, a crash restarts after 1 s, 10 minutes up reset the count — on the scheduler's clock`, async () => {
+        skew = days * 86_400_000;
+        files = { "web.md": service("Web") };
+        load();
+        await at(0);
+        await at(ALIVE_MS - 1);
+        expect(status("web").state).toBe("starting");
+        await at(ALIVE_MS);
+        expect(status("web").state).toBe("running");
+
+        now = T0 + 60_000;
+        sessions.end("web", "crashed", 137);
+        await at(60_000);
+        expect(status("web")).toMatchObject({ state: "restarting", lastCrashAt: T0 + 60_000, retryAt: T0 + 61_000 });
+        await at(61_000);
+        expect(sessions.starts("web")).toBe(2);
+        await at(61_000 + ALIVE_MS);
+        expect(status("web")).toMatchObject({ state: "running", restarts: 1 });
+        await at(61_000 + RESET_UPTIME_MS - 1);
+        expect(status("web").restarts).toBe(1);
+        await at(61_000 + RESET_UPTIME_MS);
+        expect(status("web")).toMatchObject({ state: "running", restarts: 0, lastCrashAt: null });
+      });
+    }
+
+    it("a session found running takes its age from the system clock: a restarted scheduler finds it up at once", async () => {
+      skew = 2 * 86_400_000;
+      files = { "web.md": service("Web") };
+      load();
+      await at(0);
+      await at(ALIVE_MS);
+      await supervisor.close();
+      now = T0 + 60_000;
+      await open();
+      await tick();
+      expect(status("web").state).toBe("running");
+      expect(sessions.starts("web")).toBe(1);
     });
   });
 

@@ -76,6 +76,10 @@ export class FakeSessions implements Sessions {
     return Promise.resolve();
   }
 
+  setActions(): Promise<void> {
+    return Promise.reject(new Error("runs only"));
+  }
+
   onExit(): () => void {
     return () => undefined;
   }

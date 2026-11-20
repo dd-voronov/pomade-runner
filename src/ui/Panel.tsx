@@ -1,21 +1,24 @@
 import { useState } from "react";
 import type { HostClient } from "pomade-kit/sdk";
 
-import { ActiveRunsList, goingRuns } from "./ActiveRunsList";
+import { goingRuns } from "./ActiveRunsList";
 import { JobsProblem } from "./JobsProblem";
 import { Button, PanelCard, PanelSection } from "./kit";
 import { NeedsYouList } from "./NeedsYouList";
 import { NextUpList } from "./NextUpList";
 import styles from "./Panel.module.css";
+import { RunningNow, runningServices } from "./RunningNow";
 import { PanelShell } from "./shell/PanelShell";
 import { SwitchControl } from "./SwitchControl";
-import { useJobs, useRuns } from "./useRunnerApi";
+import { useJobs, useRuns, useServices } from "./useRunnerApi";
 
-/** The side panel: the switch pinned on top; Needs you, Running now and Next up, each collapsible;
- *  Open Runner pinned at the bottom. With no jobs yet, it says what a service is. */
+/** The side panel: the switch pinned on top; Needs you, Running now — the services that run and the
+ *  runs going — and Next up, each collapsible; Open Runner pinned at the bottom. With no jobs yet, it
+ *  says what a service is. */
 export function Panel({ host }: { host: HostClient }): React.JSX.Element {
   const jobs = useJobs(host);
   const runs = useRuns(host);
+  const services = useServices(host);
   const [error, setError] = useState<string | null>(null);
 
   const openRunner = (): void => {
@@ -39,7 +42,10 @@ export function Panel({ host }: { host: HostClient }): React.JSX.Element {
   if (jobs.status !== "ready") return <JobsProblem state={jobs} testId="panel-problem" action={open} />;
   const report = runs.status === "ready" ? runs.value : null;
   const top = report === null ? undefined : <SwitchControl host={host} state={report.switch} />;
-  const running = <ActiveRunsList host={host} runs={report?.active ?? []} />;
+  const serviceStates = services.status === "ready" ? services.value.services : [];
+  const active = report?.active ?? [];
+  const running = <RunningNow host={host} services={serviceStates} jobs={jobs.value.jobs} workspace={jobs.value.workspace} runs={active} />;
+  const runningCount = runningServices(serviceStates).length + goingRuns(active).length;
 
   if (jobs.value.jobs.length === 0) {
     return (
@@ -62,7 +68,7 @@ export function Panel({ host }: { host: HostClient }): React.JSX.Element {
       <PanelSection title="Needs you" count={needs.length} urgent={needs.length > 0} testId="section-needs-you">
         <NeedsYouList host={host} items={needs} />
       </PanelSection>
-      <PanelSection title="Running now" count={goingRuns(report?.active ?? []).length} testId="section-running">
+      <PanelSection title="Running now" count={runningCount} testId="section-running">
         {running}
       </PanelSection>
       <PanelSection title="Next up" testId="section-next-up">

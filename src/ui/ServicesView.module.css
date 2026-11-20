@@ -11,6 +11,56 @@
   font-size: var(--fs-sm);
 }
 
+.helped {
+  cursor: help;
+}
+
+/* Start, or Restart · Stop, then a gap, then the terminal, the form and the file. */
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.gap {
+  width: var(--space-1);
+}
+
+/* An invalid service file: the warning, then its name and error across the middle columns. */
+.warn {
+  color: var(--danger-text);
+}
+
+.invalidText {
+  grid-column: 2 / 4;
+  min-width: 0;
+}
+
+.invalidLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 17px;
+  min-width: 0;
+}
+
+.file {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error {
+  color: var(--danger-text);
+  font-size: var(--fs-sm);
+  line-height: 17px;
+}
+
 .none {
   padding: var(--space-4) var(--space-2);
   color: var(--text-faint);

@@ -338,7 +338,7 @@ stays connected to it as the owner (`connectKeeper`, with the app's key), at
   once it is reported. Every end is reported once, an end while the scheduler was down included. A session with no record (the file lost) is
   read from its id, without a run or log; an id Runner does not make is skipped.
 - **Spawn:** the job's folder as `cwd`, the `command` run by the user's login shell, `env`, and
-  `background` for low priority. A service's session carries the Restart header action.
+  `background` for low priority. A service's session carries its header actions (below).
 - **Stop:** SIGTERM, then SIGKILL after a grace period (default 3 s), with the reason Runner names:
   `stopped`, `stopped-by-you` or `time-limit`. **Forget** drops an ended session from the keeper
   and the records.
@@ -367,9 +367,15 @@ attaches at the keeper's socket directly and never calls Runner to do it:
 - Ctrl+C typed through a tab followed by an exit within 5 s, or the tab's Stop, ends the process as
   **stopped by you**;
 - a stopped or failed service's tab keeps its last output, with **Start** as its header action;
-- header actions (Restart · Stop while running, Start otherwise) are set by Runner per session; a click arrives as the platform event
-  `attachedTab.action`, delivered to Runner only — the scheduler subscribes while connected to
-  Pomade and restarts the service.
+- a service's header actions are set by Runner on its session (`RESTART_ACTION`, `START_ACTION`,
+  `src/keeper/services.ts`): **Restart** while it runs — Pomade adds its own **Stop** beside it —
+  and **Start** once it ended, when Start would start it (its file valid and enabled); none
+  otherwise. Supervision keeps them in step every tick (the keeper's `update`), so an open tab
+  changes with the service. A click arrives as the platform event `attachedTab.action`, delivered
+  to Runner only — the scheduler subscribes while connected to Pomade and restarts or starts the
+  service, as Restart and Start do;
+- a service's ended session stays in the keeper until the service is removed, so its tab, opened
+  again, shows its last output.
 
 **Services** (`src/keeper/supervisor.ts`). The scheduler supervises every service job: each tick,
 after it follows the keeper, it compares each service with its session and acts; each session end
@@ -387,6 +393,12 @@ the keeper reports updates the service's record.
   each project's (by sub-folder), each by id. The next starts when the current one is up, or after
   30 s; one not up by then stays `starting` and keeps being checked. Restarts after a crash take
   their turn the same way. Start, Stop and Restart act at once, out of turn.
+- **One timebase.** Supervision measures every age, back-off and crash window on the scheduler's
+  clock. The keeper stamps a session's start and end on the system clock; each stamp is taken onto
+  the scheduler's clock once, when supervision first hears of it — the clock's now, less how long
+  ago it was on the system clock. In production both are the system clock and a stamp stays as it
+  is; under a test clock a session started a moment ago is a moment old, whatever the real date. A
+  session found running by a restarted scheduler keeps its age, so it is up at once.
 - **Up.** By default a service is up once it has run 5 s. `ready: { port }` is up once the port
   accepts a connection on this Mac's loopback (IPv4 or IPv6); `ready: { url }` once the URL gives
   any HTTP answer, an error status or a redirect included — the server is there. Checked every tick.
@@ -411,7 +423,7 @@ the keeper reports updates the service's record.
   again with its job file as it is now, keeping the crash count; one that does not run is started.
   They reach the scheduler from the `pomade-runner` command (`run`, `stop`, `restart`), from
   Runner's frames through the broker, from a chain on the service (`after`, "Chains") and —
-  Restart — from an attached tab's header.
+  Restart and Start — from an attached tab's header.
 - **Job file changes:**
   - disabled (`enabled: false`) → a running service is stopped (reason `stopped`);
   - the file deleted, or no longer a service → stopped once it has been gone 2 s, then dropped with
@@ -680,8 +692,13 @@ to it, light theme only.
 **Side panel** (the Runner icon on the left strip):
 1. the three-position switch;
 2. **Needs you**, with actions inline;
-3. **Running now** (services and active runs: name, project, folder, uptime, status — a queued run
-   with what it waits for, "queued · 1 ahead"; click opens the attached tab);
+3. **Running now** (`src/ui/RunningNow.tsx`): the services that are up or starting, in start
+   order, then the runs going, as one list of rows (`PanelRow`): the status dot, the name and at
+   its end where it stands with its help ("up 3d 4h", "starting", "running 3m", "queued · 1
+   ahead"); project · folder below ("workspace · git-base" for the workspace root); a third line
+   only for news ("waiting for port 5173", "restarted 3× · last crash 14:02", "restart to apply
+   its file"). A service's row opens its attached tab, titled with its name; a run's row its
+   result card;
 4. **Next up** (the next ~5 runs, Run at… ones included);
 5. **Open Runner**.
 
@@ -693,7 +710,17 @@ to it, light theme only.
   time, job, result, duration and what started it (scheduled · caught up · manual · hook: Mac login
   · chain: after Pull); opens the result card — a chain run's card opens the run it followed — or
   the output.
-- **Services:** start / stop / restart, crash count, log.
+- **Services** (`src/ui/ServicesView.tsx`): every service file in start order — a valid one's row:
+  the kind icon, the name, project · folder · command; the status (`serviceLook`,
+  `src/ui/serviceWords.ts`) — "running · up 3d 4h" over "no crashes" or "restarted 3× · last
+  crash 14:02", "starting" over what it waits for, "failed · gave up" over "crashed 5× in 1 min ·
+  today 11:20", "stopped by you" over when, and "queued", "restarting", "waiting for its project",
+  "disabled" — each with its help; **Restart · Stop** while it is up or starting, **Start**
+  otherwise; then Open terminal (its attached tab), Edit (the `edit/<encoded job id>` route) and
+  Open file. Each action toasts its outcome or why it was refused. An invalid service file is a red
+  row with its first error, its help and Open file. The "This project" chip, with the open
+  project's name, keeps that project's services ("No services in this project." when none); with
+  no service files, the view says what a service is.
 - **Settings:** the four settings ("Settings"), each written field-only.
 
 **Routes of the Runner tab** (`parseRoute`, `src/integrations/runner-api.ts`): `""` Jobs ·
@@ -718,7 +745,7 @@ chrome around them (the panel's header with its title and collapse, the tab bar)
 - **The kit** (`src/ui/kit/`): the shared primitives every surface is built from, each a React
   component over a CSS module and the tokens — icons, buttons, chips, tags and pills, status dots,
   the toggle, the segmented control and the switch, inputs and fields with inline errors, the
-  tooltip, the (i) Help, dialogs and the confirm, menus, toasts, panel sections and cards, group
+  tooltip, the (i) Help, dialogs and the confirm, menus, toasts, panel sections, cards and Running now's rows, group
   heads, the empty block, the view table. A view extends one rather than forking it.
 - **Tooltips:** one per surface (`TooltipLayer`): any element with `data-tip` (a plain line) or
   `data-help` (a key of `src/ui/help.ts`) shows it on hover and on keyboard focus.

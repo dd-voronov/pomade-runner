@@ -35,7 +35,7 @@ import { KIND_DEFAULTS } from "../jobs/parse";
 import { sessionIdOf, sessionOwner } from "../keeper/ids";
 import { exitWords, type ServiceActionResult, type ServiceStatus } from "../keeper/model";
 import type { NetworkReadiness } from "../keeper/readiness";
-import { jobIdOf, RESTART_ACTION } from "../keeper/services";
+import { jobIdOf, RESTART_ACTION, START_ACTION } from "../keeper/services";
 import type { Sessions } from "../keeper/sessions";
 import { createSupervisor, type SupervisionStore } from "../keeper/supervisor";
 import type { Clock } from "./clock";
@@ -311,15 +311,16 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
   const unwatchExits = sessions.onExit(({ id, info }) => log(`session ${id}: ended${info.exit === null ? "" : `: ${exitWords(info.exit)}`}`));
   const tabAction = (payload: AttachedTabActionPayload): void => {
     const { session, action } = payload;
-    if (session.app !== APP_ID || action !== RESTART_ACTION.id) return;
-    log(`session ${session.session}: Restart from its tab`);
+    const verb = action === RESTART_ACTION.id ? "restart" : action === START_ACTION.id ? "start" : null;
+    if (session.app !== APP_ID || verb === null) return;
+    log(`session ${session.session}: ${verb === "restart" ? RESTART_ACTION.title : START_ACTION.title} from its tab`);
     const owner = sessionOwner(session.session);
     if (owner?.kind !== "service") {
-      log(`session ${session.session}: cannot restart — not a service's session`);
+      log(`session ${session.session}: cannot ${verb} — not a service's session`);
       return;
     }
-    void supervisor.restart(owner.job).then((restarted) => {
-      if (!restarted.ok) log(`session ${session.session}: cannot restart — ${restarted.reason}`);
+    void supervisor[verb](owner.job).then((answer) => {
+      if (!answer.ok) log(`session ${session.session}: cannot ${verb} — ${answer.reason}`);
     });
   };
 

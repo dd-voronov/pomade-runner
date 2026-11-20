@@ -107,7 +107,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
         </>,
       );
     case "services":
-      return shell("tab-services", <ServicesView host={host} jobs={entries} services={serviceStates} />);
+      return shell("tab-services", <ServicesView host={host} jobs={entries} services={serviceStates} open={open} />);
     case "settings":
       return shell(
         "tab-settings",

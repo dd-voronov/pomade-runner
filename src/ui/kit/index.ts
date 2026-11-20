@@ -13,6 +13,7 @@ export { IconButton } from "./IconButton";
 export { ICONS, type IconName } from "./icons";
 export { Menu, MenuHeader, MenuItem, MenuSeparator } from "./Menu";
 export { PanelCard } from "./PanelCard";
+export { PanelRow } from "./PanelRow";
 export { GroupHead, PanelEmpty, PanelSection, SectionHead } from "./Section";
 export { Segmented, type SegmentedOption } from "./Segmented";
 export { Dot, Status, type DotTone } from "./Status";

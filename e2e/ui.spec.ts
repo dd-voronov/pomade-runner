@@ -86,7 +86,7 @@ test.describe("the Runner tab", () => {
     await expect(app(page).getByTestId("nav-services")).toHaveAttribute("aria-current", "page");
     await writeJob(page, "alpha/coda-web.md", VALID);
     const row = app(page).getByTestId("service-row");
-    await expect(row).toHaveText(/Coda web\s*Alpha · Projects\/alpha · \.\/start\.sh\s*Running/);
+    await expect(row).toHaveText(/Coda web\s*Alpha · Projects\/alpha · \.\/start\.sh\s*running · up 0s\s*no crashes/);
     await shoot(page, "tab-services");
   });
 
@@ -154,7 +154,7 @@ test.describe("the jobs list", () => {
     await writeJob(page, "weekly-report.md", BROKEN);
     const panel = app(page).getByTestId("panel-jobs");
     await expect(panel.getByTestId("switch")).toBeVisible();
-    await expect(panel.getByRole("region")).toHaveText([/^Needs you0Nothing needs you\.$/, /^Running now0Nothing is running\.$/, /^Next upNothing is scheduled\.$/]);
+    await expect(panel.getByRole("region")).toHaveText([/^Needs you0Nothing needs you\.$/, /^Running now1Coda webup 0sAlpha · Projects\/alpha$/, /^Next upNothing is scheduled\.$/]);
     await expect(panel.getByTestId("job-row")).toHaveCount(0);
     await expect(panel.getByTestId("job-invalid")).toHaveCount(0);
     const open = panel.getByRole("button", { name: "Open Runner" });
@@ -975,5 +975,153 @@ test.describe("the job form", () => {
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/backup.md" }]);
     await app(page).getByTestId("form-back").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+  });
+});
+
+test.describe("services: Running now and the Services view", () => {
+  /** A time of day as Runner's service rows write it: "9:02", "14:02". */
+  const shortClock = (epochMs: number): string => `${new Date(epochMs).getHours()}:${String(new Date(epochMs).getMinutes()).padStart(2, "0")}`;
+  const WEB = VALID.replace("command: ./start.sh\n", "command: ./start.sh\nready: { port: 5173 }\n");
+  const DOCS = "---\nkind: service\nname: Docs preview\nfolder: .\ncommand: npm run docs:dev\n---\n";
+  const GRAPH = "---\nkind: service\nname: Graph viewer\nproject: alpha\nfolder: Projects/alpha/graph\ncommand: npm run serve\nready: { port: 4000 }\n---\n";
+  const BAD = "---\nkind: service\nname: API\nfolder: .\ncommand: ./api.sh\nready: { port: 99999 }\n---\n";
+  const at = (hours: number, minutes: number, daysAgo = 0): number => {
+    const when = new Date();
+    when.setHours(hours, minutes, 0, 0);
+    return when.getTime() - daysAgo * 86_400_000;
+  };
+  /** A service's session as the keeper reports it: started `ago` ms before now, ended at `endedAt`. */
+  const session = (job: string, ago: number, endedAt: number | null = null) => ({
+    id: `svc:${job.replace("/", ".")}`,
+    job,
+    kind: "service" as const,
+    run: null,
+    log: null,
+    info: {
+      id: `svc:${job.replace("/", ".")}`,
+      title: job,
+      command: "",
+      cwd: "/fake/workspace",
+      pid: endedAt === null ? 7 : null,
+      startedAt: Date.now() - ago,
+      cols: 80,
+      rows: 24,
+      state: endedAt === null ? ("running" as const) : ("exited" as const),
+      exit: endedAt === null ? null : { code: 130, signal: null, reason: "stopped-by-you" as const, at: endedAt },
+      clients: 0,
+      actions: [],
+    },
+  });
+
+  async function services(page: Page, query: Record<string, string>): Promise<void> {
+    await page.goto(harness(query));
+    await page.waitForFunction(() => typeof window.setServiceStatus === "function");
+    await writeJob(page, "alpha/coda-web.md", WEB);
+    await writeJob(page, "alpha/graph-viewer.md", GRAPH);
+    await writeJob(page, "docs-preview.md", DOCS);
+    await writeJob(page, "api.md", BAD);
+    const crash = at(14, 2, 1);
+    const stopped = at(18, 10, 1);
+    await page.evaluate(
+      ([web, graph, docs, lastCrashAt]) => {
+        window.setServiceStatus("alpha/coda-web", { state: "running", session: web, restarts: 3, lastCrashAt });
+        window.setServiceStatus("alpha/graph-viewer", { state: "starting", session: graph });
+        window.setServiceStatus("docs-preview", { state: "stopped-by-you", session: docs });
+      },
+      [session("alpha/coda-web", (3 * 24 + 4) * 3_600_000 + 60_000), session("alpha/graph-viewer", 2000), session("docs-preview", 3_600_000, stopped), crash] as const,
+    );
+  }
+
+  test.describe("in the panel", () => {
+    test.use({ viewport: { width: 240, height: 700 } });
+
+    test("Running now lists the services that run — up for how long, the news on a third line — before the runs; a row opens the service's attached tab", async ({ page }) => {
+      await services(page, { surface: "panel" });
+      const section = app(page).getByTestId("section-running");
+      await expect(app(page).getByTestId("section-running-head-count")).toHaveText("2");
+      const rows = section.getByTestId("running-service");
+      await expect(rows).toHaveText([/^Coda web/, /^Graph viewer/]);
+      await expect(rows.nth(0)).toHaveText(`Coda webup 3d 4hAlpha · Projects/alpharestarted 3× · last crash ${shortClock(at(14, 2, 1))}`);
+      await expect(rows.nth(1)).toHaveText("Graph viewerstartingAlpha · Projects/alpha/graphwaiting for port 4000");
+      await expect(rows.nth(0).locator('[data-help="st.up"]')).toHaveText("up 3d 4h");
+      await expect(rows.nth(0).locator('[data-help="st.restarted"]')).toBeVisible();
+      await expect(rows.nth(1).locator('[data-help="st.starting"]')).toHaveText("starting");
+      await shoot(page, "panel-running-services");
+
+      await rows.nth(0).locator('[data-help="st.up"]').hover();
+      await expect(app(page).getByTestId("tooltip")).toHaveText("How long the service has been running since its last start.Example: up 3d 4h — it outlived two Pomade restarts.");
+
+      await rows.nth(0).click();
+      await expect
+        .poll(() => page.evaluate(() => window.fakeHost.openedTabs))
+        .toEqual([{ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:alpha.coda-web" }, title: "Coda web" }]);
+    });
+  });
+
+  test.describe("in the Runner tab", () => {
+    test.use({ viewport: { width: 1040, height: 700 } });
+
+    test("the Services view: each service where it stands, its actions by state, an invalid file with its error; Start, Stop and Restart call Runner and toast", async ({ page }) => {
+      await services(page, { route: "services" });
+      const rows = app(page).getByTestId("service-row");
+      await expect(rows).toHaveCount(3);
+      // Start order: workspace jobs first, then each project's, each by id.
+      await expect(rows.locator('[data-testid="service-status"]')).toHaveText(["stopped by you", "running · up 3d 4h", "starting"]);
+      await expect(rows.getByTestId("service-sub")).toHaveText([`yesterday ${shortClock(at(18, 10))}`, `restarted 3× · last crash ${shortClock(at(14, 2))}`, "waiting for port 4000"]);
+      await expect(rows.nth(1)).toContainText("Coda webAlpha · Projects/alpha · ./start.sh");
+      for (const [i, help] of ["st.stopped", "st.up", "st.starting"].entries()) await expect(rows.nth(i).getByTestId("service-status")).toHaveAttribute("data-help", help);
+      await expect(rows.nth(1).getByTestId("service-sub")).toHaveAttribute("data-help", "st.restarted");
+      await expect(rows.nth(0).getByRole("button")).toHaveText(["Start", "", "", ""]);
+      await expect(rows.nth(1).getByRole("button")).toHaveText(["Restart", "Stop", "", "", ""]);
+      await expect(rows.nth(1).getByRole("button", { name: "Open terminal (log)" })).toBeVisible();
+      const invalid = app(page).getByTestId("service-invalid");
+      await expect(invalid).toContainText("api.md");
+      await expect(invalid).toContainText("Invalid: line 6: ready.port — 99999 is not a port.");
+      await expect(invalid.getByTestId("help-jobs.invalid")).toBeVisible();
+      await shoot(page, "tab-services-states");
+
+      await rows.nth(0).getByRole("button", { name: "Start" }).click();
+      await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerDocs preview started");
+      await rows.nth(1).getByRole("button", { name: "Stop" }).click();
+      await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCoda web stopped by you — it stays stopped until Start");
+      await rows.nth(1).getByRole("button", { name: "Restart" }).click();
+      await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCould not restart Coda web: the keeper is not connected");
+      expect(await page.evaluate(() => window.runnerCalls)).toEqual([
+        { method: "services.start", params: { job: "docs-preview" } },
+        { method: "services.stop", params: { job: "alpha/coda-web" } },
+        { method: "services.restart", params: { job: "alpha/coda-web" } },
+      ]);
+
+      await rows.nth(1).getByRole("button", { name: "Open terminal (log)" }).click();
+      await rows.nth(1).getByRole("button", { name: "Open file" }).click();
+      await invalid.getByRole("button", { name: "Open file" }).click();
+      await expect
+        .poll(() => page.evaluate(() => window.fakeHost.openedTabs))
+        .toEqual([
+          { kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:alpha.coda-web" }, title: "Coda web" },
+          { kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/alpha/coda-web.md" },
+          { kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/api.md" },
+        ]);
+
+      // Edit leaves the view for the job's form route.
+      await rows.nth(1).getByRole("button", { name: "Edit" }).click();
+      await expect(app(page).getByTestId("tab-services")).toHaveCount(0);
+    });
+
+    test("the This project chip keeps the services of the project Pomade has open, and says when it has none", async ({ page }) => {
+      await services(page, { route: "services" });
+      const chip = app(page).getByTestId("this-project");
+      await expect(chip).toHaveText("This projectAlpha");
+      await expect(chip).toHaveAttribute("aria-pressed", "false");
+      await chip.click();
+      await expect(chip).toHaveAttribute("aria-pressed", "true");
+      await expect(app(page).getByTestId("service-row")).toHaveText([/^Coda web/, /^Graph viewer/]);
+      await expect(app(page).getByTestId("service-invalid")).toHaveCount(0);
+      await shoot(page, "tab-services-this-project");
+      await page.evaluate(() => window.fakeHost.deleteFile("Apps/pomade-runner/jobs/alpha/coda-web.md"));
+      await page.evaluate(() => window.fakeHost.deleteFile("Apps/pomade-runner/jobs/alpha/graph-viewer.md"));
+      await expect(app(page).getByTestId("services-none")).toHaveText("No services in this project.");
+      await shoot(page, "tab-services-none");
+    });
   });
 });
