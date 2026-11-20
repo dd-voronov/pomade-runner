@@ -65,7 +65,8 @@ test("./install builds Runner, installs it and links its skill; run again, it up
     expect(second.stdout).toContain(`skill pomade-runner-jobs: already linked ${links[1] ?? ""}\n`);
     expect(second.stdout).not.toContain("note for the skills map");
     expect(second.code).toBe(0);
-    expect(await readdir(join(folders.userData, "apps"))).toEqual([manifest.id]);
+    // One app, updated in place; Pomade keeps each install's build in its own `.builds` folder.
+    expect((await readdir(join(folders.userData, "apps"))).filter((name) => !name.startsWith("."))).toEqual([manifest.id]);
 
     scheduler.current = startSchedulerProcess(pomade.runtime, join(installed, manifest.backend.entry), { ...runtimeEnv, POMADE_CLIENT: "backend" });
     const running = scheduler.current;
