@@ -840,8 +840,7 @@ test.describe("the job form", () => {
   });
 
   test("a new job opened from a project starts in it: its project and folder are that project's", async ({ page }) => {
-    await start(page);
-    await navigate(page, "new/alpha");
+    await start(page, { route: "new/alpha" });
     const form = app(page).getByTestId("job-form");
     await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("Projects/alpha");
     await expect(form.getByRole("combobox", { name: "Project", exact: true })).toHaveValue("alpha");
