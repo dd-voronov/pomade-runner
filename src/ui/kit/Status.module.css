@@ -1,0 +1,72 @@
+.dot {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.dot.ok {
+  background: var(--ok);
+}
+
+.dot.danger {
+  background: var(--danger);
+}
+
+.dot.warning {
+  background: var(--warning);
+}
+
+.dot.accent {
+  background: var(--accent);
+}
+
+.dot.hollow {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-faint);
+}
+
+.dot.live {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* A status: a dot and its words. `xs` muted (the panel's rows); `sm` in the text colour (a view's
+   Last result / Result / Status column). Danger and warning keep their text tones in both. */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.status.sm {
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.status.sm.muted {
+  color: var(--text-muted);
+}
+
+.status.danger {
+  color: var(--danger-text);
+}
+
+.status.warning {
+  color: var(--warning-text);
+}
+
+.status[data-help] {
+  cursor: help;
+}
+
+.words {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

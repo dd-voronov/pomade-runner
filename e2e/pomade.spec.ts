@@ -111,7 +111,18 @@ test.describe("Runner in Pomade", () => {
   test("the Runner icon is on the strip and fills the side panel; with no scheduler yet, the panel says so", async () => {
     const icon = page.getByTestId(`strip-${STRIP_KEY}`);
     await expect(icon).toBeVisible();
-    await expect.poll(() => icon.locator("img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+    // Pomade draws the icon from its URL — tinted as a mask when the SVG is monochrome, else as an image.
+    const drawn = icon.locator("[data-app-icon]");
+    await expect(drawn).toBeVisible();
+    const url = await drawn.evaluate((el) => (el instanceof HTMLImageElement ? el.src : (el as HTMLElement).dataset.iconUrl ?? ""));
+    const loads = (src: string): Promise<boolean> =>
+      new Promise((done) => {
+        const image = new Image();
+        image.onload = () => done(image.naturalWidth > 0);
+        image.onerror = () => done(false);
+        image.src = src;
+      });
+    expect(await page.evaluate(loads, url)).toBe(true);
 
     await icon.click();
     await expect(panel().getByRole("heading", { name: "Runner's scheduler is not running" })).toBeVisible();
@@ -124,33 +135,35 @@ test.describe("Runner in Pomade", () => {
     await shoot(page, "pomade-panel");
   });
 
-  test("a job file written to disk shows in the panel within a second; a broken one shows its error, as pomade-runner check prints it", async () => {
+  test("a job file written to disk turns the panel's no-jobs state into its sections within a second", async () => {
     const jobs = join(folders.workspace, "Apps/pomade-runner/jobs");
     await mkdir(jobs, { recursive: true });
     await writeFile(join(jobs, "backup.md"), VALID);
-    await expect(panel().getByTestId("job-row")).toContainText("Backup", { timeout: 1000 });
-
-    await writeFile(join(jobs, "backup.md"), BROKEN);
-    await expect(panel().getByTestId("job-invalid")).toContainText(`Invalid: line 7: ${ERROR}`, { timeout: 1000 });
+    await expect(panel().getByTestId("panel-jobs").getByRole("region", { name: "Next up" })).toBeVisible({ timeout: 1000 });
     await shoot(page, "pomade-panel-jobs");
+  });
 
+  test("Open Runner opens the Runner tab with the jobs; a broken file shows its error within a second, as pomade-runner check prints it; Settings shows the version", async () => {
+    await panel().getByRole("button", { name: "Open Runner" }).click();
+    const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
+    await expect(tab.getByTestId("tab-jobs").getByTestId("job-row")).toContainText("Backup");
+    await expect(panel().getByTestId("open-runner-error")).toHaveCount(0);
+    await shoot(page, "pomade-tab");
+
+    const jobs = join(folders.workspace, "Apps/pomade-runner/jobs");
+    await writeFile(join(jobs, "backup.md"), BROKEN);
+    await expect(tab.getByTestId("job-invalid")).toContainText(`Invalid: line 7: ${ERROR}`, { timeout: 1000 });
     const check = await command("check");
     expect(check.code).toBe(1);
     expect(check.stdout).toContain(`Apps/pomade-runner/jobs/backup.md:7: ${ERROR}\n`);
     expect(check.stdout).not.toContain("not checked");
     expect(await command("projects")).toEqual({ code: 0, stdout: "Pomade has no projects.\n", stderr: "" });
-
     await writeFile(join(jobs, "backup.md"), VALID);
-    await expect(panel().getByTestId("job-row")).toContainText("Backup", { timeout: 1000 });
-  });
+    await expect(tab.getByTestId("job-row")).toContainText("Backup", { timeout: 1000 });
 
-  test("Open Runner opens the Runner tab with the jobs", async () => {
-    await panel().getByRole("button", { name: "Open Runner" }).click();
-    const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
-    await expect(tab.getByTestId("tab-jobs").getByTestId("job-row")).toContainText("Backup");
+    await tab.getByTestId("nav-settings").click();
     await expect(tab.getByTestId("version")).toHaveText(`Runner ${VERSION}`);
-    await expect(panel().getByTestId("open-runner-error")).toHaveCount(0);
-    await shoot(page, "pomade-tab");
+    await tab.getByTestId("nav-jobs").click();
   });
 
   test("pomade-runner is in Pomade's command folder and answers --version", async () => {

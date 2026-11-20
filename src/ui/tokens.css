@@ -1,34 +1,70 @@
-/* Runner's design tokens. The names and the light values are Pomade's (its renderer's tokens.css),
-   so a Runner frame reads as part of the window around it; the dark values follow the system's
-   colour scheme. Every colour, size and radius in the UI's CSS is one of these. */
+/* Runner's design tokens, light only. The names and values are the approved prototype's
+   (`prototype/index.html`), whose light set is Pomade's renderer tokens.css, so a Runner frame reads
+   as part of the window around it. Every colour, size, radius, shadow and duration in the UI's CSS
+   is one of these. */
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 
   --accent: #4fb8d8;
   --accent-hover: #3aa6c8;
   --accent-active: #2f92b2;
+  --accent-strong: #287f9b;
+  --accent-soft: #eaf6fa;
   --accent-contrast: #ffffff;
-  --accent-text: #1f7f9c;
+  --selection: rgba(79, 184, 216, 0.18);
+  --badge-bg: var(--accent-soft);
+  --badge-fg: #256d84;
   --focus-ring: rgba(79, 184, 216, 0.55);
 
   --bg: #fafbfc;
   --panel: #f1f4f6;
+  --panel-raised: #ffffff;
   --border: #e2e8ec;
+  --border-strong: #cdd6dc;
   --text: #1f2933;
   --text-muted: #5a6b7a;
   --text-faint: #8a99a6;
-  --danger: #d1495b;
+  --hover-bg: rgba(31, 41, 51, 0.04);
+  --active-bg: rgba(31, 41, 51, 0.07);
+  --overlay: rgba(31, 41, 51, 0.28);
 
-  --font-ui: -apple-system, "SF Pro Text", "SF Pro", system-ui, sans-serif;
+  --danger: #d1495b;
+  --danger-soft: rgba(209, 73, 91, 0.12);
+  --danger-text: #c0374b;
+  --on-danger: #ffffff;
+  --warning: #d98a1f;
+  --warning-soft: rgba(217, 138, 31, 0.14);
+  --warning-text: #a5660f;
+  --on-warning: #ffffff;
+  --ok: #2f9e6f;
+  --ok-soft: rgba(47, 158, 111, 0.12);
+  --ok-text: #23845a;
+
+  --row-active-bg: #fbfcfd;
+  --row-active-border: #cdd6dc;
+  --knob: #ffffff;
+
+  --term-bg: #ffffff;
+  --term-fg: #1f2933;
+  --term-dim: #8a99a6;
+  --term-green: #23845a;
+  --term-blue: #2b6cb0;
+  --term-red: #c0374b;
+  --term-amber: #a5660f;
+
+  --font-ui: -apple-system, "SF Pro Text", "SF Pro", system-ui, "Segoe UI", sans-serif;
   --font-mono: "SF Mono", "Menlo", "Monaco", ui-monospace, monospace;
   --fs-base: 13px;
   --fs-sm: 12px;
   --fs-xs: 11px;
   --fs-lg: 15px;
+  --fs-xl: 19px;
   --lh: 1.45;
+  --fw-normal: 400;
   --fw-medium: 500;
   --fw-semibold: 600;
+  --fw-bold: 700;
 
   --space-1: 4px;
   --space-2: 8px;
@@ -37,45 +73,16 @@
   --space-5: 24px;
   --space-6: 32px;
 
+  --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 10px;
 
-  --dur-fast: 120ms;
-  --ease: ease-out;
-}
+  --shadow-1: 0 1px 2px rgba(31, 41, 51, 0.06);
+  --shadow-2: 0 4px 16px rgba(31, 41, 51, 0.12);
+  --shadow-knob: 0 1px 2px rgba(0, 0, 0, 0.25);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --accent-hover: #63c4e1;
-    --accent-active: #7bcfe8;
-    --accent-contrast: #0e2a33;
-    --accent-text: #63c4e1;
-
-    --bg: #1a1e22;
-    --panel: #20252a;
-    --border: #323a41;
-    --text: #e4e9ed;
-    --text-muted: #a3b0bb;
-    --text-faint: #75828e;
-    --danger: #ef7a8a;
-  }
-}
-
-html,
-body,
-#root {
-  height: 100%;
-}
-
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: var(--fs-base) / var(--lh) var(--font-ui);
-  -webkit-font-smoothing: antialiased;
-}
-
-/* A side panel sits on Pomade's panel surface. */
-:root[data-surface="panel"] body {
-  background: var(--panel);
+  --icon-btn: 24px;
+  --tree-row-h: 24px;
+  --dur-fast: 90ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
 }

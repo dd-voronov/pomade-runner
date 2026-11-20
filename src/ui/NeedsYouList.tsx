@@ -7,6 +7,7 @@ import { dayTime, type NeedsYouItem } from "../scheduler/model";
 import { MissedActions } from "./MissedActions";
 import styles from "./Runs.module.css";
 import { useAction } from "./useAction";
+import { Button, PanelEmpty } from "./kit";
 
 /** An item's line under its name. */
 function itemWords(item: NeedsYouItem): string {
@@ -29,9 +30,9 @@ function Item({ host, item }: { host: HostClient; item: NeedsYouItem }): React.J
   const call = (method: string, params: Record<string, string>, timeoutMs?: number) => () =>
     action.run(() => host.apps.call(APP_ID, method, params, timeoutMs === undefined ? {} : { timeoutMs }));
   const button = (label: string, onClick: () => void): React.JSX.Element => (
-    <button type="button" className={styles.button} onClick={onClick}>
+    <Button size="sm" onClick={onClick}>
       {label}
-    </button>
+    </Button>
   );
   let actions: React.JSX.Element;
   switch (item.kind) {
@@ -84,13 +85,12 @@ function Item({ host, item }: { host: HostClient; item: NeedsYouItem }): React.J
   );
 }
 
-/** Needs you: each item with its actions inline. A stand-in until the panel's real design. */
+/** Needs you's content: each item with its actions inline. A stand-in until the panel's real design. */
 export function NeedsYouList({ host, items }: { host: HostClient; items: readonly NeedsYouItem[] }): React.JSX.Element {
   return (
-    <section className={styles.section} data-testid="needs-you">
-      <h2 className={styles.heading}>Needs you</h2>
+    <div data-testid="needs-you">
       {items.length === 0 ? (
-        <p className={styles.empty}>Nothing needs you.</p>
+        <PanelEmpty>Nothing needs you.</PanelEmpty>
       ) : (
         <ul className={styles.list}>
           {items.map((item) => (
@@ -98,6 +98,6 @@ export function NeedsYouList({ host, items }: { host: HostClient; items: readonl
           ))}
         </ul>
       )}
-    </section>
+    </div>
   );
 }

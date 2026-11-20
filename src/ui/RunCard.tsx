@@ -9,12 +9,38 @@ import { MissedActions } from "./MissedActions";
 import styles from "./Runs.module.css";
 import { useAction } from "./useAction";
 import { useOutput, useRun } from "./useRunnerApi";
+import { Button, Dialog, DialogBody, DialogHead } from "./kit";
+
+/** A run's result card, in the dialog over History that Esc, the close button or a click outside
+ *  closes back to History. */
+export function RunDialog(props: { host: HostClient; job: string; run: string; needsYou: readonly NeedsYouItem[]; open: (route: string) => void }): React.JSX.Element {
+  const close = (): void => props.open("history");
+  return (
+    <Dialog onClose={close} testId="run-dialog">
+      <RunCard {...props} close={close} />
+    </Dialog>
+  );
+}
 
 /** A run's result: its state, what started it, exit code, when and how long, the last lines — a git
  *  run's result per repo; View output. Opening a failed run that is a Needs-you item resolves the item. A chain run opens the
  *  run it followed. A missed run that waits for the person offers Run now · Run at… · Skip; a running
  *  one, Stop. A stand-in until the real result card. */
-export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; job: string; run: string; needsYou: readonly NeedsYouItem[]; open: (route: string) => void }): React.JSX.Element {
+function RunCard({
+  host,
+  job,
+  run,
+  needsYou,
+  open,
+  close,
+}: {
+  host: HostClient;
+  job: string;
+  run: string;
+  needsYou: readonly NeedsYouItem[];
+  open: (route: string) => void;
+  close: () => void;
+}): React.JSX.Element {
   const view = useRun(host, job, run);
   const action = useAction();
   const item = needsYou.find((candidate) => candidate.kind === "run-failed" && candidate.job === job && candidate.run === run);
@@ -23,12 +49,17 @@ export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; 
     if (item !== undefined) host.apps.call(APP_ID, DISMISS_METHOD, { id: item.id }).catch(() => undefined);
   }, [host, item]);
 
-  if (view.status === "loading") return <section data-testid="run-loading" />;
+  if (view.status === "loading") return <DialogHead title="" onClose={close} />;
   if (view.status !== "ready" || view.value === null) {
     return (
-      <p className={styles.error} role="alert" data-testid="run-missing">
-        {view.status === "ready" ? "This run is not in the history any more." : view.status === "failed" ? view.message : "Runner's scheduler is not running."}
-      </p>
+      <>
+        <DialogHead title="Result" onClose={close} />
+        <DialogBody>
+          <p className={styles.error} role="alert" data-testid="run-missing">
+            {view.status === "ready" ? "This run is not in the history any more." : view.status === "failed" ? view.message : "Runner's scheduler is not running."}
+          </p>
+        </DialogBody>
+      </>
     );
   }
   const value = view.value;
@@ -36,8 +67,10 @@ export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; 
   const session = value.state === "running" ? value.session : null;
   const parent = value.cause?.kind === "chain" ? value.cause : null;
   return (
+    <>
+    <DialogHead title={value.name} onClose={close} />
+    <DialogBody>
     <section className={styles.card} data-testid="run-card" data-state={value.state}>
-      <h2 className={styles.cardTitle}>{value.name}</h2>
       <span className={`${styles.meta} ${failed ? styles.failed : ""}`} data-testid="run-result">
         {runWords(value)}
       </span>
@@ -70,29 +103,29 @@ export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; 
       {value.state === "missed-waiting" && <MissedActions host={host} job={job} />}
       <span className={styles.actions}>
         {value.log !== null && (
-          <button type="button" className={styles.button} onClick={() => open(outputRoute(job, run))}>
+          <Button onClick={() => open(outputRoute(job, run))}>
             View output
-          </button>
+          </Button>
         )}
         {parent !== null && (
-          <button type="button" className={styles.button} onClick={() => open(runRoute(parent.job, parent.run))}>
+          <Button onClick={() => open(runRoute(parent.job, parent.run))}>
             Open {parent.name}'s run
-          </button>
+          </Button>
         )}
         {session !== null && (
-          <button type="button" className={styles.button} onClick={() => action.run(() => host.tabs.openAttached({ session: { app: APP_ID, session }, title: value.name }))}>
+          <Button onClick={() => action.run(() => host.tabs.openAttached({ session: { app: APP_ID, session }, title: value.name }))}>
             Open session
-          </button>
+          </Button>
         )}
         {session !== null && (
-          <button type="button" className={styles.button} onClick={() => action.run(() => host.apps.call(APP_ID, RUN_STOP_METHOD, { job, run }))}>
+          <Button onClick={() => action.run(() => host.apps.call(APP_ID, RUN_STOP_METHOD, { job, run }))}>
             Stop
-          </button>
+          </Button>
         )}
         {(value.kind === "script" || value.kind === "git") && value.state !== "missed-waiting" && (
-          <button type="button" className={styles.button} onClick={() => action.run(() => host.apps.call(APP_ID, RUN_NOW_METHOD, { job }))}>
+          <Button onClick={() => action.run(() => host.apps.call(APP_ID, RUN_NOW_METHOD, { job }))}>
             Run now
-          </button>
+          </Button>
         )}
       </span>
       {action.error !== null && (
@@ -101,6 +134,8 @@ export function RunCard({ host, job, run, needsYou, open }: { host: HostClient; 
         </p>
       )}
     </section>
+    </DialogBody>
+    </>
   );
 }
 
@@ -110,9 +145,9 @@ export function OutputView({ host, job, run, open }: { host: HostClient; job: st
   return (
     <section className={styles.card} data-testid="run-output">
       <span className={styles.actions}>
-        <button type="button" className={styles.button} onClick={() => open(runRoute(job, run))}>
+        <Button onClick={() => open(runRoute(job, run))}>
           Back to the result
-        </button>
+        </Button>
       </span>
       {output.status === "ready" ? (
         <pre className={styles.output} data-testid="run-output-text">

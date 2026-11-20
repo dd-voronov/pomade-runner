@@ -1,0 +1,78 @@
+/* The element defaults every Runner surface shares — the prototype's base rules. A frame never
+   scrolls as a page: each surface has its own scroll regions (the shells in `shell/`). */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  line-height: var(--lh);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* The Runner tab sits on Pomade's pane surface; the side panel keeps the page background. */
+:root[data-surface="tab"] body {
+  background: var(--panel-raised);
+}
+
+::selection {
+  background: var(--selection);
+}
+
+button {
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background: var(--border-strong);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+  background-clip: content-box;
+}
+
+svg {
+  display: block;
+  flex: none;
+}
+
+[hidden] {
+  display: none !important;
+}

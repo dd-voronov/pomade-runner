@@ -1,18 +1,10 @@
+/* The stand-ins of the panel's lists, History, the run card and Settings, on the shared tokens,
+   until their own slices rebuild them. */
+
 .section {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  padding-bottom: var(--space-3);
-}
-
-.heading {
-  margin: 0;
-  padding: 0 var(--space-3) var(--space-1);
-  color: var(--text-muted);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .list {
@@ -27,7 +19,8 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: var(--space-2) var(--space-3);
+  margin: 0 var(--space-2);
+  padding: var(--space-2);
   border-bottom: 1px solid var(--border);
 }
 
@@ -57,19 +50,19 @@
 
 .when {
   flex: none;
-  min-width: 72px;
+  min-width: 62px;
   color: var(--text-muted);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .failed {
-  color: var(--danger);
+  color: var(--danger-text);
 }
 
 .empty {
   margin: 0;
-  padding: 0 var(--space-3);
+  padding: var(--space-1) var(--space-2) var(--space-2);
   color: var(--text-faint);
   font-size: var(--fs-sm);
 }
@@ -81,40 +74,15 @@
   padding-top: var(--space-1);
 }
 
-.button {
-  height: 22px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-
-.button:hover:enabled {
-  border-color: var(--accent);
-}
-
-.button:disabled {
-  color: var(--text-faint);
-  cursor: default;
-}
-
-.button:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-}
-
 .rowButton {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
+  width: calc(100% - 2 * var(--space-2));
+  margin: 0 var(--space-2);
+  padding: var(--space-1) var(--space-2);
   border: none;
-  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--text);
   font: inherit;
@@ -129,109 +97,53 @@
 }
 
 .rowButton:hover {
-  background: var(--panel);
+  background: var(--hover-bg);
 }
 
-.rowButton:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
+.rowButton:active {
+  background: var(--active-bg);
 }
 
 .card {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: 0 var(--space-3);
-}
-
-.cardTitle {
-  margin: 0;
-  color: var(--text);
-  font-size: var(--fs-lg);
-  font-weight: var(--fw-semibold);
 }
 
 .output {
-  overflow: auto;
   max-height: 60vh;
   margin: 0;
   padding: var(--space-2) var(--space-3);
+  overflow: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--panel);
+  background: var(--bg);
   color: var(--text);
-  font: var(--fs-sm) / var(--lh) var(--font-mono);
+  font: var(--fs-xs) / 17px var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .error {
   margin: 0;
-  padding: 0 var(--space-3);
-  color: var(--danger);
+  padding: 0 var(--space-2);
+  color: var(--danger-text);
   font-size: var(--fs-sm);
 }
 
-.switch {
-  display: flex;
-  margin: 0 var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-
-.switchButton {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  height: 26px;
-  padding: 0 var(--space-1);
-  border: none;
-  border-right: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-muted);
-  font: inherit;
-  font-size: var(--fs-xs);
-  cursor: pointer;
-}
-
-.switchButton:last-child {
-  border-right: none;
-}
-
-.switchButton[aria-pressed="true"] {
-  background: var(--accent);
-  color: var(--accent-contrast);
-  font-weight: var(--fw-medium);
-}
-
-.switchButton:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
+.switchWrap {
+  flex: none;
+  margin: 0 var(--space-2) var(--space-1);
 }
 
 .note {
-  margin: 0;
-  padding: 0 var(--space-3);
-  color: var(--text-muted);
-  font-size: var(--fs-sm);
-}
-
-.input {
-  min-width: 0;
-  height: 22px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg);
+  margin: 6px 0 0;
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
   color: var(--text);
-  font: inherit;
-  font-size: var(--fs-sm);
-}
-
-.input:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
+  font-size: var(--fs-xs);
+  line-height: 15px;
 }
 
 .fields {
@@ -239,7 +151,6 @@
   flex-direction: column;
   gap: var(--space-3);
   margin: 0;
-  padding: 0 var(--space-3);
 }
 
 .field {
@@ -261,4 +172,10 @@
 
 .settings {
   gap: var(--space-3);
+}
+
+.settingsPath {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
 }

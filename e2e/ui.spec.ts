@@ -1,5 +1,5 @@
 // The UI in pomade-kit's fake host — the built page in an iframe, as Pomade hosts it — and on its
-// own in a browser. `RUNNER_SHOTS=<dir>` saves a screenshot of every state in both colour schemes.
+// own in a browser. `RUNNER_SHOTS=<dir>` saves a screenshot of every state.
 
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -22,14 +22,11 @@ function app(page: Page): FrameLocator {
   return page.frameLocator("iframe");
 }
 
-/** With `RUNNER_SHOTS`, save the page as `<name>-light.png` and `<name>-dark.png`. */
+/** With `RUNNER_SHOTS`, save the page as `<name>.png`. */
 async function shoot(page: Page, name: string): Promise<void> {
   if (!SHOTS) return;
   await mkdir(SHOTS, { recursive: true });
-  for (const colorScheme of ["light", "dark"] as const) {
-    await page.emulateMedia({ colorScheme });
-    await page.screenshot({ path: join(SHOTS, `${name}-${colorScheme}.png`) });
-  }
+  await page.screenshot({ path: join(SHOTS, `${name}.png`) });
 }
 
 test.describe("the side panel", () => {
@@ -39,7 +36,8 @@ test.describe("the side panel", () => {
     await page.goto(harness({ surface: "panel" }));
     const panel = app(page).getByTestId("panel-empty");
     await expect(panel.getByRole("heading", { name: "No jobs yet" })).toBeVisible();
-    await expect(panel).toContainText("Services and runs show here once Runner has jobs.");
+    await expect(panel).toContainText("A service is a command Runner keeps running: it starts at login, restarts on a crash and outlives Pomade");
+    await expect(panel.getByTestId("active-runs")).toHaveText("Nothing is running.");
     await expect(app(page).locator("html")).toHaveAttribute("data-surface", "panel");
     await shoot(page, "panel");
 
@@ -52,14 +50,43 @@ test.describe("the side panel", () => {
 test.describe("the Runner tab", () => {
   test.use({ viewport: { width: 1040, height: 700 } });
 
-  test("shows the no-jobs state and the version", async ({ page }) => {
+  test("shows the no-jobs state in the shell, and the version in Settings", async ({ page }) => {
     await page.goto(harness());
     const tab = app(page).getByTestId("tab-empty");
     await expect(tab.getByRole("heading", { name: "No jobs yet" })).toBeVisible();
-    await expect(tab).toContainText("Runner keeps services up");
-    await expect(tab.getByTestId("version")).toHaveText(`Runner ${manifest.version}`);
+    await expect(tab).toContainText("A job is something Runner does without you.");
+    await expect(app(page).getByTestId("nav-jobs")).toHaveText("Jobs0");
     await expect(app(page).locator("html")).toHaveAttribute("data-surface", "tab");
     await shoot(page, "tab");
+    await app(page).getByTestId("nav-settings").click();
+    await expect(app(page).getByTestId("tab-settings").getByTestId("version")).toHaveText(`Runner ${manifest.version}`);
+  });
+
+  test("the header's views: Jobs · History · Services · Settings, the current one marked; each opens its route", async ({ page }) => {
+    await page.goto(harness());
+    await expect(app(page).getByTestId("tab-empty")).toBeVisible();
+    await writeJob(page, "alpha/coda-web.md", VALID);
+    await writeJob(page, "weekly-report.md", BROKEN);
+    const nav = app(page).getByRole("navigation", { name: "Runner views" });
+    await expect(nav.getByRole("button")).toHaveText(["Jobs2", "History", "Services1", "Settings"]);
+    const current = nav.locator('[aria-current="page"]');
+    await expect(current).toHaveText("Jobs2");
+    for (const view of ["history", "services", "settings", "jobs"] as const) {
+      await app(page).getByTestId(`nav-${view}`).click();
+      await expect(app(page).getByTestId(`tab-${view}`)).toBeVisible();
+      await expect(current).toHaveAttribute("data-testid", `nav-${view}`);
+    }
+    expect(await page.evaluate(() => window.fakeHost.openedTabs)).toEqual([]);
+  });
+
+  test("the services route opens the Services view: each service with its project, folder, command and state", async ({ page }) => {
+    await page.goto(harness({ route: "services" }));
+    await expect(app(page).getByTestId("services-empty")).toContainText("A service is a command Runner keeps running");
+    await expect(app(page).getByTestId("nav-services")).toHaveAttribute("aria-current", "page");
+    await writeJob(page, "alpha/coda-web.md", VALID);
+    const row = app(page).getByTestId("service-row");
+    await expect(row).toHaveText(/Coda web\s*Alpha · Projects\/alpha · \.\/start\.sh\s*Running/);
+    await shoot(page, "tab-services");
   });
 
   test("says so when Pomade speaks another Host API version", async ({ page }) => {
@@ -118,17 +145,37 @@ test.describe("the jobs list", () => {
     await shoot(page, "tab-service-failed");
   });
 
-  test("the panel lists the jobs above Open Runner", async ({ page }) => {
+  test("the panel: the switch on top, Needs you · Running now · Next up, each collapsing, Open Runner at the bottom — no jobs list", async ({ page }) => {
     await page.setViewportSize({ width: 240, height: 640 });
     await page.goto(harness({ surface: "panel" }));
     await expect(app(page).getByTestId("panel-empty")).toBeVisible();
     await writeJob(page, "alpha/coda-web.md", VALID);
     await writeJob(page, "weekly-report.md", BROKEN);
     const panel = app(page).getByTestId("panel-jobs");
-    await expect(panel.getByTestId("job-row")).toContainText("Coda web");
-    await expect(panel.getByTestId("job-invalid")).toContainText("Invalid: line 7: schedule.weekly.at");
-    await expect(panel.getByRole("button", { name: "Open Runner" })).toBeVisible();
+    await expect(panel.getByTestId("switch")).toBeVisible();
+    await expect(panel.getByRole("region")).toHaveText([/^Needs you0Nothing needs you\.$/, /^Running now0Nothing is running\.$/, /^Next upNothing is scheduled\.$/]);
+    await expect(panel.getByTestId("job-row")).toHaveCount(0);
+    await expect(panel.getByTestId("job-invalid")).toHaveCount(0);
+    const open = panel.getByRole("button", { name: "Open Runner" });
+    await expect(open).toBeInViewport();
+    expect((await open.boundingBox())?.y).toBeGreaterThan(590);
     await shoot(page, "panel-jobs");
+
+    for (const [section, content] of [
+      ["needs-you", "needs-you"],
+      ["running", "active-runs"],
+      ["next-up", "next-up"],
+    ] as const) {
+      const head = panel.getByTestId(`section-${section}-head`);
+      await expect(head).toHaveAttribute("aria-expanded", "true");
+      await head.click();
+      await expect(head).toHaveAttribute("aria-expanded", "false");
+      await expect(panel.getByTestId(content)).toBeHidden();
+      await head.click();
+      await expect(panel.getByTestId(content)).toBeVisible();
+    }
+    await panel.getByTestId("section-running-head").click();
+    await shoot(page, "panel-collapsed");
   });
 
   test("a git job's row says its operation and repos — one the workspace lacks, so — with Run now; its route marks it", async ({ page }) => {
@@ -235,8 +282,9 @@ test.describe("runs", () => {
     await expect(items.first()).toContainText("Failed: exit 2 · 2×");
     await expect(items.last()).toContainText("Gave up: crashed 5 times within a minute");
     await expect(app(page).getByTestId("next-up-item")).toHaveText(/in 4[01] min\s*Backup/);
-    await expect(app(page).getByTestId("job-runs")).toContainText("daily at 13:00 · next");
-    await expect(app(page).getByTestId("job-runs")).toContainText("last failed · exit 2");
+    const needsCount = app(page).getByTestId("section-needs-you-head-count");
+    await expect(needsCount).toHaveText("2");
+    await expect(needsCount).toHaveCSS("background-color", "rgb(209, 73, 91)");
     await shoot(page, "panel-runs");
 
     await items.first().getByRole("button", { name: "Open" }).click();
@@ -296,8 +344,47 @@ test.describe("runs", () => {
     await expect(app(page).getByTestId("run-output-text")).toHaveText("copying\nrsync: connection refused\n");
     await app(page).getByRole("button", { name: "Back to the result" }).click();
     await expect(card).toBeVisible();
+    await page.keyboard.press("Escape");
     await app(page).getByTestId("nav-jobs").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+    await expect(app(page).getByTestId("job-runs")).toHaveText(/daily at 13:00 · next .* · last failed · exit 2/);
+  });
+
+  test("a run's card is a dialog over History: focus moves in and stays in; Esc, the close button or a click outside closes it", async ({ page }) => {
+    await page.goto(harness({ route: `run/backup/${RUN}` }));
+    await setRuns(page, [failed]);
+    const dialog = app(page).getByRole("dialog", { name: "Backup" });
+    await expect(dialog.getByTestId("run-result")).toHaveText("failed · exit 2");
+    await expect(app(page).getByTestId("history-row")).toHaveCount(1);
+    await expect(app(page).getByTestId("nav-history")).toHaveAttribute("aria-current", "page");
+    const close = dialog.getByRole("button", { name: "Close (Esc)" });
+    await expect(dialog).toBeFocused();
+    await shoot(page, "tab-run-dialog");
+    // Tab goes through the card's buttons and wraps from the last to the first and back, never leaving it.
+    const buttons = dialog.getByRole("button");
+    const count = await buttons.count();
+    await page.keyboard.press("Tab");
+    await expect(close).toBeFocused();
+    for (let i = 1; i < count; i++) await page.keyboard.press("Tab");
+    await expect(buttons.last()).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(close).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(buttons.last()).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(app(page).getByTestId("tab-history")).toBeVisible();
+
+    await app(page).getByTestId("history-row").click();
+    await expect(dialog).toBeVisible();
+    await close.click();
+    await expect(dialog).toHaveCount(0);
+    await app(page).getByTestId("history-row").click();
+    await expect(dialog).toBeVisible();
+    await page.mouse.click(10, 690);
+    await expect(dialog).toHaveCount(0);
+    await expect(app(page).getByTestId("history-row")).toBeFocused();
   });
 
   test("a git run's card has a line per repo — a failed repo red — and Run now", async ({ page }) => {
@@ -485,7 +572,7 @@ test.describe("missed runs and load", () => {
     await expect(card.getByTestId("run-result")).toHaveText("failed · stopped: ran over 45 min");
     const red = await card.getByTestId("run-result").evaluate((element) => {
       const probe = document.createElement("span");
-      probe.style.color = "var(--danger)";
+      probe.style.color = "var(--danger-text)";
       document.body.append(probe);
       const danger = getComputedStyle(probe).color;
       probe.remove();
@@ -521,6 +608,41 @@ test.describe("missed runs and load", () => {
     ]);
     await app(page).getByTestId("nav-jobs").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+  });
+
+  test("help: the (i) shows its text and example on hover and on keyboard focus; a status's help on hover", async ({ page }) => {
+    await page.setViewportSize({ width: 1040, height: 700 });
+    await open(page, { route: "settings" });
+    const tip = app(page).getByRole("tooltip");
+    const help = app(page).getByTestId("help-s.heavy");
+    await expect(tip).toHaveCount(0);
+    await help.hover();
+    await expect(tip).toHaveText('How many low-priority runs may go at once. The rest wait as "queued · N ahead".Example: 2 — three due at once → two run, one queues.');
+    await expect(help).toHaveAttribute("aria-describedby", "runner-tip");
+    const box = await tip.boundingBox();
+    const at = await help.boundingBox();
+    // Above the (i), or below it when there is no room above; never over it.
+    expect(box !== null && at !== null && (box.y + box.height <= at.y || box.y >= at.y + at.height)).toBe(true);
+    await shoot(page, "tab-help");
+    await page.mouse.move(1000, 600);
+    await expect(tip).toHaveCount(0);
+
+    await app(page).getByLabel("Low-priority runs at once").focus();
+    // Save, then (Default is disabled: the value is the default) the next setting's (i).
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    await expect(app(page).getByTestId("help-s.warm")).toBeFocused();
+    await expect(tip).toHaveText(/^The pause after login or wake before caught-up runs and hooks start\. Services start first\.Example: 2 min/);
+    await page.keyboard.press("Escape");
+    await expect(tip).toHaveCount(0);
+
+    await page.setViewportSize({ width: 240, height: 900 });
+    await open(page, { surface: "panel" });
+    await app(page).getByTestId("switch-pause-all").hover();
+    await expect(tip).toHaveText("Holds every scheduled job, hook and chain. Services keep running.Example: a demo — nothing starts until you switch back.");
+    const inside = await tip.boundingBox();
+    expect(inside !== null && inside.x >= 0 && inside.x + inside.width <= 240).toBe(true);
+    await shoot(page, "panel-help");
   });
 });
 

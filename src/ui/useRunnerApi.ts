@@ -131,6 +131,25 @@ export function useRepos(host: HostClient): LiveState<GitRepoState[]> {
   return state;
 }
 
+/** Pomade's projects' names by id, as `project.list` answers once; empty until it does. A job's
+ *  project shows by its name ("Workspace" for none, the id for one Pomade does not have). */
+export function useProjectNames(host: HostClient): (id: string | null) => string {
+  const [names, setNames] = useState<ReadonlyMap<string, string>>(new Map());
+  useEffect(() => {
+    let live = true;
+    host.project.list().then(
+      ({ projects }) => {
+        if (live) setNames(new Map(projects.map((p) => [p.id, p.name])));
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [host]);
+  return (id) => (id === null ? "Workspace" : (names.get(id) ?? id));
+}
+
 /** The tab's route: the one it opened with, then each one Pomade navigates it to. */
 export function useRoute(host: HostClient): [string, (route: string) => void] {
   const [route, setRoute] = useState(host.welcome.route);

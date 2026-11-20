@@ -6,7 +6,9 @@ import { createRoot } from "react-dom/client";
 import { connect } from "pomade-kit/sdk";
 
 import { App } from "./App";
+import { ToastProvider, TooltipLayer } from "./kit";
 import "./tokens.css";
+import "./base.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Runner: index.html has no #root");
@@ -16,6 +18,9 @@ if (connection.status === "connected") document.documentElement.dataset.surface 
 
 createRoot(root).render(
   <StrictMode>
-    <App connection={connection} />
+    <ToastProvider>
+      <App connection={connection} />
+      <TooltipLayer />
+    </ToastProvider>
   </StrictMode>,
 );

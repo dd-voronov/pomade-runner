@@ -117,6 +117,7 @@ export type RunnerRoute =
   /** Every job; `job` is the one the route opens (a repo row's Scheduled line), `null` for none. */
   | { view: "jobs"; job: string | null }
   | { view: "history" }
+  | { view: "services" }
   | { view: "settings" }
   /** A run's result card. */
   | { view: "run"; job: string; run: string }
@@ -141,6 +142,7 @@ export function outputRoute(job: string, run: string): string {
 /** The view a route names; an unknown route is the Jobs view. */
 export function parseRoute(route: string): RunnerRoute {
   if (route === "history") return { view: "history" };
+  if (route === "services") return { view: "services" };
   if (route === "settings") return { view: "settings" };
   const at = /^jobs\/([^/]+)$/.exec(route);
   if (at !== null) return { view: "jobs", job: decodeJobId(at[1] ?? "") };

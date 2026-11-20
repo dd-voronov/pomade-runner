@@ -1,19 +1,27 @@
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_NAME, APP_VERSION } from "../app";
-import { parseRoute } from "../integrations/runner-api";
-import { ActiveRunsList } from "./ActiveRunsList";
-import { EmptyState } from "./EmptyState";
+import { parseRoute, type RunnerRoute } from "../integrations/runner-api";
+import { ActiveRunsList, goingRuns } from "./ActiveRunsList";
 import { HistoryView } from "./HistoryView";
 import { JobsList } from "./JobsList";
-import { OutputView, RunCard } from "./RunCard";
-import styles from "./RunnerTab.module.css";
 import { JobsProblem } from "./JobsProblem";
+import { EmptyBlock, GroupHead } from "./kit";
+import { OutputView, RunDialog } from "./RunCard";
+import styles from "./RunnerTab.module.css";
+import { ServicesView } from "./ServicesView";
 import { SettingsView } from "./SettingsView";
+import { TabShell, ViewFilters, type TabView } from "./shell/TabShell";
 import { useJobs, useRoute, useRuns, useServices } from "./useRunnerApi";
 
-/** The Runner tab: every job — at one job, from a repo row's Scheduled line — the history with the
- *  runs going, a run's result and output, the settings — by its route. */
+/** The header's view for a route: a run's card and its output belong to History. */
+function tabView(route: RunnerRoute): TabView {
+  return route.view === "run" || route.view === "output" ? "history" : route.view;
+}
+
+/** The Runner tab: the shell's four views by its route — every job (at one job, from a repo row's
+ *  Scheduled line), the history with the runs going — a run's result card over it — a run's output,
+ *  the services, the settings with Runner's version. */
 export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   const jobs = useJobs(host);
   const services = useServices(host);
@@ -26,60 +34,74 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
     </span>
   );
 
-  if (jobs.status === "loading") return <main className={styles.root} data-testid="tab-loading" />;
-  if (jobs.status !== "ready") return <JobsProblem state={jobs} testId="tab-problem" footer={version} />;
+  if (jobs.status === "no-scheduler" || jobs.status === "failed") return <JobsProblem state={jobs} testId="tab-problem" footer={version} />;
+  const entries = jobs.status === "ready" ? jobs.value.jobs : [];
   const report = runs.status === "ready" ? runs.value : null;
-  const nav = (
-    <nav className={styles.nav}>
-      <button type="button" className={styles.navItem} aria-current={view.view === "jobs" ? "page" : undefined} data-testid="nav-jobs" onClick={() => open("")}>
-        Jobs
-      </button>
-      <button type="button" className={styles.navItem} aria-current={view.view === "jobs" || view.view === "settings" ? undefined : "page"} data-testid="nav-history" onClick={() => open("history")}>
-        History
-      </button>
-      <button type="button" className={styles.navItem} aria-current={view.view === "settings" ? "page" : undefined} data-testid="nav-settings" onClick={() => open("settings")}>
-        Settings
-      </button>
-    </nav>
+  const serviceStates = services.status === "ready" ? services.value.services : [];
+  const counts = jobs.status === "ready" ? { jobs: entries.length, services: entries.filter((entry) => entry.valid && entry.job.kind === "service").length } : {};
+  const shell = (testId: string, children: React.ReactNode): React.JSX.Element => (
+    <TabShell current={tabView(view)} counts={counts} open={open} testId={testId}>
+      {children}
+    </TabShell>
   );
-  if (view.view !== "jobs") {
-    return (
-      <main className={styles.root} data-testid={`tab-${view.view}`}>
-        <header className={styles.header}>{nav}</header>
-        {view.view === "history" && (
-          <>
-            <ActiveRunsList host={host} runs={report?.active ?? []} open={open} />
-            <HistoryView host={host} open={open} />
-          </>
-        )}
-        {view.view === "settings" && <SettingsView host={host} />}
-        {view.view === "run" && <RunCard host={host} job={view.job} run={view.run} needsYou={report?.needsYou ?? []} open={open} />}
-        {view.view === "output" && <OutputView host={host} job={view.job} run={view.run} open={open} />}
-        <footer className={styles.footer}>{version}</footer>
-      </main>
-    );
-  }
-  const count = jobs.value.jobs.length;
-  if (count === 0) {
-    return (
-      <EmptyState testId="tab-empty" title="No jobs yet" footer={version}>
-        Runner keeps services up and runs scripts, git operations and agents on schedules and hooks — with Pomade open or
-        closed. Its jobs show here.
-      </EmptyState>
-    );
-  }
-  const invalid = jobs.value.jobs.filter((entry) => !entry.valid).length;
-  return (
-    <main className={styles.root} data-testid="tab-jobs">
-      <header className={styles.header}>
-        {nav}
-        <span className={styles.count}>
-          {count} {count === 1 ? "job" : "jobs"}
-          {invalid > 0 && ` · ${invalid} invalid`}
-        </span>
-      </header>
-      <JobsList host={host} jobs={jobs.value.jobs} services={services.status === "ready" ? services.value.services : []} runs={report?.jobs ?? []} selected={view.job} />
-      <footer className={styles.footer}>{version}</footer>
-    </main>
+
+  const history = (
+    <>
+      {goingRuns(report?.active ?? []).length > 0 && (
+        <div className={styles.going}>
+          <GroupHead title="Running now" />
+          <ActiveRunsList host={host} runs={report?.active ?? []} open={open} />
+        </div>
+      )}
+      <HistoryView host={host} open={open} />
+    </>
   );
+
+  if (jobs.status === "loading") return shell("tab-loading", null);
+  switch (view.view) {
+    case "jobs": {
+      if (entries.length === 0) {
+        return shell(
+          "tab-jobs",
+          <EmptyBlock title="No jobs yet" testId="tab-empty">
+            <p>
+              A job is something Runner does without you. A <b>service</b> keeps a command running — it starts at login, restarts on a crash and outlives Pomade. A{" "}
+              <b>script</b>, an <b>agent</b> or a <b>git</b> operation runs on a schedule, on a hook, or after another job.
+            </p>
+            <p>You can also ask an agent: “add a job that runs inbox triage every Sunday at 3:00”.</p>
+          </EmptyBlock>,
+        );
+      }
+      const invalid = entries.filter((entry) => !entry.valid).length;
+      return shell(
+        "tab-jobs",
+        <>
+          <ViewFilters summary={`${entries.length} ${entries.length === 1 ? "job" : "jobs"}${invalid > 0 ? ` · ${invalid} invalid` : ""}`} />
+          <JobsList host={host} jobs={entries} services={serviceStates} runs={report?.jobs ?? []} selected={view.job} />
+        </>,
+      );
+    }
+    case "history":
+    case "run":
+      // One tree for both, so History stays mounted under the card and focus returns to its row.
+      return shell(
+        `tab-${view.view}`,
+        <>
+          {history}
+          {view.view === "run" && <RunDialog key={`${view.job}/${view.run}`} host={host} job={view.job} run={view.run} needsYou={report?.needsYou ?? []} open={open} />}
+        </>,
+      );
+    case "services":
+      return shell("tab-services", <ServicesView host={host} jobs={entries} services={serviceStates} />);
+    case "settings":
+      return shell(
+        "tab-settings",
+        <>
+          <SettingsView host={host} />
+          <p className={styles.version}>{version}</p>
+        </>,
+      );
+    case "output":
+      return shell("tab-output", <OutputView host={host} job={view.job} run={view.run} open={open} />);
+  }
 }

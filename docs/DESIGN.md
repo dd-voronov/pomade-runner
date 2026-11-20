@@ -698,9 +698,29 @@ to it, light theme only.
 
 **Routes of the Runner tab** (`parseRoute`, `src/integrations/runner-api.ts`): `""` Jobs ·
 `jobs/<encoded job id>` Jobs at one job, its row marked and scrolled to (what a repo row's Scheduled
-line opens) · `history` · `settings` · `run/<encoded job id>/<run id>` a run's result card (what a run's notice
-opens; a missed run's card offers Run now · Run at… · Skip, a running run's Stop) ·
-`output/<encoded job id>/<run id>` its full output. The tab follows Pomade's `route.changed`.
+line opens) · `history` · `services` · `settings` · `run/<encoded job id>/<run id>` a run's result
+card, a dialog over History (what a run's notice opens; a missed run's card offers Run now · Run at…
+· Skip, a running run's Stop) · `output/<encoded job id>/<run id>` its full output. An unknown route
+is Jobs. The tab follows Pomade's `route.changed`.
+
+**Frames and the design system.** Runner draws only inside the two frames Pomade hosts; Pomade's
+chrome around them (the panel's header with its title and collapse, the tab bar) is Pomade's.
+- **Runner tab shell** (`src/ui/shell/TabShell.tsx`): a 44 px header — the views Jobs · History ·
+  Services · Settings, a count beside Jobs and Services, the current one underlined in the accent;
+  the view's actions ("New job") at its right end — then the page in its own scroll region, 1040 px
+  at most. A view opens with its filter row (chips, a faint summary at the right). Runner's version
+  is at the foot of Settings.
+- **Side panel shell** (`src/ui/shell/PanelShell.tsx`): the switch pinned on top; Needs you ·
+  Running now · Next up in the scroll region, each a collapsible section with its count (Needs
+  you's a red badge while anything waits); Open Runner pinned at the bottom. With no jobs it says
+  what a service is. The panel is the switch's container: below 268 px it takes the short labels.
+- **The kit** (`src/ui/kit/`): the shared primitives every surface is built from, each a React
+  component over a CSS module and the tokens — icons, buttons, chips, tags and pills, status dots,
+  the toggle, the segmented control and the switch, inputs and fields with inline errors, the
+  tooltip, the (i) Help, dialogs and the confirm, menus, toasts, panel sections and cards, group
+  heads, the empty block, the view table. A view extends one rather than forking it.
+- **Tooltips:** one per surface (`TooltipLayer`): any element with `data-tip` (a plain line) or
+  `data-help` (a key of `src/ui/help.ts`) shows it on hover and on keyboard focus.
 
 **Job form.** Creating and editing a job happens in a form, never by hand-editing md. Order: kind
 → trigger → folder and project (agent: agent → folder → mode) → policies.
@@ -709,7 +729,9 @@ opens; a missed run's card offers Run now · Run at… · Skip, a running run's 
 A confirm names the file; a running service is stopped first, then the file is removed.
 
 **Help.** Every non-obvious field, policy and status carries an (i) tooltip with a one-line
-example. This is a product requirement, not polish.
+example. This is a product requirement, not polish. Every text is in `src/ui/help.ts`, keyed
+`<area>.<what>` (`st.*` statuses, `f.*` form fields, `p.*` policies, `s.*` settings, `c.*` result
+cards); `Help` shows one by its key.
 
 ## Data and locations
 
@@ -832,8 +854,8 @@ repointed; anything else at that name is left alone. The first link drops a note
 map into `<workspace>/Knowledge/00-Inbox/` (remembered in Runner's state folder). `./uninstall`
 removes the links to this Pomade's copy, then the app.
 
-**Theme.** The UI's tokens carry Pomade's names and light values; the dark values follow the
-system's colour scheme (`prefers-color-scheme`).
+**Theme.** Light only: `src/ui/tokens.css` carries the approved prototype's light token set —
+Pomade's names and light values — and `color-scheme: light`, whatever the system's colour scheme.
 
 **The scheduler's control socket.** The command reaches the scheduler over the scheduler's own
 unix socket, `<userData>/app-state/pomade-runner/scheduler.sock`, so it works with Pomade closed:

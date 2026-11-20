@@ -84,6 +84,7 @@ describe("routes", () => {
     expect(parseRoute(runRoute("coda/web", "20261117-120000-abcdef"))).toEqual({ view: "run", job: "coda/web", run: "20261117-120000-abcdef" });
     expect(parseRoute(outputRoute("Café", "r1"))).toEqual({ view: "output", job: "Café", run: "r1" });
     expect(parseRoute("history")).toEqual({ view: "history" });
+    expect(parseRoute("services")).toEqual({ view: "services" });
     expect(parseRoute("settings")).toEqual({ view: "settings" });
     for (const route of ["", "jobs", "run/x", "run/a_zz/r", "run//r", "nope/a/b", "jobs/a/b"]) expect(parseRoute(route)).toEqual({ view: "jobs", job: null });
     expect(jobsRoute("coda/knowledge")).toBe("jobs/coda.knowledge");

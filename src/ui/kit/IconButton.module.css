@@ -1,0 +1,32 @@
+.root {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-btn);
+  height: var(--icon-btn);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.root:hover {
+  background: var(--hover-bg);
+  color: var(--text);
+}
+
+.root:active {
+  background: var(--active-bg);
+}
+
+.root:disabled {
+  background: transparent;
+  cursor: default;
+  opacity: 0.4;
+}

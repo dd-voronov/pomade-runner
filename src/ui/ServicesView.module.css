@@ -1,0 +1,18 @@
+.cols {
+  grid-template-columns: 16px minmax(0, 1.2fr) minmax(0, 1fr) 262px;
+}
+
+.row {
+  min-height: 52px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+.none {
+  padding: var(--space-4) var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+}

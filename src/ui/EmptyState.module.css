@@ -1,8 +1,8 @@
 .root {
   display: flex;
   flex-direction: column;
-  box-sizing: border-box;
-  min-height: 100%;
+  height: 100%;
+  overflow-y: auto;
   padding: var(--space-5) var(--space-4) var(--space-3);
 }
 
@@ -17,7 +17,7 @@
   text-align: center;
 }
 
-/* Runner's icon as a mask, so the mark takes a token's colour in either scheme. */
+/* Runner's icon as a mask, so the mark takes a token's colour. */
 .mark {
   width: 36px;
   height: 36px;

@@ -1,0 +1,110 @@
+/* A view's table: a grid per row, the columns from the view's own class (`grid-template-columns`). */
+.cols {
+  display: grid;
+  align-items: center;
+  column-gap: var(--space-3);
+}
+
+.head {
+  height: 24px;
+  padding: 0 var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
+.head > * {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.row {
+  min-height: 44px;
+  padding: 5px var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.row + .row {
+  box-shadow: 0 -1px 0 var(--border);
+}
+
+.row:hover {
+  background: var(--hover-bg);
+}
+
+.row.click {
+  cursor: pointer;
+}
+
+.row.invalid {
+  margin: 2px 0;
+  background: var(--danger-soft);
+  box-shadow: none;
+}
+
+.row.invalid + .row {
+  box-shadow: none;
+}
+
+.kind {
+  color: var(--text-muted);
+}
+
+.row.off .kind,
+.row.off .name,
+.row.off .sub {
+  color: var(--text-faint);
+}
+
+.main {
+  min-width: 0;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 17px;
+  min-width: 0;
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sub {
+  height: 17px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell {
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+
+.cellSub {
+  height: 16px;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}

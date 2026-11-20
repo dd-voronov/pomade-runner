@@ -1,0 +1,120 @@
+/* `seg`: the form's choice between a few options. */
+.seg {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--active-bg);
+}
+
+.seg .option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.seg .option:hover {
+  color: var(--text);
+}
+
+.seg .option[aria-pressed="true"] {
+  background: var(--panel-raised);
+  color: var(--text);
+  box-shadow:
+    var(--shadow-1),
+    0 0 0 1px var(--border);
+}
+
+.seg .option:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.default {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-normal);
+}
+
+/* `switch`: the panel's three-position switch, a sliding thumb under the chosen position. Its short
+   labels take over in a narrow panel: the panel's root is the inline-size container. */
+.switch {
+  position: relative;
+  display: flex;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--active-bg);
+}
+
+.thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-raised);
+  box-shadow:
+    var(--shadow-1),
+    0 0 0 1px var(--border);
+  transition:
+    left 160ms var(--ease),
+    width 160ms var(--ease);
+}
+
+.switch .option {
+  position: relative;
+  display: inline-flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.switch .option:hover,
+.switch .option[aria-pressed="true"] {
+  color: var(--text);
+}
+
+.short {
+  display: none;
+}
+
+@container (max-width: 268px) {
+  .long {
+    display: none;
+  }
+
+  .short {
+    display: inline;
+  }
+}
+
+@container (max-width: 214px) {
+  .switch .option {
+    padding: 0 3px;
+  }
+
+  .switch .option .dot {
+    display: none;
+  }
+}

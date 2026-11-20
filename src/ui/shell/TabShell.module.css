@@ -1,0 +1,97 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-4);
+  height: 44px;
+  padding: 0 var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.views {
+  display: flex;
+  align-self: stretch;
+  gap: var(--space-4);
+}
+
+.view {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 1px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+
+.view:hover,
+.view[aria-current="page"] {
+  color: var(--text);
+}
+
+.view[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: var(--accent);
+}
+
+.view:focus-visible {
+  outline-offset: -2px;
+}
+
+.count {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-normal);
+  font-variant-numeric: tabular-nums;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.page {
+  max-width: 1040px;
+  padding: var(--space-4) var(--space-5) var(--space-6);
+}
+
+/* A view's filter row: chips on the left, a faint summary at its end. */
+/* As tall as a chip, with or without one. */
+.filters {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.summary {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+}

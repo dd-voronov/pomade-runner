@@ -1,21 +1,20 @@
 import { useState } from "react";
 import type { HostClient } from "pomade-kit/sdk";
 
-import { ActiveRunsList } from "./ActiveRunsList";
-import { EmptyState } from "./EmptyState";
-import { JobsList } from "./JobsList";
+import { ActiveRunsList, goingRuns } from "./ActiveRunsList";
+import { JobsProblem } from "./JobsProblem";
+import { Button, PanelCard, PanelSection } from "./kit";
 import { NeedsYouList } from "./NeedsYouList";
 import { NextUpList } from "./NextUpList";
 import styles from "./Panel.module.css";
-import { JobsProblem } from "./JobsProblem";
+import { PanelShell } from "./shell/PanelShell";
 import { SwitchControl } from "./SwitchControl";
-import { useJobs, useRuns, useServices } from "./useRunnerApi";
+import { useJobs, useRuns } from "./useRunnerApi";
 
-/** The side panel: the switch, what needs the user, what runs now and next and every job, with the
- *  way into the Runner tab. */
+/** The side panel: the switch pinned on top; Needs you, Running now and Next up, each collapsible;
+ *  Open Runner pinned at the bottom. With no jobs yet, it says what a service is. */
 export function Panel({ host }: { host: HostClient }): React.JSX.Element {
   const jobs = useJobs(host);
-  const services = useServices(host);
   const runs = useRuns(host);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,9 +24,9 @@ export function Panel({ host }: { host: HostClient }): React.JSX.Element {
   };
   const open = (
     <>
-      <button type="button" className={styles.open} data-testid="open-runner" onClick={openRunner}>
+      <Button wide data-testid="open-runner" onClick={openRunner}>
         Open Runner
-      </button>
+      </Button>
       {error !== null && (
         <p className={styles.error} role="alert" data-testid="open-runner-error">
           Could not open Runner: {error}
@@ -36,29 +35,39 @@ export function Panel({ host }: { host: HostClient }): React.JSX.Element {
     </>
   );
 
-  if (jobs.status === "loading") return <main className={styles.root} data-testid="panel-loading" />;
+  if (jobs.status === "loading") return <PanelShell testId="panel-loading" foot={open} />;
   if (jobs.status !== "ready") return <JobsProblem state={jobs} testId="panel-problem" action={open} />;
+  const report = runs.status === "ready" ? runs.value : null;
+  const top = report === null ? undefined : <SwitchControl host={host} state={report.switch} />;
+  const running = <ActiveRunsList host={host} runs={report?.active ?? []} />;
+
   if (jobs.value.jobs.length === 0) {
     return (
-      <EmptyState testId="panel-empty" title="No jobs yet" action={open}>
-        Services and runs show here once Runner has jobs.
-      </EmptyState>
+      <PanelShell testId="panel-empty" top={top} foot={open}>
+        <PanelSection title="Running now" count={0} testId="section-running">
+          {running}
+        </PanelSection>
+        <div className={styles.emptyCard}>
+          <PanelCard title="No jobs yet">
+            A <b>service</b> is a command Runner keeps running: it starts at login, restarts on a crash and outlives Pomade — like a project's web server. Scripts, agents
+            and git operations run on schedules and hooks.
+          </PanelCard>
+        </div>
+      </PanelShell>
     );
   }
-  const report = runs.status === "ready" ? runs.value : null;
+  const needs = report?.needsYou ?? [];
   return (
-    <main className={styles.root} data-testid="panel-jobs">
-      {report !== null && (
-        <>
-          <SwitchControl host={host} state={report.switch} />
-          <NeedsYouList host={host} items={report.needsYou} />
-          <ActiveRunsList host={host} runs={report.active} />
-          <NextUpList next={report.nextUp} now={Date.now()} />
-        </>
-      )}
-      <h2 className={styles.heading}>Jobs</h2>
-      <JobsList host={host} jobs={jobs.value.jobs} services={services.status === "ready" ? services.value.services : []} runs={report?.jobs ?? []} />
-      <footer className={styles.footer}>{open}</footer>
-    </main>
+    <PanelShell testId="panel-jobs" top={top} foot={open}>
+      <PanelSection title="Needs you" count={needs.length} urgent={needs.length > 0} testId="section-needs-you">
+        <NeedsYouList host={host} items={needs} />
+      </PanelSection>
+      <PanelSection title="Running now" count={goingRuns(report?.active ?? []).length} testId="section-running">
+        {running}
+      </PanelSection>
+      <PanelSection title="Next up" testId="section-next-up">
+        <NextUpList next={report?.nextUp ?? []} now={Date.now()} />
+      </PanelSection>
+    </PanelShell>
   );
 }

@@ -5,6 +5,7 @@ import { APP_ID } from "../app";
 import { MISSED_METHOD } from "../integrations/runner-api";
 import styles from "./Runs.module.css";
 import { useAction } from "./useAction";
+import { Button, TextInput } from "./kit";
 
 /** A missed run's choices: Run now · Run at… (a time or a phrase: `23:00`, `tomorrow 9:00`) · Skip.
  *  A stand-in until the real card. */
@@ -15,15 +16,15 @@ export function MissedActions({ host, job }: { host: HostClient; job: string }):
   return (
     <>
       <span className={styles.actions}>
-        <button type="button" className={styles.button} onClick={choose({ choice: "run-now" })}>
+        <Button size="sm" onClick={choose({ choice: "run-now" })}>
           Run now
-        </button>
-        <button type="button" className={styles.button} aria-expanded={at !== null} onClick={() => setAt(at === null ? "" : null)}>
+        </Button>
+        <Button size="sm" aria-expanded={at !== null} onClick={() => setAt(at === null ? "" : null)}>
           Run at…
-        </button>
-        <button type="button" className={styles.button} onClick={choose({ choice: "skip" })}>
+        </Button>
+        <Button size="sm" onClick={choose({ choice: "skip" })}>
           Skip
-        </button>
+        </Button>
       </span>
       {at !== null && (
         <form
@@ -33,10 +34,10 @@ export function MissedActions({ host, job }: { host: HostClient; job: string }):
             choose({ choice: "run-at", at })();
           }}
         >
-          <input className={styles.input} aria-label="Run at" placeholder="23:00 · tomorrow 9:00 · +2h" value={at} onChange={(event) => setAt(event.target.value)} />
-          <button type="submit" className={styles.button}>
+          <TextInput width="compact" aria-label="Run at" placeholder="23:00 · tomorrow 9:00 · +2h" value={at} onChange={(event) => setAt(event.target.value)} />
+          <Button type="submit" size="sm">
             Set
-          </button>
+          </Button>
         </form>
       )}
       {action.error !== null && (

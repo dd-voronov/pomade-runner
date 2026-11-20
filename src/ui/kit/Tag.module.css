@@ -1,0 +1,66 @@
+.tag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: var(--badge-bg);
+  color: var(--badge-fg);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.tag.warn {
+  background: var(--warning-soft);
+  color: var(--warning-text);
+}
+
+.tag.muted {
+  background: var(--active-bg);
+  color: var(--text-muted);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 var(--space-2);
+  border-radius: 10px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+
+.pill.ok {
+  background: var(--ok-soft);
+  color: var(--ok-text);
+}
+
+.pill.danger {
+  background: var(--danger);
+  color: var(--on-danger);
+}
+
+.pill.warning {
+  background: var(--warning);
+  color: var(--on-warning);
+}
+
+.pill.muted {
+  background: var(--active-bg);
+  color: var(--text-muted);
+}
+
+.pill.accent {
+  background: var(--accent-soft);
+  color: var(--badge-fg);
+}
+
+[data-help].tag,
+[data-help].pill {
+  cursor: help;
+}

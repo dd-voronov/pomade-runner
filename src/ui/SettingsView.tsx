@@ -8,12 +8,21 @@ import { DEFAULT_SETTINGS, minutesText, parseMinutes, SETTINGS_FIELDS, type Sett
 import styles from "./Runs.module.css";
 import { useAction } from "./useAction";
 import { useSettings } from "./useRunnerApi";
+import type { HelpKey } from "./help";
+import { Button, Help, TextInput } from "./kit";
 
 const LABELS: Record<SettingsField, string> = {
   "max-low-priority-runs": "Low-priority runs at once",
   "warm-up": "Warm-up after login or wake",
   "long-run-warning": "Long-run warning after",
   "history-days": "Keep history (days)",
+};
+
+const HELPS: Record<SettingsField, HelpKey> = {
+  "max-low-priority-runs": "s.heavy",
+  "warm-up": "s.warm",
+  "long-run-warning": "s.long",
+  "history-days": "s.keep",
 };
 
 /** One setting: its value as the file writes it, Save and Default. */
@@ -41,17 +50,20 @@ function Field({ host, name, value }: { host: HostClient; name: SettingsField; v
         else save(raw);
       }}
     >
-      <label className={styles.meta} htmlFor={`setting-${name}-input`}>
-        {LABELS[name]} <code className={styles.key}>{name}</code>
-      </label>
       <span className={styles.fieldLine}>
-        <input id={`setting-${name}-input`} className={styles.input} value={text} onChange={(event) => setText(event.target.value)} />
-        <button type="submit" className={styles.button}>
+        <label className={styles.meta} htmlFor={`setting-${name}-input`}>
+          {LABELS[name]} <code className={styles.key}>{name}</code>
+        </label>
+        <Help k={HELPS[name]} />
+      </span>
+      <span className={styles.fieldLine}>
+        <TextInput id={`setting-${name}-input`} width="number" value={text} onChange={(event) => setText(event.target.value)} />
+        <Button type="submit">
           Save
-        </button>
-        <button type="button" className={styles.button} disabled={value === fallback} onClick={() => save(null)}>
+        </Button>
+        <Button disabled={value === fallback} onClick={() => save(null)}>
           Default ({spec.kind === "duration" ? minutesText(fallback) : fallback})
-        </button>
+        </Button>
       </span>
       {action.error !== null && (
         <span className={styles.error} role="alert">
@@ -77,7 +89,7 @@ export function SettingsView({ host }: { host: HostClient }): React.JSX.Element 
   const { path, exists, errors } = settings.value;
   return (
     <section className={`${styles.section} ${styles.settings}`} data-testid="settings">
-      <p className={styles.note}>
+      <p className={styles.settingsPath}>
         {path}
         {exists ? "" : " — no file yet: every setting is its default"}
       </p>

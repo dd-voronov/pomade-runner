@@ -11,7 +11,8 @@ import { dayTime, runWords, type JobRuns } from "../scheduler/model";
 import styles from "./JobsList.module.css";
 import { serviceWords } from "./serviceWords";
 import { useAction } from "./useAction";
-import { useRepos } from "./useRunnerApi";
+import { useProjectNames, useRepos } from "./useRunnerApi";
+import { Button, LinkButton } from "./kit";
 
 const KIND_LABEL: Record<JobKind, string> = { service: "Service", script: "Script", agent: "Agent", git: "Git" };
 
@@ -86,16 +87,16 @@ function Row({
         )}
         <span className={styles.actions}>
           {(job.kind === "script" || job.kind === "git") && (
-            <button type="button" className={styles.button} onClick={call(RUN_NOW_METHOD, { job: job.id })}>
+            <Button size="sm" onClick={call(RUN_NOW_METHOD, { job: job.id })}>
               Run now
-            </button>
+            </Button>
           )}
-          <button type="button" className={styles.button} onClick={call(SET_ENABLED_METHOD, { job: job.id, enabled: !job.enabled })}>
+          <Button size="sm" onClick={call(SET_ENABLED_METHOD, { job: job.id, enabled: !job.enabled })}>
             {job.enabled ? "Disable" : "Enable"}
-          </button>
-          <button type="button" className={styles.button} onClick={() => onOpen(job.path)}>
+          </Button>
+          <Button size="sm" onClick={() => onOpen(job.path)}>
             Open file
-          </button>
+          </Button>
         </span>
         {action.error !== null && (
           <span className={styles.failure} role="alert">
@@ -114,9 +115,7 @@ function Row({
         Invalid: {first === undefined ? "the file has an error." : `line ${first.line}: ${describeJobError(first)}`}
         {invalid.errors.length > 1 && ` · ${invalid.errors.length - 1} more`}
         {" · "}
-        <button type="button" className={styles.link} onClick={() => onOpen(invalid.path)}>
-          Open file
-        </button>
+        <LinkButton onClick={() => onOpen(invalid.path)}>Open file</LinkButton>
       </span>
     </li>
   );
@@ -139,25 +138,10 @@ export function JobsList({
   runs: readonly JobRuns[];
   selected?: string | null;
 }): React.JSX.Element {
-  const [projects, setProjects] = useState<ReadonlyMap<string, string>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const repos = useRepos(host);
   const known = repos.status === "ready" ? new Set(repos.value.map((repo) => repo.name)) : null;
-
-  useEffect(() => {
-    let live = true;
-    host.project.list().then(
-      ({ projects: list }) => {
-        if (live) setProjects(new Map(list.map((p) => [p.id, p.name])));
-      },
-      () => undefined,
-    );
-    return () => {
-      live = false;
-    };
-  }, [host]);
-
-  const projectName = (id: string | null): string => (id === null ? "Workspace" : (projects.get(id) ?? id));
+  const projectName = useProjectNames(host);
   const open = (path: string): void => {
     setError(null);
     host.tabs.openFile({ path }).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));

@@ -1,17 +1,17 @@
 import { dayTime, type NextRun } from "../scheduler/model";
 import styles from "./Runs.module.css";
+import { PanelEmpty } from "./kit";
 import { aheadWords } from "./runWords";
 
 /** How many runs Next up shows. */
 const NEXT_UP = 5;
 
-/** Next up: the next runs, soonest first. A stand-in until the panel's real design. */
+/** Next up's content: the next runs, soonest first. A stand-in until the panel's real design. */
 export function NextUpList({ next, now }: { next: readonly NextRun[]; now: number }): React.JSX.Element {
   return (
-    <section className={styles.section} data-testid="next-up">
-      <h2 className={styles.heading}>Next up</h2>
+    <div data-testid="next-up">
       {next.length === 0 ? (
-        <p className={styles.empty}>Nothing is scheduled.</p>
+        <PanelEmpty>Nothing is scheduled.</PanelEmpty>
       ) : (
         <ul className={styles.list}>
           {next.slice(0, NEXT_UP).map((run) => (
@@ -26,6 +26,6 @@ export function NextUpList({ next, now }: { next: readonly NextRun[]; now: numbe
           ))}
         </ul>
       )}
-    </section>
+    </div>
   );
 }
