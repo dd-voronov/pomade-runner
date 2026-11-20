@@ -1,0 +1,12 @@
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+/* The file Delete removes, on its own line in the confirm; doubled to outweigh the dialog's `p` size. */
+.path.path {
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}

@@ -7,7 +7,8 @@
 // (`fakeHost.writeFile`). Every valid service runs; Restart is refused; a spec sets another state with
 // `window.setServiceStatus`, the runs with `window.setRuns`, the settings with
 // `window.setSettings`, and reads the actions the UI asked for in `window.runnerCalls`. Delete
-// removes the job's file — refused with `window.refuseDelete`'s reason while one is set.
+// removes the job's file — refused with `window.refuseDelete`'s reason while one is set; Run now and
+// Enable / Disable are refused with `window.refuseActions`'s.
 
 import type { FakeHost } from "pomade-kit/fake-host";
 import type { JsonValue } from "pomade-kit/protocol";
@@ -37,9 +38,9 @@ import {
   SWITCH_METHOD,
 } from "../../src/integrations/runner-api";
 import { checkJobs } from "../../src/jobs/check";
-import { entryId, entryPath, JOBS_FOLDER, type JobsSnapshot } from "../../src/jobs/model";
+import { entryId, entryPath, JOBS_FOLDER, type JobKind, type JobsSnapshot } from "../../src/jobs/model";
 import type { ServicesReport, ServiceStatus } from "../../src/keeper/model";
-import type { RunRecord, RunsReport, RunView, SwitchPosition } from "../../src/scheduler/model";
+import type { ActiveRun, RunRecord, RunsReport, RunView, SwitchPosition } from "../../src/scheduler/model";
 import { checkSettings, type SettingsReport } from "../../src/scheduler/settings";
 
 export async function startFakeScheduler(fake: FakeHost): Promise<void> {
@@ -91,8 +92,32 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     const service = services(snapshot).services.find((status) => status.job === job);
     return service === undefined ? { ok: false, reason: `no service "${job}"` } : { ok: true, service };
   };
+  /** The run Run now starts, as the scheduler answers it. */
+  const startedRun = (job: string, name: string, kind: JobKind, project: string | null): ActiveRun => ({
+    job,
+    name,
+    kind,
+    project,
+    folder: "",
+    run: "20261117-120000-abcdef",
+    trigger: "manual",
+    cause: null,
+    dueAt: Date.now(),
+    state: "running",
+    lowPriority: false,
+    runAt: null,
+    deadline: null,
+    waits: null,
+    startedAt: Date.now(),
+    session: null,
+    log: null,
+    limitHit: null,
+    warnedAt: null,
+    warningDismissed: false,
+  });
   window.runnerCalls = [];
   window.refuseDelete = null;
+  window.refuseActions = null;
   await host.api.serve({
     [JOBS_LIST_METHOD]: () => json(snapshot),
     [SERVICES_LIST_METHOD]: () => json(services(snapshot)),
@@ -100,8 +125,14 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     [HISTORY_LIST_METHOD]: () => json({ records: runs.history, next: null }),
     [RUN_GET_METHOD]: (params) => json(find(params) ?? null),
     [RUN_OUTPUT_METHOD]: () => json({ text: runs.output, truncated: false }),
-    [RUN_NOW_METHOD]: action(RUN_NOW_METHOD),
-    [SET_ENABLED_METHOD]: action(SET_ENABLED_METHOD),
+    [RUN_NOW_METHOD]: action(RUN_NOW_METHOD, (params) => {
+      const { job } = params as { job: string };
+      if (window.refuseActions !== null) return { ok: false, reason: window.refuseActions };
+      const entry = snapshot.jobs.find((candidate) => entryId(candidate) === job);
+      if (entry === undefined || !entry.valid) return { ok: false, reason: `no job "${job}"` };
+      return { ok: true, run: startedRun(entry.job.id, entry.job.name, entry.job.kind, entry.job.project) };
+    }),
+    [SET_ENABLED_METHOD]: action(SET_ENABLED_METHOD, () => (window.refuseActions === null ? { ok: true } : { ok: false, reason: window.refuseActions })),
     [SERVICE_METHODS.start]: action(SERVICE_METHODS.start, serviceAnswer),
     [SERVICE_METHODS.stop]: action(SERVICE_METHODS.stop, serviceAnswer),
     [SERVICE_METHODS.restart]: action(SERVICE_METHODS.restart, () => ({ ok: false, reason: "the keeper is not connected" })),

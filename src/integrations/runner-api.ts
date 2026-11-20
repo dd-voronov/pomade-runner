@@ -130,8 +130,8 @@ export type RunnerRoute =
   | { view: "run"; job: string; run: string }
   /** A run's full output. */
   | { view: "output"; job: string; run: string }
-  /** The job form, for a new job. */
-  | { view: "new" }
+  /** The job form, for a new job; `project` is the project it starts in, `null` for none. */
+  | { view: "new"; project: string | null }
   /** The job form, editing a job. */
   | { view: "edit"; job: string };
 
@@ -150,9 +150,10 @@ export function outputRoute(job: string, run: string): string {
   return `output/${encodeJobId(job)}/${run}`;
 }
 
-/** The job form for a new job: `new` — what "New job" opens. */
-export function newRoute(): string {
-  return "new";
+/** The job form for a new job: `new` — what "New job" opens — or `new/<encoded project id>` when
+ *  the job starts in a project (the Jobs view's "This project" chip is on). */
+export function newRoute(project: string | null = null): string {
+  return project === null ? "new" : `new/${encodeJobId(project)}`;
 }
 
 /** The job form editing a job: `edit/<encoded job id>`. */
@@ -162,7 +163,10 @@ export function editRoute(job: string): string {
 
 /** The view a route names; an unknown route is the Jobs view. */
 export function parseRoute(route: string): RunnerRoute {
-  if (route === "new") return { view: "new" };
+  if (route === "new") return { view: "new", project: null };
+  const starting = /^new\/([^/]+)$/.exec(route);
+  const project = starting === null ? null : decodeJobId(starting[1] ?? "");
+  if (project !== null) return { view: "new", project };
   const edit = /^edit\/([^/]+)$/.exec(route);
   const editing = edit === null ? null : decodeJobId(edit[1] ?? "");
   if (editing !== null) return { view: "edit", job: editing };

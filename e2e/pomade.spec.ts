@@ -470,4 +470,63 @@ test.describe("Runner in Pomade", () => {
       runner.close();
     }
   });
+
+  test("a script job is disabled, run and deleted from its row in the Jobs view, and the file on disk matches after each step", async () => {
+    const running = scheduler ?? (await startTheScheduler());
+    const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
+    const file = join(folders.workspace, "Apps/pomade-runner/jobs/row-script.md");
+    const hand = scriptFile("Row script", "echo row-ok").replace("kind: script\n", "kind: script # by hand\n") + "Notes kept.\n";
+    await writeFile(file, hand);
+    const runner = await connectAsRunner();
+    try {
+      await runner.tabs.openApp({ route: "", projectId: WORKSPACE_PROJECT_ID });
+      const row = tab.locator('[data-testid="job-row"][data-job="row-script"]');
+      await expect(row).toBeVisible({ timeout: 5000 });
+      await expect(row.getByTestId("job-trigger")).toHaveText("when a project is created");
+      await expect(row.getByTestId("job-status")).toHaveText("never ran");
+      await expect(row.getByTestId("job-next")).toHaveText("on event");
+      await shoot(page, "pomade-jobs-row");
+
+      // Disable: the file says so, its comment and notes stay, the row dims.
+      await row.getByRole("switch").click();
+      await expect.poll(() => readFile(file, "utf8")).toMatch(/^enabled: false$/m);
+      const disabled = await readFile(file, "utf8");
+      expect(disabled).toContain("kind: script # by hand\n");
+      expect(disabled.endsWith("Notes kept.\n")).toBe(true);
+      expect(disabled.replace("enabled: false\n", "")).toBe(hand);
+      await expect(row.getByTestId("job-next")).toHaveText("disabled");
+      // A disabled job does not run, and the row says why.
+      await row.getByRole("button", { name: "Run now" }).click();
+      await expect(tab.getByTestId("toast").last()).toHaveText('RunnerCould not run Row script: "Row script" is disabled in its file; enable it first');
+      expect(await history("row-script")).toEqual([]);
+
+      // Enable and run: the run lands in History and the row's last result says done.
+      await row.getByRole("switch").click();
+      await expect.poll(() => readFile(file, "utf8")).not.toMatch(/^enabled: false$/m);
+      expect(await readFile(file, "utf8")).toContain("Notes kept.\n");
+      await expect(row.getByTestId("job-next")).toHaveText("on event");
+      await row.getByRole("button", { name: "Run now" }).click();
+      await expect(tab.getByTestId("toast").last()).toHaveText(/^RunnerRow script (started|queued)$/);
+      await expect.poll(() => history("row-script")).toEqual([expect.objectContaining({ state: "done", exitCode: 0, trigger: "manual" }) as RunRecord]);
+      await expect(row.getByTestId("job-status")).toHaveText("done");
+      await expect(row.getByTestId("job-last-sub")).toHaveText(/^today \d+:\d\d · \d+s$/);
+      await shoot(page, "pomade-jobs-row-done");
+
+      // Delete: the confirm names the file, Cancel keeps it, Delete job removes it.
+      await row.getByRole("button", { name: "Delete" }).click();
+      const confirm = tab.getByTestId("delete-confirm");
+      await expect(confirm.getByTestId("delete-path")).toHaveText("Apps/pomade-runner/jobs/row-script.md");
+      await expect(confirm).toContainText("This can't be undone.");
+      await confirm.getByRole("button", { name: "Cancel" }).click();
+      expect(await readFile(file, "utf8")).toContain("Notes kept.\n");
+      await row.getByRole("button", { name: "Delete" }).click();
+      await confirm.getByRole("button", { name: "Delete job" }).click();
+      await expect(tab.getByTestId("toast").last()).toHaveText("RunnerDeleted Apps/pomade-runner/jobs/row-script.md", { timeout: 15_000 });
+      await expect(readFile(file, "utf8")).rejects.toThrow(/ENOENT/);
+      await expect(row).toHaveCount(0);
+      expect(running.output()).toContain("job row-script: deleted\n");
+    } finally {
+      runner.close();
+    }
+  });
 });

@@ -63,4 +63,22 @@ describe("a job's trigger in words", () => {
       "one/later": "always on, from its project's first open; starts after pull finishes",
     });
   });
+
+  it("says a job and a project by their names when the caller knows them", () => {
+    const snapshot = checkJobs(
+      [
+        { path: "pull.md", text: script("schedule:\n  daily: { at: 7:00 }") },
+        { path: "web.md", text: service("after: { job: pull }\n") },
+        { path: "tests.md", text: script("after: { job: pull, result: any }") },
+        { path: "first.md", text: script("hook: { event: project-first-open, project: p1 }") },
+      ],
+      { workspace: "/ws", projects: [{ id: "p1", name: "One", root: "Projects/one" }] },
+    );
+    const named = { job: (id: string) => (id === "pull" ? "Pull coda-helper" : id), project: (id: string) => (id === "p1" ? "One" : id) };
+    const said = Object.fromEntries(snapshot.jobs.map((entry) => (entry.valid ? [entry.job.id, jobTriggerWords(entry.job, named)] : [entry.invalid.id, ""])));
+    const { web, tests, first } = said;
+    expect(web).toBe("always on, from login; restarts after Pull coda-helper is done");
+    expect(tests).toBe("after Pull coda-helper finishes");
+    expect(first).toBe("on the first open of project One");
+  });
 });

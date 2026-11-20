@@ -20,5 +20,7 @@ declare global {
     runnerCalls: { method: string; params: JsonValue }[];
     /** While set, the stand-in scheduler refuses Delete with this reason. */
     refuseDelete: string | null;
+    /** While set, the stand-in scheduler refuses Run now and Enable / Disable with this reason. */
+    refuseActions: string | null;
   }
 }

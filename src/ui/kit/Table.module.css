@@ -92,6 +92,10 @@
   font-size: var(--fs-sm);
 }
 
+.cellButton {
+  cursor: pointer;
+}
+
 .cellSub {
   height: 16px;
   overflow: hidden;

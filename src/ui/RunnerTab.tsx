@@ -1,28 +1,28 @@
+import { useState } from "react";
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_NAME, APP_VERSION } from "../app";
-import { newRoute, parseRoute, type RunnerRoute } from "../integrations/runner-api";
+import { parseRoute, type RunnerRoute } from "../integrations/runner-api";
 import { ActiveRunsList, goingRuns } from "./ActiveRunsList";
 import { JobForm } from "./form/JobForm";
 import { HistoryView } from "./HistoryView";
-import { JobsList } from "./JobsList";
+import { newJobRoute } from "./jobWords";
+import { JobsView } from "./JobsView";
 import { JobsProblem } from "./JobsProblem";
 import { Button, EmptyBlock, GroupHead } from "./kit";
 import { OutputView, RunDialog } from "./RunCard";
 import styles from "./RunnerTab.module.css";
 import { ServicesView } from "./ServicesView";
 import { SettingsView } from "./SettingsView";
-import { TabShell, ViewFilters, type TabView } from "./shell/TabShell";
-import { useJobs, useRoute, useRuns, useServices } from "./useRunnerApi";
+import { TabShell, type TabView } from "./shell/TabShell";
+import { SERVICE_RUNS } from "./serviceWords";
+import { useActiveProject, useJobs, useRoute, useRuns, useServices } from "./useRunnerApi";
 
 /** The header's view for a route: a run's card and its output belong to History; the job form, to Jobs. */
 function tabView(route: RunnerRoute): TabView {
   if (route.view === "new" || route.view === "edit") return "jobs";
   return route.view === "run" || route.view === "output" ? "history" : route.view;
 }
-
-/** The services that run now, by state: what Delete stops first. */
-const SERVICE_RUNS: readonly string[] = ["starting", "running", "restarting"];
 
 /** The Runner tab: the shell's four views by its route — every job (at one job, from a repo row's
  *  Scheduled line), the history with the runs going — a run's result card over it — a run's output,
@@ -32,6 +32,9 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   const services = useServices(host);
   const runs = useRuns(host);
   const [route, open] = useRoute(host);
+  const active = useActiveProject(host);
+  // The "This project" chip is the tab's: on in Jobs, it is on in Services, and New job starts in the open project.
+  const [thisProject, setThisProject] = useState(false);
   const view = parseRoute(route);
   const version = (
     <span data-testid="version">
@@ -45,7 +48,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   const serviceStates = services.status === "ready" ? services.value.services : [];
   const counts = jobs.status === "ready" ? { jobs: entries.length, services: entries.filter((entry) => entry.valid && entry.job.kind === "service").length } : {};
   const newJob = (testId: string): React.JSX.Element => (
-    <Button variant="primary" icon="plus" onClick={() => open(newRoute())} data-testid={testId}>
+    <Button variant="primary" icon="plus" onClick={() => open(newJobRoute(thisProject, active))} data-testid={testId}>
       New job
     </Button>
   );
@@ -87,13 +90,20 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
           </EmptyBlock>,
         );
       }
-      const invalid = entries.filter((entry) => !entry.valid).length;
       return shell(
         "tab-jobs",
-        <>
-          <ViewFilters summary={`${entries.length} ${entries.length === 1 ? "job" : "jobs"}${invalid > 0 ? ` · ${invalid} invalid` : ""}`} />
-          <JobsList host={host} jobs={entries} services={serviceStates} runs={report?.jobs ?? []} selected={view.job} />
-        </>,
+        <JobsView
+          host={host}
+          jobs={entries}
+          services={serviceStates}
+          report={report}
+          marked={view.job}
+          active={active}
+          thisProject={thisProject}
+          onThisProject={setThisProject}
+          open={open}
+          newJob={newJob}
+        />,
       );
     }
     case "history":
@@ -107,7 +117,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
         </>,
       );
     case "services":
-      return shell("tab-services", <ServicesView host={host} jobs={entries} services={serviceStates} open={open} />);
+      return shell("tab-services", <ServicesView host={host} jobs={entries} services={serviceStates} open={open} thisProject={thisProject} onThisProject={setThisProject} />);
     case "settings":
       return shell(
         "tab-settings",

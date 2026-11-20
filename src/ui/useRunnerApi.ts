@@ -131,15 +131,14 @@ export function useRepos(host: HostClient): LiveState<GitRepoState[]> {
   return state;
 }
 
-/** Pomade's projects' names by id, as `project.list` answers once; empty until it does. A job's
- *  project shows by its name ("Workspace" for none, the id for one Pomade does not have). */
-export function useProjectNames(host: HostClient): (id: string | null) => string {
-  const [names, setNames] = useState<ReadonlyMap<string, string>>(new Map());
+/** Pomade's projects as `project.list` answers once, in its order; empty until it does. */
+export function useProjectList(host: HostClient): readonly ProjectRef[] {
+  const [projects, setProjects] = useState<readonly ProjectRef[]>([]);
   useEffect(() => {
     let live = true;
     host.project.list().then(
-      ({ projects }) => {
-        if (live) setNames(new Map(projects.map((p) => [p.id, p.name])));
+      (answer) => {
+        if (live) setProjects(answer.projects);
       },
       () => undefined,
     );
@@ -147,6 +146,13 @@ export function useProjectNames(host: HostClient): (id: string | null) => string
       live = false;
     };
   }, [host]);
+  return projects;
+}
+
+/** Pomade's projects' names by id; a job's project shows by its name ("Workspace" for none, the id
+ *  for one Pomade does not have). */
+export function useProjectNames(host: HostClient): (id: string | null) => string {
+  const names = new Map(useProjectList(host).map((p) => [p.id, p.name]));
   return (id) => (id === null ? "Workspace" : (names.get(id) ?? id));
 }
 

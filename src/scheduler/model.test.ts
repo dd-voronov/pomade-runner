@@ -94,11 +94,14 @@ describe("routes", () => {
 
   it("name the job form: a new job, or a job by its id, and read back", () => {
     expect(newRoute()).toBe("new");
-    expect(parseRoute(newRoute())).toEqual({ view: "new" });
+    expect(parseRoute(newRoute())).toEqual({ view: "new", project: null });
+    expect(newRoute("coda-helper")).toBe("new/coda-helper");
+    expect(parseRoute(newRoute("coda-helper"))).toEqual({ view: "new", project: "coda-helper" });
+    expect(parseRoute(newRoute("Café"))).toEqual({ view: "new", project: "Café" });
     expect(editRoute("coda-helper/coda-web")).toBe("edit/coda-helper.coda-web");
     expect(parseRoute(editRoute("coda-helper/coda-web"))).toEqual({ view: "edit", job: "coda-helper/coda-web" });
     expect(parseRoute(editRoute("Café"))).toEqual({ view: "edit", job: "Café" });
-    for (const route of ["edit", "edit/", "edit/a_zz", "edit/a/b", "new/x"]) expect(parseRoute(route)).toEqual({ view: "jobs", job: null });
+    for (const route of ["edit", "edit/", "edit/a_zz", "edit/a/b", "new/", "new/a_zz", "new/a/b"]) expect(parseRoute(route)).toEqual({ view: "jobs", job: null });
   });
 });
 

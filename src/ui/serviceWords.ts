@@ -20,6 +20,9 @@ const STATE_WORDS: Record<ServiceState, string> = {
   removed: "Stopping: its file is gone",
 };
 
+/** The states of a service with a session going or about to: what Delete stops first. */
+export const SERVICE_RUNS: readonly ServiceState[] = ["starting", "running", "restarting"];
+
 export function serviceWords(status: ServiceStatus): string {
   return [
     STATE_WORDS[status.state],

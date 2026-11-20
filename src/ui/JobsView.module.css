@@ -1,0 +1,72 @@
+/* kind · job and trigger · last result · next run · actions · the Disable toggle */
+.cols {
+  grid-template-columns: 16px minmax(0, 1.5fr) minmax(0, 1.1fr) 104px 78px 28px;
+}
+
+/* Under a row's Next run: nothing is scheduled. */
+.none {
+  color: var(--text-faint);
+}
+
+.helped {
+  cursor: help;
+}
+
+.problem {
+  color: var(--danger-text);
+}
+
+/* The row the route marks (a repo row's Scheduled line opens it): the accent's bar, and its wash on a
+   valid job. Tripled to outweigh the kit's row rules (hover, invalid, the hairline). */
+.cols.cols.cols[aria-current="true"] {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.cols.cols.cols[aria-current="true"][data-testid="job-row"] {
+  background: var(--accent-soft);
+}
+
+/* Delete sits in the row's icon colour and turns red under the pointer or the keyboard. */
+.delete:hover,
+.delete:focus-visible {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+}
+
+/* An invalid file: the warning, its name and error across the middle columns, Open file at the end. */
+.warn {
+  color: var(--danger-text);
+}
+
+.invalidText {
+  grid-column: 2 / 5;
+  min-width: 0;
+}
+
+.invalidLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 17px;
+  min-width: 0;
+}
+
+.file {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error {
+  color: var(--danger-text);
+  font-size: var(--fs-sm);
+  line-height: 17px;
+}
+
+.invalidActions {
+  grid-column: 5 / 7;
+}

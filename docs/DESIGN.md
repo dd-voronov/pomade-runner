@@ -703,9 +703,35 @@ to it, light theme only.
 5. **Open Runner**.
 
 **Runner tab:**
-- **Jobs:** grouped by project, workspace jobs first, "This project" chip. Each row: trigger in
-  words, last result, next run, Run now · Edit · Delete, and the Disable toggle. An invalid file's
-  row shows its error and Open file.
+- **Jobs** (`src/ui/JobsView.tsx`): the job files grouped by project — workspace jobs first, then each
+  project in Pomade's order — each group headed by its name (the Workspace's with its help), its
+  jobs sub-folder (`jobs/coda-helper/`) and its count; the files of a group by path. The filter row
+  has the "This project" chip with its help and the "N jobs" summary ("· N invalid" when a file is
+  invalid); the table head carries the helps on **Last result** and **Next run**. The chip is the
+  tab's: on in Jobs, it is on in Services; it keeps the open project's jobs ("No jobs in <project>"
+  and **New job** when none), and **New job** then starts in that project (`new/<encoded project
+  id>`, `newJobRoute`).
+  - **A row:** the kind icon (the kind as its tooltip), the name over the trigger in words
+    (`jobTriggerWords`, a chain's job and a hook's project by name; the tooltip is the full text, and
+    a git job's adds its operation and repos — a repo the workspace lacks is said in red), **Last
+    result**, **Next run**, the actions, and the **Disable** toggle. A disabled row is dimmed.
+  - **Last result** (`lastLook`, `src/ui/jobWords.ts`): a chip with the status's help over a sub line.
+    A service shows its state as the Services view does (`serviceLook`). Any other job shows the run
+    going — "running" over "started 12:31 · 17m", "queued" over what it waits for, "missed · waiting
+    for you" — else its latest finished one: "done", "failed · exit 1", "stopped: ran over 45 min",
+    "skipped · …", "missed · …", "stopped by you", over "today 11:20 · 3s"; "never ran" for none. A
+    click on a job's cell opens that run's result card (`run/<job>/<run>`); a service's and a
+    never-ran job's cell has none.
+  - **Next run** (`nextLook`): "disabled", "paused" (the loop guard's), "always on" (a service), "on
+    event" (a hook or a chain), "finished" (a schedule with nothing ahead), else the next time —
+    "Today 13:00", "Tomorrow 7:00", "Wed 7:00", "Wed 25 Nov 7:00" — with "in N min" under it within the
+    hour.
+  - **Actions**, always visible icon buttons: **Run now** (a service: **Open terminal**, its attached
+    tab), **Edit** (`edit/<encoded job id>`), **Delete** — the bin in the row's icon colour, red under
+    the pointer and on focus — which opens the confirm of "Deleting a job". Run now, a refused Run now
+    or toggle and Delete report as toasts. The toggle writes `enabled:` (`jobs.setEnabled`).
+  - **An invalid file** is a red row with its file name, its help, its first error and **Open file**.
+  - **The route `jobs/<job>`** marks that job's row — the accent bar and wash — and scrolls to it.
 - **History:** the runs going on top, queued ones with what they wait for; then every run, with
   time, job, result, duration and what started it (scheduled · caught up · manual · hook: Mac login
   · chain: after Pull); opens the result card — a chain run's card opens the run it followed — or
@@ -718,7 +744,7 @@ to it, light theme only.
   "disabled" — each with its help; **Restart · Stop** while it is up or starting, **Start**
   otherwise; then Open terminal (its attached tab), Edit (the `edit/<encoded job id>` route) and
   Open file. Each action toasts its outcome or why it was refused. An invalid service file is a red
-  row with its first error, its help and Open file. The "This project" chip, with the open
+  row with its first error, its help and Open file. The "This project" chip (the tab's, as in Jobs), with the open
   project's name, keeps that project's services ("No services in this project." when none); with
   no service files, the view says what a service is.
 - **Settings:** the four settings ("Settings"), each written field-only.
@@ -728,7 +754,7 @@ to it, light theme only.
 line opens) · `history` · `services` · `settings` · `run/<encoded job id>/<run id>` a run's result
 card, a dialog over History (what a run's notice opens; a missed run's card offers Run now · Run at…
 · Skip, a running run's Stop) · `output/<encoded job id>/<run id>` its full output · `new` the job form for a new job (what
-**New job** opens; `newRoute`) · `edit/<encoded job id>` the job form editing a job (`editRoute`).
+**New job** opens; `newRoute`), `new/<encoded project id>` for one that starts in that project · `edit/<encoded job id>` the job form editing a job (`editRoute`).
 An unknown route is Jobs. The tab follows Pomade's `route.changed`.
 
 **Frames and the design system.** Runner draws only inside the two frames Pomade hosts; Pomade's
@@ -787,7 +813,7 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   off.
 
 **Deleting a job.** Delete is on a job's row in the Jobs view and in the form, next to Open file.
-A confirm names the file; on it the scheduler's `jobs.delete` (`src/scheduler/delete.ts`):
+One confirm (`DeleteJobDialog`, `src/ui/DeleteJobDialog.tsx`) serves both; it names the file; on it the scheduler's `jobs.delete` (`src/scheduler/delete.ts`):
 - a running service is stopped first, as Stop does, and its session's end waited for (up to
   `STOP_WAIT_MS`, 8 s); one that does not end keeps its file, and the confirm says why;
 - a run of the job that is going refuses the delete — stop it first — so a run is never cut off

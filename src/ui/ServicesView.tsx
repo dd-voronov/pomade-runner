@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { WORKSPACE_PROJECT_ID } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
@@ -8,6 +7,7 @@ import { describeJobError } from "../jobs/format";
 import { JOBS_FOLDER, type InvalidJob, type JobEntry, type ServiceJob } from "../jobs/model";
 import { isServiceActionResult, type ServiceStatus } from "../keeper/model";
 import { Button, Chip, EmptyBlock, Help, Icon, IconButton, KindCell, RowCell, RowMain, Status, TableHead, TableRow, useToast } from "./kit";
+import { fallbackService } from "./jobWords";
 import { useOpenServiceTab } from "./RunningNow";
 import { serviceLook } from "./serviceWords";
 import styles from "./ServicesView.module.css";
@@ -39,16 +39,20 @@ export function ServicesView({
   jobs,
   services,
   open,
+  thisProject,
+  onThisProject,
 }: {
   host: HostClient;
   jobs: readonly JobEntry[];
   services: readonly ServiceStatus[];
   /** Navigates the tab to a route (Edit opens the job's form). */
   open: (route: string) => void;
+  /** The "This project" chip, kept by the tab: it holds across the Jobs and Services views. */
+  thisProject: boolean;
+  onThisProject: (on: boolean) => void;
 }): React.JSX.Element {
   const projectName = useProjectNames(host);
   const active = useActiveProject(host);
-  const [thisProject, setThisProject] = useState(false);
   const now = useNow();
   const toast = useToast();
   const openTab = useOpenServiceTab(host);
@@ -86,7 +90,7 @@ export function ServicesView({
   return (
     <section data-testid="services">
       <ViewFilters summary="Services keep running when Pomade quits · the switch never pauses them">
-        <Chip on={thisProject} count={active?.name ?? "…"} onClick={() => setThisProject(!thisProject)} data-testid="this-project">
+        <Chip on={thisProject} count={active?.name ?? "…"} onClick={() => onThisProject(!thisProject)} data-testid="this-project">
           This project
         </Chip>
       </ViewFilters>
@@ -130,18 +134,7 @@ export function ServicesView({
             );
           }
           const { job } = entry;
-          const status: ServiceStatus = services.find((candidate) => candidate.job === job.id) ?? {
-            job: job.id,
-            name: job.name,
-            project: job.project,
-            state: job.enabled ? "queued" : "disabled",
-            session: null,
-            restarts: 0,
-            lastCrashAt: null,
-            retryAt: null,
-            needsRestart: false,
-            problem: null,
-          };
+          const status = services.find((candidate) => candidate.job === job.id) ?? fallbackService(job);
           const look = serviceLook(status, job.ready, now);
           return (
             <TableRow key={job.id} columns={styles.cols} className={styles.row} data-testid="service-row" data-job={job.id} data-state={status.state}>

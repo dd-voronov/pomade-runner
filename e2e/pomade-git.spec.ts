@@ -137,7 +137,7 @@ test.describe("git jobs in Pomade", () => {
     const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
     const row = tab.locator('[data-testid="job-row"][data-job="knowledge"]');
     await expect(row).toHaveAttribute("aria-current", "true");
-    await expect(row.getByTestId("job-git")).toHaveText("Commit & push · Knowledge");
+    await expect(row.getByTestId("job-trigger")).toHaveAttribute("data-tip", "Daily at 13:00 and 20:00 · Commit & push · Knowledge");
     await shoot(page, "pomade-git-job");
   });
 

@@ -70,9 +70,21 @@ export function PanelEmpty({ children }: { children: ReactNode }): React.JSX.Ele
 
 /** A view's group head: a project's jobs, a History day — the title (help beside it), a faint path
  *  and a count at its end. */
-export function GroupHead({ title, help, path, count }: { title: string; help?: HelpKey | undefined; path?: string | undefined; count?: number | undefined }): React.JSX.Element {
+export function GroupHead({
+  title,
+  help,
+  path,
+  count,
+  testId,
+}: {
+  title: string;
+  help?: HelpKey | undefined;
+  path?: string | undefined;
+  count?: number | undefined;
+  testId?: string | undefined;
+}): React.JSX.Element {
   return (
-    <div className={styles.group}>
+    <div className={styles.group} data-testid={testId}>
       <span className={styles.title}>{title}</span>
       {help !== undefined && <Help k={help} />}
       {path !== undefined && <span className={styles.path}>{path}</span>}

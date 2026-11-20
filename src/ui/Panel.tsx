@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { HostClient } from "pomade-kit/sdk";
 
+import { newRoute } from "../integrations/runner-api";
 import { goingRuns } from "./ActiveRunsList";
 import { JobsProblem } from "./JobsProblem";
 import { Button, PanelCard, PanelSection } from "./kit";
@@ -24,6 +25,10 @@ export function Panel({ host }: { host: HostClient }): React.JSX.Element {
   const openRunner = (): void => {
     setError(null);
     host.tabs.openApp().catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+  };
+  const newJob = (): void => {
+    setError(null);
+    host.tabs.openApp({ route: newRoute() }).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
   };
   const open = (
     <>
@@ -54,7 +59,14 @@ export function Panel({ host }: { host: HostClient }): React.JSX.Element {
           {running}
         </PanelSection>
         <div className={styles.emptyCard}>
-          <PanelCard title="No jobs yet">
+          <PanelCard
+            title="No jobs yet"
+            actions={
+              <Button size="sm" variant="primary" onClick={newJob} data-testid="panel-new-job">
+                New job
+              </Button>
+            }
+          >
             A <b>service</b> is a command Runner keeps running: it starts at login, restarts on a crash and outlives Pomade — like a project's web server. Scripts, agents
             and git operations run on schedules and hooks.
           </PanelCard>
