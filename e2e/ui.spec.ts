@@ -19,7 +19,38 @@ function harness(query: Record<string, string> = {}): string {
 }
 
 function app(page: Page): FrameLocator {
-  return page.frameLocator("iframe");
+  return page.frameLocator('iframe[data-frame="main"]');
+}
+
+/** The frame of the keyed tab `key` the app opened (a run's output tab). */
+function outputTab(page: Page, key: string): FrameLocator {
+  return page.frameLocator(`iframe[data-frame="${key}"]`);
+}
+
+/** Stand in for the clipboard in every frame: `writeText` keeps what it is given in
+ *  `window.copied`, and refuses with `window.refuseCopy` while that is set. The fake host's frames
+ *  are not allowed the clipboard as Pomade's are (`allow="clipboard-write"`); `pomade.spec.ts`
+ *  copies through the real one. */
+async function stubClipboard(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    window.copied = [];
+    window.refuseCopy = null;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (text: string): Promise<void> => {
+          if (window.refuseCopy !== null) return Promise.reject(new DOMException(window.refuseCopy, "NotAllowedError"));
+          window.copied.push(text);
+          return Promise.resolve();
+        },
+      },
+    });
+  });
+}
+
+/** What the frame of the keyed tab `key` wrote to the stand-in clipboard (`stubClipboard`). */
+function copied(page: Page, key: string): Promise<string[]> {
+  return page.locator(`iframe[data-frame="${key}"]`).contentFrame().locator("html").evaluate(() => window.copied);
 }
 
 /** With `RUNNER_SHOTS`, save the page as `<name>.png`. */
@@ -341,7 +372,7 @@ test.describe("runs", () => {
     ]);
   });
 
-  test("History lists the runs; a row opens the result card: red, the exit code and the last lines; View output shows the whole output on its page", async ({ page }) => {
+  test("History lists the runs; a row opens the result card: red, the exit code and the last lines; View output opens the whole output in its own tab", async ({ page }) => {
     await page.goto(harness());
     await expect(app(page).getByTestId("tab-empty")).toBeVisible();
     await writeJob(page, "backup.md", SCRIPT);
@@ -365,21 +396,36 @@ test.describe("runs", () => {
     await expect.poll(() => page.evaluate(() => window.runnerCalls)).toContainEqual({ method: "needsYou.dismiss", params: { id: "run-failed:backup" } });
     await shoot(page, "tab-run-failed");
 
+    // View output: the run's own tab beside the Runner tab — keyed by the run, of the manifest's
+    // output kind, titled "<job> · output" — focused; the Runner tab stays at the card.
     await app(page).getByRole("button", { name: "View output" }).click();
-    await expect(app(page).getByTestId("run-output-text")).toHaveText("copying\nrsync: connection refused");
-    await expect(app(page).getByTestId("run-output-badge")).toContainText("Captured log ·");
+    const key = `out:backup:${RUN}`;
+    const output = outputTab(page, key);
+    await expect(output.getByTestId("run-output-text")).toHaveText("copying\nrsync: connection refused");
+    await expect(output.getByTestId("run-output-badge")).toContainText("Captured log ·");
+    await expect(output.getByRole("button", { name: "Back to the result" })).toHaveCount(0);
+    await expect(page.locator('iframe[data-frame="main"]')).toBeHidden();
+    const tabs = (): Promise<{ route: string; key: string | undefined; kind: string | undefined; title: string | undefined }[]> => page.evaluate(() => window.fakeHost.appTabs.map(({ route, key, kind, title }) => ({ route, key, kind, title })));
+    expect(await tabs()).toEqual([
+      { route: `run/backup/${RUN}` },
+      { route: `output/backup/${RUN}`, key, kind: "output", title: "Backup · output" },
+    ]);
     await shoot(page, "tab-run-output");
-    await app(page).getByRole("button", { name: "Back to the result" }).click();
-    await expect(card).toBeVisible();
     // A record that came with the workspace from another Mac: its output log is not here.
     await page.evaluate(() => window.setRuns({ output: "", outputMissing: true }));
-    await app(page).getByRole("button", { name: "View output" }).click();
-    await expect(app(page).getByTestId("run-output-missing")).toHaveText("This run's output is not on this Mac.");
+    await expect(output.getByTestId("run-output-missing")).toHaveText("This run's output is not on this Mac.");
+    await expect(output.getByTestId("run-output-copy")).toBeDisabled();
     await shoot(page, "tab-run-output-missing");
     await page.evaluate(() => window.setRuns({ output: "copying\nrsync: connection refused\n", outputMissing: false }));
-    await app(page).getByRole("button", { name: "Back to the result" }).click();
+    // Back in the Runner tab, View output again focuses the run's tab: one tab per run.
+    await page.evaluate(() => window.fakeHost.openAppTab());
     await expect(card).toBeVisible();
-    await page.keyboard.press("Escape");
+    await app(page).getByRole("button", { name: "View output" }).click();
+    await expect(output.getByTestId("run-output-text")).toBeVisible();
+    expect(await tabs()).toHaveLength(2);
+    await page.evaluate(() => window.fakeHost.openAppTab());
+    await expect(card).toBeVisible();
+    await app(page).getByRole("button", { name: "Close (Esc)" }).click();
     await app(page).getByTestId("nav-jobs").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
     const row = app(page).getByTestId("job-row");
@@ -390,6 +436,53 @@ test.describe("runs", () => {
     // The last result opens that run's card, over History.
     await row.getByTestId("job-last").click();
     await expect(app(page).getByTestId("run-card")).toBeVisible();
+  });
+
+  test("a card closed in the tab tells Pomade where the tab is, so the same notice clicked again reopens the card", async ({ page }) => {
+    // Pomade opened the tab at the card, as a run's notice does.
+    await page.goto(harness({ route: `run/backup/${RUN}` }));
+    await setRuns(page, [failed]);
+    const dialog = app(page).getByRole("dialog", { name: "Backup" });
+    await expect(dialog.getByTestId("run-result")).toHaveText("Failed");
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.fakeHost.appTabs.map((tab) => tab.route))).toEqual(["history"]);
+    // The notice again: Pomade navigates the tab back to the card.
+    await page.evaluate((route) => window.fakeHost.openAppTab({ route }), `run/backup/${RUN}`);
+    await expect(dialog.getByTestId("run-result")).toHaveText("Failed");
+    // A view picked in the header is recorded too: a reload opens there.
+    await page.keyboard.press("Escape");
+    await app(page).getByTestId("nav-services").click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.appTabs.map((tab) => tab.route))).toEqual(["services"]);
+  });
+
+  test("the output tab's Copy puts the whole log on the clipboard and says so; a refused copy says why", async ({ page }) => {
+    await stubClipboard(page);
+    await page.goto(harness({ route: `run/backup/${RUN}` }));
+    await setRuns(page, [failed]);
+    await app(page).getByRole("dialog", { name: "Backup" }).getByRole("button", { name: "View output" }).click();
+    const output = outputTab(page, `out:backup:${RUN}`);
+    await expect(output.getByTestId("run-output-text")).toHaveText("copying\nrsync: connection refused");
+    await output.getByTestId("run-output-copy").click();
+    await expect(output.getByTestId("toast")).toHaveText("RunnerCopied the log");
+    expect(await copied(page, `out:backup:${RUN}`)).toEqual(["copying\nrsync: connection refused\n"]);
+    await shoot(page, "tab-run-output-copied");
+    await page.locator(`iframe[data-frame="out:backup:${RUN}"]`).contentFrame().locator("html").evaluate(() => {
+      window.refuseCopy = "Write permission denied.";
+    });
+    await output.getByTestId("run-output-copy").click();
+    await expect(output.getByTestId("toast").last()).toHaveText("RunnerCould not copy the log: Write permission denied.");
+  });
+
+  test("an output tab whose run is gone from the history — Runner pruned it, Pomade restored the tab — closes itself", async ({ page }) => {
+    await page.goto(harness({ route: `run/backup/${RUN}` }));
+    await setRuns(page, [failed]);
+    await app(page).getByRole("dialog", { name: "Backup" }).getByRole("button", { name: "View output" }).click();
+    await expect(outputTab(page, `out:backup:${RUN}`).getByTestId("run-output-text")).toBeVisible();
+    await page.evaluate(() => window.setRuns({ history: [] }));
+    await expect.poll(() => page.evaluate(() => window.fakeHost.appTabs.map((tab) => tab.key ?? "runner"))).toEqual(["runner"]);
+    await expect(page.locator(`iframe[data-frame="out:backup:${RUN}"]`)).toHaveCount(0);
+    await expect(app(page).getByTestId("run-missing")).toHaveText("This run is not in the history any more.");
   });
 
   test("a run's card is a dialog over History: focus moves in and stays in; Esc, the close button or a click outside closes it", async ({ page }) => {
@@ -843,7 +936,7 @@ test.describe("the job form", () => {
     await form.getByRole("button", { name: "Choose…" }).click();
     await menu.getByRole("menuitem", { name: /^Other folder/ }).click();
     await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("Projects/coda-helper/web");
-    expect(await page.evaluate(() => window.fakeHost.pickRequests)).toEqual([{ root: "", initial: "Projects/coda-helper" }]);
+    expect(await page.evaluate(() => window.fakeHost.pickRequests)).toEqual([{ kind: "folder", root: "", initial: "Projects/coda-helper" }]);
     await form.getByRole("textbox", { name: "Folder", exact: true }).fill("Projects/coda-helper");
 
     // Readiness: collapsed to a line until asked for.
@@ -2672,5 +2765,17 @@ test.describe("the switch and Settings (T-009)", () => {
     await expect(file).not.toContainText("No file yet");
     await file.getByRole("button", { name: "Open file" }).click();
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: SETTINGS_FILE }]);
+  });
+
+  test("Settings: Show in Files shows the jobs folder in Pomade's Files panel; a folder not there yet says so", async ({ page }) => {
+    const view = await openSettings(page);
+    const jobs = view.getByTestId("setting-jobs-folder");
+    await jobs.getByRole("button", { name: "Show in Files" }).click();
+    await expect(app(page).getByTestId("toast")).toHaveText(/^RunnerCould not show Apps\/pomade-runner\/jobs in Files: /);
+    expect(await page.evaluate(() => window.fakeHost.reveals)).toEqual([]);
+    await writeJob(page, "backup.md", "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\n---\n");
+    await jobs.getByRole("button", { name: "Show in Files" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.reveals)).toEqual([{ projectId: "__workspace__", path: "Apps/pomade-runner/jobs" }]);
+    await shoot(page, "tab-settings-files");
   });
 });

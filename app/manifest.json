@@ -18,6 +18,12 @@
       "action": "panel"
     }
   ],
+  "tabKinds": {
+    "output": {
+      "title": "Output",
+      "icon": "output.svg"
+    }
+  },
   "skills": [
     "skills/pomade-runner-jobs"
   ],

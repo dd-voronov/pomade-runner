@@ -16,6 +16,7 @@ import { STRIP_ICON } from "../src/app";
 import { callScheduler } from "../src/scheduler/control/client";
 import type { RunRecord } from "../src/scheduler/model";
 import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
+import { drawn } from "./support/frames";
 import { stopKeeper } from "./support/keeper";
 import { pomadeCheckout, pomadeEnv, type PomadeFolders } from "./support/pomade";
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
@@ -156,12 +157,9 @@ test.describe("missed runs in Pomade", () => {
     const item = (name: string) => panel.locator('[data-testid="needs-you-item"][data-kind="missed"]', { hasText: name });
     await expect(item("Nightly").getByTestId("needs-you-words")).toHaveText("Missed — it waits for you to pick a time.");
     await shoot(page, "pomade-missed");
-    // The panel was just shown: click until it takes. Run now is idempotent here — once the run
-    // took the item's place, the card is gone and there is nothing to click again.
-    await expect(async () => {
-      await clickIfThere(item("Early").getByRole("button", { name: "Run now" }));
-      await expect(item("Early")).toHaveCount(0, { timeout: 1500 });
-    }).toPass({ intervals: [500, 1000] });
+    await drawn(page);
+    await item("Early").getByRole("button", { name: "Run now" }).click();
+    await expect(item("Early")).toHaveCount(0);
     await expect.poll(() => history("early"), { timeout: 15_000 }).toEqual([expect.objectContaining({ trigger: "manual", state: "done", lastLines: ["early manual"] }) as RunRecord]);
     await item("Nightly").getByRole("button", { name: "Run at…" }).click();
     await item("Nightly").getByRole("textbox", { name: "Run at" }).fill("23:00");

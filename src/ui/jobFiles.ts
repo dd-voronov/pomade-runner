@@ -40,9 +40,11 @@ export async function updateJobFile(host: HostClient, path: string, changes: Fie
 
 /**
  * Follow a job file: `onText` gets its text now and after every change on disk, `null` while it
- * does not exist. The jobs folder is watched, not the file, so a save by atomic rename is seen.
+ * does not exist. The jobs folder is watched, not the file, so a save by atomic rename is seen. A
+ * read after a change that fails for another reason goes to `onError`; the first read's failure
+ * rejects the call.
  */
-export async function followJobFile(host: HostClient, path: string, onText: (text: string | null) => void): Promise<{ close(): Promise<void> }> {
+export async function followJobFile(host: HostClient, path: string, onText: (text: string | null) => void, onError: (err: unknown) => void): Promise<{ close(): Promise<void> }> {
   let reads = 0;
   const read = async (): Promise<void> => {
     const n = ++reads;
@@ -56,7 +58,7 @@ export async function followJobFile(host: HostClient, path: string, onText: (tex
     if (n === reads) onText(text);
   };
   const watch = await host.files.watch({ path: JOBS_FOLDER, recursive: true }, (changes) => {
-    if (changes.some((c) => c.path === path || c.oldPath === path)) void read();
+    if (changes.some((c) => c.path === path || c.oldPath === path)) read().catch(onError);
   });
   await read();
   return { close: () => watch.close() };

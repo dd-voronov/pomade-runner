@@ -518,7 +518,8 @@ head is red, a missed run that waits for you amber. Its body, by what the run le
 | Missed, waiting for you | when it was due, and that its policy waits for you; **Run at…** opens a field that reads the time as it is typed | **Run now** · **Run at…** · **Skip** |
 | Skipped or missed; a chain's action on a service | why it never started, or what the chain did | **Run now** (scripts and git jobs) |
 
-Every card ends with **Edit job**. **View output** shows the full captured log (a git run's holds
+Every card ends with **Edit job**. **View output** opens the run's **output tab** beside the
+Runner tab — a Pomade tab of its own, one per run — with the full captured log (a git run's holds
 what `pomade-git` wrote to its standard error — nothing, when all went well). Stop and the missed
 run's choices close the card and toast the outcome; Run again toasts it.
 
@@ -533,7 +534,7 @@ fields it lacks at their defaults.
   never by a path on a Mac. Read back, a record names it where it is found (`findOutputLog`): in
   the records folder, else still in the state folder (before its move, or after one that did not
   finish). A log in neither — removed, or a record whose log stayed on another Mac — reads as
-  missing: the output page says "This run's output is not on this Mac." and `pomade-runner history`
+  missing: the output tab says "This run's output is not on this Mac." and `pomade-runner history`
   says `output not on this Mac`; the record's last lines still show.
 - **Format:** append-only JSON Lines, one file per day of the runs' ends (UTC):
   `history/YYYY-MM-DD.jsonl`. A record is one line, written once, when the run ends; nothing is
@@ -827,17 +828,27 @@ to it, light theme only.
     settings file's own problems are listed over the cards.
   - **Notifications** and **Agents:** read-only rows with a status (`environment.get`) — the
     macOS notification permission, and the agent skill's links into the skills folders.
-  - **Files:** `settings.yaml` with Open file (once it exists) and the jobs folder.
+  - **Files:** `settings.yaml` with Open file (once it exists), and the jobs folder with Show in
+    Files, which shows it in Pomade's Files panel (`files.reveal`).
 
 **Routes of the Runner tab** (`parseRoute`, `src/integrations/runner-api.ts`): `""` Jobs ·
 `jobs/<encoded job id>` Jobs at one job, its row marked and scrolled to (what a repo row's Scheduled
 line opens) · `history` · `services` · `settings` · `run/<encoded job id>/<run id>` a run's result
 card, a dialog over History (what a run's notice opens) · `output/<encoded job id>/<run id>` its
-full output, the whole tab (`src/ui/OutputPage.tsx`): a head with the way back to the card, the
-job's name and "Captured log · <when> · read-only", then the log as plain text, followed while the
-run runs · `new` the job form for a new job (what
+full output — the route of the run's output tab (below) · `new` the job form for a new job (what
 **New job** opens; `newRoute`), `new/<encoded project id>` for one that starts in that project · `edit/<encoded job id>` the job form editing a job (`editRoute`).
-An unknown route is Jobs. The tab follows Pomade's `route.changed`.
+An unknown route is Jobs. The tab follows Pomade's `route.changed`, and tells Pomade each route it
+goes to by itself — a view picked, a card closed — with `tabs.setRoute`, so a reload opens there and
+the same notice clicked again opens its card again.
+
+**A run's output tab** (`src/ui/OutputPage.tsx`): a keyed Pomade tab (`tabs.openApp` with `key`,
+`title`, `kind`) of the manifest's tab kind `output` (title "Output", a terminal icon), one per run —
+key `out:<encoded job id>:<run id>` (`outputTab`, `src/integrations/runner-api.ts`) — titled
+"<job> · output", at the run's `output/…` route. **View output** opens it, or focuses it when it is
+open. A head with the job's name, "Captured log · <when> · read-only" and **Copy**, which puts the
+log on the clipboard (`navigator.clipboard.writeText`); then the log as plain text, followed while
+the run runs. A tab Pomade restores whose run is gone from the history (pruned) closes itself
+(`tabs.close`).
 
 **Frames and the design system.** Runner draws only inside the two frames Pomade hosts; Pomade's
 chrome around them (the panel's header with its title and collapse, the tab bar) is Pomade's.
@@ -1109,7 +1120,7 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
 
 ## Stack
 
-TypeScript (strict) everywhere, on `pomade-kit` (`github:dd-voronov/pomade-kit#v0.9.0`).
+TypeScript (strict) everywhere, on `pomade-kit` (`github:dd-voronov/pomade-kit#v0.14.0`).
 
 | Part | Built with | Why |
 |---|---|---|

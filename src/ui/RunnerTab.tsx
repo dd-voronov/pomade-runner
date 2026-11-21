@@ -18,16 +18,16 @@ import { TabShell, type TabView } from "./shell/TabShell";
 import { SERVICE_RUNS } from "./serviceWords";
 import { useActiveProject, useJobs, useRoute, useRuns, useServices } from "./useRunnerApi";
 
-/** The header's view for a route: a run's card and its output belong to History; the job form, to Jobs. */
-function tabView(route: RunnerRoute): TabView {
+/** The header's view for a route: a run's card belongs to History; the job form, to Jobs. */
+function tabView(route: Exclude<RunnerRoute, { view: "output" }>): TabView {
   if (route.view === "new" || route.view === "edit") return "jobs";
-  return route.view === "run" || route.view === "output" ? "history" : route.view;
+  return route.view === "run" ? "history" : route.view;
 }
 
-/** The Runner tab: the shell's four views by its route — every job (at one job, from a repo row's
- *  Scheduled line), the history with the runs going — a run's result card over it — a run's output
- *  on a page of its own,
- *  the services, the settings with Runner's version. */
+/** A Runner tab frame by its route: the Runner tab — the shell's four views: every job (at one job,
+ *  from a repo row's Scheduled line), the history with the runs going — a run's result card over
+ *  it — the services, the settings with Runner's version — or, at `output/<job>/<run>`, a run's
+ *  output tab (View output opens it, keyed by the run). */
 export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   const jobs = useJobs(host);
   const services = useServices(host);
@@ -43,6 +43,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
     </span>
   );
 
+  if (view.view === "output") return <OutputPage host={host} job={view.job} run={view.run} />;
   if (jobs.status === "no-scheduler" || jobs.status === "failed") return <JobsProblem state={jobs} testId="tab-problem" footer={version} />;
   const entries = jobs.status === "ready" ? jobs.value.jobs : [];
   const report = runs.status === "ready" ? runs.value : null;
@@ -117,7 +118,5 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
           <p className={styles.version}>{version}</p>
         </>,
       );
-    case "output":
-      return <OutputPage host={host} job={view.job} run={view.run} open={open} />;
   }
 }

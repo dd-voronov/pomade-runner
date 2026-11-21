@@ -2,7 +2,7 @@ import type { HostClient } from "pomade-kit/sdk";
 
 import { runRoute } from "../integrations/runner-api";
 import { runWords, type ActiveRun } from "../scheduler/model";
-import { PanelEmpty, PanelRow } from "./kit";
+import { PanelEmpty, PanelRow, useToast } from "./kit";
 import { upWords } from "./serviceWords";
 import { useNow } from "./useNow";
 import { useProjectNames } from "./useRunnerApi";
@@ -59,9 +59,10 @@ export function ActiveRunsList({
   const going = goingRuns(runs);
   const now = useNow();
   const projectName = useProjectNames(host);
+  const toast = useToast();
   const show = (run: ActiveRun): void => {
     const route = runRoute(run.job, run.run);
-    if (open === undefined) void host.tabs.openApp({ route }).catch(() => undefined);
+    if (open === undefined) host.tabs.openApp({ route }).catch((err: unknown) => toast(`Could not open ${run.name}: ${err instanceof Error ? err.message : String(err)}`));
     else open(route);
   };
   return (

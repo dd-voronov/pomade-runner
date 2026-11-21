@@ -6,9 +6,11 @@
 // gives Pomade the prototype's projects and groups, `?projects=<json>` other projects
 // (`[{ id, name, root }]`), `?active=<id>` the one open, and `?repos=a,b` more git repos. The fake host is
 // on `window.fakeHost` for the specs to read what the app did and to write job files, the mounted
-// frame on `window.mounted` to navigate it.
+// frame on `window.mounted` to navigate it. A tab is one of the app's tabs in the fake tab strip;
+// each keyed tab the app opens gets a frame of its own, shown while that tab is focused. Frames are
+// `iframe[data-frame]`: `main` for the one opened, the key for a keyed tab's.
 
-import { createFakeHost, mountApp } from "pomade-kit/fake-host";
+import { createFakeHost, mountApp, type MountedApp } from "pomade-kit/fake-host";
 
 import manifest from "../../app/manifest.json" with { type: "json" };
 import { STRIP_ICON } from "../../src/app";
@@ -53,4 +55,32 @@ window.fakeHost = fakeHost;
 
 if (query.get("scheduler") !== "none" && hostApi === null) await startFakeScheduler(fakeHost);
 const route = query.get("route");
-window.mounted = mountApp(fakeHost, { src: app, ...(query.get("surface") === "panel" ? { surface: "panel", icon: STRIP_ICON } : {}), ...(route === null ? {} : { route }) });
+if (query.get("surface") === "panel") {
+  window.mounted = mountApp(fakeHost, { src: app, surface: "panel", icon: STRIP_ICON });
+  window.mounted.iframe.dataset.frame = "main";
+} else {
+  // The Runner tab is one of the app's tabs in the fake tab strip, so the frame's own tab calls
+  // (`tabs.setRoute`, `tabs.close`) and a `tabs.openApp` to it reach it as in Pomade.
+  const main = fakeHost.openAppTab({ route: route ?? "" });
+  window.mounted = mountApp(fakeHost, { src: app, tabId: main.tabId });
+  window.mounted.iframe.dataset.frame = "main";
+  // Every keyed tab the app opens (a run's output tab) gets its frame, `data-frame` its key; the
+  // focused tab's frame is the one shown, as in Pomade's tab strip.
+  const frames = new Map<string, MountedApp>([[main.tabId, window.mounted]]);
+  const show = (tabId: string): void => {
+    for (const [id, frame] of frames) frame.setHidden(id !== tabId);
+  };
+  fakeHost.onAppTab(({ change, tab }) => {
+    if (change === "open" && tab.key !== undefined) {
+      const frame = mountApp(fakeHost, { src: app, tabId: tab.tabId });
+      frame.iframe.dataset.frame = tab.key;
+      frames.set(tab.tabId, frame);
+      show(tab.tabId);
+    } else if (change === "focus" && frames.has(tab.tabId)) show(tab.tabId);
+    else if (change === "close" && tab.tabId !== main.tabId) {
+      frames.get(tab.tabId)?.close();
+      frames.delete(tab.tabId);
+      show(main.tabId);
+    }
+  });
+}

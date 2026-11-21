@@ -1,8 +1,8 @@
+import { useEffect } from "react";
 import type { HostClient } from "pomade-kit/sdk";
 
-import { runRoute } from "../integrations/runner-api";
 import { plainLines } from "../scheduler/model";
-import { Dot, IconButton } from "./kit";
+import { Button, Dot, useToast } from "./kit";
 import styles from "./OutputPage.module.css";
 import { runTime, whenWords } from "./runLook";
 import { useNow } from "./useNow";
@@ -13,23 +13,36 @@ import { useRun } from "./useRunnerApi";
  *  workspace from another Mac, or the log was removed. */
 export const OUTPUT_NOT_HERE = "This run's output is not on this Mac.";
 
-/** A run's full output (the prototype's output tab, `outPane`), the whole Runner tab at the route
- *  `output/<job>/<run>`: a head with the way back to the result card, the job's name and what the
- *  log is, then the log as plain text — followed while the run runs. */
-export function OutputPage({ host, job, run, open }: { host: HostClient; job: string; run: string; open: (route: string) => void }): React.JSX.Element {
+/** A run's full output (the prototype's output tab, `outPane`): the run's own output tab, at the
+ *  route `output/<job>/<run>`. A head with the job's name and what the log is, and Copy, which puts
+ *  the log on the clipboard; then the log as plain text — followed while the run runs. A tab whose
+ *  run is gone from the history (Runner pruned it, and Pomade restored the tab) closes itself. */
+export function OutputPage({ host, job, run }: { host: HostClient; job: string; run: string }): React.JSX.Element {
   const view = useRun(host, job, run);
   const value = view.status === "ready" ? view.value : null;
   const running = value?.state === "running";
   const output = useRunOutput(host, job, run, running);
   const now = useNow(30_000);
-  const lines = output.status === "ready" ? plainLines(output.value.text) : [];
+  const toast = useToast();
+  const lines = output.status === "ready" && !output.value.missing ? plainLines(output.value.text) : [];
   if (lines.at(-1) === "") lines.pop();
+  const gone = view.status === "ready" && view.value === null;
+
+  useEffect(() => {
+    if (gone) host.tabs.close().catch((err: unknown) => toast(`Could not close this tab: ${err instanceof Error ? err.message : String(err)}`));
+  }, [host, gone, toast]);
+
+  const copy = (): void => {
+    navigator.clipboard.writeText(`${lines.join("\n")}\n`).then(
+      () => toast("Copied the log"),
+      (err: unknown) => toast(`Could not copy the log: ${err instanceof Error ? err.message : String(err)}`),
+    );
+  };
 
   return (
     <main className={styles.root} data-testid="run-output">
       <header className={styles.head}>
         <div className={styles.title}>
-          <IconButton icon="back" label="Back to the result" onClick={() => open(runRoute(job, run))} />
           <b className={styles.name}>{value?.name ?? job}</b>
           <span className={styles.owner}>· output</span>
           {value !== null && (
@@ -39,6 +52,11 @@ export function OutputPage({ host, job, run, open }: { host: HostClient; job: st
               {running ? " · still running" : ""} · read-only
             </span>
           )}
+        </div>
+        <div className={styles.acts}>
+          <Button className={styles.act} disabled={lines.length === 0} onClick={copy} data-testid="run-output-copy">
+            Copy
+          </Button>
         </div>
       </header>
       {output.status === "ready" ? (

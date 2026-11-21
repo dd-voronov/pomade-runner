@@ -209,7 +209,8 @@ function status(state: LiveState<EnvironmentReport>, look: (environment: Environ
 
 /** The Settings view: the four settings, each a stepper written field-only to the workspace's
  *  `settings.yaml`; what the Mac says about notifications and the agent skill, read-only; the
- *  files. The file's own problems are listed on top. */
+ *  files — the settings file opens in a tab, the jobs folder shows in Pomade's Files panel. The
+ *  file's own problems are listed on top. */
 export function SettingsView({ host }: { host: HostClient }): React.JSX.Element {
   const settings = useSettings(host);
   const environment = useEnvironment(host);
@@ -226,6 +227,9 @@ export function SettingsView({ host }: { host: HostClient }): React.JSX.Element 
   const skill = environment.status === "ready" ? skillLook(environment.value.skill) : null;
   const openFile = (): void => {
     host.tabs.openFile({ path: report.path }).catch((err: unknown) => toast(`Could not open ${report.path}: ${err instanceof Error ? err.message : String(err)}`));
+  };
+  const showJobs = (): void => {
+    host.files.reveal({ path: JOBS_FOLDER }).catch((err: unknown) => toast(`Could not show ${JOBS_FOLDER} in Files: ${err instanceof Error ? err.message : String(err)}`));
   };
   const fileNote = (
     <>
@@ -272,7 +276,9 @@ export function SettingsView({ host }: { host: HostClient }): React.JSX.Element 
             Open file
           </Button>
         </Row>
-        <Row label="Job files" help="f.file" note={<code className={styles.mono}>{JOBS_FOLDER}/</code>} testId="setting-jobs-folder" />
+        <Row label="Job files" help="f.file" note={<code className={styles.mono}>{JOBS_FOLDER}/</code>} testId="setting-jobs-folder">
+          <Button onClick={showJobs}>Show in Files</Button>
+        </Row>
       </Card>
     </section>
   );

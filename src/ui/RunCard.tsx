@@ -3,7 +3,7 @@ import type { GitRunResult } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
-import { DISMISS_METHOD, editRoute, MISSED_METHOD, outputRoute, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute } from "../integrations/runner-api";
+import { DISMISS_METHOD, editRoute, MISSED_METHOD, outputTab, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute } from "../integrations/runner-api";
 import { isMissedChoiceResult, isRunActionResult, isRunStopResult, LAST_LINES, limitWords, plainLines, TRIGGER_WORDS, type ActiveRun, type NeedsYouItem, type RunRecord, type RunView } from "../scheduler/model";
 import { Button, Dialog, DialogBody, DialogFoot, DialogHead, Help, Icon, LinkButton, Pill, useToast } from "./kit";
 import styles from "./RunCard.module.css";
@@ -18,7 +18,8 @@ import { useRun } from "./useRunnerApi";
 /** A run's result card (the prototype's `cardHtml`), a dialog over History that Esc, the close
  *  button or a click outside closes back to History. Its head says the run's job, result, when,
  *  how long and what started it; its body what the run left — exit code and last lines, a git
- *  run's repos, why one never started, what a queued one waits for; its foot what can be done.
+ *  run's repos, why one never started, what a queued one waits for; its foot what can be done —
+ *  View output opens the run's output tab beside the Runner tab.
  *  Opening a failed run that is a Needs-you item resolves the item. */
 export function RunDialog({ host, job, run, needsYou, open }: { host: HostClient; job: string; run: string; needsYou: readonly NeedsYouItem[]; open: (route: string) => void }): React.JSX.Element {
   const close = (): void => open("history");
@@ -134,6 +135,9 @@ function RunCard({ host, view, open, close }: { host: HostClient; view: RunView;
       failed(`settle ${view.name}`),
     );
   };
+  const openOutput = (): void => {
+    host.tabs.openApp(outputTab(view.job, view.run, view.name)).catch(failed(`open ${view.name}'s output`));
+  };
   const openTerminal = (session: string): void => {
     host.tabs.openAttached({ session: { app: APP_ID, session }, title: view.name }).catch(failed(`open ${view.name}'s terminal`));
   };
@@ -171,7 +175,7 @@ function RunCard({ host, view, open, close }: { host: HostClient; view: RunView;
     foot = (
       <>
         {view.log !== null && (
-          <Button data-help="c.output" onClick={() => open(outputRoute(view.job, view.run))}>
+          <Button data-help="c.output" onClick={openOutput}>
             View output
           </Button>
         )}

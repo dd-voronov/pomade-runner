@@ -154,6 +154,26 @@ export function outputRoute(job: string, run: string): string {
   return `output/${encodeJobId(job)}/${run}`;
 }
 
+/** The manifest's tab kind (`tabKinds`) of a run's output tab. */
+export const OUTPUT_TAB_KIND = "output";
+
+/** A run's output tab: its own keyed tab (`tabs.openApp` `key`), one per run —
+ *  `out:<encoded job id>:<run id>`, at most 128 characters as a key allows: an encoded job id leaves
+ *  room for a run session's id (`run:<encoded job id>:<run id>`), which is as long. */
+export function outputTabKey(job: string, run: string): string {
+  return `out:${encodeJobId(job)}:${run}`;
+}
+
+/** A run's output tab's title: the job's name and what the tab is (`Backup · output`). */
+export function outputTabTitle(name: string): string {
+  return `${name} · output`;
+}
+
+/** What `tabs.openApp` takes to open or focus a run's output tab at `outputRoute`. */
+export function outputTab(job: string, run: string, name: string): { route: string; key: string; title: string; kind: string } {
+  return { route: outputRoute(job, run), key: outputTabKey(job, run), title: outputTabTitle(name), kind: OUTPUT_TAB_KIND };
+}
+
 /** The job form for a new job: `new` — what "New job" opens — or `new/<encoded project id>` when
  *  the job starts in a project (the Jobs view's "This project" chip is on). */
 export function newRoute(project: string | null = null): string {

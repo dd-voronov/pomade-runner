@@ -194,12 +194,20 @@ function FormBody({
   useEffect(() => {
     if (path === null) return;
     let live = true;
-    const following = followJobFile(host, path, (text) => {
-      if (!live) return;
-      setFile(text);
-      if (text !== null) setState((current) => (current === null ? editForm(path, text) : followText(current, text)));
-    });
-    following.catch((err: unknown) => setSaveError(err instanceof Error ? err.message : String(err)));
+    const failed = (err: unknown): void => {
+      if (live) setSaveError(err instanceof Error ? err.message : String(err));
+    };
+    const following = followJobFile(
+      host,
+      path,
+      (text) => {
+        if (!live) return;
+        setFile(text);
+        if (text !== null) setState((current) => (current === null ? editForm(path, text) : followText(current, text)));
+      },
+      failed,
+    );
+    following.catch(failed);
     return () => {
       live = false;
       void following.then((f) => f.close(), () => undefined);

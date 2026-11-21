@@ -49,7 +49,9 @@ describe("job files through the Host API", () => {
 
   it("follows the file on disk: edits by anyone, a deletion, a re-creation", async () => {
     const seen: Array<string | null> = [];
-    const follow = await followJobFile(host, WEB, (text) => seen.push(text));
+    const follow = await followJobFile(host, WEB, (text) => seen.push(text), (err) => {
+      throw err;
+    });
     expect(seen).toEqual([HAND_WRITTEN]);
     fake.writeFile(WEB, HAND_WRITTEN.replace("Coda web", "Edited"));
     await vi.waitFor(() => expect(seen.at(-1)).toContain("name: Edited"));
@@ -59,6 +61,17 @@ describe("job files through the Host API", () => {
     fake.writeFile(WEB, HAND_WRITTEN);
     await vi.waitFor(() => expect(seen.at(-1)).toBe(HAND_WRITTEN));
     expect(seen).toHaveLength(4);
+    await follow.close();
+  });
+
+  it("hands a read that fails after a change to onError, never to an unhandled rejection", async () => {
+    const errors: unknown[] = [];
+    const follow = await followJobFile(host, WEB, () => undefined, (err) => errors.push(err));
+    fake.deleteFile(WEB);
+    fake.writeFile(`${WEB}/inside.md`, "x");
+    // The file is a folder now: every read the changes ask for fails.
+    await vi.waitFor(() => expect(errors.length).toBeGreaterThan(0));
+    for (const err of errors) expect(err).toBeInstanceOf(Error);
     await follow.close();
   });
 });

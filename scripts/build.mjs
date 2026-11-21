@@ -89,6 +89,7 @@ const { manifest } = parsed;
 const named = [
   manifest.entry,
   manifest.icon,
+  ...Object.values(manifest.tabKinds ?? {}).map((kind) => kind.icon),
   manifest.backend?.entry,
   ...(manifest.commands ?? []).map((c) => c.entry),
   ...(manifest.skills ?? []).map((skill) => `${skill.path}/SKILL.md`),

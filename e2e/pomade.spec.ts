@@ -20,6 +20,7 @@ import { STRIP_ICON } from "../src/app";
 import { callScheduler } from "../src/scheduler/control/client";
 import type { RunRecord } from "../src/scheduler/model";
 import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
+import { drawn } from "./support/frames";
 import { blankSchedule, type ScheduleValues } from "../src/ui/form/schedule";
 import { newForm, setFolder, setValue, switchKind, wouldBe } from "../src/ui/form/state";
 import { runningSession, sessionInfo, sessionsReport, stopKeeper } from "./support/keeper";
@@ -243,13 +244,10 @@ test.describe("Runner in Pomade", () => {
     await expect(panel().getByTestId("section-needs-you-head-count")).toHaveText("1");
     await shoot(page, "pomade-panel-needs-you");
 
-    // A panel frame just shown again may still be re-handshaking with Pomade, which drops a call
-    // made across the handshake unanswered: click again until the card opens.
     const card = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`).getByTestId("run-card");
-    await expect(async () => {
-      await item.getByRole("button", { name: "Open", exact: true }).click();
-      await expect(card).toBeVisible({ timeout: 1500 });
-    }).toPass({ intervals: [500, 1000] });
+    await drawn(page);
+    await item.getByRole("button", { name: "Open", exact: true }).click();
+    await expect(card).toBeVisible();
     await expect(card).toHaveAttribute("data-state", "failed");
     await expect(page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`).getByTestId("run-result")).toHaveText("Failed");
     await expect(card.getByTestId("run-exit")).toHaveText("3");
@@ -257,6 +255,63 @@ test.describe("Runner in Pomade", () => {
     await expect(item).toHaveCount(0);
     await expect(panel().getByTestId("section-needs-you-head-count")).toHaveText("0");
     expect(running.output()).toContain("needs you: fail failed");
+  });
+
+  /** Runner's keyed tabs in the Workspace scope — a run's output tab — as Pomade's tab strip keeps them. */
+  function outputTabs(): Promise<{ id: string; key: string; tabKind: string; route: string }[]> {
+    return page.evaluate((project) => {
+      const stores = (window as unknown as { __pomadeStores: { useTabsStore: { getState(): { tabsByProject: Record<string, { id: string; kind: string; appId?: string; key?: string; tabKind?: string; route?: string }[] | undefined> } } } }).__pomadeStores;
+      return (stores.useTabsStore.getState().tabsByProject[project] ?? [])
+        .filter((tab) => tab.kind === "app" && tab.key !== undefined)
+        .map((tab) => ({ id: tab.id, key: tab.key ?? "", tabKind: tab.tabKind ?? "", route: tab.route ?? "" }));
+    }, WORKSPACE_PROJECT_ID);
+  }
+
+  test("T-008 · View output opens the run's own output tab beside the Runner tab, titled “Fail · output”; its Copy puts the log on the system clipboard", async () => {
+    const [latest] = await history("fail");
+    const run = latest?.run ?? "";
+    const dialog = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`).getByTestId("run-dialog");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "View output" }).click();
+    await expect.poll(() => outputTabs()).toEqual([{ id: expect.any(String) as unknown as string, key: `out:fail:${run}`, tabKind: "output", route: `output/fail/${run}` }]);
+    const [tab] = await outputTabs();
+    const id = tab?.id ?? "";
+    await expect(page.getByTestId(`tab-title-${id}`)).toHaveText("Fail · output");
+    const output = page.frameLocator(`[data-testid="app-pane-${id}"] iframe`);
+    await expect(output.getByTestId("run-output-text")).toHaveText("working\nboom");
+    await expect(output.getByTestId("run-output-badge")).toContainText("Captured log · today");
+    await shoot(page, "pomade-output-tab");
+
+    // The Owner's clipboard is put back after.
+    const before = await app?.evaluate(({ clipboard }) => clipboard.readText());
+    try {
+      await drawn(page);
+      await output.getByTestId("run-output-copy").click();
+      await expect(output.getByTestId("toast")).toHaveText("RunnerCopied the log");
+      expect(await app?.evaluate(({ clipboard }) => clipboard.readText())).toBe("working\nboom\n");
+    } finally {
+      await app?.evaluate(({ clipboard }, text) => clipboard.writeText(text), before ?? "");
+    }
+    // Closed, so the specs after find the one Runner tab frame.
+    await page.getByTestId(`close-${id}`).click();
+    await expect.poll(() => outputTabs()).toEqual([]);
+  });
+
+  test("T-008 · a card closed in the Runner tab is recorded, so the same notice clicked again opens it again", async () => {
+    const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
+    const dialog = tab.getByTestId("run-dialog");
+    const notice = async (): Promise<void> => {
+      await runnerNotices();
+      await page.getByTestId("notices-panel").locator('[data-testid="notice-row"][data-source="pomade-runner"]').first().click();
+    };
+    await notice();
+    await expect(dialog).toBeVisible();
+    await drawn(page);
+    await dialog.getByRole("button", { name: "Close (Esc)" }).click();
+    await expect(dialog).toHaveCount(0);
+    await notice();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId("run-result")).toHaveText("Failed");
   });
 
   const TICKER = 'i=0; while :; do i=$((i+1)); echo "tick $i"; if read -t 1 line; then echo "got: $line"; fi; done';
@@ -388,12 +443,9 @@ test.describe("Runner in Pomade", () => {
       await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
       const row = panel().getByTestId("running-service").filter({ hasText: "Ticker" });
       await expect(row).toContainText("workspace · ws");
-      // A panel frame just shown again may still be re-handshaking with Pomade, which drops a call
-      // made across the handshake unanswered: click again until the tab opens.
-      await expect(async () => {
-        await row.click();
-        expect(await attachedTabIds()).toHaveLength(1);
-      }).toPass({ intervals: [500, 1000] });
+      await drawn(page);
+      await row.click();
+      await expect.poll(() => attachedTabIds()).toHaveLength(1);
       const [fromRow = ""] = await attachedTabIds();
       await expect(page.getByTestId(`tab-title-${fromRow}`)).toHaveText("Ticker · Runner");
       await expect(page.getByTestId(`attached-status-${fromRow}`)).toHaveText("Running");
@@ -669,11 +721,9 @@ test.describe("Runner in Pomade", () => {
     await expect(row).toHaveAttribute("data-state", "running");
     await expect(row).toContainText("running");
     await shoot(page, "pomade-panel-running-run");
-    // A panel frame just shown again may still be re-handshaking with Pomade: click until the tab opens.
-    await expect(async () => {
-      await row.click();
-      expect(await attachedTabIds()).toHaveLength(1);
-    }).toPass({ intervals: [500, 1000] });
+    await drawn(page);
+    await row.click();
+    await expect.poll(() => attachedTabIds()).toHaveLength(1);
     const [id = ""] = await attachedTabIds();
     await expect(page.getByTestId(`tab-title-${id}`)).toHaveText("Slow · Runner");
     await expect.poll(() => buffer(id)).toContain("slow-start");
@@ -693,11 +743,9 @@ test.describe("Runner in Pomade", () => {
       await runner.tabs.openApp({ route: "settings", projectId: WORKSPACE_PROJECT_ID });
       const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
       await expect(tab.getByTestId("setting-history-days-stepper-value")).toHaveText("30");
-      // A tab frame just shown again may not take a click yet: step until the value moves, once.
-      await expect(async () => {
-        if ((await tab.getByTestId("setting-history-days-stepper-value").textContent()) === "30") await tab.getByTestId("setting-history-days-stepper-more").click();
-        expect(await readFile(file, "utf8")).toBe("# mine\nhistory-days: 31  # a month\n");
-      }).toPass({ intervals: [1000, 1500] });
+      await drawn(page);
+      await tab.getByTestId("setting-history-days-stepper-more").click();
+      await expect.poll(() => readFile(file, "utf8")).toBe("# mine\nhistory-days: 31  # a month\n");
       await expect.poll(() => running.output()).toContain("history 31 days");
       await tab.getByTestId("setting-warm-up-stepper-less").click();
       await expect.poll(() => readFile(file, "utf8")).toBe("# mine\nhistory-days: 31  # a month\nwarm-up: 1m\n");
@@ -720,17 +768,34 @@ test.describe("Runner in Pomade", () => {
     }
   });
 
+  test("T-009 · Settings' Show in Files shows the jobs folder in Pomade's Files panel, selected", async () => {
+    const runner = await connectAsRunner();
+    try {
+      await runner.tabs.openApp({ route: "settings", projectId: WORKSPACE_PROJECT_ID });
+      const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
+      const button = tab.getByTestId("setting-jobs-folder").getByRole("button", { name: "Show in Files" });
+      await expect(button).toBeVisible();
+      await drawn(page);
+      await button.click();
+      await expect(page.getByTestId("side-panel-files")).toBeVisible();
+      const jobs = page.getByTestId("tree-node-Apps/pomade-runner/jobs");
+      await expect(jobs).toHaveAttribute("data-selected", "true");
+      await expect(jobs).toBeInViewport();
+      await shoot(page, "pomade-settings-show-in-files");
+    } finally {
+      runner.close();
+    }
+  });
+
   test("T-009 · the panel's switch holds scheduled runs while it is on Pause all, and Running lets them go", async () => {
     test.setTimeout(150_000);
     const running = scheduler ?? (await startTheScheduler());
     await page.getByTestId(`strip-${STRIP_KEY}`).click();
     await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
-    // A panel frame just shown again may still be re-handshaking with Pomade: click until it takes.
+    await drawn(page);
     const press = async (name: string, expected: string): Promise<void> => {
-      await expect(async () => {
-        await panel().getByTestId(name).click();
-        expect(await position()).toBe(expected);
-      }).toPass({ intervals: [500, 1000] });
+      await panel().getByTestId(name).click();
+      await expect.poll(() => position()).toBe(expected);
     };
     await press("switch-pause-all", "pause-all");
     await expect(panel().getByTestId("switch")).toHaveAttribute("data-position", "pause-all");
@@ -796,12 +861,10 @@ test.describe("Runner in Pomade", () => {
       await runner.tabs.openApp({ route: "history", projectId: WORKSPACE_PROJECT_ID });
       const row = tab.locator('[data-testid="history-row"][data-job="follower"]');
       await expect(row.getByTestId("history-trigger")).toHaveText("chain: after Parent");
-      // A tab frame just shown again may not take a click yet: click until the card opens.
       const dialog = tab.getByTestId("run-dialog");
-      await expect(async () => {
-        await row.click();
-        await expect(dialog).toBeVisible({ timeout: 1500 });
-      }).toPass({ intervals: [500, 1000] });
+      await drawn(page);
+      await row.click();
+      await expect(dialog).toBeVisible();
       await expect(dialog.getByTestId("run-trigger")).toHaveText("chain");
       await shoot(page, "pomade-chain-card");
       await dialog.getByRole("button", { name: "Open Parent's run" }).click();
@@ -832,11 +895,9 @@ test.describe("Runner in Pomade", () => {
     await expect(item.getByTestId("needs-you-words")).toHaveText("Paused: triggered 10× in 10 min.");
     await expect(item.getByRole("button", { name: "Dismiss" })).toHaveCount(0);
     await shoot(page, "pomade-panel-loop-paused");
-    // A panel frame just shown again may still be re-handshaking with Pomade: click until it takes.
-    await expect(async () => {
-      if ((await item.count()) > 0) await item.getByRole("button", { name: "Resume" }).click();
-      await expect(item).toHaveCount(0, { timeout: 1500 });
-    }).toPass({ intervals: [500, 1000] });
+    await drawn(page);
+    await item.getByRole("button", { name: "Resume" }).click();
+    await expect(item).toHaveCount(0);
     expect((await command("runs")).stdout).not.toContain("needs you: Follower");
     expect(running.output()).toContain("job follower: Resume — hooks and chains fire it again\n");
 

@@ -4,9 +4,10 @@
 // whenever the scheduler announces a change (`jobs.changed`, `services.changed`, `runs.changed`,
 // `settings.changed`) — on every change, and when it connects to Pomade, so a frame that found no
 // scheduler catches up. The workspace's repos, from Pomade's git state (`git.read`), followed live.
-// And Runner's own tab route, which Pomade sets when it opens or navigates the tab.
+// And Runner's own tab route, which Pomade sets when it opens or navigates the tab, and the tab
+// records with Pomade when it navigates by itself.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { GitRepoState, JsonValue, ProjectRef } from "pomade-kit/protocol";
 import { HostError, type HostClient } from "pomade-kit/sdk";
 
@@ -31,6 +32,7 @@ import { isServicesReport, type ServicesReport } from "../keeper/model";
 import { isHistoryPage, isRunOutput, isRunsReport, isRunView, type HistoryPage, type RunOutput, type RunsReport, type RunView } from "../scheduler/model";
 import { isEnvironmentReport, type EnvironmentReport } from "../scheduler/environment";
 import { isSettingsReport, type SettingsReport } from "../scheduler/settings";
+import { useToast } from "./kit";
 
 export type LiveState<T> =
   | { status: "loading" }
@@ -163,11 +165,42 @@ export function useProjectNames(host: HostClient): (id: string | null) => string
   return (id) => (id === null ? "Workspace" : (names.get(id) ?? id));
 }
 
-/** The tab's route: the one it opened with, then each one Pomade navigates it to. */
+/** The tab's route: the one it opened with, then each one Pomade navigates it to — a navigation
+ *  that came before the tab listened (between the handshake and the first render) is caught up from
+ *  `host.info`. `open` navigates the tab by itself (a view picked, a card closed) and tells Pomade
+ *  (`tabs.setRoute`), so a reload opens there and a notice or `tabs.openApp` to the route the tab
+ *  left — the card just closed — navigates it back. */
 export function useRoute(host: HostClient): [string, (route: string) => void] {
   const [route, setRoute] = useState(host.welcome.route);
-  useEffect(() => host.onRouteChange(setRoute), [host]);
-  return [route, setRoute];
+  const toast = useToast();
+  const moved = useRef(false);
+  useEffect(() => {
+    let live = true;
+    const off = host.onRouteChange((next) => {
+      moved.current = true;
+      setRoute(next);
+    });
+    host.info().then(
+      (info) => {
+        if (live && !moved.current) setRoute(info.route);
+      },
+      // Nothing to catch up from: the tab stays at the route it opened with.
+      () => undefined,
+    );
+    return () => {
+      live = false;
+      off();
+    };
+  }, [host]);
+  const open = useCallback(
+    (next: string): void => {
+      moved.current = true;
+      setRoute(next);
+      host.tabs.setRoute(next).catch((err: unknown) => toast(`Pomade did not record where the Runner tab is: ${err instanceof Error ? err.message : String(err)}`));
+    },
+    [host, toast],
+  );
+  return [route, open];
 }
 
 /** The project Pomade has open — the Workspace scope for none — followed as it changes; `null` until

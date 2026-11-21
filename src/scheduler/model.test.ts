@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { editRoute, jobsRoute, newRoute, outputRoute, parseRoute, runRoute } from "../integrations/runner-api";
+import { APP_TAB_KEY_RE } from "pomade-kit/protocol";
+
+import { editRoute, jobsRoute, newRoute, outputRoute, outputTab, outputTabKey, parseRoute, runRoute } from "../integrations/runner-api";
+import { MAX_ENCODED_JOB_ID } from "../keeper/ids";
 import { clockTime, dayTime, durationWords, isActiveRun, isRunsReport, runWords, type ActiveRun, type RunRecord } from "./model";
 
 const base = { job: "coda/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/coda", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1 };
@@ -90,6 +93,21 @@ describe("routes", () => {
     expect(jobsRoute("coda/knowledge")).toBe("jobs/coda.knowledge");
     expect(parseRoute(jobsRoute("coda/knowledge"))).toEqual({ view: "jobs", job: "coda/knowledge" });
     expect(parseRoute("jobs/a_zz")).toEqual({ view: "jobs", job: null });
+  });
+
+  it("open a run's output in its own keyed tab, one per run, whose key Pomade takes for any job id", () => {
+    expect(outputTab("coda/web", "20261117-120000-abcdef", "Coda web")).toEqual({
+      route: "output/coda.web/20261117-120000-abcdef",
+      key: "out:coda.web:20261117-120000-abcdef",
+      title: "Coda web · output",
+      kind: "output",
+    });
+    expect(outputTabKey("coda/web", "20261117-120000-abcdef")).not.toBe(outputTabKey("coda/web", "20261117-120001-abcdef"));
+    expect(outputTabKey("coda.web", "r")).not.toBe(outputTabKey("coda/web", "r"));
+    const run = "20261117-120000-abcdef";
+    for (const job of ["Café", "a b/c", "a".repeat(MAX_ENCODED_JOB_ID), "é".repeat(Math.floor(MAX_ENCODED_JOB_ID / 6))]) {
+      expect(outputTabKey(job, run)).toMatch(APP_TAB_KEY_RE);
+    }
   });
 
   it("name the job form: a new job, or a job by its id, and read back", () => {

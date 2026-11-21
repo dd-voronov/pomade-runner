@@ -48,7 +48,7 @@ test("./install builds Runner, installs it and links its skill; run again, it up
     expect(first.stderr + first.stdout).toContain(`Installed into ${installed}`);
     expect(first.code).toBe(0);
     expect(JSON.parse(await readFile(join(installed, "manifest.json"), "utf8"))).toEqual(manifest);
-    expect((await readdir(installed)).sort()).toEqual(["assets", "backend", "cli", "icon.svg", "index.html", "manifest.json", "node_modules", "skills"]);
+    expect((await readdir(installed)).sort()).toEqual(["assets", "backend", "cli", "icon.svg", "index.html", "manifest.json", "node_modules", "output.svg", "skills"]);
     const skill = join(installed, "skills/pomade-runner-jobs");
     const links = [join(userHome, ".claude/skills/pomade-runner-jobs"), join(folders.workspace, "Agents/claude-coder/skills/pomade-runner-jobs")];
     for (const link of links) {

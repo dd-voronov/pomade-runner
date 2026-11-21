@@ -28,6 +28,10 @@ declare global {
     refuseDelete: string | null;
     /** While set, the stand-in scheduler refuses Run now and Enable / Disable with this reason. */
     refuseActions: string | null;
+    /** What the app wrote to the stand-in clipboard (`ui.spec.ts` `stubClipboard`), in order. */
+    copied: string[];
+    /** While set, the stand-in clipboard refuses a write with this message. */
+    refuseCopy: string | null;
     /** The stand-in scheduler refuses an action (a method of `runner-api.ts`) with its reason while one is set. */
     refuse: Record<string, string>;
   }

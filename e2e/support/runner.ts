@@ -34,7 +34,8 @@ export interface RunnerWorld {
   env: Record<string, string>;
   /** Start a scheduler of the build, with `extra` in its environment (its clock, a time zone). */
   startScheduler(extra?: Record<string, string>): SchedulerProcess;
-  /** Wait until the scheduler is connected to its keeper. */
+  /** Wait until the scheduler is connected to its keeper and its first tick has followed it —
+   *  the tick that decides login or not and from which a later tick tells a wake. */
   ready(scheduler: SchedulerProcess): Promise<void>;
   /** Write a job file into the jobs folder (`path` inside it). */
   writeJob(path: string, text: string): Promise<void>;
@@ -112,6 +113,7 @@ export async function createRunnerWorld(): Promise<RunnerWorld> {
     },
     async ready(scheduler) {
       await expect.poll(() => scheduler.output()).toMatch(/keeper: connected — version \w+, pid \d+\n/);
+      await expect.poll(() => scheduler.output()).toMatch(/(login: no keeper was running|start: the keeper was running) — /);
     },
     writeJob: (path, text) => writeFile(join(jobs, path), text),
     command: (...args) => run(process.execPath, [join(build, "cli/pomade-runner.mjs"), ...args], { env: { ...env, POMADE_CLIENT: "command" }, cwd: tmp }),
