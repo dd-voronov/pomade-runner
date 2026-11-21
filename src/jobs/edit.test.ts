@@ -30,6 +30,14 @@ describe("field-only writes", () => {
     expect(written(HAND_WRITTEN, { kind: "script" })).toContain("kind: script   # keeps it up\n");
   });
 
+  it("keeps the comment of a mapping field on one flow line while it stays on one line", () => {
+    const text = "---\nkind: service\nready: { port: 5173 }   # vite, {dev}\nafter: { job: pull } # nightly\n---\n";
+    expect(written(text, { ready: { port: 5174 } })).toBe(text.replace("5173", "5174"));
+    expect(written(text, { after: { job: "pull", result: "any" } })).toBe(text.replace("{ job: pull }", "{ job: pull, result: any }"));
+    expect(written(text, { ready: { port: { x: { y: 1 } } } })).not.toContain("# vite");
+    expect(written("---\nhook: { event: login }\n---\n", { hook: { event: "login" } })).toBe("---\nhook: { event: login }\n---\n");
+  });
+
   it("replaces a mapping field's lines and keeps the rest", () => {
     const next = written(HAND_WRITTEN, { ready: { url: "http://localhost:5173/" } });
     expect(next).toBe(HAND_WRITTEN.replace("ready:\n  port: 5173\n", "ready: { url: http://localhost:5173/ }\n"));

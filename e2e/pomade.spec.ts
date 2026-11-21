@@ -22,7 +22,7 @@ import type { RunRecord } from "../src/scheduler/model";
 import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
 import { blankSchedule, type ScheduleValues } from "../src/ui/form/schedule";
 import { newForm, setFolder, setValue, switchKind, wouldBe } from "../src/ui/form/state";
-import { runningSession, sessionInfo, stopKeeper } from "./support/keeper";
+import { runningSession, sessionInfo, sessionsReport, stopKeeper } from "./support/keeper";
 import { pomadeCheckout, pomadeEnv, type PomadeFolders } from "./support/pomade";
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
 
@@ -751,5 +751,129 @@ test.describe("Runner in Pomade", () => {
     // The held occurrence comes due on release: it runs.
     await expect.poll(() => history("held-tick"), { timeout: 70_000 }).toEqual(expect.arrayContaining([expect.objectContaining({ state: "done" }) as RunRecord]));
     await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/held-tick.md"), "---\nkind: script\nname: Held tick\nfolder: .\ncommand: echo held-tick\nenabled: false\nschedule:\n  every: { minutes: 1 }\n---\n");
+  });
+
+  /** New job → Script in the Runner tab, its name, command and folder typed, its trigger When
+   *  something happens; the tab's frame. */
+  async function newHookScript(runner: HostClient, name: string, command: string): Promise<ReturnType<Page["frameLocator"]>> {
+    const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
+    await runner.tabs.openApp({ route: "", projectId: WORKSPACE_PROJECT_ID });
+    await runner.tabs.openApp({ route: "new", projectId: WORKSPACE_PROJECT_ID });
+    await tab.getByTestId("kind-script").click();
+    const form = tab.getByTestId("form-script");
+    await form.getByRole("textbox", { name: "Name", exact: true }).fill(name);
+    await form.getByRole("textbox", { name: "Command", exact: true }).fill(command);
+    await form.getByRole("textbox", { name: "Folder", exact: true }).fill(".");
+    await form.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
+    return tab;
+  }
+
+  test("T-010 · a chain made in the job form fires as a hand-written one does: its parent's run starts it; History says chain: after Parent, and its card opens the parent's run", async () => {
+    scheduler ??= await startTheScheduler();
+    const jobs = join(folders.workspace, "Apps/pomade-runner/jobs");
+    await mkdir(jobs, { recursive: true });
+    await writeFile(join(jobs, "parent.md"), scriptFile("Parent", "echo parent"));
+    await expect.poll(async () => (await command("list")).stdout).toContain("Parent");
+    const runner = await connectAsRunner();
+    try {
+      const tab = await newHookScript(runner, "Follower", 'echo "after $POMADE_PARENT_JOB $POMADE_PARENT_RESULT"');
+      await tab.getByTestId("hook-event").selectOption({ label: "Another job finished" });
+      await tab.getByTestId("chain-job").selectOption({ label: "Parent" });
+      await expect(tab.getByTestId("hook-words")).toHaveText("Runs after Parent is doneA chain. History will show “chain: after Parent”.");
+      await shoot(page, "pomade-form-chain");
+      await tab.getByTestId("form-save").click();
+      await expect(tab.getByTestId("toast").last()).toHaveText("RunnerCreated Apps/pomade-runner/jobs/follower.md");
+      const file = join(jobs, "follower.md");
+      expect(await readFile(file, "utf8")).toBe('---\nkind: script\nname: Follower\nfolder: .\nenabled: true\ncommand: echo "after $POMADE_PARENT_JOB $POMADE_PARENT_RESULT"\nafter: { job: parent, result: done }\n---\n');
+      expect(await command("check", file)).toEqual({ code: 0, stdout: "1 job file: no problems.\n", stderr: "" });
+      await expect.poll(async () => (await command("list")).stdout).toContain("Follower");
+
+      expect((await command("run", "parent")).code).toBe(0);
+      await expect.poll(() => history("follower"), { timeout: 15_000 }).toEqual([
+        expect.objectContaining({ state: "done", trigger: "chain", cause: expect.objectContaining({ kind: "chain", job: "parent", name: "Parent", result: "done" }) as unknown, lastLines: ["after parent done"] }) as RunRecord,
+      ]);
+
+      await runner.tabs.openApp({ route: "history", projectId: WORKSPACE_PROJECT_ID });
+      const row = tab.locator('[data-testid="history-row"][data-job="follower"]');
+      await expect(row.getByTestId("history-trigger")).toHaveText("chain: after Parent");
+      // A tab frame just shown again may not take a click yet: click until the card opens.
+      const dialog = tab.getByTestId("run-dialog");
+      await expect(async () => {
+        await row.click();
+        await expect(dialog).toBeVisible({ timeout: 1500 });
+      }).toPass({ intervals: [500, 1000] });
+      await expect(dialog.getByTestId("run-trigger")).toHaveText("chain");
+      await shoot(page, "pomade-chain-card");
+      await dialog.getByRole("button", { name: "Open Parent's run" }).click();
+      await expect(dialog.getByTestId("run-trigger")).toHaveText("manual");
+      await expect(dialog.getByTestId("run-last-lines")).toHaveText("parent");
+    } finally {
+      runner.close();
+    }
+  });
+
+  test("T-010 · the loop guard pauses a chained job fired more than 10 times in 10 min; Resume in the panel's Needs you clears its card — which has no Dismiss — and the chain fires it again", async () => {
+    test.setTimeout(150_000);
+    const running = scheduler ?? (await startTheScheduler());
+    // Follower fired once in the test before: ten more firings run it, the eleventh pauses it.
+    for (let firing = 2; firing <= 10; firing++) {
+      expect((await command("run", "parent")).code).toBe(0);
+      await expect.poll(async () => (await history("follower")).length, { timeout: 15_000 }).toBe(firing);
+    }
+    expect((await command("run", "parent")).code).toBe(0);
+    await expect.poll(async () => (await history("parent")).length, { timeout: 15_000 }).toBe(11);
+    await expect.poll(() => running.output(), { timeout: 15_000 }).toContain("job follower: fired more than 10 times in 10 min by hooks or chains — looks like a loop; paused until Resume\n");
+    expect(await history("follower")).toHaveLength(10);
+
+    await page.getByTestId(`strip-${STRIP_KEY}`).click();
+    await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
+    const item = panel().locator('[data-testid="needs-you-item"][data-kind="loop-paused"]');
+    await expect(item.getByRole("button", { name: "Follower" })).toBeVisible();
+    await expect(item.getByTestId("needs-you-words")).toHaveText("Paused: triggered 10× in 10 min.");
+    await expect(item.getByRole("button", { name: "Dismiss" })).toHaveCount(0);
+    await shoot(page, "pomade-panel-loop-paused");
+    // A panel frame just shown again may still be re-handshaking with Pomade: click until it takes.
+    await expect(async () => {
+      if ((await item.count()) > 0) await item.getByRole("button", { name: "Resume" }).click();
+      await expect(item).toHaveCount(0, { timeout: 1500 });
+    }).toPass({ intervals: [500, 1000] });
+    expect((await command("runs")).stdout).not.toContain("needs you: Follower");
+    expect(running.output()).toContain("job follower: Resume — hooks and chains fire it again\n");
+
+    expect((await command("run", "parent")).code).toBe(0);
+    await expect.poll(async () => (await history("follower")).length, { timeout: 15_000 }).toBe(11);
+  });
+
+  test("T-010 · a login hook made in the job form runs at the next Mac login, as a hand-written one does", async () => {
+    test.setTimeout(120_000);
+    scheduler ??= await startTheScheduler();
+    await mkdir(join(folders.workspace, "Apps/pomade-runner"), { recursive: true });
+    await writeFile(join(folders.workspace, "Apps/pomade-runner/settings.yaml"), "warm-up: 0m\n");
+    const jobs = join(folders.workspace, "Apps/pomade-runner/jobs");
+    const runner = await connectAsRunner();
+    try {
+      const tab = await newHookScript(runner, "Form mount", 'echo "mounted $POMADE_TRIGGER"');
+      await expect(tab.getByTestId("hook-event")).toHaveValue("login");
+      await expect(tab.getByTestId("hook-words")).toHaveText("Runs at Mac loginOnce per login, once the services are up.");
+      await shoot(page, "pomade-form-login");
+      await tab.getByTestId("form-save").click();
+      await expect(tab.getByTestId("toast").last()).toHaveText("RunnerCreated Apps/pomade-runner/jobs/form-mount.md");
+    } finally {
+      runner.close();
+    }
+    expect(await readFile(join(jobs, "form-mount.md"), "utf8")).toBe('---\nkind: script\nname: Form mount\nfolder: .\nenabled: true\ncommand: echo "mounted $POMADE_TRIGGER"\nhook: { event: login }\n---\n');
+    await expect.poll(async () => (await command("list")).stdout).toContain("Form mount");
+    expect(await history("form-mount")).toEqual([]);
+
+    // A login: macOS ends the keeper with the user's processes; the login item starts the scheduler.
+    pids.push(...(await sessionsReport(schedulerSocket())).sessions.map((session) => session.info.pid ?? 0));
+    await scheduler.kill();
+    await stopKeeper(keeperSocket, pids.splice(0));
+    const next = await startTheScheduler();
+    await expect.poll(() => next.output()).toContain("login: no keeper was running");
+    await expect.poll(() => history("form-mount"), { timeout: 30_000 }).toEqual([
+      expect.objectContaining({ state: "done", trigger: "hook", cause: { kind: "hook", event: "login", context: {} }, lastLines: ["mounted hook"] }) as RunRecord,
+    ]);
+    expect((await command("history", "form-mount")).stdout).toMatch(/^form-mount {2}Form mount {2}hook: Mac login {2}done, /);
   });
 });

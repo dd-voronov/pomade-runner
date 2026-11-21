@@ -1047,7 +1047,7 @@ test.describe("the job form", () => {
     await form.getByRole("button", { name: "Check a port or URL instead" }).click();
     await form.getByTestId("form-policies").getByRole("button", { name: "Change" }).click();
     const tip = app(page).getByRole("tooltip");
-    const keys = ["f.enabled", "f.name", "f.start", "f.ready", "f.command", "f.folder", "f.project", "p.low", "p.notify", "f.file"] as const;
+    const keys = ["f.enabled", "f.name", "f.start", "f.ready", "f.after", "f.command", "f.folder", "f.project", "p.low", "p.notify", "f.file"] as const;
     for (const key of keys) {
       await form.getByTestId(`help-${key}`).hover();
       await expect(tip).toHaveText(HELP[key].join(""));
@@ -1705,7 +1705,7 @@ test.describe("the Script form and the schedule picker", () => {
     let frame = await newScript(page, "Daily report");
     const form = frame.getByTestId("form-script");
     await expect(form.getByRole("region")).toHaveText([/^Kind/, /^Trigger/, /^Runs/, /^Policies/]);
-    await expect(frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" })).toHaveAttribute("aria-disabled", "true");
+    await expect(frame.getByTestId("trigger-choice").getByRole("button", { name: "On a schedule" })).toHaveAttribute("aria-pressed", "true");
     await expect(frame.getByTestId("schedule-shape").getByRole("button", { name: "Daily" })).toHaveAttribute("aria-pressed", "true");
     // Daily, two times, weekdays only.
     await expectWords(frame, "Runs daily at 9:00", "Next: tomorrow 9:00 · Thu 9:00 · Fri 9:00 · Mac’s local time");
@@ -1937,21 +1937,137 @@ test.describe("the Script form and the schedule picker", () => {
     expect(await fileText(page, `${JOBS}/tidy.md`)).toBe(text.replace("at: 7:00", "at: 7:30"));
   });
 
-  test("a script whose trigger is a hook keeps it: said in words, changed in the file", async ({ page }) => {
-    const text = "---\nkind: script\nname: Mount\nfolder: .\ncommand: ./mount.sh\nhook: { event: login }\n---\n";
-    await start(page, "edit/mount");
-    await page.evaluate((t) => window.fakeHost.writeFile("Apps/pomade-runner/jobs/mount.md", t), text);
+  test("a script whose hook is on an event the form does not offer keeps it: said in words, changed in the file", async ({ page }) => {
+    const text = "---\nkind: script\nname: Init\nfolder: .\ncommand: ./init.sh\nhook: { event: project-created } # new projects\n---\n";
+    await start(page, "edit/init");
+    await page.evaluate((t) => window.fakeHost.writeFile("Apps/pomade-runner/jobs/init.md", t), text);
     const frame = app(page);
     const choice = frame.getByTestId("trigger-choice");
     await expect(choice.getByRole("button", { name: "When something happens" })).toHaveAttribute("aria-pressed", "true");
-    await expect(choice.getByRole("button", { name: "On a schedule" })).toHaveAttribute("aria-disabled", "true");
-    await expect(frame.getByTestId("file-trigger")).toContainText("Runs at Mac loginThe form edits schedules; a hook or a chain is changed in the job file.");
+    await expect(frame.getByTestId("file-trigger")).toContainText("Runs when a project is createdThis hook is set in the job file: hook:");
+    await expect(frame.getByTestId("hook-event")).toHaveCount(0);
     await frame.getByTestId("trigger-open-file").click();
-    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: `${JOBS}/mount.md` }]);
-    await frame.getByRole("textbox", { name: "Command", exact: true }).fill("./mount-all.sh");
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: `${JOBS}/init.md` }]);
+    // To a schedule and back: the hook is the file's again, and nothing of it is written.
+    await choice.getByRole("button", { name: "On a schedule" }).click();
+    await expect(frame.getByTestId("schedule-words")).toBeVisible();
+    await choice.getByRole("button", { name: "When something happens" }).click();
+    await expect(frame.getByTestId("file-trigger")).toBeVisible();
+    await frame.getByRole("textbox", { name: "Command", exact: true }).fill("./init-all.sh");
     await frame.getByTestId("form-save").click();
     await expect(frame.getByTestId("tab-jobs")).toBeVisible();
-    expect(await fileText(page, `${JOBS}/mount.md`)).toBe(text.replace("./mount.sh", "./mount-all.sh"));
+    expect(await fileText(page, `${JOBS}/init.md`)).toBe(text.replace("./init.sh", "./init-all.sh"));
+  });
+
+  const BACKUP = "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\nschedule:\n  daily: { at: 13:00 }\n---\n";
+  const WEB = "---\nkind: service\nname: Web\nfolder: .\ncommand: ./web.sh # dev server\n---\nNotes.\n";
+
+  async function writeJobs(page: Page, files: Record<string, string>): Promise<void> {
+    await page.evaluate((all) => {
+      for (const [path, text] of Object.entries(all)) window.fakeHost.writeFile(`Apps/pomade-runner/jobs/${path}`, text);
+    }, files);
+  }
+
+  test("T-010 · a script on the Mac login hook and one chained after another job: the Event list, the chain's job and result, the trigger in words — and the files a hand-written hook and chain are", async ({ page }) => {
+    await start(page, "");
+    await writeJobs(page, { "backup.md": BACKUP, "web.md": WEB });
+    await expect(app(page).getByTestId("job-row")).toHaveCount(2);
+    let frame = await newScript(page, "Mount");
+    await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
+    const event = frame.getByTestId("hook-event");
+    // The hooks the engine fires, then the chain, last.
+    await expect(event.locator("option")).toHaveText(["Mac login", "Another job finished"]);
+    await expect(event).toHaveValue("login");
+    await expect(frame.getByTestId("hook-words")).toHaveText("Runs at Mac loginOnce per login, after the 2-minute warm-up.");
+    await frame.getByTestId("form-policies").getByRole("button", { name: "Change" }).click();
+    await expect(frame.getByTestId("missed-n-a")).toHaveText("Doesn’t apply — hooks fire only while Pomade is running.");
+    await shoot(page, "tab-form-hook-login");
+    expect(await create(page, "mount")).toBe(`${header("Mount")}hook: { event: login }\n---\n`);
+
+    frame = await newScript(page, "Cleanup");
+    await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
+    await frame.getByTestId("hook-event").selectOption({ label: "Another job finished" });
+    const job = frame.getByTestId("chain-job");
+    // Jobs that finish, by name: no service, not the job itself.
+    await expect(job.locator("option")).toHaveText(["Choose a job…", "Backup", "Mount"]);
+    await expect(frame.getByTestId("hook-words")).toHaveText("Runs after another job finishesA chain. History will show “chain: after …”.");
+    await job.selectOption({ label: "Backup" });
+    await frame.getByTestId("chain-result").getByRole("button", { name: "Fails" }).click();
+    await expect(frame.getByTestId("hook-words")).toHaveText("Runs after Backup failsA chain. History will show “chain: after Backup”.");
+    await shoot(page, "tab-form-chain");
+    expect(await create(page, "cleanup")).toBe(`${header("Cleanup")}after: { job: backup, result: failed }\n---\n`);
+    await expect(app(page).getByTestId("job-trigger")).toContainText(["daily at 13:00", "after Backup fails", "at Mac login"]);
+
+    // A chain with no job chosen: Save asks for one on the picker.
+    frame = await newScript(page, "Orphan");
+    await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
+    await frame.getByTestId("hook-event").selectOption({ label: "Another job finished" });
+    await frame.getByTestId("form-save").click();
+    await expect(frame.getByTestId("chain-error")).toHaveText("after — names no job. Fix: add the job to follow: after: { job: backup, result: done }.");
+    await expect(frame.getByTestId("chain-job")).toBeFocused();
+  });
+
+  test("T-010 · a chain that leads back to itself is refused on Save, both jobs named in the checker's words, with the (i) on why", async ({ page }) => {
+    const a = "---\nkind: script\nname: A\nfolder: .\ncommand: ./a.sh\nschedule:\n  daily: { at: 9:00 }\n---\n";
+    const b = "---\nkind: script\nname: B\nfolder: .\ncommand: ./b.sh\nafter: { job: a }\n---\n";
+    await start(page, "edit/a");
+    await writeJobs(page, { "a.md": a, "b.md": b });
+    const frame = app(page);
+    await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
+    await frame.getByTestId("hook-event").selectOption({ label: "Another job finished" });
+    await frame.getByTestId("chain-job").selectOption({ label: "B" });
+    const error = frame.getByTestId("chain-error");
+    await expect(error).toHaveText("after.job — the chain loops back: a → b → a. Fix: remove after: from one of these jobs, or point it at a job outside the loop.");
+    await expect(frame.getByTestId("chain-job")).toHaveAttribute("aria-invalid", "true");
+    await error.getByTestId("help-hk.loop").hover();
+    await expect(frame.getByRole("tooltip")).toHaveText(HELP["hk.loop"].join(""));
+    await shoot(page, "tab-form-loop");
+    await frame.getByTestId("form-save").click();
+    await expect(frame.getByTestId("form-error-count")).toHaveText("1 thing to fix before saving");
+    await expect(frame.getByTestId("job-form")).toBeVisible();
+    expect(await fileText(page, `${JOBS}/a.md`)).toBe(a);
+    // Pointed outside the loop, it saves.
+    await frame.getByTestId("chain-job").selectOption({ label: "Choose a job…" });
+    await writeJobs(page, { "c.md": a.replace("name: A", "name: C") });
+    await frame.getByTestId("chain-job").selectOption({ label: "C" });
+    await expect(error).toHaveCount(0);
+    await frame.getByTestId("form-save").click();
+    await expect(frame.getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, `${JOBS}/a.md`)).toBe(a.replace("schedule:\n  daily: { at: 9:00 }\n", "after: { job: c, result: done }\n"));
+  });
+
+  test("T-010 · a service's chain: + Restart, start or stop it after another job adds the line; it writes after:, field-only; × removes it", async ({ page }) => {
+    await start(page, "edit/web");
+    await writeJobs(page, { "backup.md": BACKUP, "web.md": WEB, "docs.md": WEB.replace("name: Web", "name: Docs") });
+    const frame = app(page);
+    const add = frame.getByTestId("service-chain-add");
+    await expect(add).toHaveText("+ Restart, start or stop it after another job");
+    await add.click();
+    const line = frame.getByTestId("service-chain");
+    await expect(line).toContainText("Also");
+    await expect(line.getByRole("combobox", { name: "What it does" }).locator("option")).toHaveText(["restart it", "start it", "stop it"]);
+    // Jobs that finish: never a service.
+    await expect(frame.getByTestId("chain-job").locator("option")).toHaveText(["choose a job…", "Backup"]);
+    await line.getByRole("combobox", { name: "What it does" }).selectOption({ label: "stop it" });
+    await frame.getByTestId("chain-job").selectOption({ label: "Backup" });
+    await line.getByRole("combobox", { name: "When it" }).selectOption({ label: "fails" });
+    await shoot(page, "tab-form-service-chain");
+    await frame.getByTestId("form-save").click();
+    await expect(frame.getByTestId("tab-jobs")).toBeVisible();
+    const chained = WEB.replace("---\nNotes", "after: { job: backup, result: failed, action: stop }\n---\nNotes");
+    expect(await fileText(page, `${JOBS}/web.md`)).toBe(chained);
+    await expect(app(page).locator('[data-testid="job-row"][data-job="web"]').getByTestId("job-trigger")).toHaveText("always on, from login; stops after Backup fails");
+
+    await page.evaluate(() => {
+      window.mounted.navigate("");
+      window.mounted.navigate("edit/web");
+    });
+    await expect(frame.getByTestId("chain-job")).toHaveValue("backup");
+    await frame.getByTestId("service-chain-remove").click();
+    await expect(frame.getByTestId("service-chain")).toHaveCount(0);
+    await frame.getByTestId("form-save").click();
+    await expect(frame.getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, `${JOBS}/web.md`)).toBe(WEB);
   });
 
   test("every field the Script form adds has a working (i)", async ({ page }) => {
@@ -1983,9 +2099,17 @@ test.describe("the Script form and the schedule picker", () => {
     await shapes.getByRole("button", { name: "Once" }).click();
     await frame.getByTestId("help-sh.phrase").hover();
     await expect(tip).toHaveText(HELP["sh.phrase"].join(""));
-    // The hook's choice, faded, still says why on hover.
-    await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).hover();
-    await expect(tip).toHaveText("A hook or a chain is set in the job file: hook: or after:");
+    // The hooks: the event's (i) follows the event; a chain's result and a loop have theirs.
+    await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
+    await frame.getByTestId("help-hk.login").hover();
+    await expect(tip).toHaveText(HELP["hk.login"].join(""));
+    await frame.getByTestId("hook-event").selectOption({ label: "Another job finished" });
+    // The pointer leaves the (i) it was on, which now explains the chain.
+    await frame.getByTestId("hook-event").hover();
+    for (const key of ["hk.job-finished", "hk.result"] as const) {
+      await frame.getByTestId(`help-${key}`).hover();
+      await expect(tip).toHaveText(HELP[key].join(""));
+    }
   });
 });
 

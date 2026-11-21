@@ -20,6 +20,9 @@ export function projectJobsFolder(project: ProjectRecord): string {
   return baseName(project.root);
 }
 
+/** The problem every job in a chain that loops back is refused with, before the loop's ids. */
+export const LOOP_PROBLEM = "the chain loops back";
+
 function add(file: ParsedJobFile, line: number, field: string, problem: string, fix: string): void {
   file.errors.push({ path: file.path, line, field, problem, fix });
 }
@@ -55,7 +58,7 @@ function checkChains(files: readonly ParsedJobFile[]): void {
       reported.add(id);
       const member = byId.get(id);
       if (member?.after) {
-        add(member, member.after.line, "after.job", `the chain loops back: ${loop}`, "remove after: from one of these jobs, or point it at a job outside the loop");
+        add(member, member.after.line, "after.job", `${LOOP_PROBLEM}: ${loop}`, "remove after: from one of these jobs, or point it at a job outside the loop");
       }
     }
   }

@@ -96,8 +96,34 @@ function rawIndex(raw: string, index: number): number {
   return r;
 }
 
-/** Set a mapping field: its lines are replaced (or appended), every other byte stays. */
+/** The comment after a field written on one flow line (`ready: { port: 5173 } # vite`), with the
+ *  space before it; `""` for none. It follows the `}` that closes the mapping — quoted text and
+ *  nested braces skipped. */
+function flowLineComment(frontmatter: string, key: string): string {
+  const line = frontmatter.split("\n").find((candidate) => candidate.startsWith(`${key}:`));
+  const open = line === undefined ? -1 : line.indexOf("{");
+  if (line === undefined || open < 0 || line.slice(key.length + 1, open).trim() !== "") return "";
+  let depth = 0;
+  let quote: string | null = null;
+  for (let at = open; at < line.length; at++) {
+    const char = line[at];
+    if (quote !== null) {
+      if (char === "\\" && quote === '"') at++;
+      else if (char === quote) quote = null;
+    } else if (char === '"' || char === "'") quote = char;
+    else if (char === "{") depth++;
+    else if (char === "}" && --depth === 0) {
+      const tail = line.slice(at + 1);
+      return /^\s+#/.test(tail) ? tail.trimEnd() : "";
+    }
+  }
+  return "";
+}
+
+/** Set a mapping field: its lines are replaced (or appended), every other byte stays — and the
+ *  comment of a field on one flow line, when it stays on one line. */
 function setMappingField(text: string, key: string, value: { readonly [key: string]: FieldInput }): FieldWriteResult {
+  const comment = flowLineComment(splitFrontmatter(text.replace(/\r\n/g, "\n")).frontmatter, key);
   // A plain `key:` line first — the kit appends a missing key, or a block to a file with none.
   const placed = setField(text, key, null);
   if (!placed.ok) return placed;
@@ -105,7 +131,9 @@ function setMappingField(text: string, key: string, value: { readonly [key: stri
   const { frontmatter } = splitFrontmatter(lf);
   const end = rawIndex(placed.text, frontmatter.length);
   const crlf = placed.text.slice(0, end).includes("\r\n");
-  const block = setComplexKeyLines(frontmatter, key, mappingLines(key, value).join("\n"));
+  const lines = mappingLines(key, value);
+  if (lines.length === 1 && comment !== "") lines[0] = `${lines[0] ?? ""}${comment}`;
+  const block = setComplexKeyLines(frontmatter, key, lines.join("\n"));
   const next = (crlf ? block.replace(/\n/g, "\r\n") : block) + placed.text.slice(end);
   return { ok: true, text: next, changed: next !== text };
 }

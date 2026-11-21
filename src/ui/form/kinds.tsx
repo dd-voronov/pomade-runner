@@ -13,7 +13,7 @@ import { FormSection } from "./FormSection";
 import styles from "./JobForm.module.css";
 import { LOW_PRIORITY_WORDS, MISSED_WORDS, NOTIFY_WORDS, OVERLAP_WORDS, TIME_LIMIT_WORDS, type PolicyWords } from "./policies";
 import type { FormValues, WorthUntil } from "./state";
-import { TriggerSection } from "./TriggerSection";
+import { ServiceChainLine, TriggerSection } from "./TriggerSection";
 
 /** A policy as the Policies section shows it: its words in the summary (`policies.ts`), and its
  *  row — its control — once the person presses Change. */
@@ -191,7 +191,7 @@ const TIME_LIMIT: PolicyRow = {
 /** A script's policies, in the sentence's order. */
 const SCRIPT_POLICIES: readonly PolicyRow[] = [MISSED, OVERLAP, LOW_PRIORITY, TIME_LIMIT, NOTIFY];
 
-/** The Script kind: Trigger (a schedule), then Runs. */
+/** The Script kind: Trigger (a schedule, a hook or a chain), then Runs. */
 function ScriptSections(props: FormProps): React.JSX.Element {
   const { state, set, error } = props;
   return (
@@ -207,7 +207,8 @@ function ScriptSections(props: FormProps): React.JSX.Element {
   );
 }
 
-/** The Service kind: Trigger (always on — when it starts, when it counts as up), then Runs. */
+/** The Service kind: Trigger (always on — when it starts, when it counts as up, a chain that acts on
+ *  it), then Runs. */
 function ServiceSections(props: FormProps): React.JSX.Element {
   const { state, set, error, projects } = props;
   const { values } = state;
@@ -262,6 +263,7 @@ function ServiceSections(props: FormProps): React.JSX.Element {
             <Help k="f.ready" />
           </div>
         )}
+        <ServiceChainLine {...props} />
       </FormSection>
       <FormSection title="Runs" sub="what · where">
         <Field label="Command" help="f.command" error={error("command")}>

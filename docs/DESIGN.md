@@ -873,8 +873,9 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   (`kinds.tsx`: its sections between Kind and Policies, its policy rows, its Create button). The
   picker shows every kind; the ones not registered are shown faded, with their help, and cannot be
   chosen. A job of such a kind opens a page saying so, with **Open file**.
-- **Trigger** (script; `TriggerSection.tsx`, the values in `schedule.ts`, pure). A choice of **On a
-  schedule** · **When something happens**, then the schedule editor:
+- **Trigger** (script; `TriggerSection.tsx`, the values in `schedule.ts` and `state.ts`, the words
+  in `triggerWords.ts`, pure). A choice of **On a schedule** · **When something happens**; back
+  from a schedule, the hook or the chain shown last returns. A schedule has the schedule editor:
   - **Repeats**: Once (a date of the coming week and a time, or a phrase typed in words — `tonight
     23:00`, `tomorrow 7:00`, `+2h` — read by `pomade-kit/dates`, which fills in the date and time) ·
     Every N minutes or hours, optionally only between two times · Daily at one or more times ·
@@ -891,10 +892,25 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   entry per line, a shape's mapping in flow style); what the file's schedule has that the editor has
   no control for (`monthly.months`, `start`, `end`, an unknown key) is kept. A schedule the person
   left alone is never written. Each schedule error the checker names lands on its control by its
-  path (`schedule.daily.at[1]` → the second time), and the error shows under the box. A script
-  whose file has a hook or a chain keeps it: the section says it in words (`jobTriggerWords`), that
-  it is changed in the job file, with **Open file**; its errors — a chain that loops back — show
-  there and keep Save from writing. The choice the form does not make is shown faded, with a tip.
+  path (`schedule.daily.at[1]` → the second time), and the error shows under the box.
+
+  When something happens has the **Event** list — the hooks the engine fires (`EVENT_CHOICES`:
+  Mac login), then **Another job finished**, a chain, always last — its (i) following the event.
+  A chain picks, in a box under it, the **Job** (every valid job but services and the job itself,
+  by name; one the file names that is not among them stays, by its id) and **When it**: Is done ·
+  Fails · Either. Under them, the trigger in words: "Runs at Mac login · Once per login, after the
+  2-minute warm-up" (the warm-up as the settings say it) or "Runs after Pull is done · A chain.
+  History will show “chain: after Pull”". The file gets `hook: { event: login }` or
+  `after: { job, result }`, as a hand-written one has them; a hook's filters are not the form's,
+  so an edit that keeps the event writes no hook. A chain's errors show under its picker in the
+  checker's words — a chain that leads back to itself names the loop's jobs ("the chain loops
+  back: a → b → a"), with the (i) on why — and keep Save from writing. A hook on an event the form
+  does not offer is said in words (`jobTriggerWords`) with **Open file**, and stays as the file
+  has it.
+- **A service's chain** (`ServiceChainLine` in `TriggerSection.tsx`) ends the service's Trigger
+  section: **+ Restart, start or stop it after another job**, then the line "**Also** [restart it ·
+  start it · stop it] after [job] [is done · fails · finishes]" with **×** to remove it; the file
+  gets `after: { job, result, action }`.
 - **Policies** (`policies.ts` their words, pure; `kinds.tsx` their rows). Each kind lists its
   policies in the sentence's order; a policy's words come from the values, a non-default's in bold.
   A script's, in that order:
@@ -917,7 +933,8 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   written), in the project's sub-folder (`projectJobsFolder`) or at the top for the Workspace,
   under the first free slug of its name (`createJobFile`). An edit writes only the fields whose
   value differs from the file as last read (`fieldChanges` → `updateJobFile`), so comments,
-  unknown fields and the body stay; a field the file lacked is added at the end of its block. A
+  unknown fields and the body stay — a mapping on one flow line (`after: { job: pull } # nightly`)
+  keeps its comment while it stays on one line; a field the file lacked is added at the end of its block. A
   new name keeps the file name (the id stays). A new project moves the file to that project's
   sub-folder under the same file name (`files.move`), after writing the fields.
 - **Validation.** The text the form would write is checked by the one validator, among the other

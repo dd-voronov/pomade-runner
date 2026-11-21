@@ -236,7 +236,7 @@ describe("a script whose trigger is a hook or a chain", () => {
     expect(edit(HOOK.replace("hook: { event: login } # once per login", "after: { job: backup }")).values.trigger).toBe("chain");
   });
 
-  it("a chain that loops back shows the checker's message on the trigger, and Save refuses it", () => {
+  it("a chain that loops back shows the checker's message on the chain's job, and Save refuses it", () => {
     const a = "---\nkind: script\nname: A\nfolder: .\ncommand: ./a.sh\nafter: { job: b }\n---\n";
     const b = "---\nkind: script\nname: B\nfolder: .\ncommand: ./b.sh\nafter: { job: a }\n---\n";
     const snapshot = checkJobs(
@@ -249,7 +249,7 @@ describe("a script whose trigger is a hook or a chain", () => {
     const state = editForm("Apps/pomade-runner/jobs/a.md", a);
     if (state === null) throw new Error("not editable");
     const places = errorsByPlace(formErrors(setValue(state, "command", "./a2.sh"), snapshot, PROJECTS), state.values);
-    expect(places.get("trigger")?.map(describeJobError)).toEqual(["after.job — the chain loops back: a → b → a. Fix: remove after: from one of these jobs, or point it at a job outside the loop."]);
-    expect(blocksSave(state, "trigger")).toBe(true);
+    expect(places.get("chainJob")?.map(describeJobError)).toEqual(["after.job — the chain loops back: a → b → a. Fix: remove after: from one of these jobs, or point it at a job outside the loop."]);
+    expect(blocksSave(state, "chainJob")).toBe(true);
   });
 });

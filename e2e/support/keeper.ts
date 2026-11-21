@@ -39,7 +39,8 @@ export async function stopKeeper(socketPath: string, pids: readonly number[] = [
     process.kill(keeper.pid, "SIGKILL");
     await gone(keeper.pid);
   }
-  for (const pid of pids) {
+  // A pid that is not a process's (`?? 0` for a session that had none) would name the process group.
+  for (const pid of pids.filter((candidate) => candidate > 0)) {
     if (alive(pid)) process.kill(pid, "SIGKILL");
     await gone(pid);
   }

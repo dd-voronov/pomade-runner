@@ -1,21 +1,23 @@
 // The job form's Trigger section for a job that runs once per trigger: the choice between a schedule
 // and a hook, then the schedule editor — the shape (Once · Every… · Daily · Weekly · Monthly), the
 // shape's own controls, the Weekdays only / Weekends only filter — and the schedule in words with its
-// next three runs, live. A file whose trigger is a hook or a chain keeps it: the section says it in
-// words and that it is changed in the file.
+// next three runs, live; or the hook editor — the Event list of the hooks the engine fires, with
+// "Another job finished" (a chain) last, a chain's job and result — and the trigger in words. A
+// hook on an event the form does not offer keeps it: the section says it in words and that it is
+// changed in the file. A service's chain is its own line (`ServiceChainLine`).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { addDays, localDateOf, WEEKDAYS, type MonthDay, type Nth, type Weekday } from "pomade-kit/schedule";
 
-import { JOBS_FOLDER } from "../../jobs/model";
+import { JOBS_FOLDER, type ChainResult, type JobError } from "../../jobs/model";
 import { parseJobFile } from "../../jobs/parse";
 import { jobTriggerWords } from "../../jobs/words";
 import type { HelpKey } from "../help";
-import { Button, Check, Checks, DayButton, Field, FieldError, Help, Icon, Segmented, Select, TextInput, Toggle, type SelectOption } from "../kit";
+import { Button, Check, Checks, DayButton, Field, FieldError, Help, Icon, IconButton, LinkButton, Segmented, Select, TextInput, Toggle, type SelectOption } from "../kit";
+import { useSettings } from "../useRunnerApi";
 import type { FormProps } from "./FolderField";
 import styles from "./JobForm.module.css";
 import { FormSection } from "./FormSection";
-import { fileValue } from "./state";
 import {
   dayWords,
   MONTH_NTHS,
@@ -35,6 +37,7 @@ import {
   type ScheduleTarget,
   type ScheduleValues,
 } from "./schedule";
+import { ACTION_OPTIONS, CHAIN_CHOICE, chainJobOptions, EVENT_CHOICES, formOffersHook, hookBoxWords, isLoopError, RESULT_CHOICES, SERVICE_RESULT_OPTIONS } from "./triggerWords";
 
 /** The time now, a fresh one every minute: the next runs move on while the form is open. */
 function useNow(): Date {
@@ -63,36 +66,52 @@ function monthDayWords(day: MonthDay): string {
 }
 
 export function TriggerSection(props: FormProps): React.JSX.Element {
-  const { state, error } = props;
+  const { state, set } = props;
   const { trigger } = state.values;
-  const triggerErrors = error("trigger");
+  // Back from a schedule, the hook editor shows the hook or the chain it last showed.
+  const [lastHook, setLastHook] = useState<"hook" | "chain">(trigger === "chain" ? "chain" : "hook");
+  useEffect(() => {
+    if (trigger !== "schedule") setLastHook(trigger);
+  }, [trigger]);
   return (
     <FormSection title="Trigger" sub="when it runs" testId="form-trigger">
       <div className={styles.inline}>
         <Segmented<"schedule" | "hook">
           label="Trigger"
           value={trigger === "schedule" ? "schedule" : "hook"}
-          onChange={() => undefined}
+          onChange={(value) => set("trigger", value === "schedule" ? "schedule" : lastHook)}
           testId="trigger-choice"
           options={[
-            { value: "schedule", label: "On a schedule", unavailable: trigger !== "schedule", tip: trigger === "schedule" ? undefined : "Its trigger is set in the job file: hook: or after:" },
-            { value: "hook", label: "When something happens", unavailable: trigger === "schedule", tip: trigger === "schedule" ? "A hook or a chain is set in the job file: hook: or after:" : undefined },
+            { value: "schedule", label: "On a schedule" },
+            { value: "hook", label: "When something happens" },
           ]}
         />
         <Help k="f.trigger" />
       </div>
-      {trigger === "schedule" ? (
-        <ScheduleEditor {...props} />
-      ) : (
-        <>
-          <FileTrigger
-            words={fileTriggerWords(state.path, state.text) ?? (trigger === "hook" ? "on its hook" : `after ${chainOf(fileValue(state, "after"))}`)}
-            openFile={props.openFile}
-          />
-          {triggerErrors !== undefined && <FieldError>{triggerErrors}</FieldError>}
-        </>
-      )}
+      {trigger === "schedule" ? <ScheduleEditor {...props} /> : trigger === "hook" && !formOffersHook(state.values.hookEvent) ? <FileHook {...props} /> : <HookEditor {...props} />}
     </FormSection>
+  );
+}
+
+/** A hook on an event the form does not offer, from the file as last read. */
+function FileHook({ state, error, openFile }: FormProps): React.JSX.Element {
+  const triggerErrors = error("trigger");
+  return (
+    <>
+      <div className={styles.words} data-testid="file-trigger" data-field="trigger">
+        <Icon name="clock" />
+        <div className={styles.wordsText}>
+          <b>Runs {fileTriggerWords(state.path, state.text) ?? "on its hook"}</b>
+          <span>This hook is set in the job file: hook:</span>
+        </div>
+        {openFile !== undefined && (
+          <Button icon="file" onClick={openFile} data-testid="trigger-open-file">
+            Open file
+          </Button>
+        )}
+      </div>
+      {triggerErrors !== undefined && <FieldError>{triggerErrors}</FieldError>}
+    </>
   );
 }
 
@@ -103,25 +122,128 @@ function fileTriggerWords(path: string | null, text: string | null): string | nu
   return job === null ? null : jobTriggerWords(job);
 }
 
-/** The job a chain names, as written. */
-function chainOf(after: unknown): string {
-  const job = typeof after === "object" && after !== null && "job" in after ? (after as { job: unknown }).job : null;
-  return typeof job === "string" && job.trim() !== "" ? job.trim() : "another job";
+/** A chain's errors, in the checker's words; a loop's with the (i) on why it is refused. */
+function ChainErrors({ errors, rendered }: { errors: readonly JobError[]; rendered: React.ReactNode }): React.JSX.Element | null {
+  if (errors.length === 0) return null;
+  return (
+    <div className={styles.chainErrors} data-testid="chain-error">
+      <FieldError>{rendered}</FieldError>
+      {errors.some(isLoopError) && <Help k="hk.loop" />}
+    </div>
+  );
 }
 
-function FileTrigger({ words, openFile }: { words: string; openFile: (() => void) | undefined }): React.JSX.Element {
+/** The Event list, and a chain's job and result in a box under it; the trigger in words. */
+function HookEditor(props: FormProps): React.JSX.Element {
+  const { state, set, error, errorList, jobs, jobId } = props;
+  const { values } = state;
+  const chain = values.trigger === "chain";
+  const event = chain ? CHAIN_CHOICE : values.hookEvent;
+  const choice = EVENT_CHOICES.find((one) => one.value === event) ?? EVENT_CHOICES[0];
+  const triggerErrors = error("trigger");
   return (
-    <div className={styles.words} data-testid="file-trigger" data-field="trigger">
+    <>
+      <Field label="Event" help={choice?.help}>
+        {(id) => (
+          <Select
+            id={id}
+            options={EVENT_CHOICES}
+            value={event}
+            data-field="trigger"
+            data-testid="hook-event"
+            onChange={(e) => {
+              if (e.target.value === CHAIN_CHOICE) set("trigger", "chain");
+              else {
+                set("trigger", "hook");
+                set("hookEvent", e.target.value);
+              }
+            }}
+          />
+        )}
+      </Field>
+      {triggerErrors !== undefined && <FieldError>{triggerErrors}</FieldError>}
+      {chain && (
+        <div className={styles.subBox} data-testid="chain-box">
+          <div className={styles.row}>
+            <Field label="Job">
+              {(id) => (
+                <Select
+                  id={id}
+                  options={chainJobOptions(jobs, jobId, values.chainJob, "Choose a job…")}
+                  value={values.chainJob}
+                  bad={errorList("chainJob").length > 0}
+                  data-field="chainJob"
+                  data-testid="chain-job"
+                  onChange={(e) => set("chainJob", e.target.value)}
+                />
+              )}
+            </Field>
+            <Field label="When it" help="hk.result">
+              {() => <Segmented<ChainResult> label="When it" value={values.chainResult} onChange={(value) => set("chainResult", value)} options={RESULT_CHOICES} testId="chain-result" />}
+            </Field>
+          </div>
+          <ChainErrors errors={errorList("chainJob")} rendered={error("chainJob")} />
+        </div>
+      )}
+      <HookWords {...props} />
+    </>
+  );
+}
+
+function HookWords({ host, state, jobs }: FormProps): React.JSX.Element {
+  const settings = useSettings(host);
+  const words = hookBoxWords(state.values, jobs, settings.status === "ready" ? settings.value.settings.warmUpMinutes : null);
+  return (
+    <div className={styles.words} data-testid="hook-words">
       <Icon name="clock" />
       <div className={styles.wordsText}>
-        <b>Runs {words}</b>
-        <span>The form edits schedules; a hook or a chain is changed in the job file.</span>
+        <b>{words.title}</b>
+        <span>{words.sub}</span>
       </div>
-      {openFile !== undefined && (
-        <Button icon="file" onClick={openFile} data-testid="trigger-open-file">
-          Open file
-        </Button>
-      )}
+    </div>
+  );
+}
+
+/** A service's chain: "+ Restart, start or stop it after another job", or the line "Also restart
+ *  it after Pull is done", with its remove button. */
+export function ServiceChainLine(props: FormProps): React.JSX.Element {
+  const { state, set, error, errorList, jobs, jobId } = props;
+  const { values } = state;
+  if (!values.serviceChain) {
+    return (
+      <div className={styles.inline}>
+        <LinkButton onClick={() => set("serviceChain", true)} data-testid="service-chain-add">
+          + Restart, start or stop it after another job
+        </LinkButton>
+        <Help k="f.after" />
+      </div>
+    );
+  }
+  const options = (list: readonly { value: string; label: string }[]): SelectOption[] => list.map(({ value, label }) => ({ value, label }));
+  return (
+    <div className={styles.subBox} data-testid="service-chain">
+      <div className={styles.chainLine}>
+        <div className={`${styles.inline} ${styles.grow}`}>
+          <b className={styles.chainAlso}>Also</b>
+          <Select auto aria-label="What it does" options={options(ACTION_OPTIONS)} value={values.chainAction} onChange={(e) => set("chainAction", ACTION_OPTIONS.find((one) => one.value === e.target.value)?.value ?? "restart")} />
+          after
+          <Select
+            auto
+            className={styles.chainJob}
+            aria-label="Job"
+            options={chainJobOptions(jobs, jobId, values.chainJob, "choose a job…")}
+            value={values.chainJob}
+            bad={errorList("chainJob").length > 0}
+            data-field="chainJob"
+            data-testid="chain-job"
+            onChange={(e) => set("chainJob", e.target.value)}
+          />
+          <Select auto aria-label="When it" options={options(SERVICE_RESULT_OPTIONS)} value={values.chainResult} onChange={(e) => set("chainResult", SERVICE_RESULT_OPTIONS.find((one) => one.value === e.target.value)?.value ?? "done")} />
+          <Help k="f.after" />
+        </div>
+        <IconButton icon="x" iconSize={12} label="Remove" onClick={() => set("serviceChain", false)} data-testid="service-chain-remove" />
+      </div>
+      <ChainErrors errors={errorList("chainJob")} rendered={error("chainJob")} />
     </div>
   );
 }

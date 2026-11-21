@@ -276,6 +276,7 @@ function FormBody({
   const target = wouldBe(state, jobs, projects.records);
   const gone = path !== null && file === null;
   const openFile = path === null || gone ? undefined : openJobFile;
+  const jobId = path === null ? null : entryId(jobs, path);
   const props: FormProps = {
     host,
     state,
@@ -287,6 +288,8 @@ function FormBody({
     openFile,
     projects,
     workspaceName: folderName(jobs.workspace),
+    jobs,
+    jobId,
   };
   const changed = hasChanges(state);
 
@@ -326,7 +329,6 @@ function FormBody({
     }
   };
 
-  const jobId = path === null ? null : entryId(jobs, path);
   const head = (
     <>
       <label className={styles.enabled}>
@@ -484,6 +486,11 @@ const FIELD_WORDS: Record<FormField, string> = {
   url: "URL",
   trigger: "trigger",
   schedule: "schedule",
+  hookEvent: "event",
+  serviceChain: "chain",
+  chainJob: "chain's job",
+  chainResult: "chain's result",
+  chainAction: "chain's action",
   missed: "if a run is missed",
   worth: "still worth it until",
   worthAt: "worth it until",

@@ -9,15 +9,34 @@ import { baseName } from "pomade-kit/protocol";
 import { checkJobAmong, projectJobsFolder } from "../../jobs/check";
 import { readJobDocument } from "../../jobs/document";
 import { FIELD_ORDER, jobFileCandidates, newJobText, setJobFields, type FieldChanges, type FieldInput } from "../../jobs/edit";
-import { JOB_KINDS, JOBS_FOLDER, MISSED_POLICIES, NOTIFY_VALUES, OVERLAP_POLICIES, SERVICE_STARTS, type JobError, type JobKind, type JobsSnapshot, type MissedPolicy, type Notify, type OverlapPolicy, type ProjectRecord, type ServiceStart } from "../../jobs/model";
+import {
+  CHAIN_RESULTS,
+  JOB_KINDS,
+  JOBS_FOLDER,
+  MISSED_POLICIES,
+  NOTIFY_VALUES,
+  OVERLAP_POLICIES,
+  SERVICE_ACTIONS,
+  SERVICE_STARTS,
+  type ChainResult,
+  type JobError,
+  type JobKind,
+  type JobsSnapshot,
+  type MissedPolicy,
+  type Notify,
+  type OverlapPolicy,
+  type ProjectRecord,
+  type ServiceAction,
+  type ServiceStart,
+} from "../../jobs/model";
 import { KIND_DEFAULTS } from "../../jobs/parse";
 import { blankSchedule, readSchedule, scheduleInput, type ScheduleValues } from "./schedule";
 
 /** How a service tells it is up, as the form offers it. */
 export type ReadyCheck = "alive" | "port" | "url";
 
-/** Which trigger a script's file has: the form edits a schedule; a hook or a chain stays as the file
- *  says. */
+/** A script's trigger: a schedule, a hook (its event in `hookEvent`) or a chain (`chainJob`,
+ *  `chainResult`). */
 export type TriggerKind = "schedule" | "hook" | "chain";
 
 /** Until when a caught-up run is worth starting: the job's next scheduled run, or a time of day. */
@@ -41,6 +60,17 @@ export interface FormValues {
   /** Script, agent, git: the trigger, and the schedule's values. */
   trigger: TriggerKind;
   schedule: ScheduleValues;
+  /** The hook's event as written: the form edits the events it offers (`triggerWords.ts`), and says
+   *  any other in words. */
+  hookEvent: string;
+  /** A service: whether a chain acts on it (`after:`). */
+  serviceChain: boolean;
+  /** A chain's job, its id as written; empty until one is chosen. A script's chain and a service's
+   *  share it, so a switch of kind keeps it. */
+  chainJob: string;
+  chainResult: ChainResult;
+  /** What a service's chain does to it. */
+  chainAction: ServiceAction;
   /** What a missed run becomes; applies to a job on a schedule. */
   missed: MissedPolicy;
   /** With `missed: run-on-wake`: until the next scheduled run, or until `worthAt`. */
@@ -104,25 +134,36 @@ function portValue(text: string): number | string | null {
   return /^\d+$/.test(trimmed) ? Number(trimmed) : trimmed;
 }
 
+/** A chain's `after:` — the job (left out while none is chosen, so the checker asks for one) and the
+ *  result, written out; a service's with its action. */
+function chainInput(values: FormValues): FieldInput {
+  const job = values.chainJob.trim() === "" ? null : values.chainJob.trim();
+  return values.kind === "service" ? { job, result: values.chainResult, action: values.chainAction } : { job, result: values.chainResult };
+}
+
 const SERVICE: KindFile = {
   fields: (values) => ({
     ...commonFields(values),
     command: values.command.trim(),
     start: values.start === "login" ? undefined : values.start,
     ready: values.ready === "alive" ? undefined : values.ready === "port" ? { port: portValue(values.port) } : { url: values.url.trim() === "" ? null : values.url.trim() },
+    after: values.serviceChain ? chainInput(values) : undefined,
   }),
-  errorFields: { ...COMMON_ERROR_FIELDS, command: "command", start: "start", ready: "ready" },
+  errorFields: { ...COMMON_ERROR_FIELDS, command: "command", start: "start", ready: "ready", after: "chainJob" },
 };
 
-/** A job that runs once per trigger writes its schedule — a hook or a chain stays as the file has it
+/** A job that runs once per trigger writes its one trigger — a schedule, a hook's event, or a chain
  *  — and, for a schedule, its missed-run policy (`worth-until` only with `run-on-wake`); and its
  *  overlap and time limit. A policy at its default is left out; a limit of digits only is written
- *  as a number, so the checker says it has no unit. */
+ *  as a number, so the checker says it has no unit. A hook's filters are not the form's: an edit that
+ *  keeps the file's event writes no hook, so they stay. */
 function runFields(values: FormValues): Record<string, FieldInput | undefined> {
   const scheduled = values.trigger === "schedule";
   const timeLimit = values.timeLimit.trim();
   return {
     schedule: scheduled ? scheduleInput(values.schedule) : undefined,
+    hook: values.trigger === "hook" ? { event: values.hookEvent } : undefined,
+    after: values.trigger === "chain" ? chainInput(values) : undefined,
     missed: scheduled && values.missed !== kindDefaults(values.kind).missed ? values.missed : undefined,
     "worth-until": scheduled && values.missed === "run-on-wake" && values.worth === "time" ? values.worthAt.trim() : undefined,
     overlap: values.overlap === "skip" ? undefined : values.overlap,
@@ -130,12 +171,11 @@ function runFields(values: FormValues): Record<string, FieldInput | undefined> {
   };
 }
 
-/** A hook's or a chain's errors — a chain that loops back among them — show on the trigger the form
- *  shows from the file, and keep Save from writing. */
+/** A hook's errors show on the trigger; a chain's — a chain that loops back among them — on its job. */
 const RUN_ERROR_FIELDS: Readonly<Record<string, FormField>> = {
   schedule: "schedule",
   hook: "trigger",
-  after: "trigger",
+  after: "chainJob",
   missed: "missed",
   "worth-until": "worthAt",
   overlap: "overlap",
@@ -173,7 +213,7 @@ export interface FormState {
 }
 
 export function blankValues(kind: JobKind): FormValues {
-  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), worth: "next-run", worthAt: "12:00", timeLimit: "", ...kindDefaults(kind) };
+  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), hookEvent: "login", serviceChain: false, chainJob: "", chainResult: "done", chainAction: "restart", worth: "next-run", worthAt: "12:00", timeLimit: "", ...kindDefaults(kind) };
 }
 
 /** A new job's form. */
@@ -197,6 +237,8 @@ export function valuesFromText(text: string): FormValues | null {
   const ready = fields.ready;
   const choice = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T => (allowed.find((candidate) => candidate === value) ?? fallback);
   const worthUntil = asText(fields["worth-until"]).trim();
+  const hook = fields.hook;
+  const after = fields.after;
   const worthTime = worthUntil !== "" && worthUntil !== "next-run";
   return {
     ...values,
@@ -211,6 +253,11 @@ export function valuesFromText(text: string): FormValues | null {
     url: isMapping(ready) ? asText(ready.url) : "",
     trigger: kind !== "service" && fields.schedule === undefined && fields.hook !== undefined ? "hook" : kind !== "service" && fields.schedule === undefined && fields.after !== undefined ? "chain" : "schedule",
     schedule: readSchedule(fields.schedule),
+    hookEvent: isMapping(hook) ? asText(hook.event).trim() : hook === undefined ? values.hookEvent : "",
+    serviceChain: kind === "service" && after !== undefined,
+    chainJob: isMapping(after) ? asText(after.job).trim() : "",
+    chainResult: isMapping(after) ? choice(after.result, CHAIN_RESULTS, values.chainResult) : values.chainResult,
+    chainAction: isMapping(after) ? choice(after.action, SERVICE_ACTIONS, values.chainAction) : values.chainAction,
     missed: choice(fields.missed, MISSED_POLICIES, values.missed),
     worth: worthTime ? "time" : "next-run",
     worthAt: worthTime ? worthUntil : values.worthAt,
@@ -362,10 +409,11 @@ export function errorPlace(error: JobError, values: FormValues): ErrorPlace {
 }
 
 /** Whether the form draws the control of a field now: a missed-run policy only for a job on a
- *  schedule, and its time of day only with `run-on-wake` until a time. An error about a control
- *  that is not drawn is the file's. */
+ *  schedule, and its time of day only with `run-on-wake` until a time; a chain's job only while
+ *  the job has a chain. An error about a control that is not drawn is the file's. */
 function drawn(values: FormValues, field: FormField): boolean {
   const scheduled = values.trigger === "schedule";
+  if (field === "chainJob") return values.kind === "service" ? values.serviceChain : values.trigger === "chain";
   if (field === "missed") return scheduled;
   if (field === "worthAt") return scheduled && values.missed === "run-on-wake" && values.worth === "time";
   return true;

@@ -5,7 +5,7 @@ import { useState, type ReactNode } from "react";
 import type { ProjectListResult } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
-import type { JobError, ProjectRecord } from "../../jobs/model";
+import type { JobError, JobsSnapshot, ProjectRecord } from "../../jobs/model";
 import { Button, Field, Menu, MenuHeader, MenuItem, MenuSeparator, TextInput } from "../kit";
 import styles from "./JobForm.module.css";
 import type { FormField, FormState, FormValues } from "./state";
@@ -34,6 +34,10 @@ export interface FormProps {
   projects: ProjectChoices;
   /** The workspace folder's name ("git-base"). */
   workspaceName: string;
+  /** The jobs as the scheduler checked them: the ones a chain can follow. */
+  jobs: JobsSnapshot;
+  /** The edited job's id; `null` for a new job. */
+  jobId: string | null;
 }
 
 export function FolderField({ host, state, setFolder, error, projects, workspaceName }: FormProps): React.JSX.Element {
