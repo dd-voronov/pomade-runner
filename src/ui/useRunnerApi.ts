@@ -1,6 +1,6 @@
 // Runner's own API, live: the checked jobs (`jobs.list`), the services (`services.list`), the runs
 // (`runs.list`), the history (`history.list`), one run (`runs.get`) and its output (`runs.output`),
-// the settings (`settings.get`), asked of Runner's scheduler through Pomade's broker and asked again
+// the settings (`settings.get`) and the environment (`environment.get`), asked of Runner's scheduler through Pomade's broker and asked again
 // whenever the scheduler announces a change (`jobs.changed`, `services.changed`, `runs.changed`,
 // `settings.changed`) — on every change, and when it connects to Pomade, so a frame that found no
 // scheduler catches up. The workspace's repos, from Pomade's git state (`git.read`), followed live.
@@ -22,12 +22,14 @@ import {
   RUNS_LIST_METHOD,
   SERVICES_CHANGED_EVENT,
   SERVICES_LIST_METHOD,
+  ENVIRONMENT_GET_METHOD,
   SETTINGS_CHANGED_EVENT,
   SETTINGS_GET_METHOD,
 } from "../integrations/runner-api";
 import type { JobsSnapshot } from "../jobs/model";
 import { isServicesReport, type ServicesReport } from "../keeper/model";
 import { isHistoryPage, isRunOutput, isRunsReport, isRunView, type HistoryPage, type RunOutput, type RunsReport, type RunView } from "../scheduler/model";
+import { isEnvironmentReport, type EnvironmentReport } from "../scheduler/environment";
 import { isSettingsReport, type SettingsReport } from "../scheduler/settings";
 
 export type LiveState<T> =
@@ -104,6 +106,11 @@ export function useOutput(host: HostClient, job: string, run: string): LiveState
 /** The workspace settings that apply, and the settings file's problems. */
 export function useSettings(host: HostClient): LiveState<SettingsReport> {
   return useLive(host, SETTINGS_GET_METHOD, SETTINGS_CHANGED_EVENT, isSettingsReport, "the settings");
+}
+
+/** What the Settings view shows read-only about the Mac, asked again when the settings change. */
+export function useEnvironment(host: HostClient): LiveState<EnvironmentReport> {
+  return useLive(host, ENVIRONMENT_GET_METHOD, SETTINGS_CHANGED_EVENT, isEnvironmentReport, "the environment");
 }
 
 /** The workspace's repos as Pomade's Git panel lists them — their `name` is what a git job's

@@ -1,0 +1,29 @@
+.root {
+  flex: none;
+  margin: 0 var(--space-2) var(--space-1);
+}
+
+/* What the position holds: under the control, in the warning's tint. */
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  line-height: 15px;
+}
+
+.words {
+  flex: 1;
+  min-width: 0;
+}
+
+.error {
+  margin: 6px 0 0;
+  color: var(--danger-text);
+  font-size: var(--fs-sm);
+}

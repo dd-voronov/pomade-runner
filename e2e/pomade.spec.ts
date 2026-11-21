@@ -7,7 +7,7 @@
 // stops the keeper with its sessions. `RUNNER_SHOTS=<dir>` saves screenshots of the panel, the tab
 // and an attached tab.
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
@@ -182,6 +182,12 @@ test.describe("Runner in Pomade", () => {
   async function history(job: string): Promise<RunRecord[]> {
     const result = await callScheduler(schedulerSocket(), "history", { job, limit: 50 });
     return result.status === "ok" ? result.value.records : [];
+  }
+
+  /** The switch's position as the scheduler holds it; `null` when it does not answer. */
+  async function position(): Promise<string | null> {
+    const answer = await callScheduler(schedulerSocket(), "switch", { position: null });
+    return answer.status === "ok" ? answer.value.position : null;
   }
 
   /** Runner's notices in Pomade's Notices panel, newest first. */
@@ -639,5 +645,72 @@ test.describe("Runner in Pomade", () => {
     await expect.poll(() => attachedTabIds()).toHaveLength(0);
     // Closing the tab only detaches: the run goes on.
     await expect(row).toHaveAttribute("data-state", "running");
+  });
+
+  test("T-009 · a setting stepped in Settings reaches settings.yaml, comments kept, and applies with no restart; the read-only rows follow the Mac", async () => {
+    const running = scheduler ?? (await startTheScheduler());
+    const file = join(folders.workspace, "Apps/pomade-runner/settings.yaml");
+    await mkdir(join(folders.workspace, "Apps/pomade-runner"), { recursive: true });
+    await writeFile(file, "# mine\nhistory-days: 30  # a month\n");
+    const runner = await connectAsRunner();
+    try {
+      await runner.tabs.openApp({ route: "settings", projectId: WORKSPACE_PROJECT_ID });
+      const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
+      await expect(tab.getByTestId("setting-history-days-stepper-value")).toHaveText("30");
+      await tab.getByTestId("setting-history-days-stepper-more").click();
+      await expect.poll(() => readFile(file, "utf8")).toBe("# mine\nhistory-days: 31  # a month\n");
+      await expect.poll(() => running.output()).toContain("history 31 days");
+      await tab.getByTestId("setting-warm-up-stepper-less").click();
+      await expect.poll(() => readFile(file, "utf8")).toBe("# mine\nhistory-days: 31  # a month\nwarm-up: 1m\n");
+      await expect.poll(() => running.output()).toContain("warm-up 1 min");
+      await expect(tab.getByTestId("setting-warm-up-stepper-value")).toHaveText("1");
+      expect((await command("check", file)).stdout).toMatch(/^0 job files and \S*settings\.yaml: no problems\.\n$/);
+
+      // The Mac: no native notifications yet; the skill is linked once its link is in a skills folder.
+      await expect(tab.getByTestId("notifications-status")).toHaveText("Not available yet");
+      await expect(tab.getByTestId("skill-status")).toHaveText("Not installed");
+      const skills = join(tmp, "user/.claude/skills");
+      await mkdir(skills, { recursive: true });
+      await symlink(join(folders.userData, "apps", manifest.id, "skills", "pomade-runner-jobs"), join(skills, "pomade-runner-jobs"));
+      await tab.getByTestId("setting-warm-up-stepper-more").click();
+      await expect(tab.getByTestId("skill-status")).toHaveText("Installed");
+      await expect(tab.getByTestId("setting-skill")).toContainText("pomade-runner-jobs is linked into 1 skill folder.");
+      await shoot(page, "pomade-settings");
+    } finally {
+      runner.close();
+    }
+  });
+
+  test("T-009 · the panel's switch holds scheduled runs while it is on Pause all, and Running lets them go", async () => {
+    test.setTimeout(150_000);
+    const running = scheduler ?? (await startTheScheduler());
+    await page.getByTestId(`strip-${STRIP_KEY}`).click();
+    await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
+    // A panel frame just shown again may still be re-handshaking with Pomade: click until it takes.
+    const press = async (name: string, expected: string): Promise<void> => {
+      await expect(async () => {
+        await panel().getByTestId(name).click();
+        expect(await position()).toBe(expected);
+      }).toPass({ intervals: [500, 1000] });
+    };
+    await press("switch-pause-all", "pause-all");
+    await expect(panel().getByTestId("switch")).toHaveAttribute("data-position", "pause-all");
+    await expect(panel().getByTestId("switch-note")).toHaveText("Every scheduled job is held. Services keep running.");
+    await shoot(page, "pomade-switch-all");
+
+    await mkdir(join(folders.workspace, "Apps/pomade-runner/jobs"), { recursive: true });
+    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/held-tick.md"), "---\nkind: script\nname: Held tick\nfolder: .\ncommand: echo held-tick\nschedule:\n  every: { minutes: 1 }\n---\n");
+    await expect.poll(() => running.output()).toContain("job files, 0 invalid\n");
+    const created = Date.now();
+    // A whole minute passes, so the schedule fires at least once: nothing starts.
+    await expect.poll(() => Date.now() - created, { timeout: 90_000, intervals: [1000] }).toBeGreaterThan(65_000);
+    expect(await history("held-tick")).toEqual([]);
+
+    await press("switch-running", "running");
+    await expect(panel().getByTestId("switch")).toHaveAttribute("data-position", "running");
+    await expect(panel().getByTestId("switch-note")).toHaveCount(0);
+    // The held occurrence comes due on release: it runs.
+    await expect.poll(() => history("held-tick"), { timeout: 70_000 }).toEqual(expect.arrayContaining([expect.objectContaining({ state: "done" }) as RunRecord]));
+    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/held-tick.md"), "---\nkind: script\nname: Held tick\nfolder: .\ncommand: echo held-tick\nenabled: false\nschedule:\n  every: { minutes: 1 }\n---\n");
   });
 });

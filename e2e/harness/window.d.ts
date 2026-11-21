@@ -3,6 +3,7 @@ import type { FakeHost, MountedApp } from "pomade-kit/fake-host";
 import type { JsonValue } from "pomade-kit/protocol";
 
 import type { ServiceStatus } from "../../src/keeper/model";
+import type { EnvironmentReport } from "../../src/scheduler/environment";
 import type { RunRecord, RunsReport } from "../../src/scheduler/model";
 
 declare global {
@@ -16,6 +17,10 @@ declare global {
     setRuns(runs: Partial<{ report: RunsReport; history: RunRecord[]; output: string }>): void;
     /** Set what the stand-in scheduler says of the settings: the settings file's text, `null` for none. */
     setSettings(text: string | null): void;
+    /** The settings file's text as the stand-in scheduler holds it: what a setting the UI wrote left in it. */
+    settingsText(): string | null;
+    /** Set what the stand-in scheduler says of the Mac: the notification permission and the skill's links. */
+    setEnvironment(environment: EnvironmentReport): void;
     /** The actions the UI asked of the stand-in scheduler, in order. */
     runnerCalls: { method: string; params: JsonValue }[];
     /** While set, the stand-in scheduler refuses Delete with this reason. */

@@ -33,6 +33,7 @@ import {
   SERVICES_LIST_METHOD,
   SET_ENABLED_METHOD,
   SETTINGS_CHANGED_EVENT,
+  ENVIRONMENT_GET_METHOD,
   SETTINGS_GET_METHOD,
   SETTINGS_SET_METHOD,
   SWITCH_METHOD,
@@ -46,6 +47,7 @@ import type { SupervisionStore } from "../keeper/supervisor";
 import { callScheduler } from "./control/client";
 import { CONTROL_PROTOCOL } from "./control/protocol";
 import { isHistoryPage, isRunActionResult, isRunsReport } from "./model";
+import { isEnvironmentReport } from "./environment";
 import { isSettingsReport } from "./settings";
 import { startScheduler, type Scheduler } from "./scheduler";
 
@@ -765,6 +767,12 @@ describe("scheduler and runs", () => {
     // An edit by hand applies within a tick.
     await writeFile(join(dir, "ws/Apps/pomade-runner/settings.yaml"), "history-days: 7\n");
     await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", SETTINGS_GET_METHOD)).toMatchObject({ settings: { maxLowPriorityRuns: 2, historyDays: 7 } }));
+  });
+
+  it("tells Runner's frames about the Mac: the notification permission and the skill's links", async () => {
+    await start();
+    await vi.waitFor(async () => expect(isEnvironmentReport(await ui.apps.call("pomade-runner", ENVIRONMENT_GET_METHOD))).toBe(true));
+    expect(await ui.apps.call("pomade-runner", ENVIRONMENT_GET_METHOD)).toMatchObject({ notifications: "unavailable", skill: { folders: expect.any(Number) as number } });
   });
 
   it("a run's end fires its chains: a service restarts through the supervisor and History says so; a runaway chain is paused, noticed and badged, and Resume answers through Pomade and the control socket", async () => {

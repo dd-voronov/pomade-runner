@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import manifest from "../../../app/manifest.json" with { type: "json" };
-import { APP_ID, linkSkill, placesFor, SKILL_NAME, skillFolders, unlinkSkill, type SkillPlaces } from "./link";
+import { AGENT_SKILL } from "../../scheduler/environment";
+import { APP_ID, linkSkill, placesFor, SKILL_NAME, skillFolders, skillLinks, unlinkSkill, type SkillPlaces } from "./link";
 
 describe("linking the skill", () => {
   let dir: string;
@@ -29,6 +30,7 @@ describe("linking the skill", () => {
 
   it("names the manifest's skill and app", () => {
     expect(manifest.skills).toEqual([`skills/${SKILL_NAME}`]);
+    expect(AGENT_SKILL).toBe(SKILL_NAME);
     expect(APP_ID).toBe(manifest.id);
   });
 
@@ -97,6 +99,24 @@ describe("linking the skill", () => {
     expect(await unlinkSkill(places)).toEqual([`unlinked ${join(dir, "ws/Agents/claude-coder/skills/pomade-runner-jobs")}`, `unlinked ${join(dir, "ws/Agents/claude-libra/skills/pomade-runner-jobs")}`]);
     expect((await lstat(home)).isSymbolicLink()).toBe(true);
     expect(await unlinkSkill(places)).toEqual([]);
+  });
+
+  it("counts the skills folders that hold a link to a Runner's copy of the skill", async () => {
+    expect(await skillLinks(places.home, places.workspace)).toEqual({ linked: 0, folders: 3 });
+    expect(await skillLinks(places.home, null)).toEqual({ linked: 0, folders: 1 });
+    await linkSkill(places);
+    expect(await skillLinks(places.home, places.workspace)).toEqual({ linked: 3, folders: 3 });
+    // A link to another Pomade's copy counts; a link elsewhere, or a folder, does not.
+    const coder = join(dir, "ws/Agents/claude-coder/skills/pomade-runner-jobs");
+    await rm(coder);
+    await symlink("/Users/x/Library/Application Support/Pomade/apps/pomade-runner/skills/pomade-runner-jobs", coder);
+    const libra = join(dir, "ws/Agents/claude-libra/skills/pomade-runner-jobs");
+    await rm(libra);
+    await symlink("/somewhere/else", libra);
+    expect(await skillLinks(places.home, places.workspace)).toEqual({ linked: 2, folders: 3 });
+    await rm(libra);
+    await mkdir(libra);
+    expect(await skillLinks(places.home, places.workspace)).toEqual({ linked: 2, folders: 3 });
   });
 
   it("finds the places of the dev or the stable Pomade from the environment", () => {

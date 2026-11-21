@@ -88,6 +88,10 @@ export const SETTINGS_GET_METHOD = "settings.get";
  *  own frames only. */
 export const SETTINGS_SET_METHOD = "settings.set";
 
+/** `environment.get` → `EnvironmentReport` (`isEnvironmentReport`): what the Settings view shows
+ *  read-only about the Mac — the notification permission and the agent skill's links. */
+export const ENVIRONMENT_GET_METHOD = "environment.get";
+
 /** Published by the scheduler when the settings change, and when it (re)connects to Pomade. */
 export const SETTINGS_CHANGED_EVENT = "settings.changed";
 

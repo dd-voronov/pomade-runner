@@ -10,6 +10,7 @@ import { HostError, type HostClient } from "pomade-kit/sdk";
 import type { JobsSnapshot, ProjectRecord } from "../jobs/model";
 import { APP_ID } from "../app";
 import type { ServiceActionResult, ServicesReport } from "../keeper/model";
+import type { EnvironmentReport } from "../scheduler/environment";
 import {
   SWITCH_POSITIONS,
   type DeleteResult,
@@ -44,6 +45,7 @@ import {
   SERVICES_CHANGED_EVENT,
   SERVICES_LIST_METHOD,
   SET_ENABLED_METHOD,
+  ENVIRONMENT_GET_METHOD,
   SETTINGS_CHANGED_EVENT,
   SETTINGS_GET_METHOD,
   SETTINGS_SET_METHOD,
@@ -122,6 +124,8 @@ export interface RunnerOffer {
   resume(job: string): Promise<ResumeResult>;
   /** The workspace settings. */
   settings(): SettingsReport;
+  /** What the Settings view shows read-only about the Mac. */
+  environment(): Promise<EnvironmentReport>;
   /** Write one setting. */
   setSetting(field: SettingsField, value: SettingsValue): Promise<SettingsWriteResult>;
   /** Delete a job: a running service stopped first, then its file removed. */
@@ -258,6 +262,7 @@ export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise
         return offer.resume(text(RESUME_METHOD, paramsOf(RESUME_METHOD, params, takes), "job", takes));
       }),
       [SETTINGS_GET_METHOD]: () => asJson(offer.settings()),
+      [ENVIRONMENT_GET_METHOD]: async () => asJson(await offer.environment()),
       [SETTINGS_SET_METHOD]: own(SETTINGS_SET_METHOD, (params) => {
         const takes = "{ field: <a setting>, value: <a number, or null for its default> }";
         const given = paramsOf(SETTINGS_SET_METHOD, params, takes);

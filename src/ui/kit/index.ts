@@ -17,6 +17,7 @@ export { PanelRow } from "./PanelRow";
 export { GroupHead, PanelEmpty, PanelSection, SectionHead } from "./Section";
 export { Segmented, type SegmentedOption } from "./Segmented";
 export { Dot, Status, type DotTone } from "./Status";
+export { Stepper, STEPPER_SETTLED_MS } from "./Stepper";
 export { KindCell, RowActions, RowCell, RowMain, TableHead, TableRow } from "./Table";
 export { Pill, Tag, type PillTone, type TagTone } from "./Tag";
 export { ToastProvider, useToast } from "./Toast";

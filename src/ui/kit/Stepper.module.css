@@ -1,0 +1,50 @@
+/* A number with a − and a + at its ends: the Settings view's control. */
+.root {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-raised);
+}
+
+.button {
+  width: 24px;
+  height: 26px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--hover-bg);
+  color: var(--text);
+}
+
+.button:disabled {
+  color: var(--text-faint);
+  opacity: 0.6;
+  cursor: default;
+}
+
+.button:first-child {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.button:last-child {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.value {
+  min-width: 30px;
+  color: var(--text);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.value:focus-visible {
+  border-radius: var(--radius-sm);
+}

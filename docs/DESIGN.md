@@ -701,7 +701,11 @@ history-days: 30           # run history and output logs kept
 to it, light theme only.
 
 **Side panel** (the Runner icon on the left strip):
-1. the three-position switch;
+1. the three-position switch (`src/ui/SwitchControl.tsx`), pinned above the scroll: Running · Pause
+   low-priority · Pause all, the chosen one with its dot (green, amber) and, in a panel narrower
+   than 268 px, the middle one reading "Pause low". A pause says what it holds under the control —
+   "Low-priority jobs are held. Services keep running." / "Every scheduled job is held. Services
+   keep running." — with the (i) of what becomes of a held run;
 2. **Needs you** (`src/ui/NeedsYou.tsx`): a card per item (`PanelCard`) — the status dot (red: a failed
    run, a service that gave up · amber: a missed run, a paused job · accent: a long run), the
    job's name, the (i) help of that kind, the time at the card's end, one line of text, and the
@@ -792,7 +796,17 @@ to it, light theme only.
   row with its first error, its help and Open file. The "This project" chip (the tab's, as in Jobs), with the open
   project's name, keeps that project's services ("No services in this project." when none); with
   no service files, the view says what a service is.
-- **Settings:** the four settings ("Settings"), each written field-only.
+- **Settings** (`src/ui/SettingsView.tsx`): cards of rows — a name with its (i), a line under it, the
+  control at the end.
+  - **Load** and **History:** the four settings ("Settings"), each a stepper (− number +, its unit
+    beside it) over the engine's whole range. A step shows at once; once the steps stop
+    (`STEPPER_SETTLED_MS`, a held button's run included) it is written field-only (`settings.set`),
+    even when the person has left the view meanwhile. The long-run warning steps by whole hours and reads
+    in minutes under an hour. A refusal puts the value back and says why under the row. The
+    settings file's own problems are listed over the cards.
+  - **Notifications** and **Agents:** read-only rows with a status (`environment.get`) — the
+    macOS notification permission, and the agent skill's links into the skills folders.
+  - **Files:** `settings.yaml` with Open file (once it exists) and the jobs folder.
 
 **Routes of the Runner tab** (`parseRoute`, `src/integrations/runner-api.ts`): `""` Jobs ·
 `jobs/<encoded job id>` Jobs at one job, its row marked and scrolled to (what a repo row's Scheduled
@@ -953,7 +967,11 @@ cards, `need.*` Needs-you cards); `Help` shows one by its key.
     first — or why not; callers give it `DELETE_JOB_TIMEOUT_MS`.
 - **Settings**, through the broker: **`settings.get`** → `SettingsReport` (`isSettingsReport`);
   from Runner's own frames only **`settings.set`** `{ field, value }` → `SettingsWriteResult`;
-  **`settings.changed`** tells Runner's frames to ask again.
+  **`settings.changed`** tells Runner's frames to ask again. **`environment.get`** →
+  `EnvironmentReport` (`isEnvironmentReport`, `src/scheduler/environment.ts`): what the Settings
+  view shows read-only about the Mac — `notifications` (`allowed`, `denied`, `not-asked`, or
+  `unavailable`: the scheduler posts no native notification) and `skill` (`linked` of `folders`
+  skills folders — `~/.claude/skills` and each agent's — hold a link to Runner's skill).
 - **`jobs.forRepo`** through the broker, to any caller — Pomade's Git panel asks as `pomade`
   (PLATFORM rule 7): the jobs that target a repo (`repoJobs`, `src/scheduler/git-runs.ts`). The
   contract is `pomade-kit/protocol`'s (`REPO_JOBS_METHOD`, `RepoJobsParams`, `RepoJobsResult`,

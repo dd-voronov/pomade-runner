@@ -54,6 +54,20 @@ export async function skillFolders(home: string, workspace: string | null): Prom
   return folders;
 }
 
+/** How many of the skills folders hold a link to this app's copy of the skill (any Pomade's). */
+export async function skillLinks(home: string, workspace: string | null): Promise<{ linked: number; folders: number }> {
+  const folders = await skillFolders(home, workspace);
+  let linked = 0;
+  for (const folder of folders) {
+    try {
+      if ((await readlink(join(folder, SKILL_NAME))).endsWith(OURS)) linked += 1;
+    } catch {
+      // Not there, or not a link.
+    }
+  }
+  return { linked, folders: folders.length };
+}
+
 async function linkAt(folder: string, skill: string): Promise<string> {
   const path = join(folder, SKILL_NAME);
   let stat;

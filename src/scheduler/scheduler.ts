@@ -47,6 +47,7 @@ import type { Log } from "./log";
 import type { ActiveRun, DeleteResult, EnableResult, JobListing, RunActionResult, RunRecord, RunsReport } from "./model";
 import { createNeedsYou, fileNeedsYouStore } from "./needs-you";
 import { projectsMemory } from "./projects";
+import { readEnvironment } from "./read-environment";
 import { repoJobs } from "./git-runs";
 import { createRuns, fileRunsStore } from "./runs";
 import { settingsFile } from "./settings-file";
@@ -355,6 +356,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         setSwitch: runs.setSwitch,
         resume: runs.resume,
         settings: settings.report,
+        environment: () => readEnvironment(options.workspace()),
         setSetting: settings.write,
         deleteJob: removeJob,
         ready: () => showBadge(needsYou.items().length),

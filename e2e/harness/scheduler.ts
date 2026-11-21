@@ -6,7 +6,7 @@
 // checks it with the real validator, so the UI specs drive it by writing files
 // (`fakeHost.writeFile`). Every valid service runs; Restart is refused; a spec sets another state with
 // `window.setServiceStatus`, the runs with `window.setRuns`, the settings with
-// `window.setSettings`, and reads the actions the UI asked for in `window.runnerCalls`. Delete
+// `window.setSettings` (a setting written by the UI changes that text field-only: `window.settingsText`), the Mac with `window.setEnvironment`, and reads the actions the UI asked for in `window.runnerCalls`. Delete
 // removes the job's file — refused with `window.refuseDelete`'s reason while one is set; Run now and
 // Enable / Disable are refused with `window.refuseActions`'s. Any action is refused with
 // `window.refuse[<method>]` while one is set.
@@ -33,6 +33,7 @@ import {
   SERVICES_CHANGED_EVENT,
   SERVICES_LIST_METHOD,
   SET_ENABLED_METHOD,
+  ENVIRONMENT_GET_METHOD,
   SETTINGS_CHANGED_EVENT,
   SETTINGS_GET_METHOD,
   SETTINGS_SET_METHOD,
@@ -43,7 +44,8 @@ import { entryId, entryPath, JOBS_FOLDER, type JobKind, type JobsSnapshot } from
 import type { ServicesReport, ServiceStatus } from "../../src/keeper/model";
 import { parseRunAt } from "../../src/scheduler/missed";
 import type { ActiveRun, RunRecord, RunsReport, RunView, SwitchPosition } from "../../src/scheduler/model";
-import { checkSettings, type SettingsReport } from "../../src/scheduler/settings";
+import type { EnvironmentReport } from "../../src/scheduler/environment";
+import { checkSettings, setSettingsField, SETTINGS_PATH, settingsValueProblem, type SettingsField, type SettingsReport, type SettingsValue } from "../../src/scheduler/settings";
 
 export async function startFakeScheduler(fake: FakeHost): Promise<void> {
   const result = await connect({ transport: fake.createTransport({ surface: "backend" }), keySource: null });
@@ -77,7 +79,17 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     history: [],
     output: "",
   };
+  let settingsText: string | null = null;
   let settings: SettingsReport = checkSettings(null);
+  /** The settings file's new text — on disk in the fake workspace, as the real scheduler leaves it — and what it says. */
+  const keep = (text: string | null): void => {
+    const there = settingsText !== null;
+    settingsText = text;
+    settings = checkSettings(text);
+    if (text !== null) fake.writeFile(SETTINGS_PATH, text);
+    else if (there) fake.deleteFile(SETTINGS_PATH);
+  };
+  let environment: EnvironmentReport = { notifications: "unavailable", skill: { linked: 0, folders: 1 } };
   const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
   /** An action the UI asked for: recorded, answered `answer`. */
   const action =
@@ -170,7 +182,17 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
       return runs.report.switch;
     }),
     [SETTINGS_GET_METHOD]: () => json(settings),
-    [SETTINGS_SET_METHOD]: action(SETTINGS_SET_METHOD, () => ({ ok: true, settings })),
+    [SETTINGS_SET_METHOD]: action(SETTINGS_SET_METHOD, (params) => {
+      const { field, value } = params as { field: SettingsField; value: SettingsValue };
+      const problem = settingsValueProblem(field, value);
+      if (problem !== null) return { ok: false, reason: problem };
+      const written = setSettingsField(settingsText ?? "", field, value);
+      if (!written.ok) return { ok: false, reason: written.message };
+      keep(written.text);
+      void host.events.publish(SETTINGS_CHANGED_EVENT);
+      return { ok: true, settings };
+    }),
+    [ENVIRONMENT_GET_METHOD]: () => json(environment),
     [DELETE_JOB_METHOD]: action(DELETE_JOB_METHOD, (params) => {
       const { job } = params as { job: string };
       if (window.refuseDelete !== null) return { ok: false, reason: window.refuseDelete };
@@ -191,7 +213,12 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     void host.events.publish(RUNS_CHANGED_EVENT);
   };
   window.setSettings = (text) => {
-    settings = checkSettings(text);
+    keep(text);
+    void host.events.publish(SETTINGS_CHANGED_EVENT);
+  };
+  window.settingsText = () => settingsText;
+  window.setEnvironment = (next) => {
+    environment = next;
     void host.events.publish(SETTINGS_CHANGED_EVENT);
   };
   await host.files.watch({ path: "", recursive: true }, () => {

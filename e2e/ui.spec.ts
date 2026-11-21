@@ -545,9 +545,9 @@ test.describe("missed runs and load", () => {
     await shoot(page, "panel-load");
     await control.getByRole("button", { name: "Pause low-priority" }).click();
     await expect(control).toHaveAttribute("data-position", "pause-low");
-    await expect(app(page).getByTestId("switch-note")).toHaveText("Low-priority runs are held. Services keep running; held runs follow their missed-run policy on resume.");
+    await expect(app(page).getByTestId("switch-note")).toHaveText("Low-priority jobs are held. Services keep running.");
     await control.getByRole("button", { name: "Pause all" }).click();
-    await expect(app(page).getByTestId("switch-note")).toContainText("Every scheduled run is held.");
+    await expect(app(page).getByTestId("switch-note")).toHaveText("Every scheduled job is held. Services keep running.");
     await shoot(page, "panel-paused");
     await control.getByRole("button", { name: "Running" }).click();
     await expect(app(page).getByTestId("switch-note")).toHaveCount(0);
@@ -654,34 +654,6 @@ test.describe("missed runs and load", () => {
     await shoot(page, "tab-run-time-limit");
   });
 
-  test("the Settings view shows the settings and writes one field at a time", async ({ page }) => {
-    await page.setViewportSize({ width: 1040, height: 700 });
-    await open(page, { route: "settings" });
-    const view = app(page).getByTestId("settings");
-    await expect(view).toContainText("Apps/pomade-runner/settings.yaml — no file yet: every setting is its default");
-    await expect(view.getByLabel("Low-priority runs at once")).toHaveValue("2");
-    await expect(view.getByLabel("Warm-up after login or wake")).toHaveValue("2m");
-    await expect(view.getByLabel("Long-run warning after")).toHaveValue("3h");
-    await expect(view.getByLabel("Keep history (days)")).toHaveValue("30");
-    await shoot(page, "tab-settings");
-
-    await page.evaluate(() => window.setSettings("max-low-priority-runs: 3\nwarm-up: soon\n"));
-    await expect(view.getByLabel("Low-priority runs at once")).toHaveValue("3");
-    await expect(view.getByTestId("settings-error")).toHaveText('Line 2: warm-up — "soon" is not a duration. Fix: write minutes or hours from 0m to 1h, e.g. warm-up: 2m.');
-    await view.getByLabel("Long-run warning after").fill("1h30m");
-    await view.getByTestId("setting-long-run-warning").getByRole("button", { name: "Save" }).click();
-    await view.getByTestId("setting-max-low-priority-runs").getByRole("button", { name: "Default (2)" }).click();
-    await view.getByLabel("Keep history (days)").fill("a week");
-    await view.getByTestId("setting-history-days").getByRole("button", { name: "Save" }).click();
-    await expect(view.getByTestId("setting-history-days").getByRole("alert")).toHaveText("write a whole number, e.g. 30");
-    expect(await page.evaluate(() => window.runnerCalls)).toEqual([
-      { method: "settings.set", params: { field: "long-run-warning", value: 90 } },
-      { method: "settings.set", params: { field: "max-low-priority-runs", value: null } },
-    ]);
-    await app(page).getByTestId("nav-jobs").click();
-    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
-  });
-
   test("help: the (i) shows its text and example on hover and on keyboard focus; a status's help on hover", async ({ page }) => {
     await page.setViewportSize({ width: 1040, height: 700 });
     await open(page, { route: "settings" });
@@ -699,10 +671,9 @@ test.describe("missed runs and load", () => {
     await page.mouse.move(1000, 600);
     await expect(tip).toHaveCount(0);
 
-    await app(page).getByLabel("Low-priority runs at once").focus();
-    // Save, then (Default is disabled: the value is the default) the next setting's (i).
-    await page.keyboard.press("Tab");
-    await page.keyboard.press("Tab");
+    await help.focus();
+    // The stepper's −, its value and its +, then the next setting's (i).
+    for (let tab = 0; tab < 4; tab++) await page.keyboard.press("Tab");
     await expect(app(page).getByTestId("help-s.warm")).toBeFocused();
     await expect(tip).toHaveText(/^The pause after login or wake before caught-up runs and hooks start\. Services start first\.Example: 2 min/);
     await page.keyboard.press("Escape");
@@ -2147,4 +2118,275 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
       await shoot(page, `panel-${width}`);
     });
   }
+});
+
+test.describe("the switch and Settings (T-009)", () => {
+  const SCRIPT = "---\nkind: script\nname: Summary\nfolder: .\ncommand: ./summary.sh\nschedule:\n  daily: { at: 7:00 }\n---\n";
+  const quiet: RunsReport = { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } };
+  const SETTINGS_FILE = "Apps/pomade-runner/settings.yaml";
+
+  async function openPanel(page: Page, width: number): Promise<void> {
+    await page.setViewportSize({ width, height: 700 });
+    await page.goto(harness({ surface: "panel" }));
+    await page.waitForFunction(() => typeof window.setServiceStatus === "function");
+    await writeJob(page, "summary.md", SCRIPT);
+    await page.evaluate((report) => window.setRuns({ report, history: [] }), quiet);
+    await expect(app(page).getByTestId("panel-jobs")).toBeVisible();
+  }
+
+  async function openSettings(page: Page): Promise<FrameLocator> {
+    await page.setViewportSize({ width: 1040, height: 900 });
+    await page.goto(harness({ route: "settings" }));
+    await page.waitForFunction(() => typeof window.setServiceStatus === "function");
+    await expect(app(page).getByTestId("settings")).toBeVisible();
+    return app(page);
+  }
+
+  const written = (page: Page): Promise<{ method: string; params: unknown }[]> => page.evaluate(() => window.runnerCalls.filter((call) => call.method === "settings.set"));
+
+  test("the switch is pinned above the panel's scroll and reads Pause low in a narrow panel", async ({ page }) => {
+    await openPanel(page, 240);
+    const control = app(page).getByTestId("switch");
+    const names = control.getByRole("button");
+    expect(await names.evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label")))).toEqual(["Running", "Pause low-priority", "Pause all"]);
+    await expect(names).toHaveText(["Running", "Pause low", "Pause all"], { useInnerText: true });
+    await shoot(page, "panel-switch-240");
+
+    await page.setViewportSize({ width: 300, height: 700 });
+    await expect(names).toHaveText(["Running", "Pause low-priority", "Pause all"], { useInnerText: true });
+    await shoot(page, "panel-switch-300");
+
+    // Many items: the sections scroll, the switch stays where it is.
+    await page.evaluate(
+      (report) =>
+        window.setRuns({
+          report: {
+            ...report,
+            needsYou: Array.from({ length: 12 }, (_, index) => ({ id: `loop-paused:job-${index}`, kind: "loop-paused" as const, job: `job-${index}`, name: `Job ${index}`, project: null, at: Date.now(), detail: "triggered 10× in 10 min" })),
+          },
+        }),
+      quiet,
+    );
+    await expect(app(page).getByTestId("needs-you-item")).toHaveCount(12);
+    const before = await control.boundingBox();
+    const scrolled = await app(page).locator("body").evaluate(() => {
+      const region = [...document.querySelectorAll<HTMLElement>("main > div")].find((el) => el.scrollHeight > el.clientHeight + 1);
+      if (region === undefined) return false;
+      region.scrollTop = region.scrollHeight;
+      return region.scrollTop > 0;
+    });
+    expect(scrolled).toBe(true);
+    expect(await control.boundingBox()).toEqual(before);
+  });
+
+  test("each position: its dot and note, and the position it asks the scheduler for", async ({ page }) => {
+    await openPanel(page, 300);
+    const control = app(page).getByTestId("switch");
+    const note = app(page).getByTestId("switch-note");
+    await expect(note).toHaveCount(0);
+    const dotIs = (name: string, token: string): Promise<boolean> =>
+      control.getByRole("button", { name }).locator("i").evaluate((el, tone) => {
+        const probe = document.createElement("i");
+        probe.style.background = `var(${tone})`;
+        document.body.append(probe);
+        const expected = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return getComputedStyle(el).backgroundColor === expected;
+      }, token);
+    for (const [name, position, text] of [
+      ["Pause low-priority", "pause-low", "Low-priority jobs are held. Services keep running."],
+      ["Pause all", "pause-all", "Every scheduled job is held. Services keep running."],
+    ] as const) {
+      await control.getByRole("button", { name }).click();
+      await expect(control).toHaveAttribute("data-position", position);
+      await expect(control.getByRole("button", { name })).toHaveAttribute("aria-pressed", "true");
+      await expect(note).toHaveText(text);
+      expect(await dotIs(name, "--warning")).toBe(true);
+    }
+    await shoot(page, "panel-switch-all");
+    await control.getByRole("button", { name: "Running" }).click();
+    await expect(control).toHaveAttribute("data-position", "running");
+    await expect(note).toHaveCount(0);
+    expect(await dotIs("Running", "--ok")).toBe(true);
+    expect((await page.evaluate(() => window.runnerCalls)).map((call) => call.params)).toEqual([{ position: "pause-low" }, { position: "pause-all" }, { position: "running" }]);
+  });
+
+  test("a position's help and each setting's help show their text and an example", async ({ page }) => {
+    await openPanel(page, 300);
+    const tip = app(page).getByRole("tooltip");
+    for (const [key, target] of [
+      ["sw.running", "switch-running"],
+      ["sw.low", "switch-pause-low"],
+      ["sw.all", "switch-pause-all"],
+    ] as const) {
+      await app(page).getByTestId(target).hover();
+      await expect(tip).toHaveText(`${HELP[key][0]}${HELP[key][1]}`);
+    }
+    await app(page).getByTestId("switch-pause-low").click();
+    await app(page).getByTestId("help-sw.held").hover();
+    await expect(tip).toHaveText(`${HELP["sw.held"][0]}${HELP["sw.held"][1]}`);
+
+    const view = await openSettings(page);
+    for (const key of ["s.heavy", "s.warm", "s.long", "s.keep", "s.native", "s.skill", "f.file"] as const) {
+      await view.getByTestId(`help-${key}`).hover();
+      await expect(tip).toHaveText(`${HELP[key][0]}${HELP[key][1]}`);
+      expect(HELP[key][1]).toMatch(/^Example: /);
+    }
+  });
+
+  test("Settings: the four settings as the file says them, each a stepper in its unit", async ({ page }) => {
+    const view = await openSettings(page);
+    const row = (name: string) => view.getByTestId(`setting-${name}`);
+    await expect(row("max-low-priority-runs")).toContainText("Low-priority runs at once");
+    await expect(row("max-low-priority-runs").getByTestId("setting-max-low-priority-runs-stepper-value")).toHaveText("2");
+    await expect(row("max-low-priority-runs")).toContainText("runs");
+    await expect(row("warm-up").getByTestId("setting-warm-up-stepper-value")).toHaveText("2");
+    await expect(row("warm-up")).toContainText("min");
+    await expect(row("long-run-warning").getByTestId("setting-long-run-warning-stepper-value")).toHaveText("3");
+    await expect(row("long-run-warning")).toContainText("hours");
+    await expect(row("history-days").getByTestId("setting-history-days-stepper-value")).toHaveText("30");
+    await expect(row("history-days")).toContainText("days");
+    await shoot(page, "tab-settings");
+
+    await page.evaluate(() => window.setSettings("max-low-priority-runs: 1\nwarm-up: 0m\nlong-run-warning: 1h\nhistory-days: 1\n"));
+    await expect(view.getByTestId("setting-max-low-priority-runs-unit")).toHaveText("run");
+    await expect(view.getByTestId("setting-long-run-warning-unit")).toHaveText("hour");
+    await expect(view.getByTestId("setting-history-days-unit")).toHaveText("day");
+    // At the file's ends a step does not go on.
+    for (const name of ["max-low-priority-runs", "warm-up", "long-run-warning", "history-days"]) await expect(view.getByTestId(`setting-${name}-stepper-less`)).toBeDisabled();
+  });
+
+  test("Settings: a step is written field-only — one write for a run of clicks — and the file's value takes over", async ({ page }) => {
+    const view = await openSettings(page);
+    const text = "# how loaded the Mac may get\nmax-low-priority-runs: 3 # three at once\nwarm-up: 2m\n";
+    await page.evaluate((t) => window.setSettings(t), text);
+    const more = view.getByTestId("setting-max-low-priority-runs-stepper-more");
+    await expect(view.getByTestId("setting-max-low-priority-runs-stepper-value")).toHaveText("3");
+
+    await more.dblclick();
+    await expect(view.getByTestId("setting-max-low-priority-runs-stepper-value")).toHaveText("5");
+    await expect.poll(() => page.evaluate(() => window.settingsText())).toBe(text.replace("3 # three", "5 # three"));
+    expect(await written(page)).toEqual([{ method: "settings.set", params: { field: "max-low-priority-runs", value: 5 } }]);
+    await expect(view.getByTestId("settings-error")).toHaveCount(0);
+
+    // A field the file lacks is added; the rest stays byte for byte.
+    await view.getByTestId("setting-long-run-warning-stepper-more").click();
+    await expect(view.getByTestId("setting-long-run-warning-stepper-value")).toHaveText("4");
+    await expect.poll(() => page.evaluate(() => window.settingsText())).toBe(`${text.replace("3 # three", "5 # three")}long-run-warning: 4h\n`);
+    await view.getByTestId("setting-history-days-stepper-less").click();
+    await expect.poll(() => page.evaluate(() => window.settingsText())).toContain("history-days: 29\n");
+    await view.getByTestId("setting-warm-up-stepper-less").click();
+    await expect.poll(() => page.evaluate(() => window.settingsText())).toContain("warm-up: 1m\n");
+    expect((await written(page)).map((call) => call.params)).toEqual([
+      { field: "max-low-priority-runs", value: 5 },
+      { field: "long-run-warning", value: 240 },
+      { field: "history-days", value: 29 },
+      { field: "warm-up", value: 1 },
+    ]);
+    await expect(view.getByTestId("setting-warm-up-stepper-value")).toHaveText("1");
+  });
+
+  test("Settings: the keyboard steps a value; a long-run warning under an hour starts at the hour; the ends hold", async ({ page }) => {
+    const view = await openSettings(page);
+    await page.evaluate(() => window.setSettings("long-run-warning: 30m\nmax-low-priority-runs: 16\n"));
+    await expect(view.getByTestId("setting-long-run-warning-stepper-value")).toHaveText("30");
+    await expect(view.getByTestId("setting-long-run-warning-unit")).toHaveText("min");
+    await expect(view.getByTestId("setting-long-run-warning-stepper-less")).toBeDisabled();
+    await expect(view.getByTestId("setting-max-low-priority-runs-stepper-more")).toBeDisabled();
+
+    await view.getByTestId("setting-long-run-warning-stepper-value").focus();
+    await page.keyboard.press("ArrowUp");
+    await expect(view.getByTestId("setting-long-run-warning-unit")).toHaveText("hour");
+    await page.keyboard.press("ArrowUp");
+    await expect(view.getByTestId("setting-long-run-warning-unit")).toHaveText("hours");
+    await expect(view.getByTestId("setting-long-run-warning-stepper-value")).toHaveText("2");
+    await expect.poll(() => page.evaluate(() => window.settingsText())).toContain("long-run-warning: 2h\n");
+    await view.getByTestId("setting-long-run-warning-stepper-less").focus();
+    await page.keyboard.press("Enter");
+    await expect(view.getByTestId("setting-long-run-warning-stepper-value")).toHaveText("1");
+    await expect.poll(() => page.evaluate(() => window.settingsText())).toContain("long-run-warning: 1h\n");
+  });
+
+  test("Settings: a held button repeats; the whole run is one write when it is let go", async ({ page }) => {
+    const view = await openSettings(page);
+    const value = view.getByTestId("setting-history-days-stepper-value");
+    const more = view.getByTestId("setting-history-days-stepper-more");
+    await more.hover();
+    await page.mouse.down();
+    await expect.poll(async () => Number(await value.textContent())).toBeGreaterThan(36);
+    await page.mouse.up();
+    const reached = Number(await value.textContent());
+    await expect.poll(() => written(page)).toEqual([{ method: "settings.set", params: { field: "history-days", value: reached } }]);
+    await expect.poll(() => page.evaluate(() => window.settingsText())).toBe(`history-days: ${reached}\n`);
+    // Let go: it stays where it is.
+    await expect(value).toHaveText(String(reached));
+  });
+
+  test("Settings: a step not yet written goes out when the person leaves the view", async ({ page }) => {
+    const view = await openSettings(page);
+    await view.getByTestId("setting-warm-up-stepper-more").click();
+    await view.getByTestId("nav-jobs").click();
+    await expect(view.getByTestId("settings")).toHaveCount(0);
+    await expect.poll(() => written(page)).toEqual([{ method: "settings.set", params: { field: "warm-up", value: 3 } }]);
+    await expect.poll(() => page.evaluate(() => window.settingsText())).toBe("warm-up: 3m\n");
+  });
+
+  test("Settings: a refused write puts the value back and says why; a settings file with a problem is listed", async ({ page }) => {
+    const view = await openSettings(page);
+    await page.evaluate(() => (window.refuse["settings.set"] = "cannot write Apps/pomade-runner/settings.yaml: disk is full"));
+    await view.getByTestId("setting-history-days-stepper-more").click();
+    await expect(view.getByTestId("setting-history-days-error")).toHaveText("cannot write Apps/pomade-runner/settings.yaml: disk is full");
+    await expect(view.getByTestId("setting-history-days-stepper-value")).toHaveText("30");
+    await page.evaluate(() => delete window.refuse["settings.set"]);
+    await view.getByTestId("setting-history-days-stepper-more").click();
+    await expect(view.getByTestId("setting-history-days-error")).toHaveCount(0);
+    await expect(view.getByTestId("setting-history-days-stepper-value")).toHaveText("31");
+
+    await page.evaluate(() => window.setSettings("max-low-priority-runs: 3\nwarm-up: soon\n"));
+    await expect(view.getByTestId("setting-max-low-priority-runs-stepper-value")).toHaveText("3");
+    await expect(view.getByTestId("settings-error")).toHaveText('Line 2: warm-up — "soon" is not a duration. Fix: write minutes or hours from 0m to 1h, e.g. warm-up: 2m.');
+    await shoot(page, "tab-settings-problem");
+  });
+
+  test("Settings: the notification permission and the agent skill are read-only rows that follow the Mac", async ({ page }) => {
+    const view = await openSettings(page);
+    const notifications = view.getByTestId("notifications-status");
+    const skill = view.getByTestId("skill-status");
+    await expect(notifications).toHaveText("Not available yet");
+    await expect(skill).toHaveText("Not installed");
+    await expect(view.getByTestId("setting-skill")).toContainText("pomade-runner-jobs is not linked into any skill folder.");
+
+    for (const [state, words] of [
+      ["allowed", "Allowed"],
+      ["denied", "Blocked"],
+      ["not-asked", "Not asked yet"],
+    ] as const) {
+      await page.evaluate((notification) => window.setEnvironment({ notifications: notification, skill: { linked: 3, folders: 3 } }), state);
+      await expect(notifications).toHaveText(words);
+    }
+    await expect(skill).toHaveText("Installed");
+    await expect(view.getByTestId("setting-skill")).toContainText("pomade-runner-jobs is linked into 3 skill folders.");
+    await page.evaluate(() => window.setEnvironment({ notifications: "allowed", skill: { linked: 2, folders: 3 } }));
+    await expect(skill).toHaveText("Partly installed");
+    await expect(view.getByTestId("setting-skill")).toContainText("is linked into 2 of 3 skill folders.");
+    // Read-only: neither row has a control.
+    await expect(view.getByTestId("setting-notifications").locator("button:not([data-help])")).toHaveCount(0);
+    await expect(view.getByTestId("setting-skill").locator("button:not([data-help])")).toHaveCount(0);
+    await shoot(page, "tab-settings-environment");
+  });
+
+  test("Settings: the file locations; Open file opens settings.yaml once there is one", async ({ page }) => {
+    const view = await openSettings(page);
+    const file = view.getByTestId("setting-file");
+    await expect(file).toContainText(SETTINGS_FILE);
+    await expect(file).toContainText("No file yet: every setting is its default, and the first change writes it.");
+    await expect(file.getByRole("button", { name: "Open file" })).toBeDisabled();
+    await expect(view.getByTestId("setting-jobs-folder")).toContainText("Apps/pomade-runner/jobs/");
+
+    await view.getByTestId("setting-warm-up-stepper-more").click();
+    await expect(file.getByRole("button", { name: "Open file" })).toBeEnabled();
+    await expect(file).not.toContainText("No file yet");
+    await file.getByRole("button", { name: "Open file" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: SETTINGS_FILE }]);
+  });
 });

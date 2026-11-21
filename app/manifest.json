@@ -65,6 +65,7 @@
     "jobs.resume",
     "settings.get",
     "settings.set",
+    "environment.get",
     "jobs.forRepo",
     "jobs.delete"
   ],
