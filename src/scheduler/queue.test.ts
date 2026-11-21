@@ -18,6 +18,7 @@ function run(job: string, state: "queued" | "running", extra: Partial<ActiveRun>
     trigger: "scheduled",
     cause: null,
     dueAt: 0,
+    agent: null,
     state,
     lowPriority: true,
     runAt: null,

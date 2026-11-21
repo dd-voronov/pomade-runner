@@ -17,7 +17,9 @@ import { alive, keeperAt } from "./support/keeper";
 import { createRunnerWorld, serviceFile, type RunnerWorld } from "./support/runner";
 
 /** A service: a numbered tick a second; a typed line is echoed back at once. */
-const TICKER = 'i=0; while :; do i=$((i+1)); echo "tick $i"; if read -t 1 line; then echo "got: $line"; fi; done';
+// A closed terminal (its keeper gone) ends it: `read` then fails at once, where a second without
+// input takes a second (bash 3.2 gives both status 1, so the clock tells them apart).
+const TICKER = 'i=0; while :; do i=$((i+1)); echo "tick $i"; t=$SECONDS; if read -t 1 line; then echo "got: $line"; elif [ $SECONDS -eq $t ]; then exit 0; fi; done';
 
 test.describe("the keeper", () => {
   let world: RunnerWorld;

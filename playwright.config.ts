@@ -26,7 +26,8 @@ export default defineConfig({
     { name: "pomade", testMatch: "pomade.spec.ts" },
     { name: "pomade-load", testMatch: "pomade-load.spec.ts" },
     { name: "pomade-git", testMatch: "pomade-git.spec.ts" },
-    { name: "install", testMatch: "install.spec.ts", dependencies: ["ui", "background", "keeper", "services", "runs", "load", "chains", "git", "pomade", "pomade-load", "pomade-git"] },
+    { name: "pomade-agents", testMatch: "pomade-agents.spec.ts" },
+    { name: "install", testMatch: "install.spec.ts", dependencies: ["ui", "background", "keeper", "services", "runs", "load", "chains", "git", "pomade", "pomade-load", "pomade-git", "pomade-agents"] },
   ],
   webServer: [
     {

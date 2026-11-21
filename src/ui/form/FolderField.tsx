@@ -6,6 +6,7 @@ import type { ProjectListResult } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
 import type { JobError, JobsSnapshot, ProjectRecord } from "../../jobs/model";
+import type { HelpKey } from "../help";
 import { Button, Field, Menu, MenuHeader, MenuItem, MenuSeparator, TextInput } from "../kit";
 import styles from "./JobForm.module.css";
 import type { FormField, FormState, FormValues } from "./state";
@@ -40,7 +41,8 @@ export interface FormProps {
   jobId: string | null;
 }
 
-export function FolderField({ host, state, setFolder, error, projects, workspaceName }: FormProps): React.JSX.Element {
+/** `help` names the field's (i); `below` goes under the input (an agent's connected projects). */
+export function FolderField({ host, state, setFolder, error, projects, workspaceName, help = "f.folder", below }: FormProps & { help?: HelpKey; below?: ReactNode }): React.JSX.Element {
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const { folder } = state.values;
   const pickOther = (): void => {
@@ -52,8 +54,9 @@ export function FolderField({ host, state, setFolder, error, projects, workspace
     );
   };
   return (
-    <Field label="Folder" help="f.folder" error={error("folder")} hint={folder.trim() === "." ? `“.” is the workspace root, ${workspaceName}.` : undefined}>
+    <Field label="Folder" help={help} error={error("folder")} hint={folder.trim() === "." ? `“.” is the workspace root, ${workspaceName}.` : undefined}>
       {(id) => (
+        <>
         <div className={styles.pick}>
           <TextInput id={id} mono placeholder="Projects/coda-helper" value={folder} bad={error("folder") !== undefined} data-field="folder" onChange={(event) => setFolder(event.target.value)} />
           <Button className={styles.pickButton} icon="folder" aria-haspopup="menu" aria-expanded={menu !== null} onClick={(event) => setMenu(event.currentTarget)}>
@@ -78,6 +81,8 @@ export function FolderField({ host, state, setFolder, error, projects, workspace
             </Menu>
           )}
         </div>
+        {below}
+        </>
       )}
     </Field>
   );

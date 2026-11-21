@@ -129,6 +129,7 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     trigger: "manual",
     cause: null,
     dueAt: Date.now(),
+    agent: null,
     state: "running",
     lowPriority: false,
     runAt: null,

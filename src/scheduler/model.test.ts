@@ -6,7 +6,7 @@ import { editRoute, jobsRoute, newRoute, outputRoute, outputTab, outputTabKey, p
 import { MAX_ENCODED_JOB_ID } from "../keeper/ids";
 import { clockTime, dayTime, durationWords, isActiveRun, isRunsReport, runWords, type ActiveRun, type RunRecord } from "./model";
 
-const base = { job: "coda/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/coda", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1 };
+const base = { job: "coda/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/coda", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1, agent: null };
 const active: ActiveRun = {
   ...base,
   state: "running",

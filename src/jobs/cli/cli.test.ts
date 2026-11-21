@@ -347,7 +347,7 @@ describe("pomade-runner", () => {
 
   describe("runs", () => {
     const at = (time: string): number => Date.parse(`2026-11-17T${time}.000Z`);
-    const base = { job: "backup", name: "Backup", kind: "script" as const, project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled" as const, cause: null, dueAt: at("12:00:00") };
+    const base = { job: "backup", name: "Backup", kind: "script" as const, project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled" as const, cause: null, dueAt: at("12:00:00"), agent: null };
     const failed = { ...base, state: "failed" as const, action: null, reason: null, startedAt: at("12:00:00"), endedAt: at("12:00:03"), durationMs: 3000, exitCode: 1, signal: null, log: "/ud/output/backup/r.log", lastLines: [], git: null, limitHit: null };
     const listing: JobListing = { job: "backup", name: "Backup", kind: "script", enabled: true, trigger: "daily at 13:00", problem: null, next: at("13:00:00"), finished: false, last: failed, service: null };
     const fresh = { lowPriority: true, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false };

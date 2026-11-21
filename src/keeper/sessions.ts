@@ -34,6 +34,8 @@ export interface SessionCommand {
   title: string;
   /** A command line, run by the user's login shell. */
   command: string;
+  /** Or a program and its arguments, run directly, in place of `command` (an agent run's shell). */
+  argv?: string[];
   /** The folder it runs in (absolute). */
   cwd: string;
   /** Added to the session's environment. */
@@ -375,7 +377,7 @@ export function createSessions(options: SessionsOptions): Sessions {
       const info = await keeper.spawn({
         id,
         title: command.title,
-        command: command.command,
+        ...(command.argv === undefined ? { command: command.command } : { argv: command.argv }),
         cwd: command.cwd,
         background: command.background,
         log: output,

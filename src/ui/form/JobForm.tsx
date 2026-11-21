@@ -23,15 +23,16 @@ import { policySentence } from "./policies";
 import {
   blankValues,
   blocksSave,
+  bodyChange,
   editForm,
   errorShows,
   errorsByPlace,
   fieldChanges,
   followText,
   formErrors,
-  formKind,
   FORM_KINDS,
   hasChanges,
+  newBody,
   newForm,
   projectRecords,
   setFolder,
@@ -233,14 +234,8 @@ function FormBody({
 
   const title = state === null ? "" : path === null ? "New job" : state.base.name || "Untitled job";
   if (path !== null && file === undefined) return <FormFrame title="" back={back} />;
-  if (state === null || formKind(state.values.kind) === null || KIND_UI[state.values.kind].build === undefined) {
-    const kind = state?.values.kind;
-    const why =
-      file === null
-        ? "Its file is gone: it was deleted or moved on disk."
-        : kind === undefined
-          ? "The form cannot read its file: the frontmatter is broken, or its kind is not one Runner has. Open the file to fix it."
-          : `It is ${kind === "agent" ? "an" : "a"} ${kind} job, and this build's form edits ${builtKinds()} only. Open its file to change it.`;
+  if (state === null) {
+    const why = file === null ? "Its file is gone: it was deleted or moved on disk." : "The form cannot read its file: the frontmatter is broken, or its kind is not one Runner has. Open the file to fix it.";
     return (
       <FormFrame title={title || "Edit job"} back={back}>
         <div className={styles.page}>
@@ -266,8 +261,7 @@ function FormBody({
 
   const { values } = state;
   const ui = KIND_UI[values.kind];
-  const build = ui.build;
-  if (build === undefined) throw new Error(`unreachable: ${values.kind} has no sections`);
+  const { build } = ui;
   const places = errorsByPlace(errors, values);
   const blocking = [...places].filter(([place]) => blocksSave(state, place)).flatMap(([, list]) => list);
   const shownCount = state.tried ? blocking.length : 0;
@@ -312,8 +306,8 @@ function FormBody({
     try {
       if (state.path === null) {
         const project = values.project === null ? undefined : projects.records.find((record) => record.id === values.project);
-        const fields = Object.fromEntries(Object.entries(formKind(values.kind)?.fields(values) ?? {}).filter(([, value]) => value !== undefined));
-        const created = await createJobFile(host, { folder: project === undefined ? null : projectJobsFolder(project), fields: { ...fields, name: values.name.trim() }, body: "" });
+        const fields = Object.fromEntries(Object.entries(FORM_KINDS[values.kind].fields(values)).filter(([, value]) => value !== undefined));
+        const created = await createJobFile(host, { folder: project === undefined ? null : projectJobsFolder(project), fields: { ...fields, name: values.name.trim() }, body: newBody(values) });
         const started = values.kind === "service" && values.enabled && values.start === "login";
         toast(
           <>
@@ -322,7 +316,7 @@ function FormBody({
           </>,
         );
       } else {
-        await updateJobFile(host, state.path, fieldChanges(state));
+        await updateJobFile(host, state.path, fieldChanges(state), bodyChange(state));
         if (target.movesFrom !== null) await host.files.move({ from: target.movesFrom, to: target.path });
         toast(
           <>
@@ -434,7 +428,6 @@ function FormBody({
           <div className={styles.kinds} role="radiogroup" aria-label="Kind" data-field="kind">
             {KINDS.map((kind) => {
               const card = KIND_UI[kind];
-              const offered = card.build !== undefined && formKind(kind) !== null;
               return (
                 <button
                   key={kind}
@@ -442,12 +435,9 @@ function FormBody({
                   role="radio"
                   className={styles.kind}
                   aria-checked={values.kind === kind}
-                  aria-disabled={offered ? undefined : true}
                   data-help={card.help}
                   data-testid={`kind-${kind}`}
-                  onClick={() => {
-                    if (offered) update((current) => switchKind(current, kind));
-                  }}
+                  onClick={() => update((current) => switchKind(current, kind))}
                 >
                   <b className={styles.kindName}>
                     <Icon name={card.icon} />
@@ -508,15 +498,10 @@ const FIELD_WORDS: Record<FormField, string> = {
   notify: "notify me",
   operation: "operation",
   repos: "repositories",
+  agent: "agent",
+  mode: "mode",
+  prompt: "prompt",
 };
-
-const KIND_PLURALS: Record<JobKind, string> = { service: "services", script: "scripts", agent: "agent jobs", git: "git jobs" };
-
-/** The kinds the form builds, in words: "services, scripts and git jobs". */
-function builtKinds(): string {
-  const names = (Object.keys(FORM_KINDS) as JobKind[]).map((kind) => KIND_PLURALS[kind]);
-  return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""}`;
-}
 
 function NameField({ state, set, error, placeholder }: FormProps & { placeholder: string }): React.JSX.Element {
   return (

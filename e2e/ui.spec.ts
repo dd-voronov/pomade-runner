@@ -286,6 +286,7 @@ test.describe("runs", () => {
     trigger: "scheduled",
     cause: null,
     dueAt: at(13, 0),
+    agent: null,
     state: "failed",
     action: null,
     reason: null,
@@ -600,6 +601,7 @@ test.describe("missed runs and load", () => {
     trigger: "scheduled",
     cause: null,
     dueAt: at(7, 0),
+    agent: null,
     state: "running",
     lowPriority: true,
     runAt: null,
@@ -803,6 +805,7 @@ test.describe("hooks and chains", () => {
     trigger: "scheduled",
     cause: null,
     dueAt: at(13, 0),
+    agent: null,
     state: "done",
     action: null,
     reason: null,
@@ -908,12 +911,9 @@ test.describe("the job form", () => {
     await app(page).getByTestId("empty-new-job").click();
     const form = app(page).getByTestId("form-service");
     await expect(app(page).getByTestId("form-title")).toHaveText("Jobs / New job");
-    // Only the kinds the form builds are offered; the others show, with their help.
+    // Every kind is offered, with its help; a new job starts as a service.
     await expect(form.getByTestId("kind-service")).toHaveAttribute("aria-checked", "true");
-    for (const kind of ["script", "git"]) await expect(form.getByTestId(`kind-${kind}`)).not.toHaveAttribute("aria-disabled");
-    await expect(form.getByTestId("kind-agent")).toHaveAttribute("aria-disabled", "true");
-    await form.getByTestId("kind-agent").dispatchEvent("click");
-    await expect(form.getByTestId("kind-service")).toHaveAttribute("aria-checked", "true");
+    for (const kind of ["script", "agent", "git"]) await expect(form.getByTestId(`kind-${kind}`)).toHaveAttribute("aria-checked", "false");
 
     await form.getByRole("textbox", { name: "Name", exact: true }).fill("Coda web");
     await form.getByRole("textbox", { name: "Command", exact: true }).fill("./start.sh");
@@ -1149,13 +1149,13 @@ test.describe("the job form", () => {
     await expect(tip).toHaveText("Keeps a command running: starts it at login, restarts it on a crash, outlives Pomade.Example: Coda web — ./start.sh.");
   });
 
-  test("an unknown job's route says so; a job of a kind the form does not build yet offers Open file", async ({ page }) => {
+  test("an unknown job's route says so; a job whose file the form cannot read offers Open file", async ({ page }) => {
     await start(page, { route: "edit/nope" });
     await writeJob(page, "alpha/coda-web.md", VALID);
     await expect(app(page).getByTestId("form-missing")).toContainText("No job file has the id nope.");
-    await writeJob(page, "summary.md", "---\nkind: agent\nname: Summary\nfolder: .\nagent: claude\nschedule:\n  daily: { at: 7:00 }\n---\nWrite my summary.\n");
+    await writeJob(page, "summary.md", "---\nkind: [agent\nname: Summary\n---\nWrite my summary.\n");
     await navigate(page, "edit/summary");
-    await expect(app(page).getByTestId("form-unsupported")).toContainText("It is an agent job, and this build's form edits services, scripts and git jobs only. Open its file to change it.");
+    await expect(app(page).getByTestId("form-unsupported")).toContainText("The form cannot read its file: the frontmatter is broken, or its kind is not one Runner has. Open the file to fix it.");
     await app(page).getByTestId("form-unsupported").getByRole("button", { name: "Open file" }).click();
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/summary.md" }]);
     await app(page).getByTestId("form-back").click();
@@ -1196,6 +1196,7 @@ test.describe("the Jobs view", () => {
     trigger: "scheduled",
     cause: null,
     dueAt: endedAt - 3000,
+    agent: null,
     state,
     action: null,
     reason: null,
@@ -1244,6 +1245,7 @@ test.describe("the Jobs view", () => {
       trigger: "scheduled",
       cause: null,
       dueAt: now - 200_000,
+      agent: null,
       state: "running",
       lowPriority: true,
       runAt: null,
@@ -1591,6 +1593,7 @@ test.describe("History and result cards", () => {
     trigger: "scheduled",
     cause: null,
     dueAt: at(0, 0, 10),
+    agent: null,
     state: "done",
     action: null,
     reason: null,
@@ -1617,6 +1620,7 @@ test.describe("History and result cards", () => {
     trigger: "manual",
     cause: null,
     dueAt: Date.now() - 180_000,
+    agent: null,
     state: "running",
     lowPriority: true,
     runAt: null,
@@ -2222,6 +2226,7 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
     trigger: "scheduled",
     cause: null,
     dueAt: now,
+    agent: null,
     state: "running",
     lowPriority: true,
     runAt: null,
@@ -2891,5 +2896,170 @@ test.describe("the Git form (T-011)", () => {
     await app(page).getByTestId("form-save").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
     expect(await fileText(page, `${JOBS}/Knowledge/knowledge-commit.md`)).toBe(HAND.replace("{ operation: commit-push, repos: [Knowledge, Notes] }", "{ operation: fetch, repos: [Knowledge] }"));
+  });
+});
+
+test.describe("agent jobs", () => {
+  test.use({ viewport: { width: 1040, height: 760 } });
+  const SESSION = "5f0c2a1e-7b3d-4c8e-9a61-0d2f4b6e8c90";
+  const RUN = "20261118-070000-abcdef";
+  const at = (hours: number, minutes: number): number => new Date(2026, 10, 18, hours, minutes).getTime();
+  const done: RunRecord = {
+    job: "morning-summary",
+    name: "Morning summary",
+    kind: "agent",
+    project: null,
+    folder: "",
+    run: RUN,
+    trigger: "scheduled",
+    cause: null,
+    dueAt: at(7, 0),
+    agent: { agent: "claude", name: "claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: SESSION, cwd: "/fake/workspace", startedAt: new Date(at(7, 0)).toISOString(), exit: "/exit", exitSentAt: at(7, 4) },
+    state: "done",
+    action: null,
+    reason: null,
+    startedAt: at(7, 0),
+    endedAt: at(7, 4) + 12_000,
+    durationMs: 4 * 60_000 + 12_000,
+    exitCode: 0,
+    signal: null,
+    log: "/ud/output/morning-summary/r.log",
+    lastLines: ["● Done.", "> /exit", "Bye."],
+    git: null,
+    limitHit: null,
+  };
+  const SUMMARY = "---\nkind: agent\nname: Morning summary\nfolder: .\nagent: claude\nschedule:\n  weekly: { days: [mon, tue, wed, thu, fri], at: 7:00 }\n---\nWrite my morning summary.\n";
+
+  async function start(page: Page, query: Record<string, string> = {}): Promise<void> {
+    await page.goto(harness({ projects: "prototype", ...query }));
+    // The stand-in scheduler watches the jobs folder by the time it can set a service's state.
+    await page.waitForFunction(() => typeof window.setRuns === "function" && typeof window.setServiceStatus === "function");
+  }
+
+  async function setHistory(page: Page, history: RunRecord[], messages: Record<string, string | null> = {}): Promise<void> {
+    await page.evaluate(
+      ([h, m]) => {
+        Object.assign(window.agentMessages, m);
+        window.setRuns({ report: { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } }, history: h });
+      },
+      [history, messages] as const,
+    );
+  }
+
+  test("the form makes an agent job: the roster's agents, the folders connected to the agent, its modes, the Full-autonomy warning, the prompt as the body", async ({ page }) => {
+    await start(page, { route: "new" });
+    await app(page).getByTestId("kind-agent").click();
+    const form = app(page).getByTestId("form-agent");
+    await form.getByRole("textbox", { name: "Name", exact: true }).fill("Morning summary");
+    const agents = form.getByRole("group", { name: "Agent" });
+    await expect(agents.getByRole("button")).toHaveText(["claude", "claude-libra", "claude-coder", "claude-pm", "codex"]);
+    await expect(agents.getByRole("button", { name: "claude", exact: true })).toHaveAttribute("aria-pressed", "true");
+    // The projects connected to the agent first, then the workspace root; a pick fills the project.
+    const folders = form.getByTestId("agent-folders");
+    await expect(folders).toHaveText("Connected to claude:Pomadecoda-helperjob-huntworkspace (workspace root)");
+    await folders.getByRole("button", { name: "coda-helper" }).click();
+    await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("Projects/coda-helper");
+    await expect(form.getByRole("combobox", { name: "Project" })).toHaveValue("coda-helper");
+    // Only the agent's modes; one it lacks is faded with why; another agent's own modes after them.
+    const modes = form.getByRole("group", { name: "Mode" });
+    await expect(modes.getByRole("button")).toHaveText(["Normaldefault", "Full autonomy"]);
+    await modes.getByRole("button", { name: "Full autonomy" }).click();
+    await expect(form.getByTestId("full-autonomy-warning")).toHaveText("Skips every approval. The agent edits files and runs commands without asking. The job shows a “Full autonomy” mark in the list.");
+    await shoot(page, "agent-form-full-autonomy");
+    await agents.getByRole("button", { name: "claude-pm" }).click();
+    await expect(modes.getByRole("button", { name: "Normal" })).toHaveAttribute("aria-pressed", "true");
+    await expect(modes.getByRole("button", { name: "Full autonomy" })).toBeDisabled();
+    await expect(modes.getByRole("button", { name: "Full autonomy" })).toHaveAttribute("data-tip", "claude-pm has no full autonomy mode");
+    await expect(form.getByTestId("full-autonomy-warning")).toHaveCount(0);
+    await agents.getByRole("button", { name: "codex" }).click();
+    await expect(modes.getByRole("button")).toHaveText(["Normaldefault", "Full autonomy", "Read-only"]);
+    await expect(folders).toHaveText("Connected to codex:pomade-kitworkspace (workspace root)");
+    await agents.getByRole("button", { name: "claude", exact: true }).click();
+    // Save with no prompt: the checker's words on the prompt.
+    await app(page).getByTestId("form-save").click();
+    await expect(form.getByTestId("form-error-count").or(app(page).getByTestId("form-error-count"))).toHaveText("1 thing to fix before saving");
+    await expect(form.locator('[data-field="prompt"]')).toBeFocused();
+    await expect(form).toContainText("body — an agent job's prompt is its body, and the body is empty. Fix: write what the agent should do below the closing --- line.");
+    await form.getByRole("textbox", { name: "Prompt" }).fill("Write my morning summary.\n\n1. Read today's items with `pomade-planner today`.");
+    await expect(form.getByTestId("policy-summary")).toHaveText("If missed, run on wake · never overlaps itself · low priority · no time limit · always notifies");
+    await shoot(page, "agent-form");
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("toast")).toHaveText("RunnerCreated Apps/pomade-runner/jobs/coda-helper/morning-summary.md");
+    expect(await page.evaluate(() => window.fakeHost.readFile("Apps/pomade-runner/jobs/coda-helper/morning-summary.md"))).toBe(
+      "---\nkind: agent\nname: Morning summary\nproject: coda-helper\nfolder: Projects/coda-helper\nenabled: true\nagent: claude\nschedule:\n  daily: { at: 9:00 }\n---\nWrite my morning summary.\n\n1. Read today's items with `pomade-planner today`.\n",
+    );
+  });
+
+  test("editing an agent job writes the prompt as the body and the mode field-only — a field the file lacked at the end of its block", async ({ page }) => {
+    await start(page);
+    await writeJob(page, "morning-summary.md", SUMMARY.replace("agent: claude\n", "agent: claude # the 7:00 one\n"));
+    await expect(app(page).getByTestId("job-row")).toHaveCount(1);
+    await page.evaluate(() => window.mounted.navigate("edit/morning-summary"));
+    const form = app(page).getByTestId("form-agent");
+    await expect(form.getByRole("textbox", { name: "Prompt" })).toHaveValue("Write my morning summary.");
+    await expect(app(page).getByTestId("form-save")).toHaveText("Saved");
+    await form.getByRole("textbox", { name: "Prompt" }).fill("Write my morning summary, in 12 lines.");
+    await form.getByRole("group", { name: "Mode" }).getByRole("button", { name: "Full autonomy" }).click();
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("toast")).toHaveText("RunnerSaved Apps/pomade-runner/jobs/morning-summary.md");
+    expect(await page.evaluate(() => window.fakeHost.readFile("Apps/pomade-runner/jobs/morning-summary.md"))).toBe(
+      SUMMARY.replace("agent: claude\n", "agent: claude # the 7:00 one\n").replace("Write my morning summary.", "Write my morning summary, in 12 lines.").replace("7:00 }\n---", "7:00 }\nmode: full-autonomy\n---"),
+    );
+  });
+
+  test("without the Agents app the form says so in place of the agent and mode pickers, and keeps the file's", async ({ page }) => {
+    await start(page, { agents: "none" });
+    await writeJob(page, "morning-summary.md", SUMMARY);
+    await expect(app(page).getByTestId("job-row")).toHaveCount(1);
+    await page.evaluate(() => window.mounted.navigate("edit/morning-summary"));
+    const form = app(page).getByTestId("form-agent");
+    await expect(form.getByTestId("agents-absent")).toHaveText("The Agents app (pomade-agents) is not running. Runner lists the agents and their modes from it, so the job keeps claude in mode Normal until it answers; a run due meanwhile fails.");
+    await expect(form.getByRole("group", { name: "Agent" })).toHaveCount(0);
+    await expect(form.getByRole("group", { name: "Mode" })).toHaveCount(0);
+    await expect(form.getByRole("textbox", { name: "Prompt" })).toHaveValue("Write my morning summary.");
+    await shoot(page, "agent-form-absent");
+  });
+
+  test("an agent job's row: the Full-autonomy mark with its help, Run now", async ({ page }) => {
+    await start(page);
+    await writeJob(page, "librarian-weekly.md", SUMMARY.replace("name: Morning summary", "name: Librarian weekly").replace("agent: claude\n", "agent: claude\nmode: full-autonomy\n"));
+    await writeJob(page, "morning-summary.md", SUMMARY);
+    const rows = app(page).getByTestId("job-row");
+    await expect(rows).toHaveCount(2);
+    const weekly = app(page).locator('[data-testid="job-row"][data-job="librarian-weekly"]');
+    await expect(weekly.getByTestId("job-full-autonomy")).toHaveText("Full autonomy");
+    await expect(weekly.getByTestId("job-full-autonomy")).toHaveAttribute("data-help", "jobs.fullauto");
+    await expect(app(page).locator('[data-testid="job-row"][data-job="morning-summary"]').getByTestId("job-full-autonomy")).toHaveCount(0);
+    await weekly.getByRole("button", { name: "Run now" }).click();
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toContainEqual({ method: "jobs.run", params: { job: "librarian-weekly" } });
+    await shoot(page, "agent-rows");
+  });
+
+  test("a done agent run's card: agent · mode, the last message; Open session resumes the session in a Pomade agent tab", async ({ page }) => {
+    await start(page, { route: `run/morning-summary/${RUN}` });
+    await setHistory(page, [done], { [SESSION]: "**Tuesday 17 Nov.** Four items today.\n\nOvernight: Knowledge was committed and pushed at 20:00 (`a1b2c3d`)." });
+    const dialog = app(page).getByTestId("run-dialog");
+    await expect(app(page).getByTestId("run-result")).toHaveText("Done");
+    await expect(dialog.getByTestId("run-agent")).toHaveText("claude · Normal");
+    const message = dialog.getByTestId("run-agent-message");
+    await expect(message.locator("p")).toHaveText(["Tuesday 17 Nov. Four items today.", "Overnight: Knowledge was committed and pushed at 20:00 (a1b2c3d)."]);
+    await expect(message.locator("b")).toHaveText("Tuesday 17 Nov.");
+    await expect(dialog.getByTestId("dialog-foot").getByRole("button")).toHaveText(["Open session", "View output", "Run again", "Edit job"]);
+    await shoot(page, "agent-card-done");
+    await dialog.getByRole("button", { name: "Open session" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedAgentTabs)).toEqual([{ kind: "agent", tabId: expect.any(String) as unknown as string, projectId: "__workspace__", agentId: "claude", cwd: "", mode: "normal", sessionId: SESSION }]);
+  });
+
+  test("a failed agent run's card is red with the reason; a session the Agents app has no answer of yet says so", async ({ page }) => {
+    const failed: RunRecord = { ...done, state: "failed", reason: "the agent exited before its turn was done", agent: { ...done.agent!, exitSentAt: null }, durationMs: 9000, endedAt: at(7, 0) + 9000 };
+    await start(page, { route: `run/morning-summary/${RUN}` });
+    await setHistory(page, [failed], { [SESSION]: null });
+    const dialog = app(page).getByTestId("run-dialog");
+    await expect(dialog).toHaveAttribute("data-tone", "danger");
+    await expect(app(page).getByTestId("run-result")).toHaveText("Failed");
+    await expect(dialog.getByTestId("run-why")).toHaveText("The agent exited before its turn was done");
+    await expect(dialog.getByTestId("run-agent-note")).toHaveText("The agent left no message in this session.");
+    await expect(dialog.getByRole("button", { name: "Run again" })).toBeVisible();
+    await shoot(page, "agent-card-failed");
   });
 });

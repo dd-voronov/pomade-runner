@@ -34,8 +34,9 @@ workspace-level app: one list of every job, filterable to the current project.
 outside it, is just a terminal.
 
 **Pomade is never required for a run to keep going.** Services, scripts and git jobs run while
-Pomade is closed. Agent jobs need Pomade: when one is due and Pomade is closed, Runner launches it
-and waits until it is ready.
+Pomade is closed. An agent run needs Pomade to start — its launch spec comes from `pomade-agents`
+through Pomade's broker: one due while Runner is not connected to Pomade fails, "cannot start —
+Pomade is not running, and an agent run needs it". Once started it runs in the keeper like any run.
 
 ## Jobs
 
@@ -114,7 +115,7 @@ Notes for humans and agents.
 | `schedule` | script · agent · git | a `pomade-kit` schedule-format block (schema owned by `pomade-kit:E-003`), resolution `time`; `always` is refused (a service is always on by itself) |
 | `hook` | script · agent · git | `{ event, …filters }` (see Triggers) |
 | `after` | script · agent · git · service | `{ job: <id>, result: done \| failed \| any }` (chains); a service also takes `action: restart \| start \| stop` |
-| `agent`, `mode` | agent | `agent` (required): a roster id from `pomade-agents`; `mode`: one of that agent's modes, default `normal`; the file **body is the prompt** and must not be empty |
+| `agent`, `mode` | agent | `agent` (required): a roster id from `pomade-agents`; `mode`: one of that agent's modes, default `normal`; the file **body is the prompt**: not empty, at most 16,384 characters (`AGENT_PROMPT_MAX`), no NUL — its errors name the field `body` |
 | `git` | git | required: `{ operation: commit-push \| pull \| push \| fetch, repos: [...] }`; repos by the name `pomade-git` accepts, each once, none starting with `-` (the command would read it as an option); one repo may be written without the list |
 | `missed` | scheduled jobs only | `run-on-wake` (agent, script) · `wait-for-me` · `skip` (git) — what a missed run becomes ("Missed runs and load") |
 | `worth-until` | with `missed: run-on-wake` | `next-run` (default) or a time of day (`12:00`): until when a caught-up run is worth starting |
@@ -188,8 +189,8 @@ disk.
   - while the keeper is not followed nothing is due: the look waits for it, so a short keeper
     outage delays a run instead of losing it.
 - **Once at** runs once; after its time it has no next run and shows as **finished**.
-- Script and git jobs fire on schedules, hooks and chains; Pomade's and the agents' hook events
-  (E-007) and agent jobs (E-004) come with their epics.
+- Script, agent and git jobs fire on schedules, hooks and chains; Pomade's and the agents' hook
+  events come with E-007.
 
 **Hooks:**
 
@@ -204,7 +205,7 @@ disk.
 | Another job finished (done / failed / any) | `after: { job, result }` | Runner | a **chain** |
 
 **Firing hooks** (`src/scheduler/hooks.ts`, `runs.ts`):
-- An event fires every valid, enabled script and git job whose `hook` names it and whose filters it passes; a
+- An event fires every valid, enabled script, agent and git job whose `hook` names it and whose filters it passes; a
   filter left out takes any value. Every event comes through one firing path, `hook()`, with the
   context its runs get in their environment; E-007 brings Pomade's and the agents' events to it.
 - **Mac login** is a scheduler start that finds no keeper running (`startedKeeper` in
@@ -223,7 +224,7 @@ disk.
   and takes its result (`any` takes both). Failed is any failure: an exit code, a signal, a time
   limit, a start the keeper refused, a lost session. A run stopped by you, skipped or missed fires
   nothing: the person stepped in, or nothing ran.
-- Every follower fires, in id order. A script's or git job's run has trigger `chain` and its parent in `cause` —
+- Every follower fires, in id order. A script's, agent's or git job's run has trigger `chain` and its parent in `cause` —
   the parent's job, name, run and result — so History shows "chain: after Pull" and its card opens
   the parent's run; `POMADE_PARENT_*` are in its environment. It joins the queue like any run: its
   overlap applies, the switch holds it and it runs late on release, and it never waits for the
@@ -242,7 +243,6 @@ disk.
     `run.started` or `run.finished`, and fires no chain.
 - A run that ended while the scheduler was down fires its chains when the next scheduler records
   it. A record already in the history fired them then, and fires nothing again.
-- Agent jobs fire on hooks and chains with their epic (E-004).
 
 **Context for scripts.** Scripts receive the context as environment variables:
 - `POMADE_JOB` (the job's id: `backup`, `coda-helper/nightly`), `POMADE_RUN_ID`, `POMADE_TRIGGER`
@@ -296,7 +296,9 @@ you`. A run that never started is `skipped` or `missed`, with a reason ("missed 
   with the reason. A session gone from the keeper is **failed** ("its session is gone"); a start
   the keeper refuses is **failed** ("cannot start — …") and never started. Past the job's
   `time-limit` Runner stops the run (reason `time-limit`): **failed**, "stopped: time limit, 45 min"
-  — the job's limit, which the record keeps (`limitHit`, minutes).
+  — the job's limit, which the record keeps (`limitHit`, minutes). A run is recorded once its
+  session's end is half a second old (`LOG_SETTLE_MS`): the keeper reports an exit while its last
+  output may still be on its way into the log.
   Once its record is written the session is forgotten.
 - **Overlap**, when the job has a run going or queued: `skip` (default) records the new one
   **skipped · previous run still going** · `parallel` queues it too · `queue` holds one **queued**
@@ -304,9 +306,9 @@ you`. A run that never started is `skipped` or `missed`, with a reason ("missed 
   run is already queued**. A queued run whose job meanwhile is disabled, invalid or gone is skipped
   when its turn comes. An on-time run covers a caught-up run of its job still queued: that one is
   **missed · skipped · the 09:00 run covers it**.
-- **Run now** runs a script or git job now, trigger `manual`, under the same overlap: refused with `skip`
+- **Run now** runs a script, agent or git job now, trigger `manual`, under the same overlap: refused with `skip`
   while a run goes and with `queue` while one is held, as it is for a disabled, invalid or unknown
-  job and for agent jobs. The switch never holds it; it takes a low-priority slot like any
+  job. The switch never holds it; it takes a low-priority slot like any
   run, so it may wait as `queued · 1 ahead`. For a service it is Start.
 - **Attach.** A running run opens as an attached tab like a service
   (`tabs.openAttached({ session: { app: "pomade-runner", session: "run:…" } })`).
@@ -451,14 +453,40 @@ the keeper reports updates the service's record.
 - Without a known workspace, or while the scheduler does not follow the keeper, supervision does
   nothing.
 
-**Agent runs** (an agent → folder → mode):
-- **Launch:** Runner builds the command from the agent's launch spec in `pomade-agents`.
-- **Session id:** pre-assigned where the agent allows (claude `--session-id`); otherwise looked up
-  in `pomade-agents` by folder + start time.
-- **Waiting for you:** the session output is scanned (`pomade-kit` agent scanners). A permission
-  prompt switches the run to `waiting for you`, and the time limit pauses.
-- **Finish:** when the agent's turn completes and it sits idle with no pending prompt, Runner ends
-  the session cleanly → `done`.
+**Agent runs** (`src/scheduler/runs.ts`, the rules in `agent-runs.ts`, the turns in
+`src/keeper/agent-turns.ts`, the client of `pomade-agents` in `src/integrations/agents.ts`). Runner
+keeps no table of providers: what runs, the session id and how to end the agent come from
+`pomade-agents`' published API (`../pomade-agents/docs/CONTRACTS.md` "Roster", "Reads for Runner"),
+through Pomade's broker (the manifest's `calls: ["pomade-agents"]`). Everything else is a script
+run's: run id, queue (an agent job is low priority by default), overlap, switch, time limit, Run now,
+hooks, chains, History, notices and Needs you.
+- **Launch.** With Runner connected to Pomade: the agent from `roster.list` (its name, provider and
+  modes; none listed are the provider's — Normal, Full autonomy), the job's mode among them, then
+  `roster.launchSpec({ agent, mode, sessionId, prompt })` — `mode` always, a UUID Runner makes as
+  `sessionId`, the job's prompt. The session `run:<job>:<run id>` runs the spec's `line` — one
+  POSIX-shell line, the profile's command (maybe an alias) and its quoted arguments — as
+  `$SHELL -l -i -c <line>`: a login shell for the user's `PATH`, interactive for the aliases of the
+  rc files; in the job's folder, its realpath kept as the run's `cwd`. It fails without starting,
+  with the reason: Pomade not connected; the Agents app absent or not answering ("the Agents app
+  (pomade-agents) is not running"); an agent not in the roster; a mode the agent lacks ("claude-pm
+  has no Full autonomy mode"); a folder that does not exist.
+- **The run's agent** (`AgentRun` on the run and its record): the agent's id and name, provider,
+  mode and its name, the session id, `cwd`, `startedAt` — the session's start on this Mac's clock,
+  ISO 8601 — the spec's `exit`, and when Runner typed it.
+- **Session id.** The spec's `sessionId`: the one Runner made, when the provider pre-assigns it; when
+  it is `null` (Codex) the run's session is looked up with `sessions.find` — `cwd`, the agent, and
+  10 s around `startedAt` — every 5 s while it runs and once more at its end; of several, the one
+  started nearest it. Kept on the run.
+- **Finishing.** The agent runs interactively, so approvals and Open session work. The scheduler
+  attaches to the session as a viewer and replays its output into the kit's agent-state scanner
+  (`AgentStateScanner`, the provider's screen and window title), afresh on every snapshot — an
+  attach, a reconnect after a keeper update, a scheduler restart. When the turn completes — working,
+  then idle with no prompt pending — Runner types the spec's `exit` and, 300 ms later, Enter (a CLI
+  reads text and Enter in one chunk as a paste). The agent's exit then is **done**; an agent still
+  there 15 s later is stopped (reason `stopped`) and the run is **done** all the same. An end before
+  the exit was typed is **failed**, "the agent exited before its turn was done", a status 0
+  included; a crash after it **failed** with its exit code; Stop, the time limit and a lost session
+  read as a script's. A permission or trust prompt is no finished turn: the run keeps going.
 
 **Git runs** (`src/scheduler/git-runs.ts`, `runs.ts`) run Pomade's `pomade-git` and keep its
 structured result. Everything else about the run is a script run's: run id, queue (a git job is
@@ -504,7 +532,7 @@ the Git panel's failure mark reads. It posts no notice: Runner notifies about a 
 **Result card** (`src/ui/RunCard.tsx`, its look in `src/ui/runLook.ts`). One per run, a dialog
 over History. Its head: the kind icon, the job's name, the result as a pill with its help
 ("Done", "Failed", "Stopped: time limit", "Missed · waiting for you"), then when it ran (or was due), how long and what
-started it — with its help — and a why line: a hook's event ("Mac login"), a caught-up run's
+started it — with its help — an agent run's agent and mode ("claude · Normal"), and a why line: a hook's event ("Mac login"), a caught-up run's
 missed time, a chain's "After Pull: done" whose name opens the run it followed. A failed run's
 head is red, a missed run that waits for you amber. Its body, by what the run left:
 
@@ -512,7 +540,7 @@ head is red, a missed run that waits for you amber. Its body, by what the run le
 |---|---|---|
 | Script, ended | exit code (red when failed) or the reason it failed — a time limit as "Stopped: Time limit, 45 min — the job's time limit" — and the last lines | **View output** · **Run again** |
 | Git, ended | each repo: its commit hash and its steps (✓ done, ✗ failed, faint skipped), and a reason a step does not say | **View output** · **Run again** |
-| Agent, ended | the agent's last message | **Open session** · **View output** |
+| Agent, ended | a failed run's reason in red; the agent's last message (`sessions.lastMessage` by the run's session, its Markdown drawn as text: paragraphs, lists, bold, emphasis, code), or why it cannot be read — no session known, none written yet, the Agents app not running | **Open session** (a Pomade agent tab resuming the session — `agentTabs.resume` in the job's project and folder — or the live tab already on it) · **View output** · **Run again** |
 | Running | the latest output, followed while it runs | **Open terminal** · **Stop run** |
 | Queued | what it waits for, in a sentence | **Run now** |
 | Missed, waiting for you | when it was due, and that its policy waits for you; **Run at…** opens a field that reads the time as it is typed | **Run now** · **Run at…** · **Skip** |
@@ -773,7 +801,8 @@ to it, light theme only.
   tab's: on in Jobs, it is on in Services; it keeps the open project's jobs ("No jobs in <project>"
   and **New job** when none), and **New job** then starts in that project (`new/<encoded project
   id>`, `newJobRoute`).
-  - **A row:** the kind icon (the kind as its tooltip), the name over the trigger in words
+  - **A row:** the kind icon (the kind as its tooltip), the name — an agent job in Full autonomy with
+    the amber **Full autonomy** tag and its help beside it — over the trigger in words
     (`jobTriggerWords`, a chain's job and a hook's project by name; the tooltip is the full text, and
     a git job's adds its operation and repos — a repo the workspace lacks is said in red), **Last
     result**, **Next run**, the actions, and the **Disable** toggle. A disabled row is dimmed.
@@ -881,11 +910,11 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   and the file as last read (`base`). Switching kind keeps what the person set and resets the
   kind-dependent defaults they left alone (missed-run policy, overlap, low priority, notify). A folder inside a project
   fills in that project.
-- **Kinds**: a kind the form builds is registered in `FORM_KINDS` (`state.ts`: the file's fields
-  from the values, and which form field each file field's errors belong to) and in `KIND_UI`
-  (`kinds.tsx`: its sections between Kind and Policies, its policy rows, its Create button). The
-  picker shows every kind; the ones not registered are shown faded, with their help, and cannot be
-  chosen. A job of such a kind opens a page saying so, with **Open file**.
+- **Kinds**: each kind is registered in `FORM_KINDS` (`state.ts`: the file's fields — and the body,
+  for an agent job — from the values, and which form field each file field's errors belong to) and
+  in `KIND_UI` (`kinds.tsx`: its sections between Kind and Policies, its policy rows, its Create
+  button). A file the form cannot read — broken frontmatter, a kind Runner does not have — opens a
+  page saying so, with **Open file**.
 - **Trigger** (script and git; `TriggerSection.tsx`, the values in `schedule.ts` and `state.ts`, the words
   in `triggerWords.ts`, pure). A choice of **On a schedule** · **When something happens**; back
   from a schedule, the hook or the chain shown last returns. A schedule has the schedule editor:
@@ -928,6 +957,25 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   that does not keep Save from writing. The file gets `git: { operation, repos }`, the repos in the
   order they were ticked — the order `pomade-git` runs them in. Its policies are a script's, with
   the kind's defaults (Skip, normal priority, On failure).
+- **Agent** (`AgentSections` in `kinds.tsx`, `pomade-agents` read through `src/ui/useAgents.ts`): the
+  Trigger section as a script's, then **Agent** — who · where · how:
+  - **Agent**: a choice of the roster's agents (`roster.list`), by name; one the file names that the
+    roster lacks stays, with a red line saying so that does not keep Save from writing;
+  - **Folder** and **Project** as a script's, the Folder's (i) its own, and under the input "Connected
+    to <agent>:" with a chip per project connected to it (`roster.projectsFor`, in the Projects
+    panel's order), then the workspace root — a chip sets the folder, and its project;
+  - **Mode**: Normal and Full autonomy, then the agent's other modes; one the agent lacks is faded,
+    its tooltip "claude-pm has no full autonomy mode"; Normal tagged default. Picking an agent that
+    lacks the mode set goes back to Normal. Full autonomy shows the amber warning under it: "Skips
+    every approval. … The job shows a “Full autonomy” mark in the list.";
+  - **Prompt**: a text area, "Saved as the body of the job file." — the file's body, trimmed, with
+    a closing line break. An edit writes it only when it changed (`bodyChange`), the fields
+    field-only as for every kind; the checker's errors on the body (`body`) show on it.
+  - Without the Agents app — absent, not answering, or answering what Runner cannot read — a notice
+    stands in place of the Agent and Mode pickers, saying so and that the job keeps the file's
+    agent and mode; a run due meanwhile fails. Folder, Project and Prompt stay.
+
+  Its policies are a script's, with the kind's defaults (Run on wake, low priority, Always).
 - **A service's chain** (`ServiceChainLine` in `TriggerSection.tsx`) ends the service's Trigger
   section: **+ Restart, start or stop it after another job**, then the line "**Also** [restart it ·
   start it · stop it] after [job] [is done · fails · finishes]" with **×** to remove it; the file
@@ -1107,7 +1155,12 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
   - Payload (`RunStartedPayload`, `RunFinishedPayload`): `job` (id), `name`, `run`, `kind`,
     `folder` (workspace-relative), `project` (id or `null`), `trigger`; on run finished also
     `result` (`done` · `failed` · `stopped-by-you`) and `exitCode`.
-  - For agent runs, also the session id, the agent and the started-by-Runner flag.
+  - An agent run's also carry what `pomade-agents` reads them by (`../pomade-agents/docs/CONTRACTS.md`
+    "Subscribed events"; `src/scheduler/run-events.ts`): `sessionId` (`null` while not known —
+    `run.finished` carries one found after the start), `agent`, `mode`, `cwd` (absolute, symlinks
+    resolved), `startedByRunner: true` and `startedAt` (ISO 8601 with a zone: the session's start,
+    at or before the transcript's first record). `run.finished` repeats every field of `run.started`
+    for the same `job` and `run`.
   - `pomade-agents` subscribes (its "agent live here?" and event B use them), and never calls
     Runner.
 - **The `pomade-runner` command.**
@@ -1126,7 +1179,7 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
 | Platform (`pomade:E-034`) | attached terminals: the pane, `tabs.openAttached`, `attachedTab.action` |
 | `pomade-git` (`pomade:E-042`) | git operations, structured results |
 | `pomade-kit` | SDK, schedule format, date phrases, agent scanners, the keeper library and attach protocol, the git runs contract |
-| `pomade-agents` | agents + modes + launch specs, projects ↔ agents, last message, session lookup, events B and C |
+| `pomade-agents` (`calls`) | `roster.list`, `roster.launchSpec`, `roster.projectsFor`, `sessions.lastMessage`, `sessions.find` (`src/integrations/agents.ts`); events B and C |
 
 ## Stack
 

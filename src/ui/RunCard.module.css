@@ -141,3 +141,32 @@
 .problem {
   color: var(--danger-text);
 }
+
+/* An agent's last message (the prototype's `.msg`). */
+.message {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-size: var(--fs-base);
+  overflow-wrap: anywhere;
+}
+
+.message ul,
+.message ol {
+  margin: 0;
+}
+
+.content .message > * + * {
+  margin-top: var(--space-2);
+}
+
+.message ul,
+.message ol {
+  padding-left: var(--space-5);
+}
+
+.message code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}

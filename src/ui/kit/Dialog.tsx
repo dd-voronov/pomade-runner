@@ -125,7 +125,7 @@ export function DialogBody({ children }: { children: ReactNode }): React.JSX.Ele
 /** A dialog's foot: `children` from the left, `end` pushed to the right edge. */
 export function DialogFoot({ children, end }: { children?: ReactNode | undefined; end?: ReactNode | undefined }): React.JSX.Element {
   return (
-    <div className={styles.foot}>
+    <div className={styles.foot} data-testid="dialog-foot">
       {children}
       {end !== undefined && (
         <>

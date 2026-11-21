@@ -523,3 +523,52 @@
 .problem {
   color: var(--danger-text);
 }
+
+.hint {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+/* A folder the agent is connected to, offered under the Folder field (the prototype's small chip). */
+.suggest {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--panel-raised);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.suggest:hover {
+  border-color: var(--text-faint);
+  color: var(--text);
+}
+
+.suggest:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The Full-autonomy warning under the mode (the prototype's `.warnbar`). */
+.warnbar {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--warning-soft);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.warnbar > svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--warning-text);
+}

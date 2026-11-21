@@ -32,6 +32,8 @@ declare global {
     copied: string[];
     /** While set, the stand-in clipboard refuses a write with this message. */
     refuseCopy: string | null;
+    /** The stand-in Agents app's last message of each session (`harness/agents.ts`): `null` = none yet. */
+    agentMessages: Record<string, string | null>;
     /** The stand-in scheduler refuses an action (a method of `runner-api.ts`) with its reason while one is set. */
     refuse: Record<string, string>;
   }

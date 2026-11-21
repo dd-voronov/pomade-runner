@@ -16,6 +16,7 @@ import type { HostClient } from "pomade-kit/sdk";
 import { APP_ID, APP_VERSION } from "../app";
 import type { PostNotice } from "../integrations/notices";
 import { setBadge } from "../integrations/notices";
+import { agentsOf } from "../integrations/agents";
 import { announce, offerRunner, type LinkPomade } from "../integrations/pomade";
 import {
   JOBS_CHANGED_EVENT,
@@ -24,8 +25,6 @@ import {
   RUNS_CHANGED_EVENT,
   SERVICES_CHANGED_EVENT,
   SETTINGS_CHANGED_EVENT,
-  type RunFinishedPayload,
-  type RunStartedPayload,
 } from "../integrations/runner-api";
 import { formatJobError } from "../jobs/format";
 import { findOutputLog, gitResultPath, recordsFolderOf, type StateFolder } from "../locations";
@@ -34,6 +33,7 @@ import { createJobsLoader } from "../jobs/loader";
 import { entryId, entryPath, type JobsSnapshot } from "../jobs/model";
 import { jobTriggerWords } from "../jobs/words";
 import { KIND_DEFAULTS } from "../jobs/parse";
+import type { AgentTurns } from "../keeper/agent-turns";
 import { sessionIdOf, sessionOwner } from "../keeper/ids";
 import { exitWords, type ServiceActionResult, type ServiceStatus } from "../keeper/model";
 import type { NetworkReadiness } from "../keeper/readiness";
@@ -47,7 +47,8 @@ import { ControlRefused, serveControl } from "./control/server";
 import { deleteJob } from "./delete";
 import { createHistory, keepOutputLog, readOutput } from "./history";
 import type { Log } from "./log";
-import type { ActiveRun, DeleteResult, EnableResult, JobListing, RunActionResult, RunRecord, RunsReport } from "./model";
+import type { DeleteResult, EnableResult, JobListing, RunActionResult, RunsReport } from "./model";
+import { runFinishedPayload, runStartedPayload } from "./run-events";
 import { createNeedsYou, fileNeedsYouStore } from "./needs-you";
 import { projectsMemory } from "./projects";
 import { readEnvironment } from "./read-environment";
@@ -82,6 +83,10 @@ export interface SchedulerOptions {
   postNotice: PostNotice;
   /** The `pomade-git` command git jobs run. */
   pomadeGit: string;
+  /** Following agent runs' turns in their sessions; closed when the scheduler stops. */
+  turns: AgentTurns;
+  /** The user's login shell: agent runs run their line in it. */
+  shell: string;
 }
 
 export interface Scheduler {
@@ -98,16 +103,6 @@ export type StartResult =
   /** Another scheduler serves the control socket; it stays in charge. */
   | { status: "already-running" }
   | { status: "failed"; reason: string };
-
-const startedPayload = (run: ActiveRun | RunRecord): RunStartedPayload => ({
-  job: run.job,
-  name: run.name,
-  run: run.run,
-  kind: run.kind,
-  folder: run.folder,
-  project: run.project,
-  trigger: run.trigger,
-});
 
 export async function startScheduler(options: SchedulerOptions): Promise<StartResult> {
   const { clock, log, state } = options;
@@ -190,6 +185,9 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     post,
     serviceAction: supervisor.chainAction,
     pomadeGit: options.pomadeGit,
+    agents: () => (host === null ? null : agentsOf(host)),
+    turns: options.turns,
+    shell: options.shell,
     gitResult: (job, run) => gitResultPath(state, job, run),
     keepLog: (job, run) => keepOutputLog(records, state, job, run),
     projectPath: (project) => {
@@ -197,13 +195,12 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
       const root = projects.root(project);
       return workspace === null || root === null ? null : join(workspace, root);
     },
-    onStarted: (run) => publish(RUN_STARTED_EVENT, startedPayload(run)),
+    onStarted: (run) => publish(RUN_STARTED_EVENT, runStartedPayload(run)),
     onFinished: (record) => {
       const entry = jobs.snapshot().jobs.find((candidate) => entryId(candidate) === record.job);
       needsYou.runFinished(record, entry?.valid === true ? entry.job.notify : KIND_DEFAULTS[record.kind].notify);
       if (record.startedAt === null || record.state === "skipped") return;
-      const payload: RunFinishedPayload = { ...startedPayload(record), result: record.state, exitCode: record.exitCode };
-      publish(RUN_FINISHED_EVENT, payload);
+      publish(RUN_FINISHED_EVENT, runFinishedPayload(record));
     },
     onChange: publishRuns,
   });
@@ -441,6 +438,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         await following;
         await supervisor.close();
         await runs.close();
+        options.turns.close();
         await needsYou.close();
         await projects.flush();
         await sessions.close();

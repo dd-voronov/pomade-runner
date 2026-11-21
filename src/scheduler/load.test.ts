@@ -18,7 +18,7 @@ import type { JobsSnapshot } from "../jobs/model";
 import { createHistory, type History } from "./history";
 import { runWords, type ActiveRun, type RunRecord } from "./model";
 import { ALIVE_EVERY_MS, createRuns, WAKE_GAP_MS, type Runs } from "./runs";
-import { FakeSessions, memoryStore, memorySwitch, script } from "./runs-fixture";
+import { FakeSessions, FakeTurns, memoryStore, memorySwitch, script } from "./runs-fixture";
 import { DEFAULT_SETTINGS, type Settings } from "./settings";
 
 const ms = (local: string): number => new Date(local).getTime();
@@ -59,6 +59,9 @@ describe("missed runs and load", () => {
       store,
       switchStore,
       projectPath: () => null,
+      agents: () => null,
+      turns: new FakeTurns(),
+      shell: "/bin/sh",
       pomadeGit: "/nowhere/bin/pomade-git",
       gitResult: (job, run) => `/nowhere/output/${job}/${run}.json`,
       keepLog: () => Promise.resolve(null),

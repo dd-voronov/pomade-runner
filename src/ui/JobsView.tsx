@@ -3,6 +3,7 @@ import { WORKSPACE_PROJECT_ID, type ProjectRef } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
+import { FULL_AUTONOMY_MODE } from "../integrations/agents";
 import { editRoute, RUN_NOW_METHOD, runRoute, SET_ENABLED_METHOD } from "../integrations/runner-api";
 import { describeJobError } from "../jobs/format";
 import { entryId, entryPath, JOBS_FOLDER, type InvalidJob, type Job, type JobEntry, type JobKind } from "../jobs/model";
@@ -12,7 +13,7 @@ import { isEnableResult, isRunActionResult, type ActiveRun, type RunsReport } fr
 import { DeleteJobDialog } from "./DeleteJobDialog";
 import { fallbackService, gitDetail, lastLook, nextLook } from "./jobWords";
 import styles from "./JobsView.module.css";
-import { Button, Chip, EmptyBlock, GroupHead, Help, Icon, IconButton, KindCell, RowActions, RowCell, RowMain, Status, TableHead, TableRow, Toggle, useToast } from "./kit";
+import { Button, Chip, EmptyBlock, GroupHead, Help, Icon, IconButton, KindCell, RowActions, RowCell, RowMain, Status, TableHead, TableRow, Tag, Toggle, useToast } from "./kit";
 import { useOpenServiceTab } from "./RunningNow";
 import { SERVICE_RUNS } from "./serviceWords";
 import { ViewFilters } from "./shell/TabShell";
@@ -186,6 +187,14 @@ function JobRow({
       <KindCell icon={job.kind} label={KIND_LABEL[job.kind]} />
       <RowMain
         name={<span data-testid="job-name">{job.name}</span>}
+        tags={
+          job.kind === "agent" && job.mode === FULL_AUTONOMY_MODE ? (
+            <Tag tone="warn" help="jobs.fullauto" data-testid="job-full-autonomy">
+              <Icon name="warn" size={11} />
+              Full autonomy
+            </Tag>
+          ) : undefined
+        }
         sub={
           <>
             {trigger}

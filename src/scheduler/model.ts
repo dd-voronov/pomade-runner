@@ -61,6 +61,30 @@ export type Waits =
 
 export type RunState = ActiveState | RunResult;
 
+/** An agent run's own: who ran, how, in which session (docs/DESIGN.md "Agent runs"). */
+export interface AgentRun {
+  /** The agent's roster id. */
+  agent: string;
+  /** Its name, as the roster gave it at the launch. */
+  name: string;
+  /** Which CLI it is: the output its turns are read from. */
+  provider: "claude" | "codex";
+  /** The mode's id and name at the launch. */
+  mode: string;
+  modeName: string;
+  /** The session the run is; `null` until it is known (a provider that cannot pre-assign it is
+   *  looked up by folder and start time). */
+  sessionId: string | null;
+  /** The folder the agent started in: absolute, symlinks resolved. */
+  cwd: string;
+  /** When its session started (ISO 8601, this Mac's clock): what the session lookup goes by. */
+  startedAt: string;
+  /** What to type to end the agent, from its launch spec ("/exit"). */
+  exit: string;
+  /** When Runner typed `exit` once the turn was done (epoch ms, the scheduler's clock); `null` before. */
+  exitSentAt: number | null;
+}
+
 /** What every run carries, going or ended. */
 interface RunBase {
   /** The job's id (`backup`, `coda-helper/nightly`). */
@@ -79,6 +103,9 @@ interface RunBase {
   cause: RunCause | null;
   /** When it was due — the schedule's time, the click, the event (epoch ms, the scheduler's clock). */
   dueAt: number;
+  /** An agent run's agent, mode and session once it started; `null` for any other run, and for an
+   *  agent run before its start. */
+  agent: AgentRun | null;
 }
 
 /** A run that has not ended. */
@@ -352,9 +379,27 @@ function isRunCause(value: unknown): value is RunCause {
   }
 }
 
-function isRunBase(value: Record<string, unknown>): boolean {
-  const { job, name, kind, project, folder, run, trigger, cause, dueAt } = value;
+function isAgentRun(value: unknown): value is AgentRun {
+  if (!isRecord(value)) return false;
+  const { agent, name, provider, mode, modeName, sessionId, cwd, startedAt, exit, exitSentAt } = value;
   return (
+    typeof agent === "string" &&
+    typeof name === "string" &&
+    (provider === "claude" || provider === "codex") &&
+    typeof mode === "string" &&
+    typeof modeName === "string" &&
+    nullableString(sessionId) &&
+    typeof cwd === "string" &&
+    typeof startedAt === "string" &&
+    typeof exit === "string" &&
+    nullableNumber(exitSentAt)
+  );
+}
+
+function isRunBase(value: Record<string, unknown>): boolean {
+  const { job, name, kind, project, folder, run, trigger, cause, dueAt, agent } = value;
+  return (
+    (agent === null || isAgentRun(agent)) &&
     typeof job === "string" &&
     typeof name === "string" &&
     typeof kind === "string" &&
@@ -434,7 +479,7 @@ export function isRunRecord(value: unknown): value is RunRecord {
 /** A history record as a file keeps it; a field a record of an older build lacks gets its default. */
 export function parseRunRecord(value: unknown): RunRecord | null {
   if (!isRecord(value)) return null;
-  const record = { cause: null, action: null, git: null, limitHit: null, ...value };
+  const record = { cause: null, action: null, git: null, limitHit: null, agent: null, ...value };
   return isRunRecord(record) ? record : null;
 }
 

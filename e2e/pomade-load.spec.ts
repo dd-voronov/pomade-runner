@@ -17,7 +17,7 @@ import { callScheduler } from "../src/scheduler/control/client";
 import type { RunRecord } from "../src/scheduler/model";
 import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
 import { drawn } from "./support/frames";
-import { stopKeeper } from "./support/keeper";
+import { expectNothingLeft, stopKeeper } from "./support/keeper";
 import { pomadeCheckout, pomadeEnv, type PomadeFolders } from "./support/pomade";
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
 
@@ -61,6 +61,7 @@ test.describe("missed runs in Pomade", () => {
     for (const scheduler of schedulers.splice(0)) await scheduler.kill();
     await app?.close();
     await stopKeeper(keeperSocket);
+    await expectNothingLeft(tmp);
     await removeDir(tmp);
   });
 

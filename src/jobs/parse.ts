@@ -2,7 +2,7 @@
 // with the defaults of its kind. Every problem names its field, its line and the fix. What needs
 // the other files or Pomade's projects — chains, names, project ids — is checked in `check.ts`.
 
-import { normalizeWorkspacePath, isPomadeFolderPath } from "pomade-kit/protocol";
+import { AGENT_PROMPT_MAX, normalizeWorkspacePath, isPomadeFolderPath } from "pomade-kit/protocol";
 import { describeSchedule, parseSchedule, parseTime, type Schedule } from "pomade-kit/schedule";
 
 import { encodeJobId, jobIdFits, MAX_ENCODED_JOB_ID } from "../keeper/ids";
@@ -477,16 +477,14 @@ function checkAgent(c: FileCheck): { agent: string; mode: string; prompt: string
   }
   const mode = c.has("mode") ? c.text(["mode"], c.get("mode"), "normal", { oneLine: true }) : "normal";
   const prompt = c.doc.body.trim();
-  if (prompt === "") {
-    c.errors.push({
-      path: c.path,
-      line: c.doc.line(["kind"]),
-      field: "",
-      problem: "an agent job's prompt is its body, and the body is empty",
-      fix: "write what the agent should do below the closing --- line",
-    });
-  }
-  return agent === null || mode === null || prompt === "" ? null : { agent, mode, prompt };
+  const bodyProblem = (problem: string, fix: string): void => {
+    c.errors.push({ path: c.path, line: c.doc.line(["kind"]), field: "body", problem, fix });
+  };
+  if (prompt === "") bodyProblem("an agent job's prompt is its body, and the body is empty", "write what the agent should do below the closing --- line");
+  else if (prompt.length > AGENT_PROMPT_MAX) bodyProblem(`the prompt is ${prompt.length} characters, longer than the ${AGENT_PROMPT_MAX} an agent takes`, "shorten it, or point the agent at a file that holds the rest");
+  else if (prompt.includes("\0")) bodyProblem("the prompt holds a NUL character", "remove it");
+  const usable = prompt !== "" && prompt.length <= AGENT_PROMPT_MAX && !prompt.includes("\0");
+  return agent === null || mode === null || !usable ? null : { agent, mode, prompt };
 }
 
 /** Where a file sits in the jobs folder: its id and sub-folder, and why it cannot be a job file there. */

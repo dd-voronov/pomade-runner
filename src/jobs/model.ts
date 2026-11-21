@@ -144,7 +144,8 @@ export interface JobError {
   path: string;
   /** 1-based line in the file. */
   line: number;
-  /** The field it is about, as a path (`schedule.weekly.days[1]`); `""` for the file as a whole. */
+  /** The field it is about, as a path (`schedule.weekly.days[1]`); `"body"` for what follows the
+   *  frontmatter (an agent job's prompt); `""` for the file as a whole. */
   field: string;
   problem: string;
   fix: string;

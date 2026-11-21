@@ -4,6 +4,7 @@
 // (`checkJobAmong`), and each error lands on the field it names. An edit writes only the fields
 // whose value changed against the file as last read, so comments, unknown fields and the body stay.
 
+import { setBody } from "pomade-kit/frontmatter";
 import { baseName } from "pomade-kit/protocol";
 
 import { checkJobAmong, projectJobsFolder } from "../../jobs/check";
@@ -88,18 +89,23 @@ export interface FormValues {
    *  they run. */
   operation: GitOperation;
   repos: readonly string[];
+  /** An agent job: the agent's roster id, its mode, and the prompt — the file's body, trimmed. */
+  agent: string;
+  mode: string;
+  prompt: string;
 }
 
 export type FormField = keyof FormValues;
 
 /** What a kind makes of the form: the file's fields, and which form field an error about a file
- *  field belongs to. Registering a kind here (and its sections in `kinds.tsx`) is what makes the
- *  form build it. */
+ *  field belongs to. Each kind is registered here and its sections in `kinds.tsx`. */
 export interface KindFile {
   /** The job file's fields from the values; `undefined` leaves a field out. */
   fields(values: FormValues): Record<string, FieldInput | undefined>;
-  /** File field (its top-level name) → the form field that shows its errors. */
+  /** File field (its top-level name; `body` for the body) → the form field that shows its errors. */
   errorFields: Readonly<Record<string, FormField>>;
+  /** The file's body the kind writes from the values; `undefined` leaves the body as it is. */
+  body?(values: FormValues): string;
 }
 
 /** The values whose default depends on the kind: switching kind resets them unless the person set them. */
@@ -199,12 +205,15 @@ const GIT: KindFile = {
   errorFields: { ...COMMON_ERROR_FIELDS, git: "repos", ...RUN_ERROR_FIELDS },
 };
 
-/** The kinds the form builds. */
-export const FORM_KINDS: Partial<Record<JobKind, KindFile>> = { service: SERVICE, script: SCRIPT, git: GIT };
+/** An agent job: the agent, the folder it starts in, the mode (Normal left out), and the prompt as the body. */
+const AGENT: KindFile = {
+  fields: (values) => ({ ...commonFields(values), agent: values.agent.trim(), mode: values.mode === "normal" ? undefined : values.mode, ...runFields(values) }),
+  errorFields: { ...COMMON_ERROR_FIELDS, agent: "agent", mode: "mode", body: "prompt", ...RUN_ERROR_FIELDS },
+  body: (values) => (values.prompt.trim() === "" ? "" : `${values.prompt.trim()}\n`),
+};
 
-export function formKind(kind: JobKind): KindFile | null {
-  return FORM_KINDS[kind] ?? null;
-}
+/** The kinds the form builds. */
+export const FORM_KINDS: Record<JobKind, KindFile> = { service: SERVICE, script: SCRIPT, agent: AGENT, git: GIT };
 
 /** A form's state: the values, what the person set, and the file it edits. */
 export interface FormState {
@@ -225,7 +234,7 @@ export interface FormState {
 }
 
 export function blankValues(kind: JobKind): FormValues {
-  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), hookEvent: "login", serviceChain: false, chainJob: "", chainResult: "done", chainAction: "restart", worth: "next-run", worthAt: "12:00", timeLimit: "", operation: "commit-push", repos: [], ...kindDefaults(kind) };
+  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), hookEvent: "login", serviceChain: false, chainJob: "", chainResult: "done", chainAction: "restart", worth: "next-run", worthAt: "12:00", timeLimit: "", operation: "commit-push", repos: [], agent: "claude", mode: "normal", prompt: "", ...kindDefaults(kind) };
 }
 
 /** A new job's form. */
@@ -280,6 +289,9 @@ export function valuesFromText(text: string): FormValues | null {
     notify: choice(fields.notify, NOTIFY_VALUES, values.notify),
     operation: choice(git.operation, GIT_OPERATIONS, values.operation),
     repos: gitRepos(git.repos),
+    agent: asText(fields.agent).trim() || values.agent,
+    mode: asText(fields.mode).trim() || values.mode,
+    prompt: read.doc.body.trim(),
   };
 }
 
@@ -356,19 +368,30 @@ function sameInput(a: FieldInput | undefined, b: FieldInput | undefined): boolea
 /** The field changes an edit writes: every file field whose value differs from the file as read,
  *  in the order fields are written; `undefined` removes one. */
 export function fieldChanges(state: FormState): FieldChanges {
-  const kind = formKind(state.values.kind);
-  if (kind === null) return {};
-  const now = kind.fields(state.values);
-  const was = (formKind(state.base.kind) ?? kind).fields(state.base);
+  const now = FORM_KINDS[state.values.kind].fields(state.values);
+  const was = FORM_KINDS[state.base.kind].fields(state.base);
   const keys = [...FIELD_ORDER, ...Object.keys({ ...was, ...now }).filter((key) => !(FIELD_ORDER as readonly string[]).includes(key))];
   const changes: Record<string, FieldInput | undefined> = {};
   for (const key of keys) if ((key in now || key in was) && !sameInput(now[key], was[key])) changes[key] = now[key];
   return changes;
 }
 
+/** The body an edit writes: the kind's, when it differs from the file's as read; `undefined` when
+ *  the body stays. */
+export function bodyChange(state: FormState): string | undefined {
+  const write = FORM_KINDS[state.values.kind].body;
+  if (write === undefined || state.text === null) return undefined;
+  return state.values.prompt.trim() === state.base.prompt.trim() && state.values.kind === state.base.kind ? undefined : write(state.values);
+}
+
+/** A new job's body: the one its kind writes, else none. */
+export function newBody(values: FormValues): string {
+  return FORM_KINDS[values.kind].body?.(values) ?? "";
+}
+
 /** A new job's fields: the ones its kind writes. */
 function newFields(values: FormValues): Record<string, FieldInput> {
-  const fields = formKind(values.kind)?.fields(values) ?? {};
+  const fields = FORM_KINDS[values.kind].fields(values);
   return Object.fromEntries(Object.entries(fields).filter((entry): entry is [string, FieldInput] => entry[1] !== undefined));
 }
 
@@ -405,10 +428,12 @@ export function wouldBe(state: FormState, snapshot: JobsSnapshot, projects: read
         break;
       }
     }
-    return { path, text: newJobText(newFields(state.values), ""), movesFrom: null };
+    return { path, text: newJobText(newFields(state.values), newBody(state.values)), movesFrom: null };
   }
   const written = setJobFields(state.text, fieldChanges(state));
-  const text = written.ok ? written.text : state.text;
+  const body = bodyChange(state);
+  const withBody = written.ok && body !== undefined ? setBody(written.text, body) : written;
+  const text = withBody.ok ? withBody.text : state.text;
   if (state.values.project === state.base.project) return { path: state.path, text, movesFrom: null };
   const sub = subFolderOf(state.values.project, projects, subFolderOfPath(state.path));
   const path = `${JOBS_FOLDER}/${sub === null ? "" : `${sub}/`}${baseName(state.path)}`;
@@ -426,7 +451,7 @@ export type ErrorPlace = FormField | "file";
 
 export function errorPlace(error: JobError, values: FormValues): ErrorPlace {
   const top = error.field.split(/[.[]/)[0] ?? "";
-  const place = formKind(values.kind)?.errorFields[top] ?? "file";
+  const place = FORM_KINDS[values.kind].errorFields[top] ?? "file";
   return place !== "file" && !drawn(values, place) ? "file" : place;
 }
 
@@ -477,7 +502,7 @@ export function blocksSave(state: FormState, place: ErrorPlace): boolean {
 
 /** Whether the person changed anything the file would get. */
 export function hasChanges(state: FormState): boolean {
-  return state.path === null || Object.keys(fieldChanges(state)).length > 0;
+  return state.path === null || Object.keys(fieldChanges(state)).length > 0 || bodyChange(state) !== undefined;
 }
 
 /** The file's own value of a field as last read — for what the form shows but does not edit

@@ -28,6 +28,7 @@ function record(state: RunRecord["state"], extra: Partial<RunRecord> = {}): RunR
     trigger: "scheduled",
     cause: null,
     dueAt: T0,
+    agent: null,
     state,
     action: null,
     reason: state === "skipped" ? "previous run still going" : null,

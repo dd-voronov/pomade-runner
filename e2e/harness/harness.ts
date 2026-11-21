@@ -1,6 +1,7 @@
 // pomade-kit's fake host as the parent window of a Runner frame: the page the UI specs open
 // instead of Pomade. `?app=<url>` is the Runner page to load; `?surface=panel` opens it as the
 // side panel of the strip icon, otherwise as a tab, at `?route=<route>` when given;
+// `?agents=none` leaves out the stand-in Agents app (`agents.ts`), `?agents=silent` keeps it from answering;
 // `?hostApi=<n>` makes the host speak another Host API version, so the handshake is refused;
 // `?scheduler=none` leaves out the stand-in scheduler that serves Runner's API; `?projects=prototype`
 // gives Pomade the prototype's projects and groups, `?projects=<json>` other projects
@@ -14,6 +15,7 @@ import { createFakeHost, mountApp, type MountedApp } from "pomade-kit/fake-host"
 
 import manifest from "../../app/manifest.json" with { type: "json" };
 import { STRIP_ICON } from "../../src/app";
+import { agentsStandIn, HARNESS_ROSTER } from "./agents";
 import { startFakeScheduler } from "./scheduler";
 
 const query = new URLSearchParams(location.search);
@@ -50,6 +52,10 @@ const fakeHost = createFakeHost({
   // `?repos=a,b` names more, for the screenshots that compare with the prototype's.
   git: ["Knowledge", ...(query.get("repos")?.split(",") ?? [])].map((name) => ({ name, root: name, absPath: `/fake/workspace/${name}`, remoteUrl: null, branch: "main", upstream: null, ahead: 0, behind: 0, hasCommits: true, changes: [] })),
   ...(hostApi === null ? {} : { hostApi: Number(hostApi) }),
+  apps: agentsStandIn(query.get("agents")),
+  roster: HARNESS_ROSTER,
+  // The sessions Open session resumes: the result cards' agent runs.
+  sessions: [{ agentId: "claude", sessionId: "5f0c2a1e-7b3d-4c8e-9a61-0d2f4b6e8c90" }],
 });
 window.fakeHost = fakeHost;
 

@@ -23,7 +23,7 @@ import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
 import { drawn } from "./support/frames";
 import { blankSchedule, type ScheduleValues } from "../src/ui/form/schedule";
 import { newForm, setFolder, setValue, switchKind, wouldBe } from "../src/ui/form/state";
-import { runningSession, sessionInfo, sessionsReport, stopKeeper } from "./support/keeper";
+import { runningSession, sessionInfo, sessionsReport, expectNothingLeft, stopKeeper } from "./support/keeper";
 import { pomadeCheckout, pomadeEnv, type PomadeFolders } from "./support/pomade";
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
 
@@ -75,6 +75,7 @@ test.describe("Runner in Pomade", () => {
     await scheduler?.kill();
     await app?.close();
     await stopKeeper(keeperSocket, pids);
+    await expectNothingLeft(tmp);
     await removeDir(tmp);
   });
 
@@ -314,7 +315,9 @@ test.describe("Runner in Pomade", () => {
     await expect(dialog.getByTestId("run-result")).toHaveText("Failed");
   });
 
-  const TICKER = 'i=0; while :; do i=$((i+1)); echo "tick $i"; if read -t 1 line; then echo "got: $line"; fi; done';
+  // A closed terminal (its keeper gone) ends it: `read` then fails at once, where a second without
+  // input takes a second (bash 3.2 gives both status 1, so the clock tells them apart).
+  const TICKER = 'i=0; while :; do i=$((i+1)); echo "tick $i"; t=$SECONDS; if read -t 1 line; then echo "got: $line"; elif [ $SECONDS -eq $t ]; then exit 0; fi; done';
 
   function schedulerSocket(): string {
     return join(folders.userData, "app-state", manifest.id, "scheduler.sock");

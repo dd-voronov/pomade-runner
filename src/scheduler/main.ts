@@ -11,6 +11,7 @@ import { POMADE_ENV } from "pomade-kit/protocol";
 
 import { noticePoster } from "../integrations/notices";
 import { linkPomade } from "../integrations/pomade";
+import { createAgentTurns, loginShell } from "../keeper/agent-turns";
 import { probeReadiness } from "../keeper/readiness";
 import { createSessions } from "../keeper/sessions";
 import { fileStore } from "../keeper/supervisor";
@@ -70,6 +71,8 @@ if (state === null || socketPath === null || userData === null) {
       probe: probeReadiness,
       postNotice: noticePoster(userData, log),
       pomadeGit: pomadeGitPath(process.env),
+      turns: createAgentTurns({ socketPath: keeperSocket, log }),
+      shell: loginShell(process.env),
     });
   };
   const following = followWorkspace({ workspace: () => resolveWorkspace(), start, pollMs: tick, log });

@@ -114,6 +114,16 @@ export interface RunStartedPayload {
   /** The stable project id; `null` for a workspace job. */
   project: string | null;
   trigger: string;
+  /** An agent run's only — the shape `pomade-agents` reads (it ignores an agent run without `cwd`):
+   *  its session (`null` while not known; `run.finished` carries one found after the start), the
+   *  agent's roster id, the mode, the folder it started in (absolute, symlinks resolved), that
+   *  Runner started it, and when (ISO 8601). */
+  sessionId?: string | null;
+  agent?: string;
+  mode?: string;
+  cwd?: string;
+  startedByRunner?: true;
+  startedAt?: string;
 }
 
 /** `run.finished`'s payload: `run.started`'s and how it ended. */

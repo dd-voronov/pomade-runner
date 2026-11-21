@@ -63,7 +63,7 @@ describe("control protocol", () => {
   });
 
   it("checks the runs' answers' shapes", () => {
-    const base = { job: "backup", name: "Backup", kind: "script", project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled", cause: null, dueAt: 1 };
+    const base = { job: "backup", name: "Backup", kind: "script", project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled", cause: null, dueAt: 1, agent: null };
     const going = { lowPriority: true, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false };
     const active = { ...base, ...going, state: "running", startedAt: 2, session: "run:backup:20261117-120000-abcdef", log: "/s/o.log" };
     const record = { ...base, state: "failed", action: null, reason: null, startedAt: 2, endedAt: 3, durationMs: 1, exitCode: 1, signal: null, log: "/s/o.log", lastLines: ["boom"], git: null, limitHit: null };

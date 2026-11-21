@@ -143,7 +143,9 @@ test.describe("missed runs and load", () => {
     await world.writeJob("heavy.md", scriptFile("Heavy", "echo heavy", "schedule:\n  every: { minutes: 10 }\n"));
     await world.writeJob("light.md", scriptFile("Light", "echo light", "schedule:\n  every: { minutes: 10 }\nlow-priority: false\nmissed: skip\n"));
     await world.writeJob("web.md", serviceFile("Web", "sleep 600"));
-    const scheduler = world.startScheduler(clock("2026-11-18T12:59:30"));
+    // Five minutes before 13:00 on a clock 60 times as fast: five real seconds for the pause to
+    // land first, on a busy machine too.
+    const scheduler = world.startScheduler(clock("2026-11-18T12:55:00"));
     await world.ready(scheduler);
     const paused = await world.command("pause", "low");
     expect(paused.code).toBe(0);

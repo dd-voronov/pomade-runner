@@ -13,7 +13,7 @@ import { expect, test } from "@playwright/test";
 import manifest from "../app/manifest.json" with { type: "json" };
 import { REPO, cleanEnv, removeDir, run, tempDir } from "./support/env";
 import { pomadeCheckout, pomadeEnv } from "./support/pomade";
-import { runningSession, stopKeeper } from "./support/keeper";
+import { runningSession, expectNothingLeft, stopKeeper } from "./support/keeper";
 import { startSchedulerProcess } from "./support/scheduler";
 
 test("./install builds Runner, installs it and links its skill; run again, it updates; the installed copy runs; ./uninstall removes it", async () => {
@@ -100,6 +100,7 @@ test("./install builds Runner, installs it and links its skill; run again, it up
   } finally {
     await scheduler.current?.kill();
     await stopKeeper(keeperSocket, pids);
+    await expectNothingLeft(tmp);
     await removeDir(tmp);
   }
 });

@@ -16,7 +16,7 @@ import type { RunnerSession, ServicesReport, ServiceStatus, SessionsReport } fro
 import type { RunRecord } from "../../src/scheduler/model";
 import { callScheduler } from "../../src/scheduler/control/client";
 import { DIST, cleanEnv, removeDir, run, tempDir, type Finished } from "./env";
-import { runningSession, stopKeeper } from "./keeper";
+import { expectNothingLeft, runningSession, stopKeeper } from "./keeper";
 import { startSchedulerProcess, type SchedulerProcess } from "./scheduler";
 
 export interface RunnerWorld {
@@ -152,6 +152,7 @@ export async function createRunnerWorld(): Promise<RunnerWorld> {
     async dispose() {
       for (const scheduler of started.splice(0)) await scheduler.kill();
       await stopKeeper(keeperSocket, pids.splice(0));
+      await expectNothingLeft(tmp);
       await removeDir(tmp);
     },
   };

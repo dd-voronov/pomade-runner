@@ -1,14 +1,15 @@
-// The job form's kinds, as the person sees them: each kind's card in the picker, and — for a kind
-// the form builds — its sections between Kind and Policies, its policy rows and its Create button.
-// A kind the form builds is registered twice: its file fields in `state.ts` (`FORM_KINDS`) and its
-// sections here (`sections`, `policies`); the picker offers exactly those.
+// The job form's kinds, as the person sees them: each kind's card in the picker, its sections
+// between Kind and Policies, its policy rows and its Create button. A kind is registered twice: its
+// file fields in `state.ts` (`FORM_KINDS`) and its sections here (`sections`, `policies`).
 
 import { useState, type ReactNode } from "react";
 
+import { agentModes, FULL_AUTONOMY_MODE, modeWords } from "../../integrations/agents";
 import { GIT_OPERATIONS, type GitOperation, type JobKind, type MissedPolicy, type Notify, type OverlapPolicy } from "../../jobs/model";
 import { GIT_OPERATION_WORDS } from "../../jobs/words";
 import type { HelpKey } from "../help";
-import { Check, Checks, Field, FieldError, Help, LinkButton, Segmented, Select, TextInput, Toggle, type IconName, type SelectOption } from "../kit";
+import { Check, Checks, Field, FieldError, Help, Icon, LinkButton, Segmented, Select, TextArea, TextInput, Toggle, type IconName, type SelectOption } from "../kit";
+import { useProjectsFor, useRoster } from "../useAgents";
 import { useRepos } from "../useRunnerApi";
 import { FolderField, type FormProps } from "./FolderField";
 import { FormSection } from "./FormSection";
@@ -32,9 +33,9 @@ export interface KindUi {
   help: HelpKey;
   /** The Name field's placeholder. */
   namePlaceholder: string;
-  /** For a kind the form builds: its sections between Kind and Policies, its policy rows and the
-   *  primary button's words for a new job. */
-  build?: {
+  /** Its sections between Kind and Policies, its policy rows and the primary button's words for a
+   *  new job. */
+  build: {
     sections(props: FormProps): ReactNode;
     policies: readonly PolicyRow[];
     createLabel(values: FormValues): string;
@@ -371,8 +372,116 @@ function RepoPicker({ host, state, set, error }: FormProps): React.JSX.Element {
   );
 }
 
+/** The modes every agent is offered — Normal and Full autonomy, faded where the agent lacks one — and
+ *  the agent's own others after them. */
+const BASE_MODES = ["normal", FULL_AUTONOMY_MODE] as const;
 
-/** Every kind's card, in the picker's order; the ones with `build` are the ones the form makes. */
+/** The Agent kind: Trigger (a schedule, a hook or a chain), then Agent — who (the roster), where
+ *  (the folder: the projects connected to the agent first, then any folder; the project), how (the
+ *  agent's modes, the Full-autonomy warning) — and the prompt, the file's body. Without the Agents
+ *  app the form says so in place of the agent and mode pickers. */
+function AgentSections(props: FormProps): React.JSX.Element {
+  const { host, state, set, error, projects, workspaceName } = props;
+  const { values } = state;
+  const roster = useRoster(host);
+  const agents = roster.status === "ready" ? roster.value : [];
+  const agent = agents.find((candidate) => candidate.id === values.agent);
+  const connected = useProjectsFor(host, roster.status === "ready" && agent !== undefined ? agent.id : null);
+  const own = agent === undefined ? [] : agentModes(agent);
+  const modes = [...BASE_MODES.map((id) => own.find((mode) => mode.id === id) ?? { id, name: modeWords(id), args: [] }), ...own.filter((mode) => !(BASE_MODES as readonly string[]).includes(mode.id))];
+  if (!modes.some((mode) => mode.id === values.mode)) modes.push({ id: values.mode, name: modeWords(values.mode), args: [] });
+  const pickAgent = (id: string): void => {
+    set("agent", id);
+    const next = agents.find((candidate) => candidate.id === id);
+    if (next !== undefined && !agentModes(next).some((mode) => mode.id === values.mode)) set("mode", "normal");
+  };
+  const agentName = agent?.name ?? values.agent;
+  const connectedProjects = connected.status === "ready" ? connected.value.flatMap((id) => projects.records.filter((record) => record.id === id)) : [];
+  const suggestions =
+    agent === undefined ? undefined : (
+      <div className={styles.inline} data-testid="agent-folders">
+        <span className={styles.hint}>Connected to {agentName}:</span>
+        {connectedProjects.map((project) => (
+          <button key={project.id} type="button" className={styles.suggest} data-tip={project.root} onClick={() => props.setFolder(project.root)}>
+            {project.name}
+          </button>
+        ))}
+        <button type="button" className={styles.suggest} onClick={() => props.setFolder(".")}>
+          {workspaceName} (workspace root)
+        </button>
+      </div>
+    );
+  const absent = roster.status === "absent" || roster.status === "failed";
+  return (
+    <>
+      <TriggerSection {...props} />
+      <FormSection title="Agent" sub="who · where · how">
+        {absent ? (
+          <div className={styles.notice} role="status" data-testid="agents-absent">
+            <Icon name="warn" />
+            <p>
+              {roster.status === "absent" ? `${capitalised(roster.message)}.` : `The Agents app's roster cannot be read: ${roster.message}.`} Runner lists the agents and their modes from it, so the job keeps{" "}
+              <b>{values.agent}</b> in mode <b>{modeWords(values.mode)}</b> until it answers; a run due meanwhile fails.
+            </p>
+          </div>
+        ) : (
+          <Field label="Agent" help="f.agent" error={error("agent")} hint={roster.status === "ready" && agent === undefined ? <span className={styles.problem}>{values.agent} is not in the Agents app's roster.</span> : roster.status === "loading" ? "Reading the Agents app's roster…" : undefined}>
+            {() => (
+              <div data-field="agent">
+                <Segmented<string>
+                  label="Agent"
+                  value={values.agent}
+                  onChange={pickAgent}
+                  options={[...agents.map((candidate) => ({ value: candidate.id, label: candidate.name })), ...(agent === undefined && roster.status === "ready" ? [{ value: values.agent, label: values.agent }] : [])]}
+                  optionTestId={(id) => `agent-${id}`}
+                />
+              </div>
+            )}
+          </Field>
+        )}
+        <div className={styles.row}>
+          <div className={styles.wide}>
+            <FolderField {...props} help="f.agentfolder" below={absent ? undefined : suggestions} />
+          </div>
+          <ProjectField {...props} />
+        </div>
+        {!absent && (
+          <Field label="Mode" help="f.mode" error={error("mode")}>
+            {() => (
+              <div data-field="mode">
+                <Segmented<string>
+                  label="Mode"
+                  value={values.mode}
+                  onChange={(mode) => set("mode", mode)}
+                  options={modes.map((mode) => {
+                    const offered = own.some((candidate) => candidate.id === mode.id);
+                    return { value: mode.id, label: mode.name, isDefault: mode.id === "normal", disabled: !offered && mode.id !== values.mode, tip: offered || roster.status !== "ready" ? undefined : `${agentName} has no ${mode.name.toLowerCase()} mode` };
+                  })}
+                  optionTestId={(id) => `mode-${id}`}
+                />
+              </div>
+            )}
+          </Field>
+        )}
+        {values.mode === FULL_AUTONOMY_MODE && (
+          <div className={styles.warnbar} role="note" data-testid="full-autonomy-warning">
+            <Icon name="warn" />
+            <span>
+              <b>Skips every approval.</b> The agent edits files and runs commands without asking. The job shows a “Full autonomy” mark in the list. <Help k="f.fullauto" />
+            </span>
+          </div>
+        )}
+        <Field label="Prompt" help="f.prompt" error={error("prompt")} hint="Saved as the body of the job file.">
+          {(id) => <TextArea id={id} rows={6} placeholder="What should the agent do?" value={values.prompt} bad={error("prompt") !== undefined} data-field="prompt" onChange={(event) => set("prompt", event.target.value)} />}
+        </Field>
+      </FormSection>
+    </>
+  );
+}
+
+const capitalised = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
+/** Every kind's card, in the picker's order. */
 export const KIND_UI: Record<JobKind, KindUi> = {
   service: {
     label: "Service",
@@ -398,7 +507,18 @@ export const KIND_UI: Record<JobKind, KindUi> = {
       createLabel: () => "Create job",
     },
   },
-  agent: { label: "Agent", line: "Runs an agent with a prompt", icon: "agent", help: "kind.agent", namePlaceholder: "Morning summary" },
+  agent: {
+    label: "Agent",
+    line: "Runs an agent with a prompt",
+    icon: "agent",
+    help: "kind.agent",
+    namePlaceholder: "Morning summary",
+    build: {
+      sections: (props) => <AgentSections {...props} />,
+      policies: SCRIPT_POLICIES,
+      createLabel: () => "Create job",
+    },
+  },
   git: {
     label: "Git",
     line: "Git operation on your repos",

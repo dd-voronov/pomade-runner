@@ -46,20 +46,23 @@
 // lane, one after another. Time comes from the clock given, so every rule is tested without
 // waiting.
 
-import { randomBytes } from "node:crypto";
-import { access, constants, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { randomBytes, randomUUID } from "node:crypto";
+import { access, constants, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { isGitRunOutput, type GitRunOutput, type NoticeParams } from "pomade-kit/protocol";
 import { nextOccurrence } from "pomade-kit/schedule";
 
-import { entryId, type GitJob, type Job, type JobsSnapshot, type ScriptJob, type ServiceAction, type ServiceJob } from "../jobs/model";
+import { agentMode, modeWords, type AgentsApi } from "../integrations/agents";
+import { entryId, type AgentJob, type GitJob, type Job, type JobsSnapshot, type ScriptJob, type ServiceAction, type ServiceJob } from "../jobs/model";
 import { KIND_DEFAULTS } from "../jobs/parse";
+import type { AgentTurns } from "../keeper/agent-turns";
 import { newRunId, sessionIdOf } from "../keeper/ids";
 import type { ChainActionOutcome, RunnerSession } from "../keeper/model";
 import { jobIdOf } from "../keeper/services";
 import type { Sessions } from "../keeper/sessions";
 import { liveOutputLogPath, runsRecordPath, type RecordsFolder, type StateFolder } from "../locations";
+import { AGENT_EXIT_WAIT_MS, agentArgv, agentEnd, lookupWindow, pickSession, SESSION_LOOKUP_EVERY_MS } from "./agent-runs";
 import { chainCause, followers, parentResult } from "./chains";
 import type { Clock } from "./clock";
 import { gitCommandLine, gitRunEnd, type SessionEnd } from "./git-runs";
@@ -80,6 +83,7 @@ import {
   SWITCH_WORDS,
   waitsWords,
   type ActiveRun,
+  type AgentRun,
   type JobRuns,
   type MissedChoice,
   type MissedChoiceResult,
@@ -108,6 +112,9 @@ export const WAKE_GAP_MS = 60_000;
  *  within this much, since when it missed. A look that fires or misses something is written at
  *  once. */
 export const ALIVE_EVERY_MS = 60_000;
+/** How old a session's end (this Mac's clock) is before its run is recorded: the keeper may still be
+ *  appending the program's last output to the log when it reports the exit. */
+export const LOG_SETTLE_MS = 500;
 
 /** What `runs.json` keeps. Plain JSON. */
 export interface RunsRecords {
@@ -140,7 +147,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function parseActiveRun(value: unknown): ActiveRun | null {
   if (!isRecord(value)) return null;
   const kind = typeof value.kind === "string" && Object.hasOwn(KIND_DEFAULTS, value.kind) ? (value.kind as keyof typeof KIND_DEFAULTS) : "script";
-  const run = { lowPriority: KIND_DEFAULTS[kind].lowPriority, cause: null, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false, ...value };
+  const run = { lowPriority: KIND_DEFAULTS[kind].lowPriority, cause: null, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false, agent: null, ...value };
   return isActiveRun(run) ? run : null;
 }
 
@@ -218,8 +225,8 @@ export function ranFor(run: ActiveRun, now: number): number {
   return run.startedAt === null ? 0 : Math.max(0, now - run.startedAt);
 }
 
-/** The jobs that run once per trigger which Runner runs now: scripts and git jobs. */
-export type RunJob = ScriptJob | GitJob;
+/** The jobs that run once per trigger: scripts, git jobs and agent jobs. */
+export type RunJob = ScriptJob | GitJob | AgentJob;
 
 /** The working folder of a job's runs, workspace-relative: a git job's is the workspace root. */
 const runFolder = (job: RunJob): string => (job.kind === "git" ? "" : job.folder);
@@ -261,6 +268,13 @@ export interface RunsOptions {
   post(notice: NoticeParams): void;
   /** A chain's action on a service, through the supervisor; `why` names the chain, for its log. */
   serviceAction(job: string, action: ServiceAction, why: string): Promise<ChainActionOutcome>;
+  /** The Agents app through Pomade's broker while Runner is connected to Pomade; `null` while it
+   *  is not — an agent run then cannot start. */
+  agents(): AgentsApi | null;
+  /** Following agent runs' turns in their sessions. */
+  turns: AgentTurns;
+  /** The user's login shell: an agent run's line runs in it, interactive. */
+  shell: string;
   /** A run's session started. */
   onStarted(run: ActiveRun): void;
   /** A run ended, could not start, was skipped or missed: its record is in the history. */
@@ -278,7 +292,7 @@ export interface Runs {
   /** Record the runs that ended, look at the schedules, enforce the limits, start what may start.
    *  A tick asked for while one is due is dropped. */
   tick(): Promise<void>;
-  /** Run a script or git job now (trigger `manual`), by its id or name, under its overlap policy. */
+  /** Run a script, git or agent job now (trigger `manual`), by its id or name, under its overlap policy. */
   runNow(ref: string): Promise<RunActionResult>;
   /** An event: fire every job whose hook it matches, through the loop guard and the queue. Runner
    *  fires `login` itself, once per login; Pomade's and the agents' events come here (E-007). */
@@ -299,7 +313,7 @@ export interface Runs {
   active(): ActiveRun[];
   /** Missed runs waiting for the person, long-run warnings and the jobs the loop guard paused. */
   needsYou(): NeedsYouItem[];
-  /** Every enabled scheduled script and git job's next run, and the runs set with Run at…, soonest first. */
+  /** Every enabled scheduled job's next run, and the runs set with Run at…, soonest first. */
   nextUp(): NextRun[];
   /** Each run job's next and latest run. */
   jobRuns(): JobRuns[];
@@ -318,9 +332,21 @@ const MINUTE_MS = 60_000;
 /** A loop-guard pause in words. */
 export const LOOP_WORDS = `triggered ${FIRING_LIMIT}× in ${FIRING_WINDOW_MS / MINUTE_MS} min — looks like a loop`;
 
-/** The script and git jobs a schedule fires: valid, enabled, scheduled. */
+/** Whether a job runs once per trigger: a script, a git or an agent job. */
+const isRunJob = (job: Job): job is RunJob => job.kind !== "service";
+
+/** The jobs a schedule fires: valid, enabled, scheduled. */
 function scheduledRuns(snapshot: JobsSnapshot): RunJob[] {
-  return snapshot.jobs.flatMap((entry) => (entry.valid && (entry.job.kind === "script" || entry.job.kind === "git") && entry.job.enabled && entry.job.trigger.kind === "schedule" ? [entry.job] : []));
+  return snapshot.jobs.flatMap((entry) => (entry.valid && isRunJob(entry.job) && entry.job.enabled && entry.job.trigger.kind === "schedule" ? [entry.job] : []));
+}
+
+/** What a run's session runs: a command line by the login shell, or — an agent run — a program and
+ *  its arguments; in `cwd`. An agent run's agent, mode and session. */
+interface Launch {
+  command: string;
+  argv?: string[];
+  cwd: string;
+  agent: AgentRun | null;
 }
 
 /** How a run's session ended, as its record says it. */
@@ -371,6 +397,11 @@ export function createRuns(options: RunsOptions): Runs {
   let login = false;
   /** Chain actions on services under way: each records its outcome in the lane when it answers. */
   const acting = new Set<Promise<void>>();
+  /** Agent runs whose exit command was typed: by session, when Runner stops it if it has not ended
+   *  (`performance.now()` — the agent's own time, whatever the scheduler's clock). */
+  const exitDeadlines = new Map<string, number>();
+  /** Agent runs whose session is looked up: by session, when it was last asked (`performance.now()`). */
+  const lookedUp = new Map<string, number>();
 
   const now = (): Date => clock.now();
   const key = (job: string, run: string): string => `${job}\n${run}`;
@@ -456,6 +487,7 @@ export function createRuns(options: RunsOptions): Runs {
             trigger: "chain",
             cause,
             dueAt: at.getTime(),
+            agent: null,
             state: outcome.result,
             action,
             reason: outcome.result === "done" ? null : outcome.reason,
@@ -497,6 +529,7 @@ export function createRuns(options: RunsOptions): Runs {
       limitHit: null,
       warnedAt: null,
       warningDismissed: false,
+      agent: null,
     };
   }
 
@@ -511,6 +544,7 @@ export function createRuns(options: RunsOptions): Runs {
     trigger: run.trigger,
     cause: run.cause,
     dueAt: run.dueAt,
+    agent: run.agent,
     action: null,
     ...end,
   });
@@ -529,10 +563,10 @@ export function createRuns(options: RunsOptions): Runs {
     await record(notStarted(run, "missed", reason));
   }
 
-  /** The valid script or git job `id` names now, enabled or not. */
+  /** The valid job that runs once per trigger `id` names now, enabled or not. */
   function runJobOf(id: string): RunJob | null {
     const entry = options.jobs().jobs.find((candidate) => entryId(candidate) === id);
-    return entry?.valid === true && (entry.job.kind === "script" || entry.job.kind === "git") ? entry.job : null;
+    return entry?.valid === true && isRunJob(entry.job) ? entry.job : null;
   }
 
   /** The valid job of `kind` that `id` names now, or why it cannot run. */
@@ -542,15 +576,17 @@ export function createRuns(options: RunsOptions): Runs {
     if (snapshot.workspace === null) return "no workspace is known";
     if (entry === undefined) return "its job file is gone";
     if (!entry.valid) return "its job file is invalid";
-    if (entry.job.kind !== kind || (entry.job.kind !== "script" && entry.job.kind !== "git")) return `it is ${entry.job.kind === "agent" ? "an" : "a"} ${entry.job.kind} job now`;
+    if (entry.job.kind !== kind || !isRunJob(entry.job)) return `it is ${entry.job.kind === "agent" ? "an" : "a"} ${entry.job.kind} job now`;
     if (!entry.job.enabled) return "its job is disabled";
     return { job: entry.job, workspace: snapshot.workspace };
   }
 
   /** What a run's session runs: a script's command in its folder; for a git job, `pomade-git` in the
-   *  workspace root with its result into the run's result file — or why it cannot start. */
-  async function commandOf(job: RunJob, run: ActiveRun, workspace: string): Promise<{ command: string; cwd: string } | string> {
-    if (job.kind === "script") return { command: job.command, cwd: join(workspace, job.folder) };
+   *  workspace root with its result into the run's result file; for an agent job, its launch spec's
+   *  line — or why it cannot start. */
+  async function commandOf(job: RunJob, run: ActiveRun, workspace: string): Promise<Launch | string> {
+    if (job.kind === "script") return { command: job.command, cwd: join(workspace, job.folder), agent: null };
+    if (job.kind === "agent") return agentLaunch(job, workspace);
     try {
       await access(options.pomadeGit, constants.X_OK);
     } catch {
@@ -559,7 +595,35 @@ export function createRuns(options: RunsOptions): Runs {
     const result = options.gitResult(run.job, run.run);
     await mkdir(dirname(result), { recursive: true });
     await rm(result, { force: true });
-    return { command: gitCommandLine(options.pomadeGit, job, result), cwd: workspace };
+    return { command: gitCommandLine(options.pomadeGit, job, result), cwd: workspace, agent: null };
+  }
+
+  /** An agent run's launch: the agent and its mode from the roster, the launch spec for a session id
+   *  Runner makes and the job's prompt, in the job's folder — or why it cannot start. */
+  async function agentLaunch(job: AgentJob, workspace: string): Promise<Launch | string> {
+    const api = options.agents();
+    if (api === null) return "cannot start — Pomade is not running, and an agent run needs it";
+    let cwd: string;
+    try {
+      cwd = await realpath(join(workspace, job.folder));
+    } catch {
+      return `cannot start — its folder ${job.folder === "" ? "the workspace root" : job.folder} does not exist`;
+    }
+    try {
+      const agent = (await api.roster()).find((candidate) => candidate.id === job.agent);
+      if (agent === undefined) return `cannot start — the Agents app has no agent "${job.agent}"`;
+      const mode = agentMode(agent, job.mode);
+      if (mode === undefined) return `cannot start — ${agent.name} has no ${modeWords(job.mode)} mode`;
+      const spec = await api.launchSpec({ agent: agent.id, mode: mode.id, sessionId: randomUUID(), prompt: job.prompt });
+      return {
+        command: spec.line,
+        argv: agentArgv(options.shell, spec.line),
+        cwd,
+        agent: { agent: agent.id, name: agent.name, provider: agent.provider, mode: mode.id, modeName: mode.name, sessionId: spec.sessionId, cwd, startedAt: new Date().toISOString(), exit: spec.exit, exitSentAt: null },
+      };
+    } catch (err) {
+      return `cannot start — ${errorText(err)}`;
+    }
   }
 
   /** Start a queued run's session. */
@@ -588,7 +652,7 @@ export function createRuns(options: RunsOptions): Runs {
     }
     // The run is recorded as running before its session starts: a scheduler that dies in between
     // finds the session's end later.
-    Object.assign(run, { state: "running", lowPriority: job.lowPriority, waits: null, startedAt: now().getTime(), session });
+    Object.assign(run, { state: "running", lowPriority: job.lowPriority, waits: null, startedAt: now().getTime(), session, agent: what.agent });
     save();
     try {
       const env = runEnv(job, run.run, run.trigger, job.project === null ? null : options.projectPath(job.project), run.cause);
@@ -597,6 +661,7 @@ export function createRuns(options: RunsOptions): Runs {
         {
           title: job.name,
           command: what.command,
+          ...(what.argv === undefined ? {} : { argv: what.argv }),
           cwd: what.cwd,
           // `pomade-git` resolves repo names in the workspace whose jobs these are.
           env: job.kind === "git" ? { ...env, POMADE_WORKSPACE: workspace } : env,
@@ -604,7 +669,10 @@ export function createRuns(options: RunsOptions): Runs {
         },
       );
       run.log = started.log;
+      // The session lookup goes by the agent's own record of its start: this Mac's clock.
+      if (run.agent !== null) run.agent.startedAt = new Date(started.info.startedAt).toISOString();
       save();
+      if (run.agent !== null) follow(run, run.agent);
       log(`run ${run.job} ${run.run}: started (${run.trigger})`);
       options.onChange();
       options.onStarted(run);
@@ -809,13 +877,79 @@ export function createRuns(options: RunsOptions): Runs {
     }
   }
 
+  /** Follow a running agent run's turns: once the turn is done, its exit command is typed. */
+  function follow(run: ActiveRun, agent: AgentRun): void {
+    if (run.session === null || agent.exitSentAt !== null) return;
+    const { job, run: id } = run;
+    options.turns.watch(run.session, agent.provider, () => void inLane(async () => endTurn(job, id)));
+  }
+
+  /** An agent run's turn is done: type its exit command, once. */
+  function endTurn(job: string, id: string): void {
+    const run = active.find((candidate) => candidate.job === job && candidate.run === id && candidate.state === "running");
+    if (run?.agent == null || run.session === null || run.agent.exitSentAt !== null) return;
+    run.agent.exitSentAt = now().getTime();
+    exitDeadlines.set(run.session, performance.now() + AGENT_EXIT_WAIT_MS);
+    save();
+    log(`run ${job} ${id}: the agent's turn is done; typing ${run.agent.exit}`);
+    options.turns.type(run.session, run.agent.exit);
+  }
+
+  /** Look up the session of an agent run whose provider could not pre-assign one — by its folder and
+   *  start time, at most every `SESSION_LOOKUP_EVERY_MS` unless `now` — and keep it on the run. */
+  async function lookUp(run: ActiveRun, agent: AgentRun, now = false): Promise<void> {
+    const api = options.agents();
+    if (agent.sessionId !== null || api === null || run.session === null) return;
+    const asked = lookedUp.get(run.session);
+    if (!now && asked !== undefined && performance.now() - asked < SESSION_LOOKUP_EVERY_MS) return;
+    lookedUp.set(run.session, performance.now());
+    try {
+      const found = pickSession(await api.findSessions({ cwd: agent.cwd, ...lookupWindow(agent.startedAt, new Date()), agent: agent.agent }), agent.startedAt);
+      if (found === null) return;
+      agent.sessionId = found.id;
+      log(`run ${run.job} ${run.run}: its session is ${found.id}`);
+      save();
+      options.onChange();
+    } catch (err) {
+      log(`run ${run.job} ${run.run}: cannot look up its session — ${errorText(err)}`);
+    }
+  }
+
+  /** The agent runs going: follow their turns — after a restart too — look up a session not known
+   *  yet, and stop one that did not end after its exit command. */
+  async function agentRuns(): Promise<void> {
+    for (const run of active) {
+      if (run.state !== "running" || run.agent === null || run.session === null) continue;
+      follow(run, run.agent);
+      await lookUp(run, run.agent);
+      if (run.agent.exitSentAt === null) continue;
+      const deadline = exitDeadlines.get(run.session);
+      if (deadline === undefined) exitDeadlines.set(run.session, performance.now() + AGENT_EXIT_WAIT_MS);
+      else if (performance.now() >= deadline) {
+        exitDeadlines.set(run.session, Number.POSITIVE_INFINITY);
+        log(`run ${run.job} ${run.run}: the agent did not end after ${run.agent.exit}; stopping its session`);
+        try {
+          await sessions.stop(run.session, "stopped");
+        } catch (err) {
+          log(`run ${run.job} ${run.run}: cannot stop — ${errorText(err)}`);
+        }
+      }
+    }
+  }
+
   /** Record every run whose session ended or is gone; forget ended run sessions no run claims. */
   async function collect(): Promise<void> {
     const byId = new Map(sessions.list().map((session) => [session.id, session]));
     for (const run of active.filter((candidate) => candidate.state === "running")) {
       const session = run.session === null ? undefined : byId.get(run.session);
       if (session !== undefined && session.info.exit === null) continue;
-      const end = endOf(session, run);
+      // The keeper reports an end as soon as the program exits; its last output may still be on
+      // its way into the log. A run is recorded once its end is `LOG_SETTLE_MS` old.
+      const age = session?.info.exit == null ? null : Date.now() - session.info.exit.at;
+      if (age !== null && age >= 0 && age < LOG_SETTLE_MS) continue;
+      if (run.agent !== null) await lookUp(run, run.agent, true);
+      const scriptEnd = endOf(session, run);
+      const end = run.agent === null ? scriptEnd : agentEnd(scriptEnd, run.agent, session?.info.exit?.reason ?? null);
       const durationMs = session?.info.exit == null ? null : Math.max(0, session.info.exit.at - session.info.startedAt);
       const endedAt = durationMs !== null && run.startedAt !== null ? run.startedAt + durationMs : now().getTime();
       const output = run.log ?? session?.log ?? null;
@@ -826,6 +960,11 @@ export function createRuns(options: RunsOptions): Runs {
       await record(ended(run, { ...how, startedAt: run.startedAt, endedAt, durationMs, log: output === null ? null : await keep(run, output) }));
       // The record holds the result now.
       if (result !== null) await rm(result, { force: true });
+      if (run.session !== null) {
+        options.turns.unwatch(run.session);
+        exitDeadlines.delete(run.session);
+        lookedUp.delete(run.session);
+      }
       if (session !== undefined) await forget(session.id);
     }
     for (const session of sessions.list()) {
@@ -879,6 +1018,7 @@ export function createRuns(options: RunsOptions): Runs {
       held = new Map([...held].map(([job, since]) => [job, Math.min(since, lookedAt)]));
     }
     await settleOrphans();
+    await agentRuns();
     if (login) {
       login = false;
       await fireHook(LOGIN);
@@ -904,7 +1044,7 @@ export function createRuns(options: RunsOptions): Runs {
     if (entry === undefined) return { ok: false, reason: `no job "${ref}"` };
     if (!entry.valid) return { ok: false, reason: `the job "${entryId(entry)}" is invalid: ${entry.invalid.errors[0]?.problem ?? "see pomade-runner check"}` };
     const { job } = entry;
-    if (job.kind === "agent" || job.kind === "service") return { ok: false, reason: `"${job.name}" is ${job.kind === "agent" ? "an" : "a"} ${job.kind} job; Run now runs scripts, git jobs and services` };
+    if (job.kind === "service") return { ok: false, reason: `"${job.name}" is a service job; Run now runs scripts, git jobs, agent jobs and services` };
     if (!job.enabled) return { ok: false, reason: `"${job.name}" is disabled in its file; enable it first` };
     if (!sessions.followed()) return { ok: false, reason: "the keeper is not connected" };
     const going = active.filter((run) => run.job === job.id && run.state !== "missed-waiting");
@@ -1092,7 +1232,7 @@ export function createRuns(options: RunsOptions): Runs {
         if (!entry.valid || entry.job.kind === "service") return [];
         const { job } = entry;
         const ahead = job.trigger.kind === "schedule" ? nextOccurrence(job.trigger.schedule, at) : null;
-        const next = job.enabled && job.kind !== "agent" ? ahead : null;
+        const next = job.enabled ? ahead : null;
         return [{ job: job.id, next: next?.getTime() ?? null, finished: job.trigger.kind === "schedule" && ahead === null, last: last.get(job.id) ?? null }];
       });
     },

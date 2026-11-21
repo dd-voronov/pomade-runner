@@ -5,6 +5,7 @@ import { describeJobError } from "../../jobs/format";
 import type { JobsSnapshot, ProjectRecord } from "../../jobs/model";
 import {
   blocksSave,
+  bodyChange,
   editForm,
   errorShows,
   errorsByPlace,
@@ -12,6 +13,7 @@ import {
   followText,
   formErrors,
   hasChanges,
+  newBody,
   newForm,
   projectOfFolder,
   setFolder,
@@ -181,6 +183,9 @@ describe("editing a job file", () => {
       notify: "on-failure",
       operation: "commit-push",
       repos: [],
+      agent: "claude",
+      mode: "normal",
+      prompt: expect.any(String) as string,
     });
     expect(valuesFromText("---\nkind: [x\n---\n")).toBeNull();
     expect(valuesFromText("---\nkind: servce\n---\n")).toBeNull();
@@ -368,5 +373,41 @@ describe("a git job", () => {
     const git = setValue(switchKind(script, "git"), "repos", ["Knowledge"]);
     expect(fieldChanges(git)).toMatchObject({ kind: "git", folder: undefined, command: undefined, git: { operation: "commit-push", repos: ["Knowledge"] } });
     expect(shown(git, EMPTY)).toEqual({});
+  });
+});
+
+describe("an agent job", () => {
+  it("becomes a job file with its agent, mode and prompt as the body; Normal and the kind's defaults left out", () => {
+    let state = fill(switchKind(newForm("service"), "agent"), { name: "Morning summary", folder: "." });
+    expect(state.values).toMatchObject({ lowPriority: true, notify: "always", missed: "run-on-wake" });
+    state = setValue(state, "prompt", "  Write my morning summary.\n\n1. Read today's items.\n");
+    expect(newBody(state.values)).toBe("Write my morning summary.\n\n1. Read today's items.\n");
+    expect(wouldBe(state, EMPTY, PROJECTS).text).toBe(
+      "---\nkind: agent\nname: Morning summary\nfolder: .\nenabled: true\nagent: claude\nschedule:\n  daily: { at: 9:00 }\n---\nWrite my morning summary.\n\n1. Read today's items.\n",
+    );
+    state = setValue(state, "mode", "full-autonomy");
+    expect(wouldBe(state, EMPTY, PROJECTS).text).toContain("agent: claude\nmode: full-autonomy\n");
+  });
+
+  it("an empty prompt is the prompt's error, in the checker's words", () => {
+    const state = { ...fill(switchKind(newForm("service"), "agent"), { name: "Summary", folder: "." }), tried: true };
+    expect(shown(state, EMPTY).prompt).toEqual(["body — an agent job's prompt is its body, and the body is empty. Fix: write what the agent should do below the closing --- line."]);
+    expect(blocksSave(state, "prompt")).toBe(true);
+  });
+
+  it("editing writes the prompt as the body, field-only otherwise; the fields stay", () => {
+    const text = "---\nkind: agent # 7:00 summary\nname: Summary\nfolder: .\nagent: claude\nschedule:\n  daily: { at: 7:00 }\n---\nWrite my summary.\n";
+    let state = editForm("Apps/pomade-runner/jobs/summary.md", text);
+    if (state === null) throw new Error("cannot edit");
+    expect(state.values).toMatchObject({ agent: "claude", mode: "normal", prompt: "Write my summary." });
+    expect(hasChanges(state)).toBe(false);
+    expect(bodyChange(state)).toBeUndefined();
+    state = setValue(state, "prompt", "Write my summary, in 12 lines.");
+    expect(hasChanges(state)).toBe(true);
+    expect(fieldChanges(state)).toEqual({});
+    expect(bodyChange(state)).toBe("Write my summary, in 12 lines.\n");
+    expect(wouldBe(state, snapshotOf({ "summary.md": text }), PROJECTS).text).toBe(text.replace("Write my summary.", "Write my summary, in 12 lines."));
+    state = setValue(state, "mode", "full-autonomy");
+    expect(fieldChanges(state)).toEqual({ mode: "full-autonomy" });
   });
 });

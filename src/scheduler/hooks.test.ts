@@ -33,8 +33,8 @@ describe("hooks", () => {
     expect(snapshot.jobs.filter((entry) => !entry.valid)).toEqual([]);
   });
 
-  it("login fires the enabled scripts and git jobs on login, and nothing else — agent jobs come with their epic", () => {
-    expect(hooked(snapshot, LOGIN).map((job) => job.id)).toEqual(["login", "pull"]);
+  it("login fires the enabled scripts, agent and git jobs on login, and nothing else", () => {
+    expect(hooked(snapshot, LOGIN).map((job) => job.id)).toEqual(["agent", "login", "pull"]);
     expect(LOGIN).toEqual({ event: "login", project: null, agent: null, status: null, context: {} });
   });
 

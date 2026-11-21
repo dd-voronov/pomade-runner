@@ -50,6 +50,7 @@ import { CONTROL_PROTOCOL } from "./control/protocol";
 import { isHistoryPage, isRunActionResult, isRunsReport, NEXT_UP_RUNS } from "./model";
 import { isEnvironmentReport } from "./environment";
 import { isSettingsReport } from "./settings";
+import { FakeTurns } from "./runs-fixture";
 import { startScheduler, type Scheduler } from "./scheduler";
 
 /** One raw line to the socket, and the first line that comes back. */
@@ -204,7 +205,7 @@ describe("scheduler", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git",
+      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh",
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -280,7 +281,7 @@ describe("scheduler", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git",
+      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh",
     });
     expect(result).toEqual({ status: "already-running" });
     expect(second.refreshes).toBe(0);
@@ -342,7 +343,7 @@ describe("scheduler", () => {
 
   it("refuses a socket path macOS cannot bind", async () => {
     socketPath = join(dir, "x".repeat(120), "scheduler.sock");
-    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: join(dir, "ws"), sessions, ...supervision, state: stateFolderOf(join(dir, "ud")), postNotice, pomadeGit: "/nowhere/bin/pomade-git" });
+    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: join(dir, "ws"), sessions, ...supervision, state: stateFolderOf(join(dir, "ud")), postNotice, pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh" });
     expect(result.status).toBe("failed");
   });
 
@@ -386,7 +387,7 @@ describe("scheduler and the job files", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git",
+      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh",
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -598,7 +599,7 @@ describe("scheduler and runs", () => {
       sessions,
       ...supervision,
       postNotice: noticePoster(join(dir, "ud"), log),
-      pomadeGit: "/nowhere/bin/pomade-git",
+      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh",
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);

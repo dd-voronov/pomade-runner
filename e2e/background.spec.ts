@@ -12,7 +12,7 @@ import { expect, test } from "@playwright/test";
 import manifest from "../app/manifest.json" with { type: "json" };
 import { callScheduler } from "../src/scheduler/control/client";
 import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
-import { stopKeeper } from "./support/keeper";
+import { expectNothingLeft, stopKeeper } from "./support/keeper";
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
 
 const VERSION = manifest.version;
@@ -77,6 +77,7 @@ test.describe("scheduler and command", () => {
   test.afterEach(async () => {
     for (const scheduler of started.splice(0)) await scheduler.kill();
     await stopKeeper(keeperSocket);
+    await expectNothingLeft(tmp);
     await removeDir(tmp);
   });
 

@@ -19,6 +19,7 @@ const running = (job: string, state: ActiveRun["state"]): ActiveRun => ({
   trigger: "manual",
   cause: null,
   dueAt: 1,
+  agent: null,
   state,
   lowPriority: true,
   runAt: null,

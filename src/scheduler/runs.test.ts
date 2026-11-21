@@ -19,7 +19,7 @@ import type { JobsSnapshot } from "../jobs/model";
 import { createHistory, keepOutputLog, type History } from "./history";
 import type { ActiveRun, RunRecord } from "./model";
 import { createRuns, fileRunsStore, runEnv, type Runs } from "./runs";
-import { FakeSessions, memoryStore, memorySwitch, script } from "./runs-fixture";
+import { FakeSessions, FakeTurns, memoryStore, memorySwitch, script } from "./runs-fixture";
 import { DEFAULT_SETTINGS } from "./settings";
 import { ON_TIME_MS } from "./triggers";
 
@@ -64,6 +64,9 @@ describe("runs", () => {
       switchStore,
       post: (notice) => notices.push(notice),
       projectPath: (project) => (project === "p1" ? "/ws/Projects/one" : null),
+      agents: () => null,
+      turns: new FakeTurns(),
+      shell: "/bin/sh",
       pomadeGit: join(dir, "bin", "pomade-git"),
       gitResult: (job, run) => join(dir, "output", job, `${run}.json`),
       keepLog: (job, run) => (keepFails === null ? keepOutputLog(recordsFolderOf(dir), stateFolderOf(dir), job, run) : Promise.reject(new Error(keepFails))),
@@ -166,6 +169,7 @@ describe("runs", () => {
           run: "20261118-120000-000001",
           trigger: "scheduled",
           dueAt: now.getTime(),
+          agent: null,
           state: "running",
           lowPriority: true,
           runAt: null,
@@ -195,6 +199,7 @@ describe("runs", () => {
         trigger: "scheduled",
         cause: null,
         dueAt: Date.parse("2026-11-18T12:00:00.000Z"),
+        agent: null,
         state: "done",
         action: null,
         reason: null,
@@ -482,7 +487,7 @@ describe("runs", () => {
       expect(await runs.runNow("nope")).toEqual({ ok: false, reason: 'no job "nope"' });
       expect(await runs.runNow("off")).toEqual({ ok: false, reason: '"Off" is disabled in its file; enable it first' });
       expect(await runs.runNow("bad")).toMatchObject({ ok: false, reason: expect.stringContaining('the job "bad" is invalid') as string });
-      expect(await runs.runNow("agent")).toEqual({ ok: false, reason: '"Agent" is an agent job; Run now runs scripts, git jobs and services' });
+      expect(await runs.runNow("agent")).toEqual({ ok: false, reason: "cannot start — Pomade is not running, and an agent run needs it" });
       sessions.following = false;
       expect(await runs.runNow("backup")).toEqual({ ok: false, reason: "the keeper is not connected" });
       sessions.following = true;

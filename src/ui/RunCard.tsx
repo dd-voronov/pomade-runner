@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
-import type { GitRunResult } from "pomade-kit/protocol";
+import { WORKSPACE_PROJECT_ID, type GitRunResult } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
 import { DISMISS_METHOD, editRoute, MISSED_METHOD, outputTab, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute } from "../integrations/runner-api";
 import { isMissedChoiceResult, isRunActionResult, isRunStopResult, LAST_LINES, limitWords, plainLines, TRIGGER_WORDS, type ActiveRun, type NeedsYouItem, type RunRecord, type RunView } from "../scheduler/model";
+import { MessageText } from "./MessageText";
 import { Button, Dialog, DialogBody, DialogFoot, DialogHead, Help, Icon, LinkButton, Pill, useToast } from "./kit";
 import styles from "./RunCard.module.css";
 import { dayWords, isRecord, KIND_WORDS, runDuration, runLook, runTime, shortDuration, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
 import { shortClock, upWords } from "./serviceWords";
 import { aheadMoment } from "./panelWords";
 import { RunAtField } from "./RunAtField";
+import { useLastMessage } from "./useAgents";
 import { useNow } from "./useNow";
 import { useRunOutput } from "./useRunOutput";
 import { useRun } from "./useRunnerApi";
@@ -85,6 +87,7 @@ function RunCard({ host, view, open, close }: { host: HostClient; view: RunView;
     <span key="trigger" className={styles.helped} data-help={TRIGGER_HELP[view.trigger]} data-testid="run-trigger">
       {TRIGGER_WORDS[view.trigger]}
     </span>,
+    ...(view.agent === null ? [] : [<span key="agent" data-testid="run-agent">{`${view.agent.name} · ${view.agent.modeName}`}</span>]),
   ];
 
   const failed = (what: string) => (err: unknown) => toast(`Could not ${what}: ${err instanceof Error ? err.message : String(err)}`);
@@ -138,6 +141,12 @@ function RunCard({ host, view, open, close }: { host: HostClient; view: RunView;
   const openOutput = (): void => {
     host.tabs.openApp(outputTab(view.job, view.run, view.name)).catch(failed(`open ${view.name}'s output`));
   };
+  const openSession = (agent: string, session: string): void => {
+    // The session in a Pomade agent tab, in the job's project, in the folder it ran in.
+    host.agentTabs
+      .resume({ agentId: agent, sessionId: session, projectId: view.project ?? WORKSPACE_PROJECT_ID, ...(view.folder === "" ? {} : { cwd: view.folder }) })
+      .catch(failed(`open ${view.name}'s session`));
+  };
   const openTerminal = (session: string): void => {
     host.tabs.openAttached({ session: { app: APP_ID, session }, title: view.name }).catch(failed(`open ${view.name}'s terminal`));
   };
@@ -172,14 +181,20 @@ function RunCard({ host, view, open, close }: { host: HostClient; view: RunView;
       </>
     );
   } else {
+    const agent = view.agent;
     foot = (
       <>
+        {agent !== null && agent.sessionId !== null && (
+          <Button variant="primary" data-help="c.session" onClick={() => openSession(agent.agent, agent.sessionId ?? "")}>
+            Open session
+          </Button>
+        )}
         {view.log !== null && (
           <Button data-help="c.output" onClick={openOutput}>
             View output
           </Button>
         )}
-        {(view.kind === "script" || view.kind === "git") && <Button onClick={runNow}>{started ? "Run again" : "Run now"}</Button>}
+        {view.kind !== "service" && <Button onClick={runNow}>{started ? "Run again" : "Run now"}</Button>}
       </>
     );
   }
@@ -211,6 +226,8 @@ function RunCard({ host, view, open, close }: { host: HostClient; view: RunView;
             <p data-testid="run-reason">{neverWords(record)}</p>
           ) : record.git !== null ? (
             <GitBody record={record} />
+          ) : record.agent !== null ? (
+            <AgentBody host={host} record={record} />
           ) : (
             <EndedBody record={record} />
           )}
@@ -303,6 +320,48 @@ function EndedBody({ record }: { record: RunRecord }): React.JSX.Element {
         )}
       </dl>
       <Lines lines={record.lastLines} title="Last lines" testId="run-last-lines" />
+    </>
+  );
+}
+
+/** An agent run that ended: why it failed, when it did — its time limit, its reason, its exit — and
+ *  the agent's last message in the session, from the Agents app. */
+function AgentBody({ host, record }: { host: HostClient; record: RunRecord }): React.JSX.Element {
+  const session = record.agent?.sessionId ?? null;
+  const message = useLastMessage(host, session);
+  const failed = record.state === "failed";
+  return (
+    <>
+      {failed && (
+        <dl className={styles.kv}>
+          <dt>{record.limitHit === null ? "Reason" : "Stopped"}</dt>
+          <dd className={styles.bad} data-testid="run-why">
+            {record.limitHit !== null ? `${capital(limitWords(record.limitHit).replace(/^stopped: /, ""))} — the job’s time limit` : capital(record.reason ?? (record.exitCode === null ? (record.signal ?? "it ended") : `exit ${record.exitCode}`))}
+          </dd>
+        </dl>
+      )}
+      <div>
+        <h5 className={styles.label}>
+          Last message <Help k="c.lastmsg" />
+        </h5>
+        {session === null ? (
+          <p className={styles.note} data-testid="run-agent-note">
+            Runner did not learn this run’s session, so its last message cannot be read.
+          </p>
+        ) : message.status === "ready" && message.value !== null ? (
+          <MessageText text={message.value.text} testId="run-agent-message" />
+        ) : (
+          <p className={styles.note} data-testid="run-agent-note">
+            {message.status === "loading"
+              ? "Reading the agent’s last message…"
+              : message.status === "ready"
+                ? "The agent left no message in this session."
+                : message.status === "absent"
+                  ? "The Agents app is not running, so the last message cannot be read now."
+                  : `The last message cannot be read: ${message.message}.`}
+          </p>
+        )}
+      </div>
     </>
   );
 }

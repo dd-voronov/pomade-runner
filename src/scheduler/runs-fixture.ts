@@ -2,8 +2,11 @@
 // as the keeper would hold them, records and the switch kept in memory as their files keep them, and
 // a script job file.
 
-import type { ExitReason } from "pomade-kit/protocol";
+import type { ExitReason, RosterAgent } from "pomade-kit/protocol";
+import type { AgentKind } from "pomade-kit/scanners";
 
+import { agentMode, type AgentsApi, type AgentsError, type FoundSession, type LastMessage, type LaunchSpec, type LaunchSpecParams } from "../integrations/agents";
+import type { AgentTurns } from "../keeper/agent-turns";
 import { sessionIdOf, type SessionOwner } from "../keeper/ids";
 import type { KeeperLink, RunnerSession } from "../keeper/model";
 import type { SessionCommand, Sessions, StopReason } from "../keeper/sessions";
@@ -127,4 +130,74 @@ export function memorySwitch(): SwitchStore & { saved: SwitchState } {
     flush: () => Promise.resolve(),
   };
   return store;
+}
+
+/** Agent runs' turns as a test plays them: `done(session)` is the agent's turn completing; what
+ *  Runner typed is in `typed`. */
+export class FakeTurns implements AgentTurns {
+  readonly followed = new Map<string, () => void>();
+  readonly typed: { session: string; text: string }[] = [];
+
+  watch(session: string, _provider: AgentKind, onTurnDone: () => void): void {
+    if (!this.followed.has(session)) this.followed.set(session, onTurnDone);
+  }
+
+  type(session: string, text: string): void {
+    this.typed.push({ session, text });
+  }
+
+  unwatch(session: string): void {
+    this.followed.delete(session);
+  }
+
+  watched = (): string[] => [...this.followed.keys()];
+  close = (): void => this.followed.clear();
+
+  /** The agent of `session` finished its turn. */
+  done(session: string): void {
+    this.followed.get(session)?.();
+  }
+}
+
+/** The Agents app as a test scripts it: a roster, the launch specs it answers (recorded in
+ *  `launches`), the sessions `findSessions` finds; `fail` makes every call reject with it. */
+export class FakeAgents implements AgentsApi {
+  agents: RosterAgent[] = [{ id: "claude", name: "Claude", command: "claude", provider: "claude" }];
+  readonly launches: LaunchSpecParams[] = [];
+  found: FoundSession[] = [];
+  /** Pre-assign the session id the launch asks for, as Claude Code does; `false` as Codex does. */
+  preassigns = true;
+  fail: AgentsError | null = null;
+
+  private check(): void {
+    if (this.fail !== null) throw this.fail;
+  }
+
+  roster(): Promise<RosterAgent[]> {
+    this.check();
+    return Promise.resolve(this.agents);
+  }
+
+  projectsFor(): Promise<string[]> {
+    this.check();
+    return Promise.resolve([]);
+  }
+
+  launchSpec(params: LaunchSpecParams): Promise<LaunchSpec> {
+    this.check();
+    this.launches.push(params);
+    const agent = this.agents.find((candidate) => candidate.id === params.agent);
+    const args = [...((agent === undefined ? undefined : agentMode(agent, params.mode))?.args ?? []), ...(this.preassigns && params.sessionId !== undefined ? ["--session-id", params.sessionId] : []), ...(params.prompt === undefined ? [] : [params.prompt])];
+    return Promise.resolve({ command: agent?.command ?? params.agent, args, line: [agent?.command ?? params.agent, ...args.map((arg) => `'${arg}'`)].join(" "), sessionId: this.preassigns ? (params.sessionId ?? null) : null, exit: "/exit" });
+  }
+
+  findSessions(): Promise<FoundSession[]> {
+    this.check();
+    return Promise.resolve(this.found);
+  }
+
+  lastMessage(): Promise<LastMessage | null> {
+    this.check();
+    return Promise.resolve(null);
+  }
 }

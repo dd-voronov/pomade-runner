@@ -24,7 +24,7 @@ import { runRoute } from "../src/integrations/runner-api";
 import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
 import { drawn } from "./support/frames";
 import { createGitFixture, gitEnv, type GitFixture } from "./support/git";
-import { stopKeeper } from "./support/keeper";
+import { expectNothingLeft, stopKeeper } from "./support/keeper";
 import { pomadeCheckout, pomadeEnv, type PomadeFolders } from "./support/pomade";
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
 
@@ -74,6 +74,7 @@ test.describe("git jobs in Pomade", () => {
     await scheduler?.kill();
     await app?.close();
     await stopKeeper(keeperSocket);
+    await expectNothingLeft(tmp);
     await removeDir(tmp);
   });
 
