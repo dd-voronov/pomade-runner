@@ -2,17 +2,14 @@ import type { HostClient } from "pomade-kit/sdk";
 
 import { jobsRoute } from "../integrations/runner-api";
 import type { JobEntry } from "../jobs/model";
-import type { NextRun } from "../scheduler/model";
-import { Icon, PanelEmpty, useToast } from "./kit";
+import { NEXT_UP_RUNS, type NextRun } from "../scheduler/model";
+import { Icon, PanelEmpty, Tag, useToast } from "./kit";
 import styles from "./NextUp.module.css";
 import { nextUpTip, nextUpWords } from "./panelWords";
 import { useNow } from "./useNow";
 
-/** How many runs Next up shows. */
-const NEXT_UP = 5;
-
 /** Next up's content: the next runs, soonest first — when ("in 40 min", "13:00"), the job's kind,
- *  its name. A row opens the job in the Jobs view. */
+ *  its name, and "held" on a run the switch holds. A row opens the job in the Jobs view. */
 export function NextUp({ host, next, jobs }: { host: HostClient; next: readonly NextRun[]; jobs: readonly JobEntry[] }): React.JSX.Element {
   const now = useNow();
   const toast = useToast();
@@ -25,14 +22,15 @@ export function NextUp({ host, next, jobs }: { host: HostClient; next: readonly 
       {next.length === 0 ? (
         <PanelEmpty>Nothing is scheduled.</PanelEmpty>
       ) : (
-        next.slice(0, NEXT_UP).map((run) => {
+        next.slice(0, NEXT_UP_RUNS).map((run) => {
           const kind = kindOf(run.job);
           return (
             <button
               key={`${run.job}@${run.at}`}
               type="button"
-              className={styles.row}
+              className={run.held ? `${styles.row} ${styles.held}` : styles.row}
               data-testid="next-up-item"
+              data-held={run.held}
               onClick={() => {
                 host.tabs.openApp({ route: jobsRoute(run.job) }).catch((err: unknown) => toast(`Could not open ${run.name}: ${err instanceof Error ? err.message : String(err)}`));
               }}
@@ -46,6 +44,11 @@ export function NextUp({ host, next, jobs }: { host: HostClient; next: readonly 
                 </span>
               )}
               <span className={styles.name}>{run.name}</span>
+              {run.held && (
+                <Tag tone="warn" help="sw.held" className={styles.heldTag} data-testid="next-up-held">
+                  held
+                </Tag>
+              )}
             </button>
           );
         })

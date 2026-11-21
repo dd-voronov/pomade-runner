@@ -27,7 +27,7 @@
 //   priority as the job says and its context in the environment (`runEnv`). Its end comes from the
 //   keeper's list: exit 0 is `done`, any other end `failed`, Ctrl+C or Stop `stopped-by-you`; a git
 //   run's is read with the result `pomade-git` wrote. Past its job's `time-limit` Runner stops it
-//   (`failed`, "stopped: ran over 45 min"). Going longer than the long-run warning (a setting) makes
+//   (`failed`, "stopped: time limit, 45 min"). Going longer than the long-run warning (a setting) makes
 //   it a Needs-you item, once — it keeps running. The record keeps the last lines of the output log,
 //   a git run's result per repo.
 // - **Hooks and chains.** An event fires the jobs whose hook it matches (`hooks.ts`): Runner's own
@@ -62,7 +62,7 @@ import type { Sessions } from "../keeper/sessions";
 import { liveOutputLogPath, runsRecordPath, type RecordsFolder, type StateFolder } from "../locations";
 import { chainCause, followers, parentResult } from "./chains";
 import type { Clock } from "./clock";
-import { gitCommandLine, gitRunEnd } from "./git-runs";
+import { gitCommandLine, gitRunEnd, type SessionEnd } from "./git-runs";
 import { foundRecord, keptRecord, lastLines, type History } from "./history";
 import { hooked, LOGIN, type HookFiring } from "./hooks";
 import type { Log } from "./log";
@@ -73,6 +73,8 @@ import {
   dayTime,
   durationWords,
   isActiveRun,
+  limitWords,
+  NEXT_UP_RUNS,
   parseRunRecord,
   runTriggerWords,
   SWITCH_WORDS,
@@ -322,23 +324,23 @@ function scheduledRuns(snapshot: JobsSnapshot): RunJob[] {
 }
 
 /** How a run's session ended, as its record says it. */
-function endOf(session: RunnerSession | undefined, run: ActiveRun): Pick<RunRecord, "state" | "reason" | "exitCode" | "signal"> {
+function endOf(session: RunnerSession | undefined, run: ActiveRun): SessionEnd {
   const exit = session?.info.exit ?? null;
-  if (exit === null) return { state: "failed", reason: "its session is gone", exitCode: null, signal: null };
+  if (exit === null) return { state: "failed", reason: "its session is gone", exitCode: null, signal: null, limitHit: null };
   const { code: exitCode, signal } = exit;
   switch (exit.reason) {
     case "exited":
-      return { state: "done", reason: null, exitCode, signal };
+      return { state: "done", reason: null, exitCode, signal, limitHit: null };
     case "crashed":
-      return { state: "failed", reason: null, exitCode, signal };
+      return { state: "failed", reason: null, exitCode, signal, limitHit: null };
     case "stopped-by-you":
-      return { state: "stopped-by-you", reason: null, exitCode, signal };
+      return { state: "stopped-by-you", reason: null, exitCode, signal, limitHit: null };
     case "stopped":
-      return { state: "failed", reason: "stopped by Runner", exitCode, signal };
+      return { state: "failed", reason: "stopped by Runner", exitCode, signal, limitHit: null };
     case "time-limit":
-      return { state: "failed", reason: run.limitHit === null ? "stopped: time limit" : `stopped: ran over ${durationWords(run.limitHit * MINUTE_MS)}`, exitCode, signal };
+      return { state: "failed", reason: run.limitHit === null ? "stopped: time limit" : limitWords(run.limitHit), exitCode, signal, limitHit: run.limitHit };
     case "lost-in-keeper-crash":
-      return { state: "failed", reason: "lost in a keeper crash", exitCode, signal };
+      return { state: "failed", reason: "lost in a keeper crash", exitCode, signal, limitHit: null };
   }
 }
 
@@ -465,6 +467,7 @@ export function createRuns(options: RunsOptions): Runs {
             log: null,
             lastLines: [],
             git: null,
+            limitHit: null,
           });
         }),
       );
@@ -498,7 +501,7 @@ export function createRuns(options: RunsOptions): Runs {
   }
 
   /** A run's record: what it was, and how it ended. */
-  const ended = (run: ActiveRun, end: Omit<RunRecord, keyof Omit<ActiveRun, "state" | "startedAt" | "log"> | "action">): RunRecord => ({
+  const ended = (run: ActiveRun, end: Omit<RunRecord, keyof Omit<ActiveRun, "state" | "startedAt" | "log" | "limitHit"> | "action">): RunRecord => ({
     job: run.job,
     name: run.name,
     kind: run.kind,
@@ -514,7 +517,7 @@ export function createRuns(options: RunsOptions): Runs {
 
   /** The record of a run that never started. */
   const notStarted = (run: ActiveRun, state: "failed" | "skipped" | "missed", reason: string): RunRecord =>
-    ended(run, { state, reason, startedAt: null, endedAt: now().getTime(), durationMs: null, exitCode: null, signal: null, log: null, lastLines: [], git: null });
+    ended(run, { state, reason, startedAt: null, endedAt: now().getTime(), durationMs: null, exitCode: null, signal: null, log: null, lastLines: [], git: null, limitHit: null });
 
   async function skip(run: ActiveRun, reason: string): Promise<void> {
     log(`run ${run.job} ${run.run}: skipped — ${reason}`);
@@ -1068,14 +1071,19 @@ export function createRuns(options: RunsOptions): Runs {
 
     nextUp() {
       const at = now();
+      const held = (run: { trigger: RunTrigger; lowPriority: boolean }): boolean => holds(switchState.position, run);
       const next: NextRun[] = [];
       for (const job of scheduledRuns(options.jobs())) {
         if (job.trigger.kind !== "schedule") continue;
-        const when = nextOccurrence(job.trigger.schedule, at);
-        if (when !== null) next.push({ job: job.id, name: job.name, project: job.project, at: when.getTime() });
+        // A job's own next runs, as many as could make the list.
+        let when = nextOccurrence(job.trigger.schedule, at);
+        for (let count = 0; when !== null && count < NEXT_UP_RUNS; count++) {
+          next.push({ job: job.id, name: job.name, project: job.project, at: when.getTime(), held: held({ trigger: "scheduled", lowPriority: job.lowPriority }) });
+          when = nextOccurrence(job.trigger.schedule, when);
+        }
       }
-      for (const run of active) if (run.state === "queued" && run.runAt !== null && run.runAt > at.getTime()) next.push({ job: run.job, name: run.name, project: run.project, at: run.runAt });
-      return next.sort((a, b) => a.at - b.at || a.job.localeCompare(b.job));
+      for (const run of active) if (run.state === "queued" && run.runAt !== null && run.runAt > at.getTime()) next.push({ job: run.job, name: run.name, project: run.project, at: run.runAt, held: held(run) });
+      return next.sort((a, b) => a.at - b.at || a.job.localeCompare(b.job)).slice(0, NEXT_UP_RUNS);
     },
 
     jobRuns() {

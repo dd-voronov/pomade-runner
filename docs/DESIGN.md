@@ -276,7 +276,7 @@ disk.
 ## Runs
 
 **States:** `missed · waiting for you` (a `wait-for-me` job's missed run) → `queued` → `running` ⇄
-`waiting for you` → `done` · `failed` (a time limit too: "stopped: ran over 45 min") · `stopped by
+`waiting for you` → `done` · `failed` (a time limit too: "stopped: time limit, 45 min") · `stopped by
 you`. A run that never started is `skipped` or `missed`, with a reason ("missed · skipped").
 
 **Execution:**
@@ -295,7 +295,8 @@ you`. A run that never started is `skipped` or `missed`, with a reason ("missed 
   **stopped by you**; `lost-in-keeper-crash`, `stopped` (by Runner) and `time-limit` → **failed**
   with the reason. A session gone from the keeper is **failed** ("its session is gone"); a start
   the keeper refuses is **failed** ("cannot start — …") and never started. Past the job's
-  `time-limit` Runner stops the run (reason `time-limit`): **failed**, "stopped: ran over 45 min".
+  `time-limit` Runner stops the run (reason `time-limit`): **failed**, "stopped: time limit, 45 min"
+  — the job's limit, which the record keeps (`limitHit`, minutes).
   Once its record is written the session is forgotten.
 - **Overlap**, when the job has a run going or queued: `skip` (default) records the new one
   **skipped · previous run still going** · `parallel` queues it too · `queue` holds one **queued**
@@ -502,14 +503,14 @@ the Git panel's failure mark reads. It posts no notice: Runner notifies about a 
 
 **Result card** (`src/ui/RunCard.tsx`, its look in `src/ui/runLook.ts`). One per run, a dialog
 over History. Its head: the kind icon, the job's name, the result as a pill with its help
-("Done", "Failed", "Missed · waiting for you"), then when it ran (or was due), how long and what
+("Done", "Failed", "Stopped: time limit", "Missed · waiting for you"), then when it ran (or was due), how long and what
 started it — with its help — and a why line: a hook's event ("Mac login"), a caught-up run's
 missed time, a chain's "After Pull: done" whose name opens the run it followed. A failed run's
 head is red, a missed run that waits for you amber. Its body, by what the run left:
 
 | Run | Card body | Card foot |
 |---|---|---|
-| Script, ended | exit code (red when failed) or the reason it failed, and the last lines | **View output** · **Run again** |
+| Script, ended | exit code (red when failed) or the reason it failed — a time limit as "Stopped: Time limit, 45 min — the job's time limit" — and the last lines | **View output** · **Run again** |
 | Git, ended | each repo: its commit hash and its steps (✓ done, ✗ failed, faint skipped), and a reason a step does not say | **View output** · **Run again** |
 | Agent, ended | the agent's last message | **Open session** · **View output** |
 | Running | the latest output, followed while it runs | **Open terminal** · **Stop run** |
@@ -525,7 +526,8 @@ run's choices close the card and toast the outcome; Run again toasts it.
 (`RunRecord`), and per chain's action on a service: the job's id, name and kind, project, folder,
 run id, trigger and — a hook or chain run — its cause, a service's chain `action`, when it was due,
 started and ended, how long it ran, the result and its reason, exit code and signal, the output
-log, the last 20 lines of the output as plain text, and a git run's result (`git`). A record of an older build reads with the
+log, the last 20 lines of the output as plain text, a git run's result (`git`), and — a run
+stopped at its time limit — that limit in minutes (`limitHit`). A record of an older build reads with the
 fields it lacks at their defaults.
 - **The output log** is named in a record by job and run (`output/<encoded job id>/<run id>.log`),
   never by a path on a Mac. Read back, a record names it where it is found (`findOutputLog`): in
@@ -628,7 +630,8 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
     (`all` when left out) and `pomade-runner resume`, and the control method `switch`.
 - **Time limit**, per job (`time-limit`), none by default. A run counts from its start
   (`ranFor`); at the limit Runner stops it, once (SIGTERM, then SIGKILL after 3 s; reason
-  `time-limit`): **failed · stopped: ran over 45 min**, red on its card, and noticed as a failure.
+  `time-limit`): **failed**, and it reads **stopped: time limit, 45 min** — the job's limit — in
+  History, on its card, in its notice and in `pomade-runner history`; red, and noticed as a failure.
   The job file as it is now sets the limit. An agent run's wait for you (E-004) is left out of
   `ranFor`, so the limit pauses while it waits.
 - **Long-run warning**, always on, never stops a run. A run going longer than `long-run-warning`
@@ -752,10 +755,12 @@ to it, light theme only.
    its file"). A row's status words explain themselves on hover (no (i) in rows). A service's row
    opens its attached tab, titled with its name; a running run's row its terminal (the run's
    attached session); a queued run's row — it has no session yet — its result card;
-4. **Next up** (`src/ui/NextUp.tsx`): the next five runs, soonest first — "in 40 min" within the
-   hour, then the time ("13:00", "tmrw 7:00", "Thu 7:00"; the full moment on hover), the job's
-   kind icon and its name; a row opens the job in the Jobs view (`jobs/<encoded job id>`);
-   "Nothing is scheduled." when none;
+4. **Next up** (`src/ui/NextUp.tsx`): the next five runs (`NEXT_UP_RUNS`), soonest first — a job
+   as many times as it comes among them — "in 40 min" within the hour, then the time ("13:00",
+   "tmrw 7:00", "Thu 7:00"; the full moment on hover), the job's kind icon and its name, and on a
+   run the switch holds (`held`) its name faint and the amber **held** tag with the switch's help;
+   a row opens the job in the Jobs view (`jobs/<encoded job id>`); "Nothing is scheduled." when
+   none;
 5. **Open Runner**.
 
 **Runner tab:**
@@ -774,7 +779,7 @@ to it, light theme only.
   - **Last result** (`lastLook`, `src/ui/jobWords.ts`): a chip with the status's help over a sub line.
     A service shows its state as the Services view does (`serviceLook`). Any other job shows the run
     going — "running" over "started 12:31 · 17m", "queued" over what it waits for, "missed · waiting
-    for you" — else its latest finished one: "done", "failed · exit 1", "stopped: ran over 45 min",
+    for you" — else its latest finished one: "done", "failed · exit 1", "stopped: time limit, 45 min",
     "skipped · …", "missed · …", "stopped by you", over "today 11:20 · 3s"; "never ran" for none. A
     click on a job's cell opens that run's result card (`run/<job>/<run>`); a service's and a
     never-ran job's cell has none.
@@ -1024,8 +1029,9 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
   `SERVICE_ACTION_TIMEOUT_MS` (`src/integrations/runner-api.ts`).
 - **Runs**, through the broker:
   - **`runs.list`** → `RunsReport` (`isRunsReport`): the runs going (missed runs waiting for you,
-    queued ones with what each waits for, running ones), Next up (every enabled scheduled job's
-    next run, and the Run at… ones), each run job's next and latest run, Needs you, and the switch;
+    queued ones with what each waits for, running ones), Next up (`NextRun`: the next
+    `NEXT_UP_RUNS` runs of the enabled scheduled jobs and the Run at… ones, soonest first, each
+    `held` when the switch's position holds it), each run job's next and latest run, Needs you, and the switch;
     **`runs.changed`** tells Runner's frames to ask again — on every change, and when the scheduler
     connects.
   - **`history.list`** `{ job?, before?, limit? }` → `HistoryPage`; **`runs.get`** `{ job, run }` →

@@ -348,7 +348,7 @@ describe("pomade-runner", () => {
   describe("runs", () => {
     const at = (time: string): number => Date.parse(`2026-11-17T${time}.000Z`);
     const base = { job: "backup", name: "Backup", kind: "script" as const, project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled" as const, cause: null, dueAt: at("12:00:00") };
-    const failed = { ...base, state: "failed" as const, action: null, reason: null, startedAt: at("12:00:00"), endedAt: at("12:00:03"), durationMs: 3000, exitCode: 1, signal: null, log: "/ud/output/backup/r.log", lastLines: [], git: null };
+    const failed = { ...base, state: "failed" as const, action: null, reason: null, startedAt: at("12:00:00"), endedAt: at("12:00:03"), durationMs: 3000, exitCode: 1, signal: null, log: "/ud/output/backup/r.log", lastLines: [], git: null, limitHit: null };
     const listing: JobListing = { job: "backup", name: "Backup", kind: "script", enabled: true, trigger: "daily at 13:00", problem: null, next: at("13:00:00"), finished: false, last: failed, service: null };
     const fresh = { lowPriority: true, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false };
 
@@ -410,6 +410,7 @@ describe("pomade-runner", () => {
         { ...listing, job: "off", name: "Off", enabled: false, next: null, last: null },
         { ...listing, job: "tonight", name: "Tonight", trigger: "once on 2026-11-17 at 23:00", next: null, finished: true, last: { ...failed, state: "done", exitCode: 0, durationMs: 850 } },
         { ...listing, job: "hooked", name: "Hooked", trigger: "at Mac login", next: null, last: { ...failed, state: "skipped", reason: "previous run still going", startedAt: null, durationMs: null } },
+        { ...listing, job: "slow", name: "Slow", trigger: "at Mac login", next: null, last: { ...failed, reason: "stopped: time limit, 45 min", exitCode: null, signal: "SIGTERM", durationMs: 2_700_000, limitHit: 45 } },
         { ...listing, job: "web", name: "Web", kind: "service", trigger: "always on, from login", next: null, last: null, service: web },
         { ...listing, job: "bad", name: "bad", kind: null, enabled: false, trigger: null, problem: "bad.md:2: kind — missing.", next: null, last: null },
       ];
@@ -420,6 +421,7 @@ describe("pomade-runner", () => {
         "off  Off  script  daily at 13:00  disabled · never ran",
         "tonight  Tonight  script  once on 2026-11-17 at 23:00  finished · last done, 2026-11-17T12:00:03.000Z, took 850 ms",
         "hooked  Hooked  script  at Mac login  no next run · last skipped · previous run still going, 2026-11-17T12:00:03.000Z",
+        "slow  Slow  script  at Mac login  no next run · last stopped: time limit, 45 min, 2026-11-17T12:00:03.000Z, took 45 min",
         "web  Web  service  always on, from login  running, pid 7, since 2026-11-17T08:00:00.000Z",
         "bad  bad  invalid — bad.md:2: kind — missing.",
         "",

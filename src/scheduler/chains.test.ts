@@ -29,6 +29,7 @@ const record = (state: RunRecord["state"], extra: Partial<RunRecord> = {}): RunR
   log: null,
   lastLines: [],
   git: null,
+  limitHit: null,
   ...extra,
 });
 
@@ -49,7 +50,7 @@ describe("chains", () => {
   it("a run that ended done or failed is a parent; stopped by you, skipped and missed are none", () => {
     const parents = Object.fromEntries(RUN_RESULTS.map((state) => [state, parentResult(record(state))]));
     expect(parents).toEqual({ done: "done", failed: "failed", skipped: null, missed: null, "stopped-by-you": null });
-    expect(parentResult(record("failed", { reason: "stopped: ran over 1 min", exitCode: null, signal: "SIGTERM" }))).toBe("failed");
+    expect(parentResult(record("failed", { reason: "stopped: time limit, 1 min", exitCode: null, signal: "SIGTERM", limitHit: 1 }))).toBe("failed");
     expect(parentResult(record("failed", { reason: "cannot start — no such folder", startedAt: null }))).toBe("failed");
   });
 

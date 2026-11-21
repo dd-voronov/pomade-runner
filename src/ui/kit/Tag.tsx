@@ -8,9 +8,9 @@ export type PillTone = "ok" | "danger" | "warning" | "muted" | "accent";
 
 /** A small label beside a name: "Full autonomy" (warn), a count or a kind (accent, muted). `help`
  *  shows that help text on hover and focus. */
-export function Tag({ tone = "accent", help, children, ...rest }: { tone?: TagTone | undefined; help?: HelpKey | undefined; children: ReactNode } & HTMLAttributes<HTMLSpanElement>): React.JSX.Element {
+export function Tag({ tone = "accent", help, className, children, ...rest }: { tone?: TagTone | undefined; help?: HelpKey | undefined; children: ReactNode } & HTMLAttributes<HTMLSpanElement>): React.JSX.Element {
   return (
-    <span className={tone === "accent" ? styles.tag : `${styles.tag} ${styles[tone]}`} data-help={help} {...rest}>
+    <span className={[styles.tag, tone === "accent" ? null : styles[tone], className].filter(Boolean).join(" ")} data-help={help} {...rest}>
       {children}
     </span>
   );

@@ -52,9 +52,9 @@ function recordLook(record: RunRecord, now: number): LastLook {
     case "done":
       return { ...base, tone: "ok", words: "done", help: "st.done" };
     case "failed":
-      // A run stopped at its time limit says so: "stopped: ran over 45 min".
-      return record.reason?.startsWith("stopped: ") === true
-        ? { ...base, tone: "danger", words: record.reason, help: "st.limit" }
+      // A run stopped at its time limit says so: "stopped: time limit, 45 min".
+      return record.limitHit !== null
+        ? { ...base, tone: "danger", words: runWords(record), help: "st.limit" }
         : { ...base, tone: "danger", words: runWords(record), help: "st.failed" };
     case "skipped":
       return { ...base, tone: "hollow", words: runWords(record), help: "st.skipped" };

@@ -71,7 +71,7 @@ const STEPS: Record<SettingsField, StepSpec> = {
   },
   "history-days": {
     label: "Keep history and output",
-    note: "Run records and captured logs on this Mac.",
+    note: "Run records and captured logs, in the workspace.",
     help: "s.keep",
     lo: SETTINGS_FIELDS["history-days"].min,
     hi: SETTINGS_FIELDS["history-days"].max,

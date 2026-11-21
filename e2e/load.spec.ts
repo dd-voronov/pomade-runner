@@ -167,14 +167,15 @@ test.describe("missed runs and load", () => {
     expect((await runsReport(world)).switch.position).toBe("pause-low");
   });
 
-  test("6 · a 1-minute time limit stops a long script: failed, stopped: ran over 1 min, and a notice", async () => {
+  test("6 · a 1-minute time limit stops a long script: failed, stopped: time limit, 1 min, in its record, a notice and pomade-runner history", async () => {
     await world.writeJob("long.md", scriptFile("Long", "echo working; sleep 600", "hook: { event: project-created }\ntime-limit: 1m\n"));
     const scheduler = world.startScheduler(clock("2026-11-18T10:00:00"));
     await world.ready(scheduler);
     expect((await world.command("run", "long")).code).toBe(0);
-    await expect.poll(() => world.history("long"), { timeout: 15_000 }).toEqual([expect.objectContaining({ state: "failed", reason: "stopped: ran over 1 min", lastLines: ["working"] }) as RunRecord]);
+    await expect.poll(() => world.history("long"), { timeout: 15_000 }).toEqual([expect.objectContaining({ state: "failed", reason: "stopped: time limit, 1 min", limitHit: 1, lastLines: ["working"] }) as RunRecord]);
     expect(scheduler.output()).toMatch(/run long \S+: ran over its time limit of 1 min; stopping it\n/);
-    await expect.poll(() => world.queuedNotices()).toEqual([expect.objectContaining({ title: "Long failed", body: "stopped: ran over 1 min · working" })]);
+    await expect.poll(() => world.queuedNotices()).toEqual([expect.objectContaining({ title: "Long failed", body: "stopped: time limit, 1 min · working" })]);
+    expect((await world.command("history", "long")).stdout).toMatch(/^long {2}Long {2}manual {2}stopped: time limit, 1 min, /);
   });
 
   test("7 · with the long-run warning at 1 minute, the warning appears, and the run keeps going", async () => {

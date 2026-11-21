@@ -135,6 +135,9 @@ export interface RunRecord extends RunBase {
   /** A git run's result as `pomade-git --json` printed it, one result per repo; `null` for any other
    *  run, and for a git run that gave none. */
   git: GitRunOutput | null;
+  /** The job's time limit Runner stopped it at, in minutes: a failed run that reads "stopped: time
+   *  limit, 45 min"; `null` for every other run. */
+  limitHit: number | null;
 }
 
 export type RunView = ActiveRun | RunRecord;
@@ -142,13 +145,19 @@ export type RunView = ActiveRun | RunRecord;
 /** How many lines of a run's output its record keeps. */
 export const LAST_LINES = 20;
 
-/** The next run of a scheduled job. */
+/** How many runs Next up lists. */
+export const NEXT_UP_RUNS = 5;
+
+/** One of the next runs: a scheduled job's occurrence, or a run set with Run at…. */
 export interface NextRun {
   job: string;
   name: string;
   project: string | null;
   /** Epoch ms. */
   at: number;
+  /** The switch's position now holds it: Pause all holds every run, Pause low-priority a
+   *  low-priority job's. */
+  held: boolean;
 }
 
 /** A job's runs in brief, for its row. */
@@ -235,7 +244,8 @@ export type NeedsYouItem =
 export interface RunsReport {
   /** Missed runs waiting for the person, queued and running runs, oldest first. */
   active: ActiveRun[];
-  /** Every enabled scheduled job's next run, soonest first. */
+  /** The next runs, soonest first, at most `NEXT_UP_RUNS`: every enabled scheduled job's
+   *  occurrences — a job more than once when it fires several times soon — and the Run at… ones. */
   nextUp: NextRun[];
   /** Each run job's next and last run, by job id. */
   jobs: JobRuns[];
@@ -416,14 +426,15 @@ export function isRunRecord(value: unknown): value is RunRecord {
     nullableString(log) &&
     Array.isArray(lastLines) &&
     lastLines.every((line) => typeof line === "string") &&
-    (git === null || isGitRunOutput(git))
+    (git === null || isGitRunOutput(git)) &&
+    nullableNumber(value.limitHit)
   );
 }
 
 /** A history record as a file keeps it; a field a record of an older build lacks gets its default. */
 export function parseRunRecord(value: unknown): RunRecord | null {
   if (!isRecord(value)) return null;
-  const record = { cause: null, action: null, git: null, ...value };
+  const record = { cause: null, action: null, git: null, limitHit: null, ...value };
   return isRunRecord(record) ? record : null;
 }
 
@@ -458,7 +469,7 @@ function isJobRuns(value: unknown): value is JobRuns {
 }
 
 function isNextRun(value: unknown): value is NextRun {
-  return isRecord(value) && typeof value.job === "string" && typeof value.name === "string" && nullableString(value.project) && finite(value.at);
+  return isRecord(value) && typeof value.job === "string" && typeof value.name === "string" && nullableString(value.project) && finite(value.at) && typeof value.held === "boolean";
 }
 
 export function isRunsReport(value: unknown): value is RunsReport {
@@ -593,12 +604,18 @@ export function runWords(view: RunView): string {
     case "missed":
       return view.reason === null ? "missed" : `missed · ${view.reason}`;
     case "failed":
-      return `failed · ${failureWords(view)}`;
+      return view.limitHit === null ? `failed · ${failureWords(view)}` : limitWords(view.limitHit);
   }
 }
 
-/** Why a run failed, in a few words: its reason, else its exit code or signal. */
+/** A run stopped at its job's time limit, in words: "stopped: time limit, 45 min". */
+export function limitWords(minutes: number): string {
+  return `stopped: time limit, ${durationWords(minutes * 60_000)}`;
+}
+
+/** Why a run failed, in a few words: its time limit, its reason, else its exit code or signal. */
 export function failureWords(record: RunRecord): string {
+  if (record.limitHit !== null) return limitWords(record.limitHit);
   if (record.reason !== null) return record.reason;
   if (record.exitCode !== null) return `exit ${record.exitCode}`;
   return record.signal ?? "ended";

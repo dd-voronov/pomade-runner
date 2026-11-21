@@ -56,7 +56,7 @@ function failedWords(output: GitRunOutput): string | null {
 }
 
 /** How a git run's session ended, as a script's would read: the keeper's end in record terms. */
-export type SessionEnd = Pick<RunRecord, "state" | "reason" | "exitCode" | "signal">;
+export type SessionEnd = Pick<RunRecord, "state" | "reason" | "exitCode" | "signal" | "limitHit">;
 
 /** A git run's end: its session's end read with what `pomade-git` printed (`output`, `null` when the
  *  result file is missing or not a `GitRunOutput`) and the last lines of its output log (`lines`,

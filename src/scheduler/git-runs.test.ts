@@ -44,7 +44,7 @@ const conflict = result({
 });
 const agentWorking = result({ repo: "coda-helper", path: "/ws/Projects/coda-helper", status: "skipped", reason: "agent working", steps: [{ step: "agents", outcome: "skipped", detail: "agent working: claude in /ws/Projects/coda-helper (pid 7)" }], commit: null });
 
-const exited = (code: number): SessionEnd => ({ state: code === 0 ? "done" : "failed", reason: null, exitCode: code, signal: null });
+const exited = (code: number): SessionEnd => ({ state: code === 0 ? "done" : "failed", reason: null, exitCode: code, signal: null, limitHit: null });
 
 function gitJob(text: string): GitJob {
   const snapshot = checkJobs([{ path: "knowledge.md", text }], { workspace: "/ws", projects: [] });
@@ -121,15 +121,15 @@ describe("a git run's end", () => {
   it("no result, or one that is not pomade-git's, is failed and says so — whatever the exit", () => {
     expect(gitRunEnd(exited(0), null, [])).toEqual({ ...exited(0), state: "failed", reason: "pomade-git gave no result (exit 0)", git: null, lastLines: [] });
     expect(gitRunEnd(exited(1), null, stderr)).toMatchObject({ state: "failed", reason: "pomade-git gave no result (exit 1)", lastLines: stderr });
-    expect(gitRunEnd({ state: "failed", reason: null, exitCode: null, signal: "SIGKILL" }, null, [])).toMatchObject({ state: "failed", reason: "pomade-git gave no result (SIGKILL)" });
+    expect(gitRunEnd({ state: "failed", reason: null, exitCode: null, signal: "SIGKILL", limitHit: null }, null, [])).toMatchObject({ state: "failed", reason: "pomade-git gave no result (SIGKILL)" });
   });
 
   it("an end of Runner's or the person's stays what it is for any run", () => {
-    const limit: SessionEnd = { state: "failed", reason: "stopped: ran over 5 min", exitCode: null, signal: "SIGTERM" };
+    const limit: SessionEnd = { state: "failed", reason: "stopped: time limit, 5 min", exitCode: null, signal: "SIGTERM", limitHit: 5 };
     expect(gitRunEnd(limit, null, stderr)).toEqual({ ...limit, git: null, lastLines: stderr });
-    const stopped: SessionEnd = { state: "stopped-by-you", reason: null, exitCode: null, signal: "SIGINT" };
+    const stopped: SessionEnd = { state: "stopped-by-you", reason: null, exitCode: null, signal: "SIGINT", limitHit: null };
     expect(gitRunEnd(stopped, null, [])).toEqual({ ...stopped, git: null, lastLines: [] });
-    const lost: SessionEnd = { state: "failed", reason: "its session is gone", exitCode: null, signal: null };
+    const lost: SessionEnd = { state: "failed", reason: "its session is gone", exitCode: null, signal: null, limitHit: null };
     expect(gitRunEnd(lost, output(result()), [])).toEqual({ ...lost, git: output(result()), lastLines: ["Knowledge · committed a1b2c3d · pulled · pushed"] });
   });
 });
@@ -170,6 +170,7 @@ describe("jobs.forRepo", () => {
     log: "/s/o.log",
     lastLines: [],
     git: output(result(), agentWorking),
+    limitHit: null,
   };
   const runs: JobRuns[] = [
     { job: "knowledge", next, finished: false, last },

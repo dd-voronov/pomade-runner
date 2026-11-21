@@ -16,7 +16,7 @@ import { checkJobs } from "../jobs/check";
 import { recordsFolderOf, stateFolderOf } from "../locations";
 import type { JobsSnapshot } from "../jobs/model";
 import { createHistory, type History } from "./history";
-import type { ActiveRun, RunRecord } from "./model";
+import { runWords, type ActiveRun, type RunRecord } from "./model";
 import { ALIVE_EVERY_MS, createRuns, WAKE_GAP_MS, type Runs } from "./runs";
 import { FakeSessions, memoryStore, memorySwitch, script } from "./runs-fixture";
 import { DEFAULT_SETTINGS, type Settings } from "./settings";
@@ -301,7 +301,7 @@ describe("missed runs and load", () => {
       expect(await runs.missed("weekly", { kind: "run-at", at: "23:00" })).toEqual({ ok: true, at: ms("2026-11-23T23:00:00") });
       expect(runs.needsYou()).toEqual([]);
       expect(going("weekly")).toEqual([expect.objectContaining({ run: run.run, state: "queued", trigger: "caught-up", runAt: ms("2026-11-23T23:00:00"), waits: { kind: "time", at: ms("2026-11-23T23:00:00") } })]);
-      expect(runs.nextUp()[0]).toEqual({ job: "weekly", name: "Weekly", project: null, at: ms("2026-11-23T23:00:00") });
+      expect(runs.nextUp()[0]).toEqual({ job: "weekly", name: "Weekly", project: null, at: ms("2026-11-23T23:00:00"), held: false });
       await awake("2026-11-23T22:59:00", 60_000);
       await awake("2026-11-23T22:59:59");
       expect(sessions.spawned).toEqual([]);
@@ -393,6 +393,11 @@ describe("missed runs and load", () => {
     it("Pause low-priority holds the low-priority job; another runs; resume within 5 minutes runs the held one on time", async () => {
       expect(await runs.setSwitch("pause-low")).toEqual({ position: "pause-low", since: now.getTime() });
       expect(switchStore.saved.position).toBe("pause-low");
+      // Next up holds the low-priority job's runs only.
+      expect(runs.nextUp().slice(0, 2).map((next) => [next.job, next.held])).toEqual([
+        ["git", false],
+        ["summary", true],
+      ]);
       await awake("2026-11-18T13:02:00");
       expect(spawned()).toEqual(["git scheduled"]);
       await runs.setSwitch("running");
@@ -404,7 +409,14 @@ describe("missed runs and load", () => {
       await runs.setSwitch("pause-all");
       await awake("2026-11-18T13:30:00", 10_000);
       expect(sessions.spawned).toEqual([]);
-      expect(runs.nextUp()).toHaveLength(2);
+      // Next up still lists their runs, each held.
+      expect(runs.nextUp().map((next) => [next.job, next.held])).toEqual([
+        ["git", true],
+        ["summary", true],
+        ["git", true],
+        ["summary", true],
+        ["git", true],
+      ]);
       expect((await runs.runNow("summary")).ok).toBe(true);
       sessions.end(sessions.latest("summary"), "exited", 0);
       await awake("2026-11-18T13:30:01");
@@ -443,7 +455,7 @@ describe("missed runs and load", () => {
   });
 
   describe("time limit", () => {
-    it("stops a run past its job's time limit, once: failed, stopped: ran over 1 min", async () => {
+    it("stops a run past its job's time limit, once: failed, stopped: time limit, 1 min", async () => {
       files = { "long.md": script("Long", "schedule:\n  daily: { at: 7:00 }\ntime-limit: 1m\n") };
       load();
       await awake("2026-11-18T07:00:59");
@@ -456,7 +468,8 @@ describe("missed runs and load", () => {
       expect(sessions.stops).toHaveLength(1);
       sessions.end(id, "time-limit", null, 61_000, "SIGTERM");
       await awake("2026-11-18T07:01:03");
-      expect(finished).toEqual([expect.objectContaining({ job: "long", state: "failed", reason: "stopped: ran over 1 min", signal: "SIGTERM" })]);
+      expect(finished).toEqual([expect.objectContaining({ job: "long", state: "failed", reason: "stopped: time limit, 1 min", limitHit: 1, signal: "SIGTERM" })]);
+      expect(runWords(finished[0] as RunRecord)).toBe("stopped: time limit, 1 min");
     });
 
     it("no time limit by default", async () => {

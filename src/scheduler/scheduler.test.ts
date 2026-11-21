@@ -47,7 +47,7 @@ import type { SupervisionStore } from "../keeper/supervisor";
 import { stateFolderOf } from "../locations";
 import { callScheduler } from "./control/client";
 import { CONTROL_PROTOCOL } from "./control/protocol";
-import { isHistoryPage, isRunActionResult, isRunsReport } from "./model";
+import { isHistoryPage, isRunActionResult, isRunsReport, NEXT_UP_RUNS } from "./model";
 import { isEnvironmentReport } from "./environment";
 import { isSettingsReport } from "./settings";
 import { startScheduler, type Scheduler } from "./scheduler";
@@ -637,7 +637,7 @@ describe("scheduler and runs", () => {
     await vi.waitFor(() => expect(heard.length).toBeGreaterThan(0));
     const listed = await ui.apps.call("pomade-runner", RUNS_LIST_METHOD);
     expect(isRunsReport(listed)).toBe(true);
-    expect(listed).toMatchObject({ active: [], nextUp: [{ job: "backup", name: "Backup" }], jobs: [{ job: "backup", finished: false, last: null }], needsYou: [] });
+    expect(listed).toMatchObject({ active: [], nextUp: Array.from({ length: NEXT_UP_RUNS }, () => ({ job: "backup", name: "Backup", held: false })), jobs: [{ job: "backup", finished: false, last: null }], needsYou: [] });
 
     const started = await ui.apps.call("pomade-runner", RUN_NOW_METHOD, { job: "Backup" });
     expect(isRunActionResult(started)).toBe(true);

@@ -266,11 +266,12 @@ test.describe("runs", () => {
     log: "/ud/output/backup/r.log",
     lastLines: ["copying", "rsync: connection refused"],
     git: null,
+    limitHit: null,
   };
   const item: NeedsYouItem = { id: "run-failed:backup", kind: "run-failed", job: "backup", name: "Backup", project: null, run: RUN, at: failed.endedAt, count: 2, detail: "exit 2" };
   const report = (now: number): RunsReport => ({
     active: [],
-    nextUp: [{ job: "backup", name: "Backup", project: null, at: now + 40 * 60_000 + 30_000 }],
+    nextUp: [{ job: "backup", name: "Backup", project: null, at: now + 40 * 60_000 + 30_000, held: false }],
     jobs: [{ job: "backup", next: now + 40 * 60_000, finished: false, last: failed }],
     needsYou: [item, { id: "service-failed:web", kind: "service-failed", job: "web", name: "Web", project: null, at: at(12, 0), detail: "crashed 5 times within a minute" }],
     switch: { position: "running", since: null },
@@ -628,6 +629,7 @@ test.describe("missed runs and load", () => {
     await expect(dialog.getByRole("button", { name: "Run now" })).toHaveCount(1);
     await expect(dialog.getByRole("button", { name: "Skip" })).toHaveCount(1);
     await dialog.getByRole("button", { name: "Run at…" }).click();
+    await expect(dialog.getByRole("textbox", { name: "Run at" })).toHaveValue("tonight 23:00");
     await dialog.getByRole("textbox", { name: "Run at" }).fill("23:00");
     await expect(dialog.getByTestId("run-at-hint")).toContainText("→ ");
     await shoot(page, "tab-run-missed");
@@ -642,23 +644,21 @@ test.describe("missed runs and load", () => {
       { method: "runs.stop", params: { job: "summary", run: base.run } },
     ]);
 
-    const stopped: RunRecord = { ...base, state: "failed", action: null, reason: "stopped: ran over 45 min", endedAt: at(7, 45), durationMs: 45 * 60_000, exitCode: null, signal: "SIGTERM", lastLines: ["still summarizing"], git: null };
+    const stopped: RunRecord = { ...base, state: "failed", action: null, reason: "stopped: time limit, 45 min", endedAt: at(7, 45), durationMs: 45 * 60_000, exitCode: null, signal: "SIGTERM", lastLines: ["still summarizing"], git: null, limitHit: 45 };
     await page.evaluate((h) => window.setRuns({ report: { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } }, history: h }), [stopped]);
     // The host still has the tab at this run's route: the card closed in the frame alone.
     await page.evaluate((route) => window.mounted.navigate(route), "history");
+    await expect(app(page).locator('[data-testid="history-row"][data-job="summary"]').getByTestId("history-result")).toHaveText("stopped: time limit, 45 min");
     await page.evaluate((route) => window.mounted.navigate(route), `run/summary/${base.run}`);
-    await expect(app(page).getByTestId("run-result")).toHaveText("Failed");
+    await expect(app(page).getByTestId("run-result")).toHaveText("Stopped: time limit");
     await expect(dialog).toHaveAttribute("data-tone", "danger");
-    await expect(card.getByTestId("run-why")).toHaveText("Stopped: ran over 45 min");
-    const red = await card.getByTestId("run-why").evaluate((element) => {
-      const probe = document.createElement("span");
-      probe.style.color = "var(--danger-text)";
-      document.body.append(probe);
-      const danger = getComputedStyle(probe).color;
-      probe.remove();
-      return getComputedStyle(element).color === danger;
-    });
-    expect(red).toBe(true);
+    // The job's limit, not an exit code or a reason line; the help explains it.
+    await expect(card.getByTestId("run-limit")).toHaveText("Time limit, 45 min — the job’s time limit");
+    await expect(card.getByTestId("run-exit")).toHaveCount(0);
+    await expect(card.getByTestId("run-why")).toHaveCount(0);
+    await expect(card.getByTestId("run-last-lines")).toHaveText("still summarizing");
+    await app(page).getByTestId("run-result").hover();
+    await expect(app(page).getByTestId("tooltip")).toHaveText("The run hit its job's time limit and was stopped.Example: stopped: time limit, 45 min.");
     await shoot(page, "tab-run-time-limit");
   });
 
@@ -721,6 +721,7 @@ test.describe("hooks and chains", () => {
     log: "/ud/output/pull/a.log",
     lastLines: ["Already up to date."],
     git: null,
+    limitHit: null,
   };
   const cause = { kind: "chain" as const, job: "pull", name: "Pull", run: pull.run, result: "done" as const };
   const tests: RunRecord = { ...pull, job: "tests", name: "Tests", run: "20261118-120002-bbbbbb", trigger: "chain", cause, dueAt: pull.endedAt, startedAt: pull.endedAt, endedAt: pull.endedAt + 5000, lastLines: ["12 passed"] };
@@ -1113,6 +1114,7 @@ test.describe("the Jobs view", () => {
     log: "/ud/output/r.log",
     lastLines: ["ok"],
     git: null,
+    limitHit: null,
     ...extra,
   });
 
@@ -1507,6 +1509,7 @@ test.describe("History and result cards", () => {
     log: "/ud/output/backup/a.log",
     lastLines: ["ok"],
     git: null,
+    limitHit: null,
   };
   const failed: RunRecord = { ...done, job: "scraper", name: "Scraper", project: "alpha", run: "20261117-000100-bbbbbb", state: "failed", exitCode: 1, dueAt: at(1, 9, 14), startedAt: at(1, 9, 14), endedAt: at(1, 9, 14) + 8000, durationMs: 8000 };
   const skipped: RunRecord = { ...done, job: "health", name: "Health check", project: "alpha", run: "20261117-000200-cccccc", state: "skipped", reason: "previous run still going", dueAt: at(3, 13, 0), startedAt: null, endedAt: at(3, 13, 0), durationMs: null, exitCode: null, log: null, lastLines: [] };
@@ -2184,12 +2187,12 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
     await panel(page, (now) => ({
       ...quiet(now),
       nextUp: [
-        { job: "backup", name: "Backup", project: null, at: now + minutes(40) + 30_000 },
-        { job: "lint", name: "Lint", project: null, at: now + minutes(95) },
-        { job: "web", name: "Web", project: null, at: now + 30 * 3_600_000 },
-        { job: "a", name: "A", project: null, at: now + 31 * 3_600_000 },
-        { job: "b", name: "B", project: null, at: now + 32 * 3_600_000 },
-        { job: "c", name: "C", project: null, at: now + 33 * 3_600_000 },
+        { job: "backup", name: "Backup", project: null, at: now + minutes(40) + 30_000, held: false },
+        { job: "lint", name: "Lint", project: null, at: now + minutes(95), held: false },
+        { job: "web", name: "Web", project: null, at: now + 30 * 3_600_000, held: false },
+        { job: "a", name: "A", project: null, at: now + 31 * 3_600_000, held: false },
+        { job: "b", name: "B", project: null, at: now + 32 * 3_600_000, held: false },
+        { job: "c", name: "C", project: null, at: now + 33 * 3_600_000, held: false },
       ],
     }));
     const rows = app(page).getByTestId("next-up-item");
@@ -2232,13 +2235,39 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
       ]);
   });
 
+  // T-009 — missed runs, time limits, Next up.
+  test("T-009 · Next up: a job as often as it comes; a run the switch holds carries the held tag, its name faint, with the switch's help", async ({ page }) => {
+    await panel(page, (now) => ({
+      ...quiet(now),
+      switch: { position: "pause-low", since: now },
+      nextUp: [
+        { job: "backup", name: "Backup", project: null, at: now + minutes(10), held: true },
+        { job: "lint", name: "Lint", project: null, at: now + minutes(15), held: false },
+        { job: "backup", name: "Backup", project: null, at: now + minutes(40), held: true },
+        { job: "lint", name: "Lint", project: null, at: now + minutes(45), held: false },
+      ],
+    }));
+    const rows = app(page).getByTestId("next-up-item");
+    await expect(rows).toHaveCount(4);
+    await expect(rows.nth(0)).toHaveText(/^in 1\d minBackupheld$/);
+    await expect(rows.nth(1)).toHaveText(/^in 1\d minLint$/);
+    await expect(rows.nth(2)).toHaveText(/^in [34]\d minBackupheld$/);
+    await expect(app(page).getByTestId("next-up-held")).toHaveCount(2);
+    await expect(rows.nth(0)).toHaveAttribute("data-held", "true");
+    const colours = await rows.evaluateAll((all) => all.map((row) => getComputedStyle(row.querySelector("span:nth-of-type(3)") ?? row).color));
+    expect(colours[0]).not.toBe(colours[1]);
+    await app(page).getByTestId("next-up-held").first().hover();
+    await expect(app(page).getByTestId("tooltip")).toHaveText('A held run becomes a missed run and follows its own "If a run is missed" policy when you switch back.Example: the 13:00 commit is skipped; the morning summary catches up.');
+    await shoot(page, "panel-next-up-held");
+  });
+
   for (const width of [240, 300]) {
     test(`at ${width} px nothing in the panel clips or scrolls sideways`, async ({ page }) => {
       await page.setViewportSize({ width, height: 1100 });
       await panel(page, (now) => ({
         ...withItems(now),
         active: [run("backup", "A job with a really long name that cannot fit the panel", "20261120-120000-aaaaaa", {}, now)],
-        nextUp: [{ job: "backup", name: "A job with a really long name that cannot fit the panel", project: null, at: now + minutes(40) }],
+        nextUp: [{ job: "backup", name: "A job with a really long name that cannot fit the panel", project: null, at: now + minutes(40), held: false }],
       }));
       await expect(app(page).getByTestId("needs-you-item")).toHaveCount(5);
       const overflow = await app(page).locator("body").evaluate(() => {

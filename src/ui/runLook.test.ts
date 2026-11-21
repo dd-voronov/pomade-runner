@@ -28,6 +28,7 @@ const record = (extra: Partial<RunRecord> = {}): RunRecord => ({
   log: "/ud/r.log",
   lastLines: [],
   git: null,
+  limitHit: null,
   ...extra,
 });
 
@@ -59,6 +60,11 @@ describe("a run's status: tone, words, help, pill, chip", () => {
   const cases: [string, RunView, Partial<ReturnType<typeof runLook>>][] = [
     ["done", record(), { tone: "ok", words: "done", help: "st.done", label: "Done", pill: "ok", cardTone: undefined, filter: null }],
     ["failed", record({ state: "failed", exitCode: 1 }), { tone: "danger", words: "failed · exit 1", help: "st.failed", label: "Failed", pill: "danger", cardTone: "danger", filter: "failed" }],
+    [
+      "stopped at its time limit",
+      record({ state: "failed", reason: "stopped: time limit, 45 min", exitCode: null, signal: "SIGTERM", limitHit: 45 }),
+      { tone: "danger", words: "stopped: time limit, 45 min", help: "st.limit", label: "Stopped: time limit", pill: "danger", cardTone: "danger", filter: "failed" },
+    ],
     ["running", active(), { tone: "accent", live: true, words: "running", help: "st.running", label: "Running", filter: "active" }],
     ["queued", active({ state: "queued", startedAt: null, waits: { kind: "slot", ahead: 1 } }), { tone: "hollow", words: "queued · 1 ahead", help: "st.queued", label: "Queued", filter: "active" }],
     ["missed-waiting", active({ state: "missed-waiting", startedAt: null }), { tone: "warning", words: "missed · waiting for you", help: "st.missed", label: "Missed · waiting for you", pill: "warning", cardTone: "warning", filter: "missed" }],
@@ -93,7 +99,7 @@ describe("History's result chips", () => {
   const views: RunView[] = [
     record(),
     record({ state: "failed", exitCode: 1 }),
-    record({ state: "failed", reason: "stopped: ran over 45 min", exitCode: null }),
+    record({ state: "failed", reason: "stopped: time limit, 45 min", exitCode: null, limitHit: 45 }),
     active(),
     active({ state: "queued", startedAt: null }),
     active({ state: "missed-waiting", startedAt: null }),

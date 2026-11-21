@@ -1,4 +1,5 @@
-/* A Next up row: 24 px — the time in a 62 px column, the kind icon, the job's name. */
+/* A Next up row: 24 px — the time in a 62 px column, the kind icon, the job's name, and the
+   "held" tag on a run the switch holds. */
 .row {
   display: flex;
   align-items: center;
@@ -44,4 +45,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.held .name {
+  color: var(--text-faint);
+}
+
+/* The prototype's `.next-held`: the warn tag at the row's text weight. */
+.row .heldTag {
+  height: 15px;
+  font-weight: inherit;
 }

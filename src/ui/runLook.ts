@@ -49,7 +49,10 @@ export function runLook(view: RunView, now?: number): RunLook {
     case "done":
       return { tone: "ok", live: false, words: isRecord(view) ? doneWords(view) : "done", help: "st.done", label: "Done", pill: "ok", cardTone: undefined, filter: null };
     case "failed":
-      return { tone: "danger", live: false, words: runWords(view), help: "st.failed", label: "Failed", pill: "danger", cardTone: "danger", filter: "failed" };
+      // A run stopped at its time limit says so: "stopped: time limit, 45 min".
+      return isRecord(view) && view.limitHit !== null
+        ? { tone: "danger", live: false, words: runWords(view), help: "st.limit", label: "Stopped: time limit", pill: "danger", cardTone: "danger", filter: "failed" }
+        : { tone: "danger", live: false, words: runWords(view), help: "st.failed", label: "Failed", pill: "danger", cardTone: "danger", filter: "failed" };
     case "running":
       return {
         tone: "accent",

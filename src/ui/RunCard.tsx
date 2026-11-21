@@ -4,7 +4,7 @@ import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
 import { DISMISS_METHOD, editRoute, MISSED_METHOD, outputRoute, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute } from "../integrations/runner-api";
-import { isMissedChoiceResult, isRunActionResult, isRunStopResult, LAST_LINES, plainLines, TRIGGER_WORDS, type ActiveRun, type NeedsYouItem, type RunRecord, type RunView } from "../scheduler/model";
+import { isMissedChoiceResult, isRunActionResult, isRunStopResult, LAST_LINES, limitWords, plainLines, TRIGGER_WORDS, type ActiveRun, type NeedsYouItem, type RunRecord, type RunView } from "../scheduler/model";
 import { Button, Dialog, DialogBody, DialogFoot, DialogHead, Help, Icon, LinkButton, Pill, useToast } from "./kit";
 import styles from "./RunCard.module.css";
 import { dayWords, isRecord, KIND_WORDS, runDuration, runLook, runTime, shortDuration, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
@@ -147,7 +147,7 @@ function RunCard({ host, view, open, close }: { host: HostClient; view: RunView;
         <Button variant="primary" onClick={() => choose({ choice: "run-now" })}>
           Run now
         </Button>
-        <Button aria-expanded={runAt !== null} onClick={() => setRunAt(runAt === null ? "" : null)}>
+        <Button aria-expanded={runAt !== null} onClick={() => setRunAt(runAt === null ? "tonight 23:00" : null)}>
           Run at…
         </Button>
         <Button onClick={() => choose({ choice: "skip" })}>Skip</Button>
@@ -257,13 +257,23 @@ function Lines({ lines, title, testId }: { lines: readonly string[]; title: stri
   );
 }
 
-/** A run that ended: its exit code — red when it failed — or why it failed, then its last lines. */
+/** A run that ended: its exit code — red when it failed — or why it failed (a time limit: the
+ *  limit), then its last lines. */
 function EndedBody({ record }: { record: RunRecord }): React.JSX.Element {
   const failed = record.state === "failed";
+  const limit = record.limitHit;
   return (
     <>
       <dl className={styles.kv}>
-        {record.exitCode !== null && (
+        {limit !== null && (
+          <>
+            <dt>Stopped</dt>
+            <dd data-testid="run-limit">
+              {capital(limitWords(limit).replace(/^stopped: /, ""))} — the job’s time limit <Help k="st.limit" />
+            </dd>
+          </>
+        )}
+        {limit === null && record.exitCode !== null && (
           <>
             <dt>
               Exit code <Help k="c.exit" />
@@ -279,7 +289,7 @@ function EndedBody({ record }: { record: RunRecord }): React.JSX.Element {
             <dd className={styles.code}>{record.signal}</dd>
           </>
         )}
-        {failed && record.reason !== null && (
+        {failed && limit === null && record.reason !== null && (
           <>
             <dt>Reason</dt>
             <dd className={styles.bad} data-testid="run-why">

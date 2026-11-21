@@ -52,6 +52,7 @@ const record = (state: RunRecord["state"], extra: Partial<RunRecord> = {}): RunR
   log: null,
   lastLines: [],
   git: null,
+  limitHit: null,
   ...extra,
 });
 
@@ -91,7 +92,8 @@ describe("a job's last result", () => {
   it("chips each result with its status, when it ended and how long it took, and opens its run", () => {
     expect(look(record("done"))).toMatchObject({ tone: "ok", words: "done", help: "st.done", sub: "today 11:20 · 3s", run: "20261117-111700-abcdef" });
     expect(look(record("failed"))).toMatchObject({ tone: "danger", words: "failed · exit 1", help: "st.failed" });
-    expect(look(record("failed", { reason: "stopped: ran over 45 min" }))).toMatchObject({ tone: "danger", words: "stopped: ran over 45 min", help: "st.limit" });
+    expect(look(record("failed", { reason: "stopped: time limit, 45 min", exitCode: null, signal: "SIGTERM", limitHit: 45 }))).toMatchObject({ tone: "danger", words: "stopped: time limit, 45 min", help: "st.limit" });
+    expect(look(record("failed", { reason: "stopped by Runner" }))).toMatchObject({ tone: "danger", words: "failed · stopped by Runner", help: "st.failed" });
     expect(look(record("stopped-by-you"))).toMatchObject({ tone: "hollow", words: "stopped by you", help: "st.byyou" });
   });
 

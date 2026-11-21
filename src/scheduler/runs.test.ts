@@ -206,6 +206,7 @@ describe("runs", () => {
         log: keptLog("backup", "20261118-120000-000001"),
         lastLines: ["copying", "backed up 3 files"],
         git: null,
+        limitHit: null,
       };
       expect(await page()).toEqual([record]);
       // Its log moved into the records folder before the record was written.
@@ -237,7 +238,7 @@ describe("runs", () => {
       files = { "tonight.md": script("Tonight", "schedule:\n  once: 2026-11-18 23:00\n") };
       load();
       expect(runs.jobRuns()).toEqual([{ job: "tonight", next: Date.parse("2026-11-18T22:00:00.000Z"), finished: false, last: null }]);
-      expect(runs.nextUp()).toEqual([{ job: "tonight", name: "Tonight", project: null, at: Date.parse("2026-11-18T22:00:00.000Z") }]);
+      expect(runs.nextUp()).toEqual([{ job: "tonight", name: "Tonight", project: null, at: Date.parse("2026-11-18T22:00:00.000Z"), held: false }]);
       await at("2026-11-18T22:59:00");
       await minutes("2026-11-18T23:05:00");
       expect(sessions.spawned).toHaveLength(1);
@@ -290,14 +291,29 @@ describe("runs", () => {
       ]);
     });
 
-    it("lists the next runs soonest first", async () => {
+    it("lists the next runs soonest first — a job as often as it fires among them — at most five", async () => {
       files = { "a.md": script("A", "schedule:\n  daily: { at: 18:00 }\n"), "b.md": script("B", "schedule:\n  daily: { at: 14:00 }\n"), "c.md": script("C") };
       load();
       await at("2026-11-18T13:30:00");
-      expect(runs.nextUp().map((next) => [next.job, new Date(next.at).getHours()])).toEqual([
-        ["b", 14],
-        ["a", 18],
-        ["c", 13],
+      expect(runs.nextUp().map((next) => [next.job, new Date(next.at).getDate(), new Date(next.at).getHours()])).toEqual([
+        ["b", 18, 14],
+        ["a", 18, 18],
+        ["c", 19, 13],
+        ["b", 19, 14],
+        ["a", 19, 18],
+      ]);
+    });
+
+    it("lists a job that fires often once per run, up to five", async () => {
+      files = { "ping.md": script("Ping", "schedule:\n  every: { minutes: 10 }\n"), "a.md": script("A", "schedule:\n  daily: { at: 14:00 }\n") };
+      load();
+      await at("2026-11-18T13:31:00");
+      expect(runs.nextUp().map((next) => [next.job, new Date(next.at).getMinutes()])).toEqual([
+        ["ping", 40],
+        ["ping", 50],
+        ["a", 0],
+        ["ping", 0],
+        ["ping", 10],
       ]);
     });
   });

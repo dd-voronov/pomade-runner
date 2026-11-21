@@ -19,7 +19,7 @@ const active: ActiveRun = {
   warningDismissed: false,
 };
 const queued: ActiveRun = { ...active, state: "queued", startedAt: null, session: null, log: null };
-const record: RunRecord = { ...base, state: "failed", action: null, reason: null, startedAt: 1, endedAt: 2, durationMs: 1, exitCode: 1, signal: null, log: "/o.log", lastLines: [], git: null };
+const record: RunRecord = { ...base, state: "failed", action: null, reason: null, startedAt: 1, endedAt: 2, durationMs: 1, exitCode: 1, signal: null, log: "/o.log", lastLines: [], git: null, limitHit: null };
 
 describe("runs in words", () => {
   it("says each state", () => {
@@ -109,7 +109,7 @@ describe("isRunsReport", () => {
   it("checks a runs report's shape", () => {
     const report = {
       active: [active],
-      nextUp: [{ job: "a", name: "A", project: null, at: 5 }],
+      nextUp: [{ job: "a", name: "A", project: null, at: 5, held: true }],
       jobs: [{ job: "a", next: null, finished: true, last: record }],
       needsYou: [
         { id: "run-failed:a", kind: "run-failed", job: "a", name: "A", project: null, run: "r", at: 1, count: 1, detail: "exit 1" },
@@ -123,6 +123,7 @@ describe("isRunsReport", () => {
     for (const bad of [
       { ...report, active: [{ ...active, state: "done" }] },
       { ...report, nextUp: [{ job: "a" }] },
+      { ...report, nextUp: [{ job: "a", name: "A", project: null, at: 5 }] },
       { ...report, jobs: [{ job: "a", next: "soon", finished: true, last: null }] },
       { ...report, needsYou: [{ ...report.needsYou[0], count: "1" }] },
       { ...report, needsYou: [{ ...report.needsYou[1], kind: "other" }] },
