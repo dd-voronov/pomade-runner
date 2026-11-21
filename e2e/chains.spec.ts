@@ -39,9 +39,12 @@ async function writeSettings(world: RunnerWorld, text: string): Promise<void> {
   await writeFile(join(world.tmp, "ws/Apps/pomade-runner/settings.yaml"), text);
 }
 
-/** When the latest warm-up the scheduler logged ends, on its clock (to the minute it names). */
-function warmUpEnd(scheduler: SchedulerProcess, day: string): number {
-  const time = [...scheduler.output().matchAll(/warm-up: the services are up; caught-up and hook runs wait until (\d\d:\d\d)\n/g)].at(-1)?.[1];
+/** When the latest warm-up logged before the line `line` first matches ends, on the scheduler's
+ *  clock (to the minute it names) — a test machine stalled for over a second looks like a wake on
+ *  the fast clock, and that starts one more warm-up after the run. */
+function warmUpEnd(scheduler: SchedulerProcess, day: string, line: RegExp): number {
+  const log = scheduler.output();
+  const time = [...log.slice(0, Math.max(0, log.search(line))).matchAll(/warm-up: the services are up; caught-up and hook runs wait until (\d\d:\d\d)\n/g)].at(-1)?.[1];
   if (time === undefined) throw new Error("no warm-up in the log");
   return madrid(`${day}T${time}:00`);
 }
@@ -155,7 +158,7 @@ test.describe("chains and login hooks", () => {
       expect.objectContaining({ trigger: "hook", state: "done", cause: { kind: "hook", event: "login", context: {} }, lastLines: ["mounted hook"] }) as RunRecord,
     ]);
     const [mounted] = await world.history("mount");
-    expect(mounted?.startedAt ?? 0).toBeGreaterThanOrEqual(warmUpEnd(scheduler, "2026-11-18"));
+    expect(mounted?.startedAt ?? 0).toBeGreaterThanOrEqual(warmUpEnd(scheduler, "2026-11-18", /run mount \S+: started \(hook\)/));
     const log = scheduler.output();
     expect(log.indexOf("hook login: fires mount\n")).toBeGreaterThan(-1);
     expect(log.search(/run mount \S+: started \(hook\)/)).toBeGreaterThan(log.indexOf("warm-up: the services are up"));

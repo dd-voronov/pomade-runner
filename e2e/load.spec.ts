@@ -8,8 +8,8 @@
 // while its clock runs on, so its next tick comes long after the previous one — the gap a Mac's
 // sleep leaves. Power-off is the scheduler killed with its keeper — macOS ends the user's
 // processes — and started again later on its clock: a login. The clock runs 60 times as fast: a
-// second is a minute, so a stall of the test machine never looks like a wake (a tick gap over a
-// minute is one).
+// second is a minute, so a test machine stalled for over a second looks like one more wake (a tick
+// gap over a minute is one). The specs therefore read the log up to the run they ask about.
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -48,9 +48,17 @@ async function writeSettings(world: RunnerWorld, text: string): Promise<void> {
   await writeFile(join(world.tmp, "ws/Apps/pomade-runner/settings.yaml"), text);
 }
 
-/** When the latest warm-up the scheduler logged ends, on its clock (to the minute it names). */
-function warmUpEnd(scheduler: SchedulerProcess): number {
-  const time = [...scheduler.output().matchAll(/warm-up: the services are up; caught-up and hook runs wait until (\d\d:\d\d)\n/g)].at(-1)?.[1];
+/** The scheduler's log up to the line `line` first matches — what led to a run's start. */
+function logBefore(scheduler: SchedulerProcess, line: RegExp): string {
+  const log = scheduler.output();
+  const at = log.search(line);
+  if (at < 0) throw new Error(`no ${String(line)} in the log`);
+  return log.slice(0, at);
+}
+
+/** When the latest warm-up of a log ends, on the scheduler's clock (to the minute it names). */
+function warmUpEnd(log: string): number {
+  const time = [...log.matchAll(/warm-up: the services are up; caught-up and hook runs wait until (\d\d:\d\d)\n/g)].at(-1)?.[1];
   if (time === undefined) throw new Error("no warm-up in the log");
   return madrid(`2026-11-18T${time}:00`);
 }
@@ -86,12 +94,11 @@ test.describe("missed runs and load", () => {
     await expect.poll(() => world.history("summary"), { timeout: 15_000 }).toEqual([expect.objectContaining({ trigger: "caught-up", state: "done", dueAt: madrid("2026-11-18T07:00:00"), lastLines: ["summary caught-up"] }) as RunRecord]);
     const [caught] = await world.history("summary");
     // After the 2-minute warm-up, counted from the wake.
-    expect(caught?.startedAt ?? 0).toBeGreaterThanOrEqual(warmUpEnd(scheduler));
+    const log = logBefore(scheduler, /run summary \S+: started \(caught-up\)/);
+    expect(caught?.startedAt ?? 0).toBeGreaterThanOrEqual(warmUpEnd(log));
     expect(await world.history("early")).toEqual([expect.objectContaining({ state: "missed", reason: "skipped · past 7:05", startedAt: null, dueAt: madrid("2026-11-18T07:00:00") }) as RunRecord]);
-    const log = scheduler.output();
     expect(log.lastIndexOf("warm-up: the services are up")).toBeGreaterThan(log.indexOf("wake:"));
-    expect(log.search(/run summary \S+: started \(caught-up\)/)).toBeGreaterThan(log.lastIndexOf("warm-up: over"));
-    expect(log.lastIndexOf("warm-up: over")).toBeGreaterThan(log.indexOf("wake:"));
+    expect(log.lastIndexOf("warm-up: over")).toBeGreaterThan(log.lastIndexOf("warm-up: the services are up"));
     // One run, however long it slept.
     await until(world, "2026-11-18T07:20:00");
     expect(await world.history("summary")).toHaveLength(1);
@@ -215,6 +222,7 @@ test.describe("missed runs and load", () => {
     expect(log.indexOf("service api: starting")).toBeLessThan(log.indexOf("service web: starting"));
     expect(log.indexOf("service web: up")).toBeLessThan(settled);
     expect(log.search(/run report \S+: started \(caught-up\)/)).toBeGreaterThan(log.indexOf("warm-up: over"));
-    for (const record of await world.history()) expect(record.startedAt ?? 0).toBeGreaterThanOrEqual(warmUpEnd(login));
+    const warmUpOver = warmUpEnd(logBefore(login, /run \S+ \S+: started \(caught-up\)/));
+    for (const record of await world.history()) expect(record.startedAt ?? 0).toBeGreaterThanOrEqual(warmUpOver);
   });
 });
