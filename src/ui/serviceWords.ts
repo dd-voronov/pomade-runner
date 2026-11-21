@@ -97,7 +97,7 @@ function readyWords(ready: Readiness): string {
 
 /** Where a service stands, for the Services view and Running now; `ready` is its job's readiness,
  *  `now` this Mac's clock — the keeper's, which stamped its session's start and end. */
-export function serviceLook(status: ServiceStatus, ready: Readiness | null, now: number): ServiceLook {
+export function serviceLook(status: ServiceStatus, ready: Readiness | null, now: number, startsOn: string | null = null): ServiceLook {
   const crashes = status.restarts > 0 && status.lastCrashAt !== null ? `restarted ${status.restarts}× · last crash ${shortClock(status.lastCrashAt)}` : null;
   const apply = status.needsRestart ? "restart to apply its file" : null;
   const look = (tone: DotTone, words: string, help: HelpKey | null, sub: string, subHelp: HelpKey | null = null): ServiceLook => ({
@@ -132,7 +132,7 @@ export function serviceLook(status: ServiceStatus, ready: Readiness | null, now:
     case "stopped-by-you":
       return look("hollow", "stopped by you", "st.stopped", ended === null ? "" : whenWords(ended, now));
     case "waiting":
-      return look("hollow", "waiting for its project", "st.svcwaiting", "starts on its project's first open");
+      return look("hollow", "waiting for first open", "st.svcwaiting", startsOn === null ? "starts on first open" : `starts on first open of ${startsOn}`);
     case "disabled":
       return look("hollow", "disabled", "st.disabled", "");
     case "invalid":

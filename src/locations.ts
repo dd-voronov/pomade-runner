@@ -93,6 +93,11 @@ export function projectsRecordPath(state: StateFolder): string {
   return join(state, "projects.json");
 }
 
+/** The Pomade start each workspace's "Pomade started" hooks last fired for. */
+export function pomadeStartedRecordPath(state: StateFolder): string {
+  return join(state, "pomade-started.json");
+}
+
 /** The output being written — live runs', services' — and git results, one sub-folder per job:
  *  `output/<encoded job id>/`. */
 export function liveOutputFolder(state: StateFolder): string {
@@ -164,6 +169,11 @@ export async function findOutputLog(records: RecordsFolder, state: StateFolder, 
     }
   }
   return kept;
+}
+
+/** Jobs whose ids changed when their project moved: old id → new id. */
+export function renamedJobsPath(records: RecordsFolder): string {
+  return join(records, "renamed.json");
 }
 
 /** The services the Owner stopped, which stay stopped. */

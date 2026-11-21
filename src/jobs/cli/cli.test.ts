@@ -411,7 +411,7 @@ describe("pomade-runner", () => {
         { ...listing, job: "tonight", name: "Tonight", trigger: "once on 2026-11-17 at 23:00", next: null, finished: true, last: { ...failed, state: "done", exitCode: 0, durationMs: 850 } },
         { ...listing, job: "hooked", name: "Hooked", trigger: "at Mac login", next: null, last: { ...failed, state: "skipped", reason: "previous run still going", startedAt: null, durationMs: null } },
         { ...listing, job: "slow", name: "Slow", trigger: "at Mac login", next: null, last: { ...failed, reason: "stopped: time limit, 45 min", exitCode: null, signal: "SIGTERM", durationMs: 2_700_000, limitHit: 45 } },
-        { ...listing, job: "web", name: "Web", kind: "service", trigger: "always on, from login", next: null, last: null, service: web },
+        { ...listing, job: "web", name: "Web", kind: "service", trigger: "always on · starts at login", next: null, last: null, service: web },
         { ...listing, job: "bad", name: "bad", kind: null, enabled: false, trigger: null, problem: "bad.md:2: kind — missing.", next: null, last: null },
       ];
       const r = await run(["list"], undefined, { list: { status: "ok", value } });
@@ -422,7 +422,7 @@ describe("pomade-runner", () => {
         "tonight  Tonight  script  once on 2026-11-17 at 23:00  finished · last done, 2026-11-17T12:00:03.000Z, took 850 ms",
         "hooked  Hooked  script  at Mac login  no next run · last skipped · previous run still going, 2026-11-17T12:00:03.000Z",
         "slow  Slow  script  at Mac login  no next run · last stopped: time limit, 45 min, 2026-11-17T12:00:03.000Z, took 45 min",
-        "web  Web  service  always on, from login  running, pid 7, since 2026-11-17T08:00:00.000Z",
+        "web  Web  service  always on · starts at login  running, pid 7, since 2026-11-17T08:00:00.000Z",
         "bad  bad  invalid — bad.md:2: kind — missing.",
         "",
       ]);

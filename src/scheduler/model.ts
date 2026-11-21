@@ -19,9 +19,10 @@ export const PARENT_RESULTS = ["done", "failed"] as const;
 export type ParentResult = (typeof PARENT_RESULTS)[number];
 
 /** What fired a hook or chain run: the event, with the context its run gets in its environment
- *  (`POMADE_PROJECT`, `POMADE_SESSION_ID`…; empty for `login`) · the parent run that finished. */
+ *  (`POMADE_PROJECT`, `POMADE_SESSION_ID`…; empty for `login`) and the name of the event's project
+ *  as it was then (absent when the event has none) · the parent run that finished. */
 export type RunCause =
-  | { kind: "hook"; event: HookEvent; context: Record<string, string> }
+  | { kind: "hook"; event: HookEvent; context: Record<string, string>; projectName?: string }
   | { kind: "chain"; job: string; name: string; run: string; result: ParentResult };
 
 /** A run that has not ended: `missed-waiting` a missed run of a `wait-for-me` job, waiting for the
@@ -404,7 +405,13 @@ function isRunCause(value: unknown): value is RunCause {
   if (!isRecord(value)) return false;
   switch (value.kind) {
     case "hook":
-      return typeof value.event === "string" && EVENTS.includes(value.event) && isRecord(value.context) && Object.values(value.context).every((v) => typeof v === "string");
+      return (
+        typeof value.event === "string" &&
+        EVENTS.includes(value.event) &&
+        isRecord(value.context) &&
+        Object.values(value.context).every((v) => typeof v === "string") &&
+        (value.projectName === undefined || typeof value.projectName === "string")
+      );
     case "chain":
       return typeof value.job === "string" && typeof value.name === "string" && typeof value.run === "string" && typeof value.result === "string" && PARENTS.includes(value.result);
     default:
@@ -637,21 +644,30 @@ export function dayTime(epochMs: number): string {
 /** What started a run, in words: "scheduled", "caught up", "manual", "hook", "chain". */
 export const TRIGGER_WORDS: Record<RunTrigger, string> = { scheduled: "scheduled", "caught-up": "caught up", manual: "manual", hook: "hook", chain: "chain" };
 
-/** A hook event in words, as a run's trigger: "hook: Mac login". */
-export const HOOK_WORDS: Record<HookEvent, string> = {
-  login: "Mac login",
-  "pomade-started": "Pomade started",
-  "project-first-open": "project first opened",
-  "project-created": "project created",
-  "session-finished": "agent session finished",
-  "session-status": "session status changed",
-};
+/** A hook's event in words, as a run's cause says it: "Mac login", "first open of job-hunt". */
+export function hookCauseWords(cause: Extract<RunCause, { kind: "hook" }>): string {
+  const project = cause.projectName;
+  switch (cause.event) {
+    case "login":
+      return "Mac login";
+    case "pomade-started":
+      return "Pomade started";
+    case "project-first-open":
+      return `first open of ${project ?? "a project"}`;
+    case "project-created":
+      return project === undefined ? "project created" : `project ${project} created`;
+    case "session-finished":
+      return "agent session finished";
+    case "session-status":
+      return "session status changed";
+  }
+}
 
 /** What started a run, in words, with its cause: "scheduled", "hook: Mac login", "chain: after
  *  Backup". */
 export function runTriggerWords(run: { trigger: RunTrigger; cause: RunCause | null }): string {
   if (run.cause?.kind === "chain") return `chain: after ${run.cause.name}`;
-  if (run.cause?.kind === "hook") return `hook: ${HOOK_WORDS[run.cause.event]}`;
+  if (run.cause?.kind === "hook") return `hook: ${hookCauseWords(run.cause)}`;
   return TRIGGER_WORDS[run.trigger];
 }
 

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,7 +42,7 @@ import {
 import { noticePoster, type PostNotice } from "../integrations/notices";
 import type { PomadeLinkHandlers } from "../integrations/pomade";
 import { isServiceActionResult, isServicesReport, type RunnerSession } from "../keeper/model";
-import type { SessionOwner } from "../keeper/ids";
+import { sessionIdOf, type SessionOwner } from "../keeper/ids";
 import type { SessionCommand, Sessions } from "../keeper/sessions";
 import type { SupervisionStore } from "../keeper/supervisor";
 import { stateFolderOf } from "../locations";
@@ -91,7 +91,7 @@ function stubSessions(): StubSessions {
   const held = new Map<string, RunnerSession>();
   const session = (owner: SessionOwner, command: SessionCommand): RunnerSession => {
     const run = owner.kind === "run" ? owner.run : "20261117-080000-abcdef";
-    const id = owner.kind === "run" ? `run:${owner.job}:${run}` : `svc:${owner.job}`;
+    const id = sessionIdOf(owner.kind === "run" ? { ...owner, run } : owner) ?? "";
     return {
       id,
       job: owner.job,
@@ -175,6 +175,8 @@ const noStore: SupervisionStore = { load: () => Promise.resolve(new Map()), save
 const supervision = { supervision: noStore, probe: () => Promise.resolve(false) };
 /** No Pomade to open: the scheduler's tests connect it themselves. */
 const noLaunch = (): Promise<LaunchResult> => Promise.resolve({ status: "failed", reason: "no Pomade in this test" });
+/** The Pomade start the tests run under. */
+const noStart = (): Promise<string | null> => Promise.resolve("start-1");
 
 /** A client of the fake host: a frame of Runner, or its backend. */
 async function frame(fake: FakeHost, surface: Surface = "tab"): Promise<HostClient> {
@@ -208,7 +210,7 @@ describe("scheduler", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch,
+      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -284,7 +286,7 @@ describe("scheduler", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch,
+      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
     });
     expect(result).toEqual({ status: "already-running" });
     expect(second.refreshes).toBe(0);
@@ -346,7 +348,7 @@ describe("scheduler", () => {
 
   it("refuses a socket path macOS cannot bind", async () => {
     socketPath = join(dir, "x".repeat(120), "scheduler.sock");
-    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: join(dir, "ws"), sessions, ...supervision, state: stateFolderOf(join(dir, "ud")), postNotice, pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch });
+    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: join(dir, "ws"), sessions, ...supervision, state: stateFolderOf(join(dir, "ud")), postNotice, pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart });
     expect(result.status).toBe("failed");
   });
 
@@ -390,7 +392,7 @@ describe("scheduler and the job files", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch,
+      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -426,8 +428,10 @@ describe("scheduler and the job files", () => {
     await writeFile(join(dir, "ws/Apps/pomade-runner/jobs/a.md"), job("A"));
     await start();
     link?.connected(await frame(fake, "backend"));
+    fake.ready();
 
     await vi.waitFor(() => expect(heard.length).toBeGreaterThan(0));
+    await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", JOBS_LIST_METHOD)).toMatchObject({ projectsChecked: true }));
     const listed = await ui.apps.call("pomade-runner", JOBS_LIST_METHOD);
     expect(isJobsSnapshot(listed)).toBe(true);
     expect(listed).toMatchObject({ workspace, projectsChecked: true, jobs: [{ valid: true, job: { id: "a", name: "A" } }] });
@@ -490,13 +494,13 @@ describe("scheduler and the job files", () => {
       },
     });
 
-    expect(await callScheduler(socketPath, "run", { job: "Coda web" })).toMatchObject({ status: "ok", value: { service: { job: "coda/web", state: "starting", session: { id: "svc:coda/web" } } } });
+    expect(await callScheduler(socketPath, "run", { job: "Coda web" })).toMatchObject({ status: "ok", value: { service: { job: "coda/web", state: "starting", session: { id: "svc:coda.web" } } } });
     expect(sessions.spawned[1]).toEqual({
       job: "coda/web",
       command: { title: "Coda web", command: "./start.sh", cwd: join(dir, "ws/Projects/coda"), background: true, actions: [{ id: "restart", title: "Restart" }] },
     });
     expect(await callScheduler(socketPath, "stop", { job: "coda/web" })).toMatchObject({ status: "ok", value: { job: "coda/web", state: "stopped-by-you" } });
-    expect(sessions.stopped).toEqual([{ id: "svc:coda/web", reason: "stopped-by-you" }]);
+    expect(sessions.stopped).toEqual([{ id: "svc:coda.web", reason: "stopped-by-you" }]);
     expect(await callScheduler(socketPath, "restart", { job: "api" })).toMatchObject({ status: "ok", value: { job: "api" } });
     expect(sessions.restarted.map((restarted) => restarted.job)).toEqual(["api"]);
 
@@ -602,7 +606,7 @@ describe("scheduler and runs", () => {
       sessions,
       ...supervision,
       postNotice: noticePoster(join(dir, "ud"), log),
-      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch,
+      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -725,7 +729,7 @@ describe("scheduler and runs", () => {
       value: [
         { job: "backup", kind: "script", enabled: true, trigger: "daily at 3:00", last: { state: "failed" }, service: null },
         { job: "bad", name: "Bad", kind: "script", trigger: null, problem: expect.stringContaining("bad.md") as string },
-        { job: "web", kind: "service", trigger: "always on, from login", service: { job: "web" } },
+        { job: "web", kind: "service", trigger: "always on · starts at login", service: { job: "web" } },
       ],
     });
     expect(await callScheduler(socketPath(), "run", { job: "web" })).toMatchObject({ status: "failed", code: "refused", message: 'cannot run "web": "Web" is running' });
@@ -823,5 +827,211 @@ describe("scheduler and runs", () => {
     ] as const) {
       await expect(ui.apps.call("pomade-runner", method, params)).rejects.toMatchObject({ code: "invalid-params" });
     }
+  });
+});
+
+describe("scheduler and Pomade's hooks", () => {
+  let dir: string;
+  let workspace: string;
+  let jobs: string;
+  let link: PomadeLinkHandlers | null;
+  let sessions: StubSessions;
+  let fake: FakeHost;
+  let lines: string[];
+  /** The Pomade start the scheduler finds: a new value is a new Pomade start. */
+  let pomadeStart: string | null;
+  const running: Scheduler[] = [];
+  // Normal priority and parallel: every firing starts at once, none waits for a slot or another run.
+  const script = (name: string, hook: string): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ./${name.toLowerCase()}.sh\nhook: ${hook}\nlow-priority: false\noverlap: parallel\n---\n`;
+
+  async function start(): Promise<Scheduler> {
+    const log = (line: string): void => void lines.push(line);
+    const result = await startScheduler({
+      socketPath: join(dir, "state", "scheduler.sock"),
+      state: stateFolderOf(join(dir, "ud")),
+      clock: { now: () => new Date() },
+      tickMs: 20,
+      log,
+      linkPomade: (handlers) => {
+        link = handlers;
+        return { stop: () => undefined };
+      },
+      workspace,
+      sessions,
+      ...supervision,
+      postNotice: noticePoster(join(dir, "ud"), log),
+      pomadeGit: "/nowhere/bin/pomade-git",
+      turns: new FakeTurns(),
+      shell: "/bin/sh",
+      launchPomade: noLaunch,
+      pomadeStart: () => Promise.resolve(pomadeStart),
+    });
+    if (result.status !== "started") throw new Error(`not started: ${result.status}`);
+    running.push(result.scheduler);
+    return result.scheduler;
+  }
+
+  /** Pomade connects the scheduler, as a (re)connection does; it listens once it announced the jobs. */
+  async function connect(): Promise<void> {
+    const announced = (): number => fake.published.filter((event) => event.name === JOBS_CHANGED_EVENT).length;
+    const before = announced();
+    link?.connected(await frame(fake, "backend"));
+    await vi.waitFor(() => expect(announced()).toBeGreaterThan(before));
+  }
+
+  /** The runs started, by job, with what their environment says of the event. */
+  const started = (): { job: string; trigger: string | undefined; project: string | undefined; path: string | undefined }[] =>
+    sessions.spawned.filter((spawn) => spawn.command.env?.POMADE_TRIGGER !== undefined).map(({ job, command }) => ({ job, trigger: command.env?.POMADE_TRIGGER, project: command.env?.POMADE_PROJECT, path: command.env?.POMADE_PROJECT_PATH }));
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "pr-"));
+    workspace = join(dir, "ws");
+    jobs = join(workspace, "Apps/pomade-runner/jobs");
+    await mkdir(jobs, { recursive: true });
+    await writeFile(join(workspace, "Apps/pomade-runner/settings.yaml"), "warm-up: 0m\n");
+    await writeFile(join(jobs, "updates.md"), script("Updates", "{ event: pomade-started }"));
+    await writeFile(join(jobs, "any-open.md"), script("Any open", "{ event: project-first-open }"));
+    await writeFile(join(jobs, "alpha-open.md"), script("Alpha open", "{ event: project-first-open, project: alpha }"));
+    await writeFile(join(jobs, "init.md"), script("Init", "{ event: project-created }"));
+    link = null;
+    lines = [];
+    pomadeStart = "start-1";
+    sessions = stubSessions();
+    fake = createFakeHost({
+      manifest,
+      projects: [
+        { id: "alpha", name: "Alpha", root: "Projects/alpha" },
+        { id: "beta", name: "Beta", root: "Projects/beta" },
+      ],
+    });
+  });
+
+  afterEach(async () => {
+    for (const scheduler of running.splice(0)) await scheduler.stop();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("Pomade started fires once per Pomade start: not again on a reconnect or a restarted scheduler, again after Pomade starts anew", async () => {
+    const scheduler = await start();
+    await connect();
+    fake.ready();
+    await vi.waitFor(() => expect(started()).toEqual([{ job: "updates", trigger: "hook", project: undefined, path: undefined }]));
+    expect(lines).toContain("Pomade started");
+
+    // The same Pomade: a reconnect hears the sticky ready again, and fires nothing.
+    await connect();
+    await vi.waitFor(() => expect(lines).toContain("Pomade ready: the Pomade started hooks fired for this Pomade start already"));
+    // A scheduler restarted (an update) while the same Pomade runs: nothing either.
+    await scheduler.stop();
+    running.splice(0);
+    lines = [];
+    await start();
+    await connect();
+    await vi.waitFor(() => expect(lines).toContain("Pomade ready: the Pomade started hooks fired for this Pomade start already"));
+    expect(started().map((run) => run.job)).toEqual(["updates"]);
+
+    // Pomade quit and started again.
+    pomadeStart = "start-2";
+    link?.disconnected();
+    await connect();
+    await vi.waitFor(() => expect(started().map((run) => run.job)).toEqual(["updates", "updates"]));
+    expect(await readFile(join(dir, "ud/app-state/pomade-runner/pomade-started.json"), "utf8")).toBe(`${JSON.stringify({ fired: { [workspace]: "start-2" } }, null, 2)}\n`);
+
+    // A Pomade start that cannot be told fires nothing and says why.
+    pomadeStart = null;
+    await connect();
+    await vi.waitFor(() => expect(lines).toContain("Pomade ready: cannot tell which Pomade start this is — its socket is not found; the Pomade started hooks do not fire"));
+    expect(started()).toHaveLength(2);
+  });
+
+  it("a project's first open fires its hooks once per Pomade start, with the project in the run's environment; the project in front at ready counts as opened", async () => {
+    await start();
+    fake.setActiveProject("alpha");
+    await connect();
+    fake.ready();
+    const alpha = { trigger: "hook", project: "alpha", path: join(workspace, "Projects/alpha") };
+    await vi.waitFor(() => expect(started()).toHaveLength(3));
+    expect(started()).toEqual(expect.arrayContaining([{ job: "updates", trigger: "hook", project: undefined, path: undefined }, { job: "any-open", ...alpha }, { job: "alpha-open", ...alpha }]));
+
+    // Pomade's own project.opened for the launch project fires nothing twice; a second open is no event.
+    fake.emitEvent("project.opened", { id: "alpha", kind: "project", name: "Alpha", root: "Projects/alpha" });
+    fake.emitEvent("project.opened", { id: "__workspace__", kind: "workspace", name: "Workspace", root: "" });
+    fake.emitEvent("project.opened", { id: "beta", kind: "project", name: "Beta", root: "Projects/beta" });
+    await vi.waitFor(() => expect(started()).toHaveLength(4));
+    expect(started()[3]).toEqual({ job: "any-open", trigger: "hook", project: "beta", path: join(workspace, "Projects/beta") });
+    // Another workspace's project (Pomade switched; this scheduler follows soon): not this workspace's.
+    fake.emitEvent("project.opened", { id: "elsewhere", kind: "project", name: "Elsewhere", root: "Projects/elsewhere" });
+    await vi.waitFor(() => expect(lines).toContain("project Elsewhere (elsewhere) opened: not a project of this workspace"));
+    expect(started()).toHaveLength(4);
+    const history = await vi.waitFor(async () => {
+      const ui = await frame(fake);
+      const runs = await ui.apps.call("pomade-runner", RUNS_LIST_METHOD);
+      if (!isRunsReport(runs)) throw new Error("no report");
+      return runs;
+    });
+    expect(history.active.find((run) => run.job === "alpha-open")?.cause).toEqual({ kind: "hook", event: "project-first-open", context: { POMADE_PROJECT: "alpha", POMADE_PROJECT_PATH: join(workspace, "Projects/alpha") }, projectName: "Alpha" });
+  });
+
+  it("a project created fires its hooks with the new project", async () => {
+    await start();
+    await connect();
+    fake.emitEvent("project.created", { id: "gamma", kind: "project", name: "Gamma", root: "Projects/gamma" });
+    await vi.waitFor(() => expect(started()).toEqual([{ job: "init", trigger: "hook", project: "gamma", path: join(workspace, "Projects/gamma") }]));
+    expect(lines).toContain("project Gamma (gamma) created");
+  });
+
+  it("a service that starts on a project's first open starts then, not at login", async () => {
+    await mkdir(join(jobs, "alpha"));
+    await writeFile(join(jobs, "alpha/web.md"), "---\nkind: service\nname: Web\nproject: alpha\nfolder: .\ncommand: ./web.sh\nstart: project-first-open\n---\n");
+    await writeFile(join(jobs, "docs.md"), "---\nkind: service\nname: Docs\nfolder: .\ncommand: ./docs.sh\nstart: project-first-open\nstart-project: beta\n---\n");
+    await start();
+    await connect();
+    fake.ready();
+    await vi.waitFor(() => expect(lines).toContain("Pomade started"));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(sessions.spawned.filter((spawn) => spawn.command.env?.POMADE_TRIGGER === undefined)).toEqual([]);
+    fake.emitEvent("project.opened", { id: "beta", kind: "project", name: "Beta", root: "Projects/beta" });
+    await vi.waitFor(() => expect(sessions.spawned.filter((spawn) => spawn.command.env?.POMADE_TRIGGER === undefined).map((spawn) => spawn.job)).toEqual(["docs"]));
+    // Beta's first open is not Alpha's.
+    const ui = await frame(fake);
+    expect(await ui.apps.call("pomade-runner", SERVICES_LIST_METHOD)).toMatchObject({ services: [{ job: "docs", state: "starting" }, { job: "alpha/web", state: "waiting" }] });
+  });
+
+  it("a project moved: its jobs follow it — sub-folder, folders, ids — keep their history and latest run, and its running service starts again in its new folder", async () => {
+    await mkdir(join(jobs, "alpha"));
+    await mkdir(join(workspace, "Projects/alpha"), { recursive: true });
+    await writeFile(join(jobs, "alpha/web.md"), "---\nkind: service\nname: Web\nproject: alpha\nfolder: Projects/alpha\ncommand: ./web.sh\n---\n");
+    await writeFile(join(jobs, "alpha/nightly.md"), "---\nkind: script\nname: Nightly\nproject: alpha\nfolder: Projects/alpha\ncommand: ./n.sh\nhook: { event: project-created }\nlow-priority: false\n---\n");
+    await start();
+    await connect();
+    fake.ready();
+    const ui = await frame(fake);
+    await vi.waitFor(() => expect(sessions.spawned.map((spawn) => spawn.job)).toContain("alpha/web"));
+    await vi.waitFor(() => expect(lines).toContain("Pomade started"));
+    expect(await ui.apps.call("pomade-runner", RUN_NOW_METHOD, { job: "alpha/nightly" })).toMatchObject({ ok: true });
+    const run = sessions.list().find((session) => session.job === "alpha/nightly");
+    sessions.exit(run?.id ?? "", 0);
+    await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", HISTORY_LIST_METHOD, { job: "alpha/nightly" })).toMatchObject({ records: [{ job: "alpha/nightly", state: "done" }] }));
+
+    await rename(join(workspace, "Projects/alpha"), join(workspace, "Projects/alpha-2"));
+    fake.updateProject("alpha", { name: "Alpha 2", root: "Projects/alpha-2" });
+    // The service is stopped before its file moves; once its session ends, the move goes on.
+    await vi.waitFor(() => expect(sessions.stopped).toEqual([{ id: "svc:alpha.web", reason: "stopped" }]));
+    sessions.exit("svc:alpha.web", 143);
+    await vi.waitFor(() => expect(sessions.spawned.map((spawn) => spawn.job)).toContain("alpha-2/web"), { timeout: 5000 });
+    expect(sessions.forgotten).toContain("svc:alpha.web");
+    expect(sessions.spawned.find((spawn) => spawn.job === "alpha-2/web")?.command.cwd).toBe(join(workspace, "Projects/alpha-2"));
+    expect(await readFile(join(jobs, "alpha-2/nightly.md"), "utf8")).toContain("\nfolder: Projects/alpha-2\n");
+    expect(lines).toContain("project Alpha (alpha) moved: Projects/alpha → Projects/alpha-2");
+
+    // Listed, valid, under the new ids; the history and the latest run follow the job.
+    await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", JOBS_LIST_METHOD)).toMatchObject({ jobs: expect.arrayContaining([expect.objectContaining({ valid: true, job: expect.objectContaining({ id: "alpha-2/nightly" }) })]) as unknown }));
+    expect(await ui.apps.call("pomade-runner", HISTORY_LIST_METHOD, { job: "alpha-2/nightly" })).toMatchObject({ records: [{ job: "alpha/nightly", state: "done" }] });
+    expect(await ui.apps.call("pomade-runner", RUNS_LIST_METHOD)).toMatchObject({ jobs: expect.arrayContaining([expect.objectContaining({ job: "alpha-2/nightly", last: expect.objectContaining({ state: "done" }) as unknown })]) as unknown });
+    expect(await readFile(join(workspace, "Apps/pomade-runner/records/renamed.json"), "utf8")).toBe(`${JSON.stringify({ renamed: { "alpha/nightly": "alpha-2/nightly", "alpha/web": "alpha-2/web" } }, null, 2)}\n`);
+    // And it still fires: bound to the project by its id.
+    fake.emitEvent("project.created", { id: "gamma", kind: "project", name: "Gamma", root: "Projects/gamma" });
+    // (Its run then waits for the warm-up: the moved service is starting again.)
+    await vi.waitFor(() => expect(lines).toContain("hook project-created: fires alpha-2/nightly, init"));
   });
 });

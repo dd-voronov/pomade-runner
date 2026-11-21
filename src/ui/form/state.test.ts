@@ -101,9 +101,24 @@ describe("a new service", () => {
     });
   });
 
-  it("a project-first-open start needs a project, said on the start field", () => {
+  it("a project-first-open start needs a project, said on the start field; one picked is start-project", () => {
     const state = setValue(fill(newForm("service"), { name: "Web", folder: ".", command: "x" }), "start", "project-first-open");
-    expect(shown(state, EMPTY)).toEqual({ start: ["start — starts on the first open of its project, and the job has no project. Fix: add project: <the project's id>, or write start: login."] });
+    expect(shown(state, EMPTY)).toEqual({ start: ["start — starts on the first open of a project, and names none. Fix: add start-project: <the project's id> — `pomade-runner projects` lists them — or write start: login."] });
+    const picked = setValue(state, "startProject", "p-hunt");
+    expect(wouldBe(picked, EMPTY, PROJECTS).text).toContain("\nstart: project-first-open\nstart-project: p-hunt\n");
+    expect(formErrors(picked, EMPTY, PROJECTS)).toEqual([]);
+    // Back to At login: the start project goes with it.
+    expect(wouldBe(setValue(picked, "start", "login"), EMPTY, PROJECTS).text).not.toContain("start");
+  });
+
+  it("a project's service starts on its own project's first open unless another is picked", () => {
+    const own = setValue(fill(newForm("service"), { name: "Web", folder: "Projects/coda-helper", command: "x" }), "start", "project-first-open");
+    expect(own.values.project).toBe("p-coda");
+    expect(wouldBe(own, EMPTY, PROJECTS).text).not.toContain("start-project");
+    expect(formErrors(own, EMPTY, PROJECTS)).toEqual([]);
+    const edited = editForm("Apps/pomade-runner/jobs/coda-helper/web.md", "---\nkind: service\nname: Web\nproject: p-coda\nfolder: .\ncommand: x\nstart: project-first-open\nstart-project: p-hunt # its scraper\n---\n");
+    expect(edited?.values).toMatchObject({ start: "project-first-open", startProject: "p-hunt" });
+    expect(edited === null ? null : fieldChanges(setValue(edited, "command", "y"))).toEqual({ command: "y" });
   });
 
   it("shows an empty field's error only once Save was pressed; a filled-in field's at once", () => {
@@ -164,12 +179,14 @@ describe("editing a job file", () => {
       enabled: true,
       command: "./start.sh",
       start: "login",
+      startProject: "",
       ready: "port",
       port: "5173",
       url: "",
       trigger: "schedule",
       schedule: blankSchedule(),
       hookEvent: "login",
+      hookProject: "",
       serviceChain: false,
       chainJob: "",
       chainResult: "done",

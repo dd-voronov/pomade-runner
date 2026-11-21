@@ -870,7 +870,7 @@ test.describe("hooks and chains", () => {
     await writeJob(page, "mount.md", "---\nkind: script\nname: Mount\nfolder: .\ncommand: ./mount.sh\nhook: { event: login }\n---\n");
     await writeJob(page, "web.md", "---\nkind: service\nname: Web\nfolder: .\ncommand: ./web.sh\nafter: { job: pull }\n---\n");
     // By path: Mount, Pull, Tests, Web.
-    await expect(app(page).getByTestId("job-trigger")).toHaveText(["at Mac login", "daily at 13:00", "after Pull finishes", "always on, from login; restarts after Pull is done"]);
+    await expect(app(page).getByTestId("job-trigger")).toHaveText(["at Mac login", "daily at 13:00", "after Pull finishes", "always on · starts at login · restarts after Pull is done"]);
     await expect(app(page).getByTestId("job-next")).toHaveText(["on event", "—", "on event", "always on"]);
     await shoot(page, "tab-jobs-chains");
   });
@@ -996,9 +996,10 @@ test.describe("the job form", () => {
     await expect(form.getByText("“.” is the workspace root, workspace.")).toBeVisible();
     // A start on the first open of a project needs one: said on Starts.
     await form.getByRole("button", { name: "On first open of a project" }).click();
-    await expect(form.getByRole("alert")).toHaveText(["start — starts on the first open of its project, and the job has no project. Fix: add project: <the project's id>, or write start: login."]);
-    await form.getByRole("combobox", { name: "Project" }).selectOption("alpha");
-    await expect(form.getByTestId("start-project")).toHaveText("Alpha, the job's project");
+    await expect(form.getByRole("alert")).toHaveText(["start — starts on the first open of a project, and names none. Fix: add start-project: <the project's id> — `pomade-runner projects` lists them — or write start: login."]);
+    // The job's own project, once it has one, is the one it starts on.
+    await form.getByRole("combobox", { name: "Project", exact: true }).selectOption("alpha");
+    await expect(form.getByTestId("start-project")).toHaveValue("alpha");
     await expect(form.getByRole("alert")).toHaveCount(0);
     // A port that is not one, as the checker words it.
     await form.getByRole("button", { name: "Check a port or URL instead" }).click();
@@ -1220,7 +1221,7 @@ test.describe("the Jobs view", () => {
     const kinds = await app(page).getByTestId("job-row").evaluateAll((rows) => rows.map((row) => row.querySelector("[data-tip]")?.getAttribute("data-tip")));
     expect(kinds).toEqual(["Script", "Script", "Script", "Service", "Git"]);
     for (const key of ["jobs.workspace", "jobs.this", "jobs.last", "jobs.next", "jobs.invalid"]) await expect(app(page).getByTestId(`help-${key}`)).toBeVisible();
-    await expect(app(page).getByTestId("job-trigger")).toHaveText(["daily at 13:00", "at Mac login", "daily at 9:00", "always on, from login", "daily at 9:00"]);
+    await expect(app(page).getByTestId("job-trigger")).toHaveText(["daily at 13:00", "at Mac login", "daily at 9:00", "always on · starts at login", "daily at 9:00"]);
     await expect(app(page).getByTestId("job-trigger").first()).toHaveAttribute("data-tip", "Daily at 13:00");
     // A service's row opens its terminal where the others run now; every row has Edit and Delete.
     const buttons = (job: string) => app(page).locator(`[data-testid="job-row"][data-job="${job}"]`).getByRole("button").evaluateAll((all) => all.map((b) => b.getAttribute("aria-label")));
@@ -2035,13 +2036,13 @@ test.describe("the Script form and the schedule picker", () => {
   });
 
   test("a script whose hook is on an event the form does not offer keeps it: said in words, changed in the file", async ({ page }) => {
-    const text = "---\nkind: script\nname: Init\nfolder: .\ncommand: ./init.sh\nhook: { event: project-created } # new projects\n---\n";
+    const text = "---\nkind: script\nname: Init\nfolder: .\ncommand: ./init.sh\nhook: { event: session-finished, agent: claude } # after claude\n---\n";
     await start(page, "edit/init");
     await page.evaluate((t) => window.fakeHost.writeFile("Apps/pomade-runner/jobs/init.md", t), text);
     const frame = app(page);
     const choice = frame.getByTestId("trigger-choice");
     await expect(choice.getByRole("button", { name: "When something happens" })).toHaveAttribute("aria-pressed", "true");
-    await expect(frame.getByTestId("file-trigger")).toContainText("Runs when a project is createdThis hook is set in the job file: hook:");
+    await expect(frame.getByTestId("file-trigger")).toContainText("Runs when an agent session finishesThis hook is set in the job file: hook:");
     await expect(frame.getByTestId("hook-event")).toHaveCount(0);
     await frame.getByTestId("trigger-open-file").click();
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: `${JOBS}/init.md` }]);
@@ -2073,7 +2074,7 @@ test.describe("the Script form and the schedule picker", () => {
     await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
     const event = frame.getByTestId("hook-event");
     // The hooks the engine fires, then the chain, last.
-    await expect(event.locator("option")).toHaveText(["Mac login", "Another job finished"]);
+    await expect(event.locator("option")).toHaveText(["Mac login", "Pomade started", "First open of a project since Pomade started", "Project created", "Another job finished"]);
     await expect(event).toHaveValue("login");
     await expect(frame.getByTestId("hook-words")).toHaveText("Runs at Mac loginOnce per login, after the 2-minute warm-up.");
     await frame.getByTestId("form-policies").getByRole("button", { name: "Change" }).click();
@@ -2102,6 +2103,78 @@ test.describe("the Script form and the schedule picker", () => {
     await frame.getByTestId("form-save").click();
     await expect(frame.getByTestId("chain-error")).toHaveText("after — names no job. Fix: add the job to follow: after: { job: backup, result: done }.");
     await expect(frame.getByTestId("chain-job")).toBeFocused();
+  });
+
+  test("T-013 · a script on Pomade's hooks: Pomade started, the first open of a project with its picker, Project created — each with its (i), the words, and the file a hand-written hook is", async ({ page }) => {
+    await start(page, "");
+    let frame = await newScript(page, "Updates");
+    await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
+    const pomade = "Fires only while Pomade is running, so there are no missed runs.";
+    await frame.getByTestId("hook-event").selectOption({ label: "Pomade started" });
+    await expect(frame.getByTestId("hook-words")).toHaveText(`Runs when Pomade starts${pomade}`);
+    await expect(frame.getByTestId("hook-box")).toHaveCount(0);
+    await frame.getByTestId("help-hk.pomade-started").hover();
+    await expect(frame.getByRole("tooltip")).toHaveText(HELP["hk.pomade-started"].join(""));
+    await frame.getByTestId("form-policies").getByRole("button", { name: "Change" }).click();
+    await expect(frame.getByTestId("missed-n-a")).toHaveText("Doesn’t apply — hooks fire only while Pomade is running.");
+    await shoot(page, "tab-form-hook-pomade-started");
+    expect(await create(page, "updates")).toBe(`${header("Updates")}hook: { event: pomade-started }\n---\n`);
+
+    frame = await newScript(page, "Scraper");
+    await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
+    await frame.getByTestId("hook-event").selectOption({ label: "First open of a project since Pomade started" });
+    const project = frame.getByTestId("hook-project");
+    await expect(project.locator("option")).toHaveText(["Any project", "Alpha"]);
+    await expect(project).toHaveValue("");
+    await expect(frame.getByTestId("hook-words")).toHaveText(`Runs on first open of a project${pomade}`);
+    await frame.getByTestId("help-hk.project-first-open").hover();
+    await expect(frame.getByRole("tooltip")).toHaveText(HELP["hk.project-first-open"].join(""));
+    await project.selectOption({ label: "Alpha" });
+    await expect(frame.getByTestId("hook-words")).toHaveText(`Runs on first open of Alpha${pomade}`);
+    await shoot(page, "tab-form-hook-first-open");
+    expect(await create(page, "scraper")).toBe(`${header("Scraper")}hook: { event: project-first-open, project: alpha }\n---\n`);
+
+    frame = await newScript(page, "Init");
+    await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
+    await frame.getByTestId("hook-event").selectOption({ label: "Project created" });
+    await expect(frame.getByTestId("hook-words")).toHaveText(`Runs when a project is created${pomade}`);
+    await frame.getByTestId("help-hk.project-created").hover();
+    await expect(frame.getByRole("tooltip")).toHaveText(HELP["hk.project-created"].join(""));
+    await shoot(page, "tab-form-hook-project-created");
+    expect(await create(page, "init")).toBe(`${header("Init")}hook: { event: project-created }\n---\n`);
+    await expect(app(page).getByTestId("job-trigger")).toContainText(["when a project is created", "on first open of Alpha", "when Pomade starts"]);
+
+    // Edited: the form shows the file's hook and its project.
+    await page.evaluate(() => window.mounted.navigate("edit/scraper"));
+    await expect(app(page).getByTestId("hook-event")).toHaveValue("project-first-open");
+    await expect(app(page).getByTestId("hook-project")).toHaveValue("alpha");
+  });
+
+  test("T-013 · a service's Starts: on first open of a project, with its project picked; the file has start-project, the Jobs view says it", async ({ page }) => {
+    await start(page, "");
+    await page.evaluate(() => {
+      window.mounted.navigate("");
+      window.mounted.navigate("new");
+    });
+    await app(page).getByTestId("kind-service").click();
+    const form = app(page).getByTestId("form-service");
+    await form.getByRole("textbox", { name: "Name", exact: true }).fill("Docs");
+    await form.getByRole("textbox", { name: "Command", exact: true }).fill("npm run docs");
+    await form.getByRole("textbox", { name: "Folder", exact: true }).fill(".");
+    await expect(form.getByTestId("start-project")).toHaveCount(0);
+    await form.getByRole("button", { name: "On first open of a project" }).click();
+    const picker = form.getByTestId("start-project");
+    // A workspace service names the project it waits for.
+    await expect(picker.locator("option")).toHaveText(["Choose a project…", "Alpha"]);
+    await picker.selectOption({ label: "Alpha" });
+    await expect(picker.locator("option")).toHaveText(["Alpha"]);
+    await form.getByTestId("help-f.start").hover();
+    await expect(app(page).getByRole("tooltip")).toHaveText(HELP["f.start"].join(""));
+    await shoot(page, "tab-form-service-starts-first-open");
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, `${JOBS}/docs.md`)).toBe("---\nkind: service\nname: Docs\nfolder: .\nenabled: true\ncommand: npm run docs\nstart: project-first-open\nstart-project: alpha\n---\n");
+    await expect(app(page).locator('[data-testid="job-row"][data-job="docs"]').getByTestId("job-trigger")).toHaveText("always on · starts on first open of Alpha");
   });
 
   test("T-010 · a chain that leads back to itself is refused on Save, both jobs named in the checker's words, with the (i) on why", async ({ page }) => {
@@ -2153,7 +2226,7 @@ test.describe("the Script form and the schedule picker", () => {
     await expect(frame.getByTestId("tab-jobs")).toBeVisible();
     const chained = WEB.replace("---\nNotes", "after: { job: backup, result: failed, action: stop }\n---\nNotes");
     expect(await fileText(page, `${JOBS}/web.md`)).toBe(chained);
-    await expect(app(page).locator('[data-testid="job-row"][data-job="web"]').getByTestId("job-trigger")).toHaveText("always on, from login; stops after Backup fails");
+    await expect(app(page).locator('[data-testid="job-row"][data-job="web"]').getByTestId("job-trigger")).toHaveText("always on · starts at login · stops after Backup fails");
 
     await page.evaluate(() => {
       window.mounted.navigate("");

@@ -3,7 +3,8 @@
 import { describe, expect, it } from "vitest";
 
 import { checkJobs } from "../jobs/check";
-import { hooked, LOGIN, type HookFiring } from "./hooks";
+import { hooked, LOGIN, POMADE_STARTED, projectFiring, type HookFiring } from "./hooks";
+import { runTriggerWords } from "./model";
 
 const script = (name: string, hook: string, extra = ""): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ./x.sh\nhook: ${hook}\n${extra}---\n`;
 
@@ -58,5 +59,25 @@ describe("hooks", () => {
     expect(event({ event: "session-status", status: "done", agent: "codex" })).toEqual(["status-done-codex", "status-done"]);
     expect(event({ event: "session-status", status: "done", agent: "claude" })).toEqual(["status-done"]);
     expect(event({ event: "session-status", status: "on-hold" })).toEqual([]);
+  });
+
+  it("Pomade's events as the firing path takes them: the project's id for the filter, its id and folder for the runs, its name for the cause", () => {
+    expect(hooked(snapshot, POMADE_STARTED).map((job) => job.id)).toEqual(["started"]);
+    const one = { id: "p1", name: "One", root: "Projects/one" };
+    const opened = projectFiring("project-first-open", one, "/ws");
+    expect(opened).toEqual({ event: "project-first-open", project: "p1", agent: null, status: null, context: { POMADE_PROJECT: "p1", POMADE_PROJECT_PATH: "/ws/Projects/one" }, projectName: "One" });
+    expect(hooked(snapshot, opened).map((job) => job.id)).toEqual(["first-any", "first-p1"]);
+    expect(projectFiring("project-created", one, null).context).toEqual({ POMADE_PROJECT: "p1" });
+    expect(hooked(snapshot, projectFiring("project-created", one, "/ws")).map((job) => job.id)).toEqual(["created"]);
+  });
+
+  it("a hook run's cause in words: the event, and its project by the name it had", () => {
+    const hook = (event: HookFiring["event"], projectName?: string): string => runTriggerWords({ trigger: "hook", cause: { kind: "hook", event, context: {}, ...(projectName === undefined ? {} : { projectName }) } });
+    expect(hook("login")).toBe("hook: Mac login");
+    expect(hook("pomade-started")).toBe("hook: Pomade started");
+    expect(hook("project-first-open", "job-hunt")).toBe("hook: first open of job-hunt");
+    expect(hook("project-first-open")).toBe("hook: first open of a project");
+    expect(hook("project-created", "job-hunt")).toBe("hook: project job-hunt created");
+    expect(hook("project-created")).toBe("hook: project created");
   });
 });

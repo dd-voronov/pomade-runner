@@ -17,6 +17,7 @@ import styles from "./JobForm.module.css";
 import { LOW_PRIORITY_WORDS, MISSED_WORDS, NOTIFY_WORDS, OVERLAP_WORDS, TIME_LIMIT_WORDS, type PolicyWords } from "./policies";
 import type { FormValues, WorthUntil } from "./state";
 import { ServiceChainLine, TriggerSection } from "./TriggerSection";
+import { projectPicks } from "./triggerWords";
 
 /** A policy as the Policies section shows it: its words in the summary (`policies.ts`), and its
  *  row — its control — once the person presses Change. */
@@ -216,7 +217,8 @@ function ServiceSections(props: FormProps): React.JSX.Element {
   const { state, set, error, projects } = props;
   const { values } = state;
   const [readyOpen, setReadyOpen] = useState(false);
-  const projectName = values.project === null ? null : (projects.records.find((project) => project.id === values.project)?.name ?? values.project);
+  // The project whose first open starts it: the one picked, else the job's own.
+  const startProject = values.startProject.trim() || values.project || "";
   return (
     <>
       <FormSection title="Trigger" sub="always on">
@@ -232,7 +234,17 @@ function ServiceSections(props: FormProps): React.JSX.Element {
                   { value: "project-first-open", label: "On first open of a project" },
                 ]}
               />
-              {values.start === "project-first-open" && projectName !== null && <span data-testid="start-project">{projectName}, the job's project</span>}
+              {values.start === "project-first-open" && (
+                <Select
+                  auto
+                  aria-label="Project it starts on"
+                  options={projectPicks(projects.records, startProject, "Choose a project…")}
+                  value={startProject}
+                  bad={error("start") !== undefined}
+                  data-testid="start-project"
+                  onChange={(event) => set("startProject", event.target.value)}
+                />
+              )}
             </div>
           )}
         </Field>

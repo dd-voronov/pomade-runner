@@ -17,7 +17,9 @@ You never start, restart or register anything: write the file, then check it.
 2. **Pick where it goes.** A workspace job: `Apps/pomade-runner/jobs/<slug>.md`. A project job:
    `Apps/pomade-runner/jobs/<project folder>/<slug>.md` with `project: <id>`. Get both from
    `pomade-runner projects` (it needs Pomade running): it prints each project's id and its jobs
-   sub-folder. The file name is the job's slug: lower-case letters, digits and dashes.
+   sub-folder. The file name is the job's slug: lower-case letters, digits and dashes. When a
+   project moves in Pomade, Runner renames its sub-folder and rewrites the `folder:` paths inside
+   it itself — don't.
 3. **Write the file** — frontmatter fields below, the body after the closing `---` (notes, or an
    agent job's prompt). To change a job, edit only the fields you mean to change; keep the rest,
    comments included. To remove a job, delete its file.
@@ -44,7 +46,8 @@ By kind:
 |---|---|---|
 | `folder` | service · script · agent (required) | working folder, relative to the workspace root; `.` is the root |
 | `command` | service · script (required) | what the login shell runs, e.g. `./start.sh` |
-| `start` | service | `login` (default) · `project-first-open` (needs `project`) |
+| `start` | service | `login` (default) · `project-first-open`: on the first open of a project since Pomade started |
+| `start-project` | service, with `start: project-first-open` | the project whose first open starts it; default: the job's own `project` (a workspace service needs it) |
 | `ready` | service | `{ port: 5173 }` or `{ url: http://localhost:5173/ }`; default: up = alive after 5 s |
 | `agent` | agent (required) | the agent's id, e.g. `claude` |
 | `mode` | agent | one of the agent's modes; default `normal` (`full-autonomy` skips every approval) |
@@ -75,7 +78,8 @@ A service runs all the time (`start`). Every script, agent and git job has **exa
   ```
 
   Times are `H:MM`, 24-hour. No cron syntax.
-- **`hook`** — on an event: `{ event: <event>, …filters }`.
+- **`hook`** — on an event: `{ event: <event>, …filters }`. Pomade's events fire only while Pomade
+  runs; one that happened while it or Runner was not listening is not caught up.
 
   | Event | Fires | Filters |
   |---|---|---|
@@ -236,7 +240,8 @@ Pomade closed it checks everything but project ids, and says so.
 
 A script runs in its folder, by the login shell, with `POMADE_JOB` (its id), `POMADE_RUN_ID`,
 `POMADE_TRIGGER` (`scheduled`, `caught-up` for a missed run run late, `manual`, `hook` or `chain`)
-and, for a project job, `POMADE_PROJECT` and `POMADE_PROJECT_PATH` in its environment; a chain's
+and, for a project job, `POMADE_PROJECT` and `POMADE_PROJECT_PATH` in its environment — on a
+`project-first-open` or `project-created` hook, the event's project's; a chain's
 run also gets `POMADE_PARENT_JOB`, `POMADE_PARENT_RUN_ID` and `POMADE_PARENT_RESULT` (`done` or
 `failed`). Exit 0 is done, anything else failed. A git job runs Pomade's `pomade-git` on its repos,
 with Pomade open or closed: a commit it makes reads `Committed automatically · job "<name>" · <date
@@ -257,7 +262,8 @@ Runner's workspace settings live in `Apps/pomade-runner/settings.yaml` — `max-
 asked, then run `pomade-runner check`.
 
 A valid, enabled `start: login` service starts within seconds of being written (services start one
-at a time). `pomade-runner services` shows every service and where it stands — running,
+at a time); a `start: project-first-open` one waits for that project's first open since Pomade
+started, then stays up like any service. `pomade-runner services` shows every service and where it stands — running,
 restarting, failed after a crash loop, stopped by you; `pomade-runner run|stop|restart <service>`
 (its id or name) starts, stops or restarts one. Disabling a service in its file or deleting the
 file stops it; an edited `command` or `folder` applies on its next restart.

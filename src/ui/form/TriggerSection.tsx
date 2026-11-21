@@ -37,7 +37,7 @@ import {
   type ScheduleTarget,
   type ScheduleValues,
 } from "./schedule";
-import { ACTION_OPTIONS, CHAIN_CHOICE, chainJobOptions, EVENT_CHOICES, formOffersHook, hookBoxWords, isLoopError, RESULT_CHOICES, SERVICE_RESULT_OPTIONS } from "./triggerWords";
+import { ACTION_OPTIONS, CHAIN_CHOICE, chainJobOptions, EVENT_CHOICES, formOffersHook, hookBoxWords, isLoopError, projectPicks, RESULT_CHOICES, SERVICE_RESULT_OPTIONS } from "./triggerWords";
 
 /** The time now, a fresh one every minute: the next runs move on while the form is open. */
 function useNow(): Date {
@@ -135,7 +135,7 @@ function ChainErrors({ errors, rendered }: { errors: readonly JobError[]; render
 
 /** The Event list, and a chain's job and result in a box under it; the trigger in words. */
 function HookEditor(props: FormProps): React.JSX.Element {
-  const { state, set, error, errorList, jobs, jobId } = props;
+  const { state, set, error, errorList, jobs, jobId, projects } = props;
   const { values } = state;
   const chain = values.trigger === "chain";
   const event = chain ? CHAIN_CHOICE : values.hookEvent;
@@ -162,6 +162,21 @@ function HookEditor(props: FormProps): React.JSX.Element {
         )}
       </Field>
       {triggerErrors !== undefined && <FieldError>{triggerErrors}</FieldError>}
+      {!chain && values.hookEvent === "project-first-open" && (
+        <div className={styles.subBox} data-testid="hook-box">
+          <Field label="Project">
+            {(id) => (
+              <Select
+                id={id}
+                options={[{ value: "", label: "Any project" }, ...projectPicks(projects.records, values.hookProject.trim(), null)]}
+                value={values.hookProject.trim()}
+                data-testid="hook-project"
+                onChange={(e) => set("hookProject", e.target.value)}
+              />
+            )}
+          </Field>
+        </div>
+      )}
       {chain && (
         <div className={styles.subBox} data-testid="chain-box">
           <div className={styles.row}>
@@ -190,9 +205,9 @@ function HookEditor(props: FormProps): React.JSX.Element {
   );
 }
 
-function HookWords({ host, state, jobs }: FormProps): React.JSX.Element {
+function HookWords({ host, state, jobs, projects }: FormProps): React.JSX.Element {
   const settings = useSettings(host);
-  const words = hookBoxWords(state.values, jobs, settings.status === "ready" ? settings.value.settings.warmUpMinutes : null);
+  const words = hookBoxWords(state.values, jobs, settings.status === "ready" ? settings.value.settings.warmUpMinutes : null, projects.records);
   return (
     <div className={styles.words} data-testid="hook-words">
       <Icon name="clock" />

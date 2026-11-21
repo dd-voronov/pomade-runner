@@ -44,6 +44,7 @@
       "pomade.ready",
       "project.created",
       "project.renamed",
+      "project.opened",
       "attachedTab.action"
     ]
   },

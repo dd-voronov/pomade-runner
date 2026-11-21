@@ -339,6 +339,42 @@ describe("service supervision", () => {
       expect(status("p/app").state).toBe("waiting");
     });
 
+    it("a first-open service starts on its start project's first open, through the staged start; a stopped one stays stopped", async () => {
+      files = {
+        "p/app.md": service("App", "project: p\nstart: project-first-open\n"),
+        "docs.md": service("Docs", "start: project-first-open\nstart-project: q\n"),
+        "p/off.md": service("Off", "project: p\nstart: project-first-open\nenabled: false\n"),
+        "p/held.md": service("Held", "project: p\nstart: project-first-open\n"),
+      };
+      load();
+      await at(0);
+      expect(await supervisor.start("p/held")).toMatchObject({ ok: true });
+      expect(await supervisor.stop("p/held")).toMatchObject({ ok: true, service: { state: "stopped-by-you" } });
+      await at(1000);
+      expect(states()).toEqual({ docs: "waiting", "p/app": "waiting", "p/held": "stopped-by-you", "p/off": "disabled" });
+
+      // Another project's first open starts nothing of p's.
+      await supervisor.firstOpen("other");
+      expect(sessions.spawned.map((spawn) => spawn.job)).toEqual(["p/held"]);
+      await supervisor.firstOpen("p");
+      expect(sessions.spawned.map((spawn) => spawn.job)).toEqual(["p/held", "p/app"]);
+      expect(states()).toEqual({ docs: "waiting", "p/app": "starting", "p/held": "stopped-by-you", "p/off": "disabled" });
+      expect(lines).toContain("service p/held: its project's first open; it stays stopped until Start");
+      // A workspace service on another project's first open waits its turn in the staged start.
+      await supervisor.firstOpen("q");
+      expect(status("docs").state).toBe("queued");
+      await at(7000);
+      expect(sessions.spawned.map((spawn) => spawn.job)).toEqual(["p/held", "p/app", "docs"]);
+      // Started, it is kept up like any service; a later first open (the next Pomade start) leaves it be.
+      await at(20_000);
+      await supervisor.firstOpen("p");
+      expect(sessions.starts("p/app")).toBe(1);
+      sessions.end("p/app", "crashed");
+      await at(20_500);
+      await at(21_100);
+      expect(sessions.starts("p/app")).toBe(2);
+    });
+
     it("does nothing while the sessions do not follow the keeper, or with no workspace", async () => {
       files = { "web.md": service("Web") };
       load();

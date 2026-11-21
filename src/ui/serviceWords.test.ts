@@ -75,7 +75,8 @@ describe("a service's look in the Services view and Running now", () => {
     const stopped = new Date(2026, 10, 16, 18, 10).getTime();
     expect(serviceLook({ ...base, state: "stopped-by-you", session: session(stopped - 60_000, stopped) }, port, now)).toMatchObject({ tone: "hollow", help: "st.stopped", words: "stopped by you", sub: "yesterday 18:10" });
     expect(serviceLook({ ...base, state: "queued" }, port, now)).toMatchObject({ on: false, help: "st.svcqueued", words: "queued" });
-    expect(serviceLook({ ...base, state: "waiting" }, port, now)).toMatchObject({ help: "st.svcwaiting", words: "waiting for its project" });
+    expect(serviceLook({ ...base, state: "waiting" }, port, now)).toMatchObject({ help: "st.svcwaiting", words: "waiting for first open", sub: "starts on first open" });
+    expect(serviceLook({ ...base, state: "waiting" }, port, now, "job-hunt")).toMatchObject({ words: "waiting for first open", sub: "starts on first open of job-hunt" });
     expect(serviceLook({ ...base, state: "disabled" }, port, now)).toMatchObject({ help: "st.disabled", words: "disabled", sub: "" });
     expect(serviceLook({ ...base, state: "restarting", restarts: 1, lastCrashAt: crash }, port, now)).toMatchObject({ tone: "warning", words: "restarting", sub: "restarted 1× · last crash 11:20" });
   });

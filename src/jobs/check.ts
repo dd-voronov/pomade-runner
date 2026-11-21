@@ -97,6 +97,9 @@ function checkProjects(files: readonly ParsedJobFile[], projects: readonly Proje
     if (file.hookProject !== null && !byId.has(file.hookProject.value)) {
       add(file, file.hookProject.line, "hook.project", `Pomade has no project with the id ${file.hookProject.value}`, listFix);
     }
+    if (file.startProject !== null && !byId.has(file.startProject.value)) {
+      add(file, file.startProject.line, "start-project", `Pomade has no project with the id ${file.startProject.value}`, listFix);
+    }
   }
 }
 
@@ -126,6 +129,7 @@ function knownFile(known: JobEntry): ParsedJobFile {
     project: project === null ? null : { value: project, line: 1 },
     after: after === null ? null : { job: after.job, line: 1 },
     hookProject: null,
+    startProject: null,
     errors: [],
     job,
   };

@@ -34,8 +34,8 @@ describe("a job's trigger in words", () => {
     ).toEqual({
       login: "at Mac login",
       started: "when Pomade starts",
-      first: "on the first open of a project",
-      "first-p1": "on the first open of project p1",
+      first: "on first open of a project",
+      "first-p1": "on first open of p1",
       created: "when a project is created",
       finished: "when an agent session finishes",
       status: "when a session's status changes to on-hold",
@@ -59,10 +59,10 @@ describe("a job's trigger in words", () => {
       done: "after pull is done",
       failed: "after pull fails",
       any: "after pull finishes",
-      web: "always on, from login; restarts after pull is done",
-      api: "always on, from login; stops after pull fails",
-      db: "always on, from login",
-      "one/later": "always on, from its project's first open; starts after pull finishes",
+      web: "always on · starts at login · restarts after pull is done",
+      api: "always on · starts at login · stops after pull fails",
+      db: "always on · starts at login",
+      "one/later": "always on · starts on first open of p1 · starts after pull finishes",
     });
   });
 
@@ -79,9 +79,9 @@ describe("a job's trigger in words", () => {
     const named = { job: (id: string) => (id === "pull" ? "Pull coda-helper" : id), project: (id: string) => (id === "p1" ? "One" : id) };
     const said = Object.fromEntries(snapshot.jobs.map((entry) => (entry.valid ? [entry.job.id, jobTriggerWords(entry.job, named)] : [entry.invalid.id, ""])));
     const { web, tests, first } = said;
-    expect(web).toBe("always on, from login; restarts after Pull coda-helper is done");
+    expect(web).toBe("always on · starts at login · restarts after Pull coda-helper is done");
     expect(tests).toBe("after Pull coda-helper finishes");
-    expect(first).toBe("on the first open of project One");
+    expect(first).toBe("on first open of One");
   });
 });
 

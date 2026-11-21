@@ -2,7 +2,7 @@
 // follow, the trigger in words under the editor, and which checker error is a chain that loops back.
 
 import { LOOP_PROBLEM } from "../../jobs/check";
-import type { ChainResult, JobError, JobsSnapshot, ServiceAction } from "../../jobs/model";
+import type { ChainResult, JobError, JobsSnapshot, ProjectRecord, ServiceAction } from "../../jobs/model";
 import { chainWords } from "../../jobs/words";
 import type { HelpKey } from "../help";
 import type { SelectOption } from "../kit";
@@ -14,6 +14,9 @@ export const CHAIN_CHOICE = "chain";
 /** The Event list: the hooks the engine fires, then the chain — always last. */
 export const EVENT_CHOICES: readonly { value: string; label: string; help: HelpKey }[] = [
   { value: "login", label: "Mac login", help: "hk.login" },
+  { value: "pomade-started", label: "Pomade started", help: "hk.pomade-started" },
+  { value: "project-first-open", label: "First open of a project since Pomade started", help: "hk.project-first-open" },
+  { value: "project-created", label: "Project created", help: "hk.project-created" },
   { value: CHAIN_CHOICE, label: "Another job finished", help: "hk.job-finished" },
 ];
 
@@ -64,6 +67,14 @@ export function chainJobOptions(snapshot: JobsSnapshot, self: string | null, cur
   return options;
 }
 
+/** A project picker's choices: Pomade's projects by name; `placeholder` first while none is picked,
+ *  and a project the file names that Pomade does not list, by its id. */
+export function projectPicks(records: readonly ProjectRecord[], current: string, placeholder: string | null): SelectOption[] {
+  const options: SelectOption[] = records.map((project) => ({ value: project.id, label: project.name }));
+  if (current !== "" && !records.some((project) => project.id === current)) options.push({ value: current, label: current });
+  return current === "" && placeholder !== null ? [{ value: "", label: placeholder }, ...options] : options;
+}
+
 /** The trigger in words under the hook editor: what fires the job, and a line on how it runs. */
 export interface HookBoxWords {
   title: string;
@@ -78,14 +89,29 @@ function warmUpWords(minutes: number | null): string {
   return `after the ${minutes}-minute warm-up`;
 }
 
-export function hookBoxWords(values: FormValues, snapshot: JobsSnapshot, warmUpMinutes: number | null): HookBoxWords {
+/** Pomade's hooks fire only while it runs: nothing is missed. */
+const POMADE_HOOK_SUB = "Fires only while Pomade is running, so there are no missed runs.";
+
+export function hookBoxWords(values: FormValues, snapshot: JobsSnapshot, warmUpMinutes: number | null, projects: readonly ProjectRecord[]): HookBoxWords {
   if (values.trigger === "chain") {
     const job = values.chainJob.trim();
     if (job === "") return { title: "Runs after another job finishes", sub: "A chain. History will show “chain: after …”." };
     const name = jobName(snapshot, job) ?? job;
     return { title: `Runs ${chainWords({ job, result: values.chainResult }, { job: () => name })}`, sub: `A chain. History will show “chain: after ${name}”.` };
   }
-  return { title: "Runs at Mac login", sub: `Once per login, ${warmUpWords(warmUpMinutes)}.` };
+  switch (values.hookEvent) {
+    case "pomade-started":
+      return { title: "Runs when Pomade starts", sub: POMADE_HOOK_SUB };
+    case "project-first-open": {
+      const id = values.hookProject.trim();
+      const name = id === "" ? "a project" : (projects.find((project) => project.id === id)?.name ?? id);
+      return { title: `Runs on first open of ${name}`, sub: POMADE_HOOK_SUB };
+    }
+    case "project-created":
+      return { title: "Runs when a project is created", sub: POMADE_HOOK_SUB };
+    default:
+      return { title: "Runs at Mac login", sub: `Once per login, ${warmUpWords(warmUpMinutes)}.` };
+  }
 }
 
 /** Whether a checker error is a chain that loops back. */

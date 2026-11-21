@@ -13,6 +13,10 @@ export interface ProjectsMemory {
   load(): Promise<void>;
   /** Pomade's projects, as just read. */
   remember(projects: readonly ProjectRecord[]): void;
+  /** A project just created, before the list is read again. */
+  add(project: ProjectRecord): void;
+  /** The projects as last heard. */
+  list(): readonly ProjectRecord[];
   /** A project's root, workspace-relative; `null` when it is not known. */
   root(id: string): string | null;
   flush(): Promise<void>;
@@ -28,6 +32,18 @@ export function projectsMemory(state: StateFolder, log: Log): ProjectsMemory {
   const file = projectsRecordPath(state);
   let projects: readonly ProjectRecord[] = [];
   let writing: Promise<void> = Promise.resolve();
+  const remember = (next: readonly ProjectRecord[]): void => {
+    if (JSON.stringify(next) === JSON.stringify(projects)) return;
+    projects = [...next];
+    const data = `${JSON.stringify({ projects }, null, 2)}\n`;
+    writing = writing
+      .then(async () => {
+        await mkdir(dirname(file), { recursive: true });
+        await writeFile(`${file}.tmp`, data);
+        await rename(`${file}.tmp`, file);
+      })
+      .catch((err: unknown) => log(`projects: cannot write ${file}: ${err instanceof Error ? err.message : String(err)}`));
+  };
   return {
     async load() {
       try {
@@ -38,18 +54,11 @@ export function projectsMemory(state: StateFolder, log: Log): ProjectsMemory {
         // None heard yet, or unreadable: the next connection to Pomade tells.
       }
     },
-    remember(next) {
-      if (JSON.stringify(next) === JSON.stringify(projects)) return;
-      projects = [...next];
-      const data = `${JSON.stringify({ projects }, null, 2)}\n`;
-      writing = writing
-        .then(async () => {
-          await mkdir(dirname(file), { recursive: true });
-          await writeFile(`${file}.tmp`, data);
-          await rename(`${file}.tmp`, file);
-        })
-        .catch((err: unknown) => log(`projects: cannot write ${file}: ${err instanceof Error ? err.message : String(err)}`));
+    remember,
+    add(project) {
+      if (!projects.some((known) => known.id === project.id)) remember([...projects, project]);
     },
+    list: () => projects,
     root: (id) => projects.find((project) => project.id === id)?.root ?? null,
     flush: () => writing,
   };

@@ -309,6 +309,11 @@ export interface Runs {
   hook(firing: HookFiring): Promise<void>;
   /** Lift the loop guard's pause of a job, by its id or name. */
   resume(ref: string): Promise<ResumeResult>;
+  /** Jobs' ids change (`ids`, old → new) once `work` moves their files (`true` when it did): their
+   *  latest records, the runs not started yet, the looks the switch holds and the loop guard's
+   *  counts go to the new ids. A run going keeps its id until it ends; its record is the new id's
+   *  latest. */
+  move(ids: ReadonlyMap<string, string>, work: () => Promise<boolean>): Promise<void>;
   /** The person's choice for the missed run of `ref` that waits for them. */
   missed(ref: string, choice: MissedChoice): Promise<MissedChoiceResult>;
   /** Stop a running run as stopped by you. */
@@ -401,6 +406,9 @@ export function createRuns(options: RunsOptions): Runs {
   let lane: Promise<unknown> = Promise.resolve();
   let tickQueued = false;
   let guard = createLoopGuard();
+  /** Jobs whose ids changed while this scheduler ran, old → new: a run going under its old id
+   *  ends as the new id's latest. */
+  const movedTo = new Map<string, string>();
   /** Whether this start is a login is decided once the keeper is followed. */
   let startDecided = false;
   /** A login: its hooks fire on the first reconcile that can run them. */
@@ -437,7 +445,7 @@ export function createRuns(options: RunsOptions): Runs {
     const written = recovered.delete(runKey) && (await history.find(entry.job, entry.run)) !== null;
     if (!written) await history.append(entry);
     active = active.filter((run) => run.job !== entry.job || run.run !== entry.run);
-    last.set(entry.job, entry);
+    last.set(movedTo.get(entry.job) ?? entry.job, entry);
     save();
     options.onChange();
     options.onFinished(entry);
@@ -458,7 +466,9 @@ export function createRuns(options: RunsOptions): Runs {
     if (jobs.length === 0) return;
     log(`hook ${firing.event}: fires ${jobs.map((job) => job.id).join(", ")}`);
     const at = now();
-    for (const job of jobs) await triggered(job, { kind: "hook", event: firing.event, context: firing.context }, at);
+    const cause: RunCause = { kind: "hook", event: firing.event, context: firing.context };
+    if (firing.projectName !== undefined) cause.projectName = firing.projectName;
+    for (const job of jobs) await triggered(job, cause, at);
   }
 
   /** A hook or a chain fires a job: past the loop guard, a script's or git job's run joins the
@@ -1168,6 +1178,23 @@ export function createRuns(options: RunsOptions): Runs {
       inLane(async () => {
         await fireHook(firing);
         if (sessions.followed() && options.jobs().workspace !== null) await advance();
+      }),
+
+    move: (ids, work) =>
+      inLane(async () => {
+        if (!(await work())) return;
+        const to = (job: string): string => ids.get(job) ?? job;
+        for (const [from, next] of ids) movedTo.set(from, next);
+        active = active.map((run) => (run.state === "running" ? run : { ...run, job: to(run.job) }));
+        last = new Map([...last].map(([job, record]) => [to(job), record]));
+        held = new Map([...held].map(([job, since]) => [to(job), since]));
+        const kept = guard.records(now().getTime());
+        guard = createLoopGuard({
+          fired: Object.fromEntries(Object.entries(kept.fired).map(([job, at]) => [to(job), at])),
+          paused: Object.fromEntries(Object.entries(kept.paused).map(([job, pause]) => [to(job), pause])),
+        });
+        save();
+        options.onChange();
       }),
 
     resume: (ref) =>

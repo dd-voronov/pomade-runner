@@ -1,5 +1,6 @@
 // A job's trigger in words, as `pomade-runner list` and the Jobs view show it: "weekdays at 7:00",
-// "at Mac login", "after backup is done", "always on, from login; restarts after git-pull is done".
+// "at Mac login", "after backup is done", "always on · starts at login · restarts after git-pull is
+// done".
 // Pure.
 
 import { addDays, describeDate, describeSchedule, localDateOf, type Schedule } from "pomade-kit/schedule";
@@ -18,11 +19,16 @@ export interface WordNames {
 const HOOK_TRIGGER_WORDS: Record<Hook["event"], (hook: Hook, names: WordNames) => string> = {
   login: () => "at Mac login",
   "pomade-started": () => "when Pomade starts",
-  "project-first-open": (hook, names) => `on the first open of ${hook.project === null ? "a project" : `project ${names.project?.(hook.project) ?? hook.project}`}`,
+  "project-first-open": (hook, names) => `on first open of ${projectWords(hook.project, names)}`,
   "project-created": () => "when a project is created",
   "session-finished": () => "when an agent session finishes",
   "session-status": (hook) => `when a session's status changes to ${hook.status ?? "any"}`,
 };
+
+/** A project in words: its name when the caller knows it, else its id; "a project" for none. */
+function projectWords(project: string | null, names: WordNames): string {
+  return project === null ? "a project" : (names.project?.(project) ?? project);
+}
 
 const RESULT_WORDS: Record<Chain["result"], string> = { done: "is done", failed: "fails", any: "finishes" };
 const ACTION_WORDS: Record<ServiceAction, string> = { restart: "restarts", start: "starts", stop: "stops" };
@@ -48,8 +54,8 @@ export function scheduleWords(schedule: Schedule, now: Date = new Date()): strin
  *  is the day a once schedule is said against. */
 export function jobTriggerWords(job: Job, names: WordNames = {}, now: Date = new Date()): string {
   if (job.kind === "service") {
-    const start = job.start === "login" ? "always on, from login" : "always on, from its project's first open";
-    return job.after === null ? start : `${start}; ${ACTION_WORDS[job.after.action]} ${chainWords(job.after, names)}`;
+    const start = job.start === "login" ? "always on · starts at login" : `always on · starts on first open of ${projectWords(job.startProject, names)}`;
+    return job.after === null ? start : `${start} · ${ACTION_WORDS[job.after.action]} ${chainWords(job.after, names)}`;
   }
   switch (job.trigger.kind) {
     case "schedule":

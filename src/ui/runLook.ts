@@ -3,7 +3,7 @@
 // duration, and what started it. Pure.
 
 import type { JobKind } from "../jobs/model";
-import { ACTION_DONE_WORDS, HOOK_WORDS, runWords, SWITCH_WORDS, waitingAt, type RunRecord, type RunTrigger, type RunView, type Waits } from "../scheduler/model";
+import { ACTION_DONE_WORDS, hookCauseWords, runWords, SWITCH_WORDS, waitingAt, type RunRecord, type RunTrigger, type RunView, type Waits } from "../scheduler/model";
 import type { HelpKey } from "./help";
 import type { DotTone, PillTone } from "./kit";
 import { shortClock } from "./serviceWords";
@@ -161,7 +161,7 @@ const capital = (text: string): string => text.charAt(0).toUpperCase() + text.sl
  *  missed time; `null` when the trigger says it all. A chain's is the card's own (it links the run
  *  it followed). */
 export function whyWords(view: RunView, now: number): string | null {
-  if (view.cause?.kind === "hook") return capital(HOOK_WORDS[view.cause.event]);
+  if (view.cause?.kind === "hook") return capital(hookCauseWords(view.cause));
   if (view.trigger === "caught-up") return `Missed ${whenWords(view.dueAt, now).replace(/^Today /, "").replace(/^Yesterday/, "yesterday")} — caught up after wake`;
   return null;
 }

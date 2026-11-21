@@ -135,7 +135,7 @@ export function ServicesView({
           }
           const { job } = entry;
           const status = services.find((candidate) => candidate.job === job.id) ?? fallbackService(job);
-          const look = serviceLook(status, job.ready, now);
+          const look = serviceLook(status, job.ready, now, job.startProject === null ? null : projectName(job.startProject));
           return (
             <TableRow key={job.id} columns={styles.cols} className={styles.row} data-testid="service-row" data-job={job.id} data-state={status.state}>
               <KindCell icon="service" label="Service" />

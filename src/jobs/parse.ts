@@ -30,6 +30,7 @@ import {
   type Readiness,
   type RunPolicies,
   type ServiceAction,
+  type ServiceStart,
   type Trigger,
 } from "./model";
 
@@ -54,6 +55,7 @@ export const FIELD_KINDS: Readonly<Record<string, readonly JobKind[]>> = {
   folder: ["service", "script", "agent"],
   command: ["service", "script"],
   start: ["service"],
+  "start-project": ["service"],
   ready: ["service"],
   agent: ["agent"],
   mode: ["agent"],
@@ -92,6 +94,8 @@ export interface ParsedJobFile {
   after: { job: string; line: number } | null;
   /** A hook's project filter, as written. */
   hookProject: { value: string; line: number } | null;
+  /** The project whose first open starts a service (`start-project`), as written. */
+  startProject: { value: string; line: number } | null;
   /** Errors in this file alone. */
   errors: JobError[];
   /** The job, when the file alone has no errors. */
@@ -352,6 +356,21 @@ function checkSchedule(c: FileCheck): { schedule: Schedule; words: string } | nu
   return null;
 }
 
+/** The project whose first open starts a service: `start-project`, else the job's own project;
+ *  `null` for a service that starts at login, or when there is none. */
+function checkStartProject(c: FileCheck, start: ServiceStart | null, project: string | null): string | null {
+  const value = c.get("start-project");
+  const given = value === undefined ? null : c.text(["start-project"], value, "<project id>", { oneLine: true });
+  if (start === "login" && value !== undefined) {
+    c.add(["start-project"], "a service that starts at login has no start project", "remove it, or write start: project-first-open to start it on that project's first open");
+    return null;
+  }
+  if (start !== "project-first-open") return null;
+  if (value !== undefined) return given;
+  if (project === null) c.add(["start"], "starts on the first open of a project, and names none", "add start-project: <the project's id> — `pomade-runner projects` lists them — or write start: login");
+  return project;
+}
+
 /** The job's trigger: exactly one of schedule, hook and after. */
 function checkTrigger(c: FileCheck, kind: JobKind, chain: Chain | null): Trigger | "invalid" {
   const given = (["schedule", "hook", "after"] as const).filter((key) => c.has(key));
@@ -535,6 +554,7 @@ export function parseJobFile(input: JobFileInput): ParsedJobFile {
     project: null,
     after: null,
     hookProject: null,
+    startProject: null,
     errors: [],
     job: null,
   };
@@ -602,14 +622,12 @@ export function parseJobFile(input: JobFileInput): ParsedJobFile {
   if (kind === "service") {
     const folder = checkFolder(c, kind);
     const command = checkCommand(c, kind);
-    let start = c.has("start") ? c.oneOf(["start"], c.get("start"), SERVICE_STARTS) : "login";
-    if (start === "project-first-open" && projectValue === undefined) {
-      c.add(["start"], "starts on the first open of its project, and the job has no project", "add project: <the project's id>, or write start: login");
-      start = null;
-    }
+    const start = c.has("start") ? c.oneOf(["start"], c.get("start"), SERVICE_STARTS) : "login";
+    const startProject = checkStartProject(c, start, project);
+    if (startProject !== null && c.has("start-project")) parsed.startProject = { value: startProject, line: c.doc.line(["start-project"]) };
     const ready = checkReadiness(c);
-    if (folder !== null && command !== null && start !== null) {
-      job = { ...common, kind, folder, command, start, ready, after: chain && { ...chain.chain, action: chain.action } };
+    if (folder !== null && command !== null && start !== null && (start === "login" || startProject !== null)) {
+      job = { ...common, kind, folder, command, start, startProject: start === "login" ? null : startProject, ready, after: chain && { ...chain.chain, action: chain.action } };
     }
   } else {
     const trigger = checkTrigger(c, kind, chain?.chain ?? null);

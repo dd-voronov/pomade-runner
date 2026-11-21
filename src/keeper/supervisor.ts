@@ -33,6 +33,10 @@ import type { NetworkReadiness } from "./readiness";
 import { findService, jobIdOf, RESTART_ACTION, serviceCommand, START_ACTION } from "./services";
 import type { Sessions } from "./sessions";
 
+/** How long a move waits for a stopped service's session to end. */
+const MOVE_WAIT_MS = 6_000;
+const MOVE_POLL_MS = 50;
+
 /** A service with the default readiness is up once it has run this long. */
 export const ALIVE_MS = 5_000;
 /** The staged start moves to the next service when the current one is up, or after this long. */
@@ -195,6 +199,14 @@ export interface Supervisor {
   start(ref: string): Promise<ServiceActionResult>;
   /** Stop it as stopped by you: it stays stopped until Start. */
   stop(ref: string): Promise<ServiceActionResult>;
+  /** A project's first open since Pomade started: every valid, enabled service that starts on it
+   *  and is not running joins the staged start — unless the Owner stopped it or it gave up. */
+  firstOpen(project: string): Promise<void>;
+  /** Its project moved and the jobs' ids change (`ids`, old → new) once `work` moves their files:
+   *  each running service of them is stopped and its session forgotten first, then `work` runs;
+   *  when it moved them (`true`), each service's record goes to its new id. A service that ran
+   *  starts again — at once under the staged start, a first-open one too. */
+  move(ids: ReadonlyMap<string, string>, work: () => Promise<boolean>): Promise<boolean>;
   /** Restart it with its file as it is now; one that does not run is started. */
   restart(ref: string): Promise<ServiceActionResult>;
   /** A chain's action on a service (`why` says which chain, for the log): `restart` restarts a
@@ -238,6 +250,8 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
   const stopping = new Map<string, number>();
   /** When each service's file was first seen gone. */
   const goneSince = new Map<string, number>();
+  /** First-open services whose project was opened, due to start until they do. */
+  const opened = new Set<string>();
   let lane: Promise<unknown> = Promise.resolve();
   let tickQueued = false;
   let published = "";
@@ -314,7 +328,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     if (record?.hold != null) return record.hold;
     if (live(entry.session) !== null) return isUp(entry) ? "running" : "starting";
     if (record?.retryAt != null && record.retryAt > at) return "restarting";
-    return entry.service.start === "login" || record?.retryAt != null ? "queued" : "waiting";
+    return entry.service.start === "login" || opened.has(entry.job) || record?.retryAt != null ? "queued" : "waiting";
   }
 
   function statusOf(entry: Entry, at: number): ServiceStatus {
@@ -421,6 +435,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     } else {
       if (restart) record.restarts++;
       record.retryAt = null;
+      opened.delete(entry.job);
       startOf(entry.job, started);
       current = { job: entry.job, startedAt: started.info.startedAt, since: at };
       log(`service ${entry.job}: ${restart ? `restarted (${record.restarts}×)` : "starting"}`);
@@ -525,7 +540,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
       const record = records.get(job);
       if (record?.hold != null) continue;
       if (record?.retryAt != null && record.retryAt > at) continue;
-      if (service.start === "login" || record?.retryAt != null) due.push({ entry, service });
+      if (service.start === "login" || opened.has(job) || record?.retryAt != null) due.push({ entry, service });
     }
     // A record outlives its file for the grace period, so a hold survives a save by delete and write.
     const listed = new Set(list.filter((entry) => entry.file !== "gone").map((entry) => entry.job));
@@ -585,6 +600,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
       if (fresh) Object.assign(record, { restarts: 0, lastCrashAt: null, crashes: [] });
       record.hold = null;
       record.retryAt = null;
+      opened.delete(service.id);
     }
     save();
     if (typeof started === "string") return { ok: false, reason: started };
@@ -671,6 +687,68 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
         if (!found.ok) return found;
         log(`service ${found.job.id}: Restart`);
         return restartNow(found.job, found.workspace);
+      }),
+
+    firstOpen: (project) =>
+      inLane(async () => {
+        for (const entry of entries()) {
+          const { service } = entry;
+          if (service?.start !== "project-first-open" || service.startProject !== project || !service.enabled || live(entry.session) !== null) continue;
+          const hold = records.get(entry.job)?.hold ?? null;
+          if (hold !== null) {
+            log(`service ${entry.job}: its project's first open; it stays ${hold === "failed" ? "failed" : "stopped"} until Start`);
+            continue;
+          }
+          opened.add(entry.job);
+          log(`service ${entry.job}: its project's first open; it starts`);
+        }
+        await reconcile();
+        publish();
+      }),
+
+    move: (ids, work) =>
+      inLane(async () => {
+        const ran = new Set<string>();
+        for (const entry of entries()) {
+          if (!ids.has(entry.job) || entry.session === null) continue;
+          const session = live(entry.session);
+          if (session !== null) {
+            ran.add(entry.job);
+            log(`service ${entry.job}: its project moved; stopping it to start it again as ${ids.get(entry.job) ?? ""}`);
+            stopping.set(entry.job, session.info.startedAt);
+            try {
+              await sessions.stop(session.id, "stopped");
+            } catch (err) {
+              log(`service ${entry.job}: cannot stop — ${errorText(err)}`);
+            }
+            const until = performance.now() + MOVE_WAIT_MS;
+            while (live(sessions.list().find((candidate) => candidate.id === session.id)) !== null && performance.now() < until) {
+              await new Promise((resolve) => setTimeout(resolve, MOVE_POLL_MS));
+              await sessions.refresh();
+            }
+          }
+          try {
+            await sessions.forget(entry.session.id);
+          } catch (err) {
+            log(`service ${entry.job}: cannot forget its session — ${errorText(err)}`);
+          }
+        }
+        const moved = await work();
+        for (const [from, to] of ids) {
+          const job = moved ? to : from;
+          const record = records.get(from);
+          if (moved && record !== undefined) {
+            records.delete(from);
+            records.set(to, record);
+          }
+          for (const map of [up, starts, stopping, goneSince]) map.delete(from);
+          if (opened.delete(from) || ran.has(from)) opened.add(job);
+          if (current?.job === from) current = null;
+        }
+        save();
+        await reconcile();
+        publish();
+        return moved;
       }),
 
     chainAction: (ref, action, why) =>

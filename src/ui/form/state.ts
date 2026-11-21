@@ -56,6 +56,9 @@ export interface FormValues {
   enabled: boolean;
   command: string;
   start: ServiceStart;
+  /** `start: project-first-open`: the project whose first open starts it, its id as written; empty
+   *  is the job's own project (the file leaves `start-project` out). */
+  startProject: string;
   ready: ReadyCheck;
   /** The port and the URL as typed; one of them is written, by `ready`. */
   port: string;
@@ -66,6 +69,8 @@ export interface FormValues {
   /** The hook's event as written: the form edits the events it offers (`triggerWords.ts`), and says
    *  any other in words. */
   hookEvent: string;
+  /** A first-open hook's project filter, its id as written; empty is any project. */
+  hookProject: string;
   /** A service: whether a chain acts on it (`after:`). */
   serviceChain: boolean;
   /** A chain's job, its id as written; empty until one is chosen. A script's chain and a service's
@@ -158,29 +163,37 @@ const SERVICE: KindFile = {
     ...commonFields(values),
     command: values.command.trim(),
     start: values.start === "login" ? undefined : values.start,
+    "start-project": values.start === "login" || values.startProject.trim() === "" ? undefined : values.startProject.trim(),
     ready: values.ready === "alive" ? undefined : values.ready === "port" ? { port: portValue(values.port) } : { url: values.url.trim() === "" ? null : values.url.trim() },
     after: values.serviceChain ? chainInput(values) : undefined,
   }),
-  errorFields: { ...COMMON_ERROR_FIELDS, command: "command", start: "start", ready: "ready", after: "chainJob" },
+  errorFields: { ...COMMON_ERROR_FIELDS, command: "command", start: "start", "start-project": "start", ready: "ready", after: "chainJob" },
 };
 
 /** A job that runs once per trigger writes its one trigger — a schedule, a hook's event, or a chain
  *  — and, for a schedule, its missed-run policy (`worth-until` only with `run-on-wake`); and its
  *  overlap and time limit. A policy at its default is left out; a limit of digits only is written
- *  as a number, so the checker says it has no unit. A hook's filters are not the form's: an edit that
- *  keeps the file's event writes no hook, so they stay. */
+ *  as a number, so the checker says it has no unit. A hook writes its event and the filters the form
+ *  edits for it — a first open's project; other filters are not the form's: an edit that keeps the
+ *  file's hook writes no hook, so they stay. */
 function runFields(values: FormValues): Record<string, FieldInput | undefined> {
   const scheduled = values.trigger === "schedule";
   const timeLimit = values.timeLimit.trim();
   return {
     schedule: scheduled ? scheduleInput(values.schedule) : undefined,
-    hook: values.trigger === "hook" ? { event: values.hookEvent } : undefined,
+    hook: values.trigger === "hook" ? hookInput(values) : undefined,
     after: values.trigger === "chain" ? chainInput(values) : undefined,
     missed: scheduled && values.missed !== kindDefaults(values.kind).missed ? values.missed : undefined,
     "worth-until": scheduled && values.missed === "run-on-wake" && values.worth === "time" ? values.worthAt.trim() : undefined,
     overlap: values.overlap === "skip" ? undefined : values.overlap,
     "time-limit": timeLimit === "" ? undefined : /^\d+$/.test(timeLimit) ? Number(timeLimit) : timeLimit,
   };
+}
+
+/** A hook's `hook:` — its event, and a first open's project when one is picked. */
+function hookInput(values: FormValues): FieldInput {
+  const project = values.hookProject.trim();
+  return values.hookEvent === "project-first-open" && project !== "" ? { event: values.hookEvent, project } : { event: values.hookEvent };
 }
 
 /** A hook's errors show on the trigger; a chain's — a chain that loops back among them — on its job. */
@@ -234,7 +247,7 @@ export interface FormState {
 }
 
 export function blankValues(kind: JobKind): FormValues {
-  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), hookEvent: "login", serviceChain: false, chainJob: "", chainResult: "done", chainAction: "restart", worth: "next-run", worthAt: "12:00", timeLimit: "", operation: "commit-push", repos: [], agent: "claude", mode: "normal", prompt: "", ...kindDefaults(kind) };
+  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", startProject: "", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), hookEvent: "login", hookProject: "", serviceChain: false, chainJob: "", chainResult: "done", chainAction: "restart", worth: "next-run", worthAt: "12:00", timeLimit: "", operation: "commit-push", repos: [], agent: "claude", mode: "normal", prompt: "", ...kindDefaults(kind) };
 }
 
 /** A new job's form. */
@@ -270,12 +283,14 @@ export function valuesFromText(text: string): FormValues | null {
     enabled: typeof fields.enabled === "boolean" ? fields.enabled : true,
     command: asText(fields.command),
     start: choice(fields.start, SERVICE_STARTS, "login"),
+    startProject: asText(fields["start-project"]).trim(),
     ready: isMapping(ready) && ready.port != null ? "port" : isMapping(ready) && ready.url != null ? "url" : "alive",
     port: isMapping(ready) ? asText(ready.port) : "",
     url: isMapping(ready) ? asText(ready.url) : "",
     trigger: kind !== "service" && fields.schedule === undefined && fields.hook !== undefined ? "hook" : kind !== "service" && fields.schedule === undefined && fields.after !== undefined ? "chain" : "schedule",
     schedule: readSchedule(fields.schedule),
     hookEvent: isMapping(hook) ? asText(hook.event).trim() : hook === undefined ? values.hookEvent : "",
+    hookProject: isMapping(hook) ? asText(hook.project).trim() : "",
     serviceChain: kind === "service" && after !== undefined,
     chainJob: isMapping(after) ? asText(after.job).trim() : "",
     chainResult: isMapping(after) ? choice(after.result, CHAIN_RESULTS, values.chainResult) : values.chainResult,

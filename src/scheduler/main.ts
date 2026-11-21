@@ -10,6 +10,7 @@ import { launchPomade, resolveWorkspace } from "pomade-kit/node";
 import { POMADE_ENV } from "pomade-kit/protocol";
 
 import { noticePoster } from "../integrations/notices";
+import { pomadeStartOf } from "../integrations/pomade-start";
 import { linkPomade } from "../integrations/pomade";
 import { createAgentTurns, loginShell } from "../keeper/agent-turns";
 import { probeReadiness } from "../keeper/readiness";
@@ -74,6 +75,7 @@ if (state === null || socketPath === null || userData === null) {
       pomadeGit: pomadeGitPath(process.env),
       turns: createAgentTurns({ socketPath: keeperSocket, log }),
       shell: loginShell(process.env),
+      pomadeStart: () => pomadeStartOf(process.env),
     });
   };
   const following = followWorkspace({ workspace: () => resolveWorkspace(), start, pollMs: tick, log });

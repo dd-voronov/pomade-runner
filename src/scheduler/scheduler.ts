@@ -20,6 +20,7 @@ import { setBadge } from "../integrations/notices";
 import { agentsOf } from "../integrations/agents";
 import { announce, offerRunner, type LinkPomade, type PomadeLinkHandlers } from "../integrations/pomade";
 import { pomadeOpener } from "../integrations/pomade-open";
+import { pomadeStarts } from "../integrations/pomade-start";
 import {
   JOBS_CHANGED_EVENT,
   RUN_FINISHED_EVENT,
@@ -32,7 +33,7 @@ import { formatJobError } from "../jobs/format";
 import { findOutputLog, gitResultPath, recordsFolderOf, type StateFolder } from "../locations";
 import { removeJobFile, writeEnabled } from "../jobs/folder";
 import { createJobsLoader } from "../jobs/loader";
-import { entryId, entryPath, type JobsSnapshot } from "../jobs/model";
+import { entryId, entryPath, type JobsSnapshot, type ProjectRecord } from "../jobs/model";
 import { jobTriggerWords } from "../jobs/words";
 import { KIND_DEFAULTS } from "../jobs/parse";
 import type { AgentTurns } from "../keeper/agent-turns";
@@ -52,7 +53,10 @@ import type { Log } from "./log";
 import type { DeleteResult, EnableResult, JobListing, RunActionResult, RunsReport } from "./model";
 import { runFinishedPayload, runStartedPayload } from "./run-events";
 import { createNeedsYou, fileNeedsYouStore } from "./needs-you";
+import { POMADE_STARTED, projectFiring } from "./hooks";
+import { applyMove, planMove, projectMoves, type ProjectMove } from "./project-moves";
 import { projectsMemory } from "./projects";
+import { renamedJobs } from "./renamed";
 import { readEnvironment } from "./read-environment";
 import { repoJobs } from "./git-runs";
 import { moveRecords } from "./records-move";
@@ -92,6 +96,8 @@ export interface SchedulerOptions {
   turns: AgentTurns;
   /** The user's login shell: agent runs run their line in it. */
   shell: string;
+  /** The running Pomade's start (`pomadeStartOf`); `null` when it cannot be told. */
+  pomadeStart(): Promise<string | null>;
 }
 
 export interface Scheduler {
@@ -142,7 +148,14 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     onChange: () => publish(SERVICES_CHANGED_EVENT),
   });
   const projects = projectsMemory(state, log);
+  const starts = pomadeStarts(state, log);
+  /** The projects whose first open fired since this Pomade start, as this scheduler heard them. */
+  let openedThisStart = new Set<string>();
   const history = createHistory(records, state, log);
+  const renamed = renamedJobs(records, log);
+  /** A page of history: a job's takes in the ids it had before its project moved. */
+  const historyPage = (query: { job: string | null; before: string | null; limit: number }): ReturnType<typeof history.page> =>
+    history.page(query.job === null ? query : { ...query, formerly: renamed.formerIds(query.job, new Set(jobs.snapshot().jobs.map(entryId))) });
 
   const post = (notice: Parameters<PostNotice>[0]): void => {
     options.postNotice(notice, host).then(
@@ -224,7 +237,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     },
     onChange: publishRuns,
   });
-  await Promise.all([supervisor.load(), runs.load(), needsYou.load(), projects.load()]);
+  await Promise.all([supervisor.load(), runs.load(), needsYou.load(), projects.load(), renamed.load()]);
 
   const answer = (verb: string, job: string, result: ServiceActionResult): ServiceStatus => {
     if (!result.ok) throw new ControlRefused(`cannot ${verb} "${job}": ${result.reason}`);
@@ -317,7 +330,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     enable: ({ job }) => enabledAnswer(job, true),
     disable: ({ job }) => enabledAnswer(job, false),
     list: listings,
-    history: ({ job, limit }) => history.page({ job: job === null ? null : (jobIdOf(jobs.snapshot(), job) ?? job), before: null, limit }),
+    history: ({ job, limit }) => historyPage({ job: job === null ? null : (jobIdOf(jobs.snapshot(), job) ?? job), before: null, limit }),
     runs: report,
     switch: ({ position }) => (position === null ? runs.switch() : runs.setSwitch(position)),
     resumeJob: async ({ job }) => {
@@ -353,6 +366,80 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     });
   };
 
+  /** Pomade's projects, as just read: a project whose folder changed since the list before moves
+   *  its jobs with it, one move after another. */
+  let moving: Promise<void> = Promise.resolve();
+  const projectsHeard = (list: ProjectRecord[]): Promise<void> => {
+    const moves = projectMoves(projects.list(), list);
+    projects.remember(list);
+    // A move checks the jobs against the new list once their files moved, never in between.
+    if (moves.length === 0) jobs.setProjects(list);
+    moving = moving.then(async () => {
+      for (const move of moves) await moveProject(move, list);
+    });
+    return moving;
+  };
+
+  /** A project's folder changed: its jobs follow it — their folders, their sub-folder, and with the
+   *  sub-folder their ids, their services, runs and history. */
+  const moveProject = async (move: ProjectMove, list: readonly ProjectRecord[]): Promise<void> => {
+    const { previous, project } = move;
+    log(`project ${previous.name} (${project.id}) moved: ${previous.root} → ${project.root}`);
+    try {
+      const plan = await planMove(workspace(), move, jobs.snapshot().jobs.map(entryId), log);
+      const ids = plan.ids ?? new Map<string, string>();
+      await runs.move(ids, () =>
+        supervisor.move(ids, async () => {
+          await applyMove(workspace(), plan, log);
+          jobs.setProjects(list);
+          await jobs.refresh();
+          const moved = plan.ids !== null && [...ids.values()].every((id) => jobs.snapshot().jobs.some((entry) => entryId(entry) === id));
+          if (moved) renamed.add(ids);
+          return moved;
+        }),
+      );
+    } catch (err) {
+      jobs.setProjects(list);
+      log(`project ${project.name}: cannot move its jobs — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  /** Pomade is ready: on the first ready of a Pomade start, the "Pomade started" hooks fire, and
+   *  the project in front counts as opened — its own `project.opened` came before this scheduler
+   *  was listening, or comes now and fires nothing twice. A ready heard again while the same
+   *  Pomade runs (a reconnect, a restarted scheduler, a workspace switch back) fires nothing. */
+  const pomadeReady = async (client: HostClient, active: ProjectRecord | null): Promise<void> => {
+    const start = await options.pomadeStart();
+    if (host !== client) return;
+    if (start === null) {
+      log("Pomade ready: cannot tell which Pomade start this is — its socket is not found; the Pomade started hooks do not fire");
+      return;
+    }
+    if (!(await starts.firstReady(workspace(), start))) {
+      log("Pomade ready: the Pomade started hooks fired for this Pomade start already");
+      return;
+    }
+    openedThisStart = new Set();
+    log("Pomade started");
+    await runs.hook(POMADE_STARTED);
+    if (active !== null && host === client) projectOpened(active);
+  };
+
+  /** A project's first open since Pomade started: its first-open services start, its hooks fire —
+   *  once per project and Pomade start. A project this workspace does not have (Pomade switched
+   *  to another workspace, and this scheduler has yet to follow it) is not this workspace's. */
+  const projectOpened = (project: ProjectRecord): void => {
+    if (openedThisStart.has(project.id)) return;
+    if (projects.root(project.id) === null) {
+      log(`project ${project.name} (${project.id}) opened: not a project of this workspace`);
+      return;
+    }
+    openedThisStart.add(project.id);
+    log(`project ${project.name} (${project.id}) opened for the first time since Pomade started`);
+    void supervisor.firstOpen(project.id);
+    void runs.hook(projectFiring("project-first-open", project, workspace()));
+  };
+
   const linkHandlers: PomadeLinkHandlers = {
     connected(client) {
       host = client;
@@ -365,13 +452,12 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         services: supervisor.report,
         serviceAction: (verb, job) => supervisor[verb](job),
         projects: (list) => {
-          projects.remember(list);
-          jobs.setProjects(list);
+          void projectsHeard(list);
         },
         tabAction,
         runs: report,
         repoJobs: (repo) => repoJobs(jobs.snapshot(), runs.jobRuns(), repo),
-        history: (query) => history.page(query),
+        history: historyPage,
         run: (job, run) => runs.find(job, run),
         output: async (job, run) => {
           const view = await runs.find(job, run);
@@ -391,10 +477,20 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         environment: () => readEnvironment(options.workspace),
         setSetting: settings.write,
         deleteJob: removeJob,
-        ready: () => {
+        ready: (active) => {
           if (host !== client) return;
           ready = true;
           showBadge(needsYou.items().length);
+          void pomadeReady(client, active);
+        },
+        opened: (project) => {
+          if (host === client) projectOpened(project);
+        },
+        created: (project) => {
+          if (host !== client) return;
+          projects.add(project);
+          log(`project ${project.name} (${project.id}) created`);
+          void runs.hook(projectFiring("project-created", project, workspace()));
         },
         log,
       });
@@ -469,6 +565,9 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         options.turns.close();
         await needsYou.close();
         await projects.flush();
+        await starts.flush();
+        await moving;
+        await renamed.flush();
         await sessions.close();
         await control.close();
         log("scheduler stopped");

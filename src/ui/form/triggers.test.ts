@@ -47,6 +47,19 @@ describe("a script on a hook or a chain, made in the form", () => {
     expect(parseJobFile({ path: "mount.md", text: file.text }).job).toMatchObject({ trigger: { kind: "hook", hook: { event: "login", project: null } } });
   });
 
+  it("on Pomade's events: the event in hook:, a first open's project with it, each as the checker reads a hand-written one", () => {
+    const hooked = (event: string, project = ""): FormState => setValue(setValue(setValue(newScript("Hook"), "trigger", "hook"), "hookEvent", event), "hookProject", project);
+    const text = (state: FormState): string => wouldBe(state, SNAPSHOT, PROJECTS).text;
+    expect(text(hooked("pomade-started"))).toContain("\nhook: { event: pomade-started }\n");
+    expect(text(hooked("project-created"))).toContain("\nhook: { event: project-created }\n");
+    expect(text(hooked("project-first-open"))).toContain("\nhook: { event: project-first-open }\n");
+    expect(text(hooked("project-first-open", "p-coda"))).toContain("\nhook: { event: project-first-open, project: p-coda }\n");
+    // The project is a first open's alone.
+    expect(text(hooked("project-created", "p-coda"))).toContain("\nhook: { event: project-created }\n");
+    for (const event of ["pomade-started", "project-created", "project-first-open"]) expect(formErrors(hooked(event), SNAPSHOT, PROJECTS)).toEqual([]);
+    expect(parseJobFile({ path: "hook.md", text: text(hooked("project-first-open", "p-coda")) }).job).toMatchObject({ trigger: { kind: "hook", hook: { event: "project-first-open", project: "p-coda" } } });
+  });
+
   it("after another job: the job and the result in after:, as a hand-written chain has them", () => {
     let state = setValue(newScript("Cleanup"), "trigger", "chain");
     state = setValue(setValue(state, "chainJob", "backup"), "chainResult", "failed");
@@ -67,16 +80,26 @@ describe("a script on a hook or a chain, made in the form", () => {
 
 describe("editing a script's hook or chain", () => {
   const FIRST_OPEN = "---\nkind: script\nname: Scraper\nfolder: .\ncommand: ./s.sh\nhook: { event: project-first-open, project: p-coda } # job-hunt\n---\n";
+  const SESSION = "---\nkind: script\nname: Lint\nfolder: .\ncommand: ./l.sh\nhook: { event: session-finished, agent: claude } # after claude\n---\n";
   const CHAIN = "---\nkind: script\nname: Tests\nfolder: .\ncommand: ./t.sh\nafter: { job: backup } # nightly\n---\n";
 
   it("a hook on an event the form does not offer stays byte for byte, filter and comment too", () => {
-    const state = edit("scraper.md", FIRST_OPEN);
-    expect(state.values).toMatchObject({ trigger: "hook", hookEvent: "project-first-open" });
+    const state = edit("lint.md", SESSION);
+    expect(state.values).toMatchObject({ trigger: "hook", hookEvent: "session-finished" });
     expect(formOffersHook(state.values.hookEvent)).toBe(false);
-    const next = setValue(state, "command", "./scrape.sh");
-    expect(fieldChanges(next)).toEqual({ command: "./scrape.sh" });
+    const next = setValue(state, "command", "./lint.sh");
+    expect(fieldChanges(next)).toEqual({ command: "./lint.sh" });
     // To a schedule and back: nothing of the hook is written.
     expect(fieldChanges(setValue(setValue(state, "trigger", "schedule"), "trigger", "hook"))).toEqual({});
+  });
+
+  it("a first open reads its project; another project, or any, rewrites hook:; an edit elsewhere keeps it byte for byte", () => {
+    const state = edit("scraper.md", FIRST_OPEN);
+    expect(state.values).toMatchObject({ trigger: "hook", hookEvent: "project-first-open", hookProject: "p-coda" });
+    expect(formOffersHook(state.values.hookEvent)).toBe(true);
+    expect(fieldChanges(setValue(state, "command", "./scrape.sh"))).toEqual({ command: "./scrape.sh" });
+    expect(fieldChanges(setValue(state, "hookProject", "p-hunt"))).toEqual({ hook: { event: "project-first-open", project: "p-hunt" } });
+    expect(wouldBe(setValue(state, "hookProject", ""), SNAPSHOT, PROJECTS).text).toContain("\nhook: { event: project-first-open } # job-hunt\n");
   });
 
   it("to a schedule: the hook goes, the schedule comes", () => {
@@ -136,9 +159,9 @@ describe("a service's chain", () => {
 });
 
 describe("triggerWords", () => {
-  it("offers the hooks the engine fires — Mac login — and not the chain's own entry or the platform's events", () => {
-    expect(formOffersHook("login")).toBe(true);
-    expect(["chain", "pomade-started", "project-first-open", "session-finished", ""].map(formOffersHook)).toEqual([false, false, false, false, false]);
+  it("offers the hooks the engine fires — Mac login and Pomade's — and not the chain's own entry or the agents' events", () => {
+    expect(["login", "pomade-started", "project-first-open", "project-created"].map(formOffersHook)).toEqual([true, true, true, true]);
+    expect(["chain", "session-finished", "session-status", ""].map(formOffersHook)).toEqual([false, false, false, false]);
   });
 
   it("the chain's picker: valid jobs that finish, by name, without the job itself; a job the file names stays, by id", () => {
@@ -153,15 +176,21 @@ describe("triggerWords", () => {
     expect(jobName(snapshot, "gone")).toBeNull();
   });
 
-  it("the trigger in words: the login hook with the warm-up as the settings say it; a chain with its job's name", () => {
+  it("the trigger in words: the login hook with the warm-up as the settings say it; Pomade's with no missed runs; a chain with its job's name", () => {
     const login = setValue(newScript("Mount"), "trigger", "hook").values;
-    expect(hookBoxWords(login, SNAPSHOT, 2)).toEqual({ title: "Runs at Mac login", sub: "Once per login, after the 2-minute warm-up." });
-    expect(hookBoxWords(login, SNAPSHOT, 0).sub).toBe("Once per login, once the services are up.");
-    expect(hookBoxWords(login, SNAPSHOT, null).sub).toBe("Once per login, after the warm-up.");
+    const pomade = "Fires only while Pomade is running, so there are no missed runs.";
+    expect(hookBoxWords({ ...login, hookEvent: "pomade-started" }, SNAPSHOT, 2, PROJECTS)).toEqual({ title: "Runs when Pomade starts", sub: pomade });
+    expect(hookBoxWords({ ...login, hookEvent: "project-created" }, SNAPSHOT, 2, PROJECTS)).toEqual({ title: "Runs when a project is created", sub: pomade });
+    expect(hookBoxWords({ ...login, hookEvent: "project-first-open" }, SNAPSHOT, 2, PROJECTS)).toEqual({ title: "Runs on first open of a project", sub: pomade });
+    expect(hookBoxWords({ ...login, hookEvent: "project-first-open", hookProject: "p-coda" }, SNAPSHOT, 2, PROJECTS).title).toBe("Runs on first open of coda-helper");
+    expect(hookBoxWords({ ...login, hookEvent: "project-first-open", hookProject: "p-gone" }, SNAPSHOT, 2, PROJECTS).title).toBe("Runs on first open of p-gone");
+    expect(hookBoxWords(login, SNAPSHOT, 2, PROJECTS)).toEqual({ title: "Runs at Mac login", sub: "Once per login, after the 2-minute warm-up." });
+    expect(hookBoxWords(login, SNAPSHOT, 0, PROJECTS).sub).toBe("Once per login, once the services are up.");
+    expect(hookBoxWords(login, SNAPSHOT, null, PROJECTS).sub).toBe("Once per login, after the warm-up.");
     const chain = { ...login, trigger: "chain" as const };
-    expect(hookBoxWords(chain, SNAPSHOT, 2)).toEqual({ title: "Runs after another job finishes", sub: "A chain. History will show “chain: after …”." });
-    expect(hookBoxWords({ ...chain, chainJob: "backup", chainResult: "failed" }, SNAPSHOT, 2)).toEqual({ title: "Runs after Backup fails", sub: "A chain. History will show “chain: after Backup”." });
-    expect(hookBoxWords({ ...chain, chainJob: "gone", chainResult: "any" }, SNAPSHOT, 2).title).toBe("Runs after gone finishes");
+    expect(hookBoxWords(chain, SNAPSHOT, 2, PROJECTS)).toEqual({ title: "Runs after another job finishes", sub: "A chain. History will show “chain: after …”." });
+    expect(hookBoxWords({ ...chain, chainJob: "backup", chainResult: "failed" }, SNAPSHOT, 2, PROJECTS)).toEqual({ title: "Runs after Backup fails", sub: "A chain. History will show “chain: after Backup”." });
+    expect(hookBoxWords({ ...chain, chainJob: "gone", chainResult: "any" }, SNAPSHOT, 2, PROJECTS).title).toBe("Runs after gone finishes");
   });
 
   it("a loop is told from the checker's other chain errors", () => {

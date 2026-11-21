@@ -106,6 +106,9 @@ export interface ServiceJob extends JobCommon {
   folder: string;
   command: string;
   start: ServiceStart;
+  /** `start: project-first-open`: the project whose first open starts it — `start-project`, else
+   *  the job's own; `null` for `start: login`. */
+  startProject: string | null;
   ready: Readiness;
   /** A chain that acts on the service. */
   after: (Chain & { action: ServiceAction }) | null;

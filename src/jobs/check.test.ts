@@ -54,6 +54,7 @@ describe("valid job files", () => {
       folder: "Projects/coda-helper",
       command: "./start.sh",
       start: "login",
+      startProject: null,
       ready: { kind: "alive" },
       after: null,
     });
@@ -64,8 +65,11 @@ describe("valid job files", () => {
     const withPull = (service: string): JobsSnapshot => check({ "coda-helper/coda-web.md": service, "pull.md": pull });
     expect(withPull(file(`${SERVICE}\nstart: project-first-open\nready: { port: 5173 }\nafter: { job: pull, result: any, action: stop }`)).jobs[0]).toMatchObject({
       valid: true,
-      job: { start: "project-first-open", ready: { kind: "port", port: 5173 }, after: { job: "pull", result: "any", action: "stop" } },
+      job: { start: "project-first-open", startProject: "p7Kx2_coda", ready: { kind: "port", port: 5173 }, after: { job: "pull", result: "any", action: "stop" } },
     });
+    // On the first open of another project: a workspace service, or a project's.
+    expect(valid("docs.md", file("kind: service\nname: Docs\nfolder: .\ncommand: ./d.sh\nstart: project-first-open\nstart-project: p9Lq4_hunt"))).toMatchObject({ project: null, start: "project-first-open", startProject: "p9Lq4_hunt" });
+    expect(valid("coda-helper/coda-web.md", file(`${SERVICE}\nstart: project-first-open\nstart-project: p9Lq4_hunt`))).toMatchObject({ startProject: "p9Lq4_hunt" });
     expect(withPull(file(`${SERVICE}\nafter: { job: pull }`)).jobs[0]).toMatchObject({ valid: true, job: { after: { job: "pull", result: "done", action: "restart" } } });
     expect(valid("coda-helper/coda-web.md", file(`${SERVICE}\nready: { url: http://localhost:5173/ }`))).toMatchObject({ ready: { kind: "url", url: "http://localhost:5173/" } });
   });
@@ -204,7 +208,9 @@ describe("one file's problems: each names its line, its field and the fix", () =
     ["a zero time limit", file(`${SCRIPT}\ntime-limit: 0m`), { field: "time-limit" }],
     ["a service with a schedule", file(`${SCRIPT.replace("kind: script", "kind: service")}`), { field: "schedule", problem: "a service job has no schedule" }],
     ["a bad start", file(`${SERVICE}\nstart: boot`), { field: "start", fix: "use one of login or project-first-open" }],
-    ["project-first-open without a project", file("kind: service\nname: W\nfolder: .\ncommand: ./w.sh\nstart: project-first-open"), { field: "start", problem: /has no project/ }],
+    ["project-first-open without a project", file("kind: service\nname: W\nfolder: .\ncommand: ./w.sh\nstart: project-first-open"), { field: "start", problem: "starts on the first open of a project, and names none", fix: /add start-project:/ }],
+    ["a start project for a service that starts at login", file(`${SERVICE}\nstart-project: p9Lq4_hunt`), { field: "start-project", problem: "a service that starts at login has no start project" }],
+    ["a start project on a script", file(`${SCRIPT}\nstart-project: p9Lq4_hunt`), { field: "start-project", problem: "a script job has no start-project" }],
     ["ready that is not a mapping", file(`${SERVICE}\nready: 5173`), { field: "ready", problem: "5173 is not a readiness check" }],
     ["ready with both checks", file(`${SERVICE}\nready: { port: 1, url: http://x/ }`), { field: "ready", problem: "has both port and url" }],
     ["ready with no check", file(`${SERVICE}\nready: {}`), { field: "ready", problem: "names no check" }],
@@ -319,6 +325,10 @@ describe("projects", () => {
 
   it("an unknown project in a hook", () => {
     expect(only({ "x.md": file("kind: script\nname: X\nfolder: .\ncommand: ./x.sh\nhook: { event: project-first-open, project: gone }") })).toMatchObject({ line: 6, field: "hook.project" });
+  });
+
+  it("an unknown start project", () => {
+    expect(only({ "x.md": file("kind: service\nname: X\nfolder: .\ncommand: ./x.sh\nstart: project-first-open\nstart-project: gone") })).toMatchObject({ line: 7, field: "start-project", problem: "Pomade has no project with the id gone" });
   });
 
   it("goes unchecked while Pomade's projects are not known, and says so", () => {

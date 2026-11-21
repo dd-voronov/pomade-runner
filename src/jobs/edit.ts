@@ -28,6 +28,7 @@ export const FIELD_ORDER = [
   "mode",
   "git",
   "start",
+  "start-project",
   "ready",
   "schedule",
   "hook",

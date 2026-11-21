@@ -55,8 +55,9 @@ const RUN_FILE_RE = /^(\d{4})(\d{2})(\d{2})-\d{6}-[0-9a-f]{6}\.(?:log|json)$/;
 export interface History {
   /** Write a finished run's record. Appends happen in order and never overlap. */
   append(record: RunRecord): Promise<void>;
-  /** Records newest first, of every job or of `job`, starting before the cursor `before`. */
-  page(options: { job: string | null; before: string | null; limit: number }): Promise<HistoryPage>;
+  /** Records newest first, of every job or of `job` — and of the ids it had before (`formerly`) —
+   *  starting before the cursor `before`. */
+  page(options: { job: string | null; formerly?: readonly string[]; before: string | null; limit: number }): Promise<HistoryPage>;
   /** A run's record; `null` when there is none (yet, or any more). */
   find(job: string, run: string): Promise<RunRecord | null>;
   /** Remove the days `keepDays` behind `now`, with their runs' output logs, kept or in the state
@@ -191,7 +192,8 @@ export function createHistory(records: RecordsFolder, state: StateFolder, log: L
       return writing;
     },
 
-    async page({ job, before, limit }) {
+    async page({ job, formerly = [], before, limit }) {
+      const ids = job === null ? null : new Set([job, ...formerly]);
       const want = Math.max(1, Math.min(PAGE_MAX, limit));
       const cursor = parseCursor(before);
       const found: RunRecord[] = [];
@@ -202,7 +204,7 @@ export function createHistory(records: RecordsFolder, state: StateFolder, log: L
         const start = cursor !== null && day === cursor.day ? Math.min(cursor.line, text.length) : text.length;
         for (let index = start - 1; index >= 0; index--) {
           const record = parseLine(text[index] ?? "");
-          if (record === null || (job !== null && record.job !== job)) continue;
+          if (record === null || (ids !== null && !ids.has(record.job))) continue;
           if (found.length === want) return { records: await Promise.all(found.map((each) => foundRecord(records, state, each))), next: `${day}:${index + 1}` };
           found.push(record);
         }

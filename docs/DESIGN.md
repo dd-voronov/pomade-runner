@@ -94,6 +94,7 @@ folder: Projects/coda-helper     # working folder, workspace-relative
 enabled: true
 command: ./start.sh              # service, script
 start: login                     # service: login | project-first-open
+start-project: <project id>      # with project-first-open: whose first open; default: project
 ready: { port: 5173 }            # service, optional: up = port open / url answers; default: alive after 5 s
 notify: on-failure               # on-failure | always | never
 ---
@@ -110,7 +111,8 @@ Notes for humans and agents.
 | `enabled` | all | `true` · `false` |
 | `folder` | service · script · agent | required; workspace-relative, `.` is the root; never outside the workspace or in `.pomade` |
 | `command` | service · script | required; run by the login shell |
-| `start` | service | `login` · `project-first-open` (needs `project`) |
+| `start` | service | `login` · `project-first-open`: on the first open of a project since Pomade started |
+| `start-project` | service | with `start: project-first-open`: the project whose first open starts it — default the job's `project`, so a workspace service needs it; refused with `start: login` |
 | `ready` | service | empty (alive after 5 s) · `{ port: 1–65535 }` · `{ url: http(s)://… }` |
 | `schedule` | script · agent · git | a `pomade-kit` schedule-format block (schema owned by `pomade-kit:E-003`), resolution `time`; `always` is refused (a service is always on by itself) |
 | `hook` | script · agent · git | `{ event, …filters }` (see Triggers) |
@@ -150,7 +152,8 @@ reported, not only the first. Across files:
 
 Project ids are checked against Pomade's projects whenever they are known — the scheduler keeps
 the last list it read; the command asks Pomade when it runs — and say so when they are not: an
-unknown id, a project job in another project's sub-folder, a hook filter on an unknown project.
+unknown id, a project job in another project's sub-folder, a hook filter or a start project on an
+unknown project.
 
 **The jobs on the UI.** The scheduler owns the loaded jobs. It reads and watches the jobs folder
 itself, from disk, so it works with Pomade closed, and follows the workspace through Pomade's
@@ -189,17 +192,16 @@ disk.
   - while the keeper is not followed nothing is due: the look waits for it, so a short keeper
     outage delays a run instead of losing it.
 - **Once at** runs once; after its time it has no next run and shows as **finished**.
-- Script, agent and git jobs fire on schedules, hooks and chains; Pomade's and the agents' hook
-  events come with E-007.
+- Script, agent and git jobs fire on schedules, hooks and chains.
 
 **Hooks:**
 
 | Hook | In the file | Source | Note |
 |---|---|---|---|
 | Mac login | `hook: { event: login }` | Runner | one-shot scripts, once per login, after the warm-up |
-| Pomade started | `event: pomade-started` | platform event bus | fires when Pomade is ready (tabs restored) |
-| First open of project X since Pomade started | `event: project-first-open` | platform event bus | — |
-| Project created | `event: project-created` | platform event bus | — |
+| Pomade started | `event: pomade-started` | platform event bus (`pomade.ready`) | once per Pomade start, when Pomade is ready (tabs restored) |
+| First open of project X since Pomade started | `event: project-first-open` | platform event bus (`project.opened`) | `project` filter, none = any project; the Workspace project is no project here |
+| Project created | `event: project-created` | platform event bus (`project.created`) | — |
 | Agent session finished | `event: session-finished` | `pomade-agents` event B | sessions started by Runner never fire it (loop guard) |
 | Session status changed to X | `event: session-status` | `pomade-agents` event C | always fires: it is a user action |
 | Another job finished (done / failed / any) | `after: { job, result }` | Runner | a **chain** |
@@ -207,7 +209,8 @@ disk.
 **Firing hooks** (`src/scheduler/hooks.ts`, `runs.ts`):
 - An event fires every valid, enabled script, agent and git job whose `hook` names it and whose filters it passes; a
   filter left out takes any value. Every event comes through one firing path, `hook()`, with the
-  context its runs get in their environment; E-007 brings Pomade's and the agents' events to it.
+  context its runs get in their environment and the name of its project, which the run's cause
+  keeps.
 - **Mac login** is a scheduler start that finds no keeper running (`startedKeeper` in
   `src/keeper/sessions.ts`): macOS ends the user's processes at log-out and shutdown, so the
   scheduler — the login item — starts the keeper itself at a login. An update of Runner or a
@@ -215,9 +218,32 @@ disk.
   made once per scheduler, when it first follows the keeper; a login fires the login hooks once,
   in a known workspace. A keeper that died and the scheduler restarted after it is a login too:
   the services start again then as well. So is the first start after Runner is installed.
-- A hook run has trigger `hook` and its event in `cause` (History: "hook: Mac login"). It joins the
-  queue and waits for the warm-up while a staged start is under way ("Missed runs and load"). It has
-  no missed-run policy: the switch holds it, and it runs late on release.
+- **Pomade's events** (`src/integrations/pomade.ts`, `src/integrations/pomade-start.ts`,
+  `scheduler.ts`) are heard while the scheduler is connected to Pomade. One that came while Pomade
+  or the scheduler was not listening does not exist: nothing catches it up.
+  - **Pomade started** fires on the first `pomade.ready` of a Pomade start. The event is sticky — a
+    scheduler that connects, or connects again, while the same Pomade runs hears it at once — so a
+    Pomade start is named by Pomade's socket: Pomade creates it at every start and removes it when it
+    quits, so its inode and birth time name the start. The start each workspace fired for is kept in
+    `pomade-started.json` in the state folder: a reconnect, a scheduler restarted or updated, fires
+    nothing again. A workspace switch starts the scheduler again on the new workspace, which fires
+    its own Pomade started hooks once for that Pomade start; switching back fires nothing. A socket
+    that cannot be found fires nothing, said in the log.
+  - **First open of a project** fires once per project and Pomade start, on `project.opened` for a
+    project (not the Workspace project). The project in front at the first ready of a Pomade start
+    counts as opened then — its own `project.opened` came right after `pomade.ready`, possibly
+    before the scheduler listened; heard as well, it fires nothing twice. A project this workspace
+    does not have is ignored: Pomade switched workspace and this scheduler has yet to follow. It
+    also starts the services that start on that project ("Services").
+  - **Project created** fires on `project.created`, with the new project; it is this workspace's
+    from then on.
+  - Pomade's projects are read once Pomade is ready, and again on `project.created` and
+    `project.renamed`: before it is ready, its workspace may not be loaded, and its list may miss
+    projects.
+- A hook run has trigger `hook` and its event in `cause` (History: "hook: Mac login", "hook: first
+  open of job-hunt"; its card: "First open of job-hunt"). It joins the queue and waits for the
+  warm-up while a staged start is under way ("Missed runs and load"). It has no missed-run policy:
+  the switch holds it, and it runs late on release.
 
 **Chains** (`src/scheduler/chains.ts`, `runs.ts`):
 - A run that ends **done** or **failed** fires every valid, enabled job whose `after` names its job
@@ -250,8 +276,10 @@ disk.
 - `POMADE_PROJECT` (a project job's stable id), `POMADE_PROJECT_PATH` (its project's folder,
   absolute — from Pomade's projects as the scheduler last heard them, `projects.json`; absent until
   it has heard them once)
-- a hook's context: `POMADE_PROJECT`, `POMADE_PROJECT_PATH`, `POMADE_SESSION_ID`, `POMADE_AGENT`,
-  `POMADE_SESSION_STATUS` as its event gives them (E-007; none for `login`)
+- a hook's context, as its event gives it: `project-first-open` and `project-created` give
+  `POMADE_PROJECT` and `POMADE_PROJECT_PATH` of the event's project (over a project job's own);
+  `login` and `pomade-started` give none; the agents' events give `POMADE_PROJECT`,
+  `POMADE_PROJECT_PATH`, `POMADE_SESSION_ID`, `POMADE_AGENT`, `POMADE_SESSION_STATUS`
 - `POMADE_PARENT_JOB` (the parent's id), `POMADE_PARENT_RUN_ID`, `POMADE_PARENT_RESULT` (`done` ·
   `failed`) (chains)
 - a git run gets the same, and `POMADE_WORKSPACE`: `pomade-git` resolves repo names in the
@@ -271,7 +299,8 @@ disk.
 - The pause and the firings within the window are kept in `runs.json`: a restart neither forgets
   a pause nor starts the count over. A paused job's item shows while its file is there; the pause
   lasts until Resume.
-- Every firing passes the guard, so the platform's hooks (E-007) are covered too.
+- Every firing passes the guard, Pomade's hooks included. A first-open service's start is a
+  service's own start, as at login, and is no firing.
 
 ## Runs
 
@@ -392,10 +421,14 @@ the keeper reports updates the service's record.
   running: at a login (no keeper running, "Firing hooks") that is all of them; a scheduler
   restarted after a crash or an update reattaches the running ones and never restarts one. A new service file, or one
   enabled again, starts the same way within a tick.
-- **`start: project-first-open`** services start on the first open of their project, a trigger
-  that comes with the platform's event bus (E-007). Until it fires they
-  are `waiting`, and Start runs them. Once started, a crash restarts them like any service; an end
-  that is not their own fault (`lost-in-keeper-crash`) leaves them waiting again.
+- **`start: project-first-open`** services start on the first open of their start project since
+  Pomade started ("Firing hooks"), never at login. Until then they are `waiting` ("waiting for
+  first open · starts on first open of job-hunt"), and Start runs them. The open puts each valid,
+  enabled one that is not running into the staged start; one the Owner stopped stays stopped, one
+  that gave up stays `failed`. Once started it is kept up like any service — a crash restarts it,
+  it keeps running when Pomade quits, and a later first open (the next Pomade start) leaves a
+  running one be. An end that is not its own fault (`lost-in-keeper-crash`) leaves it waiting
+  again.
 - **Staged start.** Services start one at a time, in a stable order: workspace jobs first, then
   each project's (by sub-folder), each by id. The next starts when the current one is up, or after
   30 s; one not up by then stays `starting` and keeps being checked. Restarts after a crash take
@@ -604,6 +637,25 @@ fields it lacks at their defaults.
   the state folder — go once the day is that many days behind,
   checked at the scheduler's start and every hour; a log a session still writes stays, and so does
   a git result a running run still writes.
+
+## Project renamed
+
+A project renamed or moved in Pomade (`project.renamed`; `src/scheduler/project-moves.ts`): its jobs
+are bound to it by the stable id, so they keep working, and what names its folder follows it. The
+scheduler compares Pomade's projects as it reads them with the ones it read before — on
+`project.renamed`, and on every connection, so a move made while it was down is followed too — and
+for each project whose folder changed, one after another:
+- every job file whose `folder` is the project's folder or inside it gets the new one, field-only;
+- its jobs' sub-folder is renamed after the folder's new last segment, when that changed. A
+  sub-folder of that name already there keeps the jobs where they are, said in the log. A new
+  name alone changes nothing on disk.
+- The sub-folder's jobs change id with it (`hunt/scrape` → `hunt-2/scrape`); their state goes with
+  them. Each running service of them is stopped and its session forgotten before its file moves,
+  and starts again under its new id in the new folder — a first-open one too. Their supervision
+  records, latest runs, runs not started yet, looks the switch holds and the loop guard's counts
+  take the new id; a run going keeps its old id until it ends, and is the new id's latest then.
+  History is never rewritten: the old id → new id is kept in `renamed.json` in the records folder,
+  and a job's history takes in every id it had.
 
 ## Missed runs and load
 
@@ -880,8 +932,8 @@ to it, light theme only.
   the kind icon, the name, project · folder · command; the status (`serviceLook`,
   `src/ui/serviceWords.ts`) — "running · up 3d 4h" over "no crashes" or "restarted 3× · last
   crash 14:02", "starting" over what it waits for, "failed · gave up" over "crashed 5× in 1 min ·
-  today 11:20", "stopped by you" over when, and "queued", "restarting", "waiting for its project",
-  "disabled" — each with its help; **Restart · Stop** while it is up or starting, **Start**
+  today 11:20", "stopped by you" over when, and "queued", "restarting", "waiting for first open" over "starts on
+  first open of job-hunt", "disabled" — each with its help; **Restart · Stop** while it is up or starting, **Start**
   otherwise; then Open terminal (its attached tab), Edit (the `edit/<encoded job id>` route) and
   Open file. Each action toasts its outcome or why it was refused. An invalid service file is a red
   row with its first error, its help and Open file. The "This project" chip (the tab's, as in Jobs), with the open
@@ -978,18 +1030,29 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   path (`schedule.daily.at[1]` → the second time), and the error shows under the box.
 
   When something happens has the **Event** list — the hooks the engine fires (`EVENT_CHOICES`:
-  Mac login), then **Another job finished**, a chain, always last — its (i) following the event.
-  A chain picks, in a box under it, the **Job** (every valid job but services and the job itself,
-  by name; one the file names that is not among them stays, by its id) and **When it**: Is done ·
-  Fails · Either. Under them, the trigger in words: "Runs at Mac login · Once per login, after the
-  2-minute warm-up" (the warm-up as the settings say it) or "Runs after Pull is done · A chain.
-  History will show “chain: after Pull”". The file gets `hook: { event: login }` or
-  `after: { job, result }`, as a hand-written one has them; a hook's filters are not the form's,
-  so an edit that keeps the event writes no hook. A chain's errors show under its picker in the
+  Mac login, Pomade started, First open of a project since Pomade started, Project created), then
+  **Another job finished**, a chain, always last — its (i) following the event. The first open
+  picks, in a box under it, its **Project**: Any project, then Pomade's projects by name (one the
+  file names that Pomade lacks stays, by its id). A chain picks, in a box under it, the **Job**
+  (every valid job but services and the job itself, by name; one the file names that is not among
+  them stays, by its id) and **When it**: Is done · Fails · Either. Under them, the trigger in
+  words: "Runs at Mac login · Once per login, after the 2-minute warm-up" (the warm-up as the
+  settings say it); "Runs when Pomade starts", "Runs on first open of job-hunt", "Runs when a
+  project is created" · "Fires only while Pomade is running, so there are no missed runs."; or
+  "Runs after Pull is done · A chain. History will show “chain: after Pull”". The file gets
+  `hook: { event: login }`, `hook: { event: project-first-open, project: <id> }` (no `project` for
+  any) or `after: { job, result }`, as a hand-written one has them; the filters the form does not
+  edit are not the form's, so an edit that keeps the hook writes no hook. A chain's errors show under its picker in the
   checker's words — a chain that leads back to itself names the loop's jobs ("the chain loops
   back: a → b → a"), with the (i) on why — and keep Save from writing. A hook on an event the form
   does not offer is said in words (`jobTriggerWords`) with **Open file**, and stays as the file
   has it.
+- **A service's Trigger** (`ServiceSections` in `kinds.tsx`), always on: **Starts** — At login
+  (default) · On first open of a project, with its project picker beside it (Pomade's projects by
+  name; the job's own project until another is picked; "Choose a project…" for a workspace
+  service with none) and the line "Then it stays up: restarts after a crash, keeps running when
+  Pomade quits, stays stopped when you stop it."; then when it counts as up, and its chain line.
+  A picked project is `start-project:`; errors on either show under Starts.
 - **Git** (`GitSections` in `kinds.tsx`): the Trigger section as a script's, then **Git** —
   **Operation** (Commit & push · Pull · Push · Fetch), **Repositories** and **Project**, no folder
   (`pomade-git` works in the repos). Repositories has a tick per repo of the workspace, in the order
@@ -1103,11 +1166,13 @@ Runner writes in two folders, both named only in `src/locations.ts`, each with i
 | The switch's position | `<workspace>/Apps/pomade-runner/records/switch.json` |
 | Needs-you items, the giving-ups noticed | `<workspace>/Apps/pomade-runner/records/needs-you.json` |
 | The services the Owner stopped | `<workspace>/Apps/pomade-runner/records/services.json` |
+| Jobs whose id changed when their project moved (old id → new id) | `<workspace>/Apps/pomade-runner/records/renamed.json` |
 | The output a live run or a service is writing | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.log` |
 | A git run's result while it runs (`pomade-git --json`'s output) | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.json` |
 | Session records (job, run, output log, end) | `<userData>/app-state/pomade-runner/sessions.json` |
 | Service supervision on this Mac (crash counts, a restart due, a service given up on, the last start's problem) | `<userData>/app-state/pomade-runner/services.json` |
-| Pomade's projects as last heard (for `POMADE_PROJECT_PATH`) | `<userData>/app-state/pomade-runner/projects.json` |
+| Pomade's projects as last heard (for `POMADE_PROJECT_PATH`, and to tell a project moved) | `<userData>/app-state/pomade-runner/projects.json` |
+| The Pomade start each workspace's Pomade started hooks fired for | `<userData>/app-state/pomade-runner/pomade-started.json` |
 | The keeper's own state (session records, exit statuses, `keeper.log`) and its stdout and stderr (`keeper.out`) | `<userData>/app-state/pomade-runner/keeper/` |
 | Scheduler log (its stdout and stderr) | `<userData>/app-logs/pomade-runner/backend.log` |
 | Scheduler control socket | `<userData>/app-state/pomade-runner/scheduler.sock` |
@@ -1214,7 +1279,7 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
 | Platform (`pomade:E-028`) | always-on backend, commands, broker, launching Pomade |
 | Platform (`pomade:E-029`) | side panel and badge |
 | Platform (`pomade:E-030`) | projects, stable ids, repos (`git.read`: the names git jobs take), open file, folder picker |
-| Platform (`pomade:E-031`) | events |
+| Platform (`pomade:E-031`) | events: `pomade.ready`, `project.opened`, `project.created`, `project.renamed` (hooks, projects) |
 | Platform (`pomade:E-032`) | notices and the closed-Pomade queue |
 | Platform (`pomade:E-033`) | Open session |
 | Platform (`pomade:E-034`) | attached terminals: the pane, `tabs.openAttached`, `attachedTab.action` |

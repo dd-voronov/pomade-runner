@@ -1,7 +1,8 @@
 // The scheduler's connection to Pomade over the Host API socket: kept up while Pomade runs,
 // retried while it is closed. While connected, the scheduler serves Runner's API through the
 // broker, publishes Runner's events, follows Pomade's projects, hears the header actions clicked
-// on attached tabs of Runner's sessions, and sets the badge once Pomade is ready.
+// on attached tabs of Runner's sessions, hears Pomade's events its hooks fire on — Pomade ready, a
+// project's first open, a project created — and sets the badge once Pomade is ready.
 
 import { stayConnected } from "pomade-kit/node";
 import { REPO_JOBS_METHOD, type AttachedTabActionPayload, type JsonValue, type RepoJob, type RepoJobsParams, type RepoJobsResult } from "pomade-kit/protocol";
@@ -93,7 +94,7 @@ export interface RunnerOffer {
   services(): ServicesReport;
   /** Start, Stop or Restart a service (by its id or name). */
   serviceAction(verb: ServiceVerb, job: string): Promise<ServiceActionResult>;
-  /** Pomade's projects, read on connect and again when one is created or renamed. */
+  /** Pomade's projects, read once Pomade is ready and again when one is created or renamed. */
   projects(projects: ProjectRecord[]): void;
   /** A header action clicked on an attached tab of one of Runner's sessions (`attachedTab.action`,
    *  which Pomade delivers only to the session's owner). */
@@ -130,9 +131,23 @@ export interface RunnerOffer {
   setSetting(field: SettingsField, value: SettingsValue): Promise<SettingsWriteResult>;
   /** Delete a job: a running service stopped first, then its file removed. */
   deleteJob(job: string): Promise<DeleteResult>;
-  /** Pomade restored its tabs (`pomade.ready`, sticky: heard at once when it already did). */
-  ready(): void;
+  /** Pomade restored its tabs (`pomade.ready`, sticky: heard at once when it already did), with the
+   *  project in front then; `null` for the Workspace project, or when it cannot be read. */
+  ready(active: ProjectRecord | null): void;
+  /** A project — not the Workspace project — became active for the first time since the workspace
+   *  loaded (`project.opened`). */
+  opened(project: ProjectRecord): void;
+  /** A project was added to the workspace (`project.created`). */
+  created(project: ProjectRecord): void;
   log(message: string): void;
+}
+
+/** A project as an event's payload names it (`ProjectRef`); `null` for the Workspace project or a
+ *  payload that is not one. */
+export function projectOf(payload: unknown): ProjectRecord | null {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
+  const { id, kind, name, root } = payload as Record<string, unknown>;
+  return kind === "project" && typeof id === "string" && typeof name === "string" && typeof root === "string" ? { id, name, root } : null;
 }
 
 /** The params of a call: a mapping, or `invalid-params` with what `method` takes. */
@@ -193,8 +208,8 @@ function historyParams(params: JsonValue): { job: string | null; before: string 
 /**
  * On a new connection: serve Runner's API — the jobs, the git jobs that target a repo (to Pomade),
  * the services and their Start, Stop and Restart, the runs, the history, Run now, Enable / Disable, Needs you and a missed run's choice,
- * Stop on a run, the switch, Resume on a job the loop guard paused, the settings — follow the projects, hear tab actions and
- * `pomade.ready`, and announce the jobs, the services, the runs and the settings: a frame that
+ * Stop on a run, the switch, Resume on a job the loop guard paused, the settings — follow the projects, hear tab actions,
+ * `pomade.ready`, `project.opened` and `project.created`, and announce the jobs, the services, the runs and the settings: a frame that
  * found no scheduler before asks again when it hears `jobs.changed`, `services.changed`,
  * `runs.changed` or `settings.changed`.
  */
@@ -275,11 +290,35 @@ export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise
         return offer.deleteJob(text(DELETE_JOB_METHOD, paramsOf(DELETE_JOB_METHOD, params, takes), "job", takes));
       }),
     });
-    await host.events.subscribe("project.created", reloadProjects);
+    await host.events.subscribe("project.created", (payload) => {
+      reloadProjects();
+      const project = projectOf(payload);
+      if (project !== null) offer.created(project);
+    });
     await host.events.subscribe("project.renamed", reloadProjects);
+    await host.events.subscribe("project.opened", (payload) => {
+      const project = projectOf(payload);
+      if (project !== null) offer.opened(project);
+    });
     await host.events.subscribe("attachedTab.action", offer.tabAction);
-    await host.events.subscribe("pomade.ready", offer.ready);
-    offer.projects(await readProjects(host));
+    // Pomade's projects are read once it is ready: before, its workspace may not be loaded, and the
+    // list it gives may miss projects.
+    await host.events.subscribe("pomade.ready", () => {
+      void (async () => {
+        try {
+          offer.projects(await readProjects(host));
+        } catch (err) {
+          offer.log(`cannot read Pomade's projects: ${String(err)}`);
+        }
+        let active: ProjectRecord | null = null;
+        try {
+          active = projectOf(await host.project.getActive());
+        } catch (err) {
+          offer.log(`cannot read the project in front: ${String(err)}`);
+        }
+        offer.ready(active);
+      })();
+    });
     await host.events.publish(JOBS_CHANGED_EVENT);
     await host.events.publish(SERVICES_CHANGED_EVENT);
     await host.events.publish(RUNS_CHANGED_EVENT);
