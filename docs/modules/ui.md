@@ -92,7 +92,7 @@ clickable table cell open on Enter or Space. There are no app-wide shortcuts.
 ## Tests
 
 Unit (vitest) for the pure parts: `form/policies`, `form/schedule`, `form/state`, `form/triggers`,
-`jobFiles`, `jobWords`, `panelWords`, `runLook`, `runWords`, `serviceWords`. E2E: `ui.spec.ts` drives
+`help`, `jobFiles`, `jobWords`, `panelWords`, `runLook`, `runWords`, `serviceWords`. E2E: `ui.spec.ts` drives
 the built page in pomade-kit's fake host (`e2e/harness/`) and in a plain browser, `RUNNER_SHOTS=<dir>`
 saves a screenshot of every state; `pomade.spec.ts`, `pomade-git.spec.ts`, `pomade-hooks.spec.ts`
 and `pomade-agents.spec.ts` drive it inside a real Pomade.

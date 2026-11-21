@@ -65,9 +65,9 @@ it runs, **Start** once it ended).
 
 ## The Services view
 
-Every service in start order. A row: the name over "project · folder · command", the **Status**, and
-the actions: **Restart** and **Stop** while it is up or starting, **Start** otherwise; `Open terminal
-(log)`, `Edit` and `Open file`. A toast reports each action's outcome or refusal.
+Every service in start order; with none, "Nothing here yet" with **New job**. A row: the name over "project · folder · command", the **Status**, and
+the actions: **Restart** and **Stop** while it is up or starting, **Start** otherwise; `Open terminal`,
+`Edit` and `Open file`. A toast reports each action's outcome or refusal.
 
 | Status | Under it |
 |---|---|
@@ -90,7 +90,7 @@ keeps the open project's services. With no service files the view says what a se
 
 ## The terminal tab
 
-**Open terminal (log)** — and a click on the service's row in Running now — opens the service's session
+**Open terminal** — and a click on the service's row in Running now — opens the service's session
 as a Pomade terminal tab titled with its name. It shows earlier and live output and takes input.
 Closing the tab only detaches; the service keeps running. A stopped or failed service's tab keeps its
 last output.

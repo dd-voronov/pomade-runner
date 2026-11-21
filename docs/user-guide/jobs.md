@@ -60,8 +60,11 @@ reads "N jobs", plus "· N invalid" when a file has errors. Columns:
   git job's tooltip adds its operation and repos; a repo the workspace lacks is said in red.
 - **Last result** — the run going ("running", "waiting for you", "queued", "missed · waiting for you")
   or the latest finished one ("done", "failed · exit 1", "stopped: time limit, 45 min", "skipped · …",
-  "missed · …", "stopped by you") over when it ended and how long it took — a done git run shows its
-  commit instead. "never ran" for none. Click it to open the run's result card. A service shows its
+  "missed · …", "stopped by you") over when it started and how long it took, with "· caught up" or
+  "· manual" where that is how it started ("today 8:32 · 4m 12s · caught up") — a done git run shows
+  its commit instead. A run going shows how long so far; a queued run reads "queued · 1 ahead" over
+  "since 12:46"; a job the loop guard paused reads amber "paused · looks like a loop" over when and
+  "10× in 10 min". "never ran" for none. Click it to open the run's result card. A service shows its
   state as the Services view does.
 - **Next run** — "disabled", "paused" (the loop guard's), "always on" (a service), "on event" (a hook or
   a chain), "finished" (a schedule with nothing ahead), else the next time ("Today 13:00", "Wed 7:00"),

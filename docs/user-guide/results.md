@@ -19,6 +19,8 @@ the **Time**, the kind icon, the **Job**, the **Result**, the **Duration** and t
 count toward a duration; time waiting for you does. Click a row, or press Enter or Space on it, to
 open its result card.
 
+With no run yet, History shows "Nothing here yet" with **New job**.
+
 Chips filter the list: `All` · `Active` (running, waiting for you, queued) · `Failed` · `Skipped &
 missed`, each but All with its count. A run you stopped shows under All only. `This project` keeps the
 open project's runs. The summary says "kept 30 days": History keeps as many days as the settings say
