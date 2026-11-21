@@ -91,8 +91,12 @@ describe("a job's last result", () => {
     expect(look(null)).toMatchObject({ tone: "hollow", words: "never ran", help: null, sub: "", run: null });
   });
 
-  it("chips each result with its status, when it ended and how long it took, and opens its run", () => {
-    expect(look(record("done"))).toMatchObject({ tone: "ok", words: "done", help: "st.done", sub: "today 11:20 · 3s", run: "20261117-111700-abcdef" });
+  it("chips each result with its status, when it started and how long it took, and opens its run", () => {
+    expect(look(record("done"))).toMatchObject({ tone: "ok", words: "done", help: "st.done", sub: "today 11:17 · 3s", run: "20261117-111700-abcdef" });
+    // The prototype's: to the second, and a trigger that is not the job's own.
+    expect(look(record("done", { trigger: "caught-up", startedAt: at(17, 8, 32), durationMs: 252_000 }))).toMatchObject({ sub: "today 8:32 · 4m 12s · caught up" });
+    expect(look(record("done", { trigger: "manual" }))).toMatchObject({ sub: "today 11:17 · 3s · manual" });
+    expect(look(record("done", { trigger: "hook" }))).toMatchObject({ sub: "today 11:17 · 3s" });
     expect(look(record("failed"))).toMatchObject({ tone: "danger", words: "failed · exit 1", help: "st.failed" });
     expect(look(record("failed", { reason: "stopped: time limit, 45 min", exitCode: null, signal: "SIGTERM", limitHit: 45 }))).toMatchObject({ tone: "danger", words: "stopped: time limit, 45 min", help: "st.limit" });
     expect(look(record("failed", { reason: "stopped by Runner" }))).toMatchObject({ tone: "danger", words: "failed · stopped by Runner", help: "st.failed" });
@@ -102,14 +106,14 @@ describe("a job's last result", () => {
   it("says a done git run's commit instead of how long it took; a run with no commit, or one that failed, its duration", () => {
     const repo = (commit: string | null) => ({ repo: "Knowledge", path: "/ws/Knowledge", op: "commit-push" as const, status: "done" as const, reason: null, steps: [], commit });
     const git = (commits: (string | null)[]) => ({ op: "commit-push" as const, job: "K", at: "2026-11-17T11:20:00.000Z", results: commits.map(repo) });
-    expect(look(record("done", { git: git([null, "a1b2c3d4e5f6", "9f8e7d6c5b4a"]) }))).toMatchObject({ words: "done", sub: "today 11:20 · a1b2c3d" });
-    expect(look(record("done", { git: git([null]) }))).toMatchObject({ sub: "today 11:20 · 3s" });
-    expect(look(record("failed", { git: git(["9f8e7d6c5b4a"]), reason: "Knowledge: push rejected" }))).toMatchObject({ sub: "today 11:20 · 3s" });
+    expect(look(record("done", { git: git([null, "a1b2c3d4e5f6", "9f8e7d6c5b4a"]) }))).toMatchObject({ words: "done", sub: "today 11:17 · a1b2c3d" });
+    expect(look(record("done", { git: git([null]) }))).toMatchObject({ sub: "today 11:17 · 3s" });
+    expect(look(record("failed", { git: git(["9f8e7d6c5b4a"]), reason: "Knowledge: push rejected" }))).toMatchObject({ sub: "today 11:17 · 3s" });
   });
 
   it("gives a run that never started its reason and no duration", () => {
-    const ended = at(16, 20, 0);
-    expect(look(record("skipped", { reason: "previous run still going", durationMs: null, endedAt: ended }))).toMatchObject({
+    const due = at(16, 20, 0);
+    expect(look(record("skipped", { reason: "previous run still going", durationMs: null, startedAt: null, dueAt: due, endedAt: due }))).toMatchObject({
       tone: "hollow",
       words: "skipped · previous run still going",
       help: "st.skipped",
@@ -119,12 +123,19 @@ describe("a job's last result", () => {
   });
 
   it("shows a run going, queued or waiting for the person ahead of the last finished one", () => {
-    expect(look(record("done"), [active("running")])).toMatchObject({ tone: "accent", live: true, words: "running", help: "st.running", sub: "started 12:31 · 17m", run: "20261117-121900-aaaaaa" });
-    expect(look(record("done"), [active("queued", { waits: { kind: "slot", ahead: 1 } })])).toMatchObject({ tone: "hollow", words: "queued", help: "st.queued", sub: "1 ahead" });
+    expect(look(record("done"), [active("running")])).toMatchObject({ tone: "accent", live: true, words: "running", help: "st.running", sub: "17m", run: "20261117-121900-aaaaaa" });
+    expect(look(record("done"), [active("running", { trigger: "manual", startedAt: at(17, 9, 46) })])).toMatchObject({ words: "running", sub: "3h 02m · manual" });
+    expect(look(record("done"), [active("queued", { dueAt: at(17, 12, 46), waits: { kind: "slot", ahead: 1 } })])).toMatchObject({ tone: "hollow", words: "queued · 1 ahead", help: "st.queued", sub: "since 12:46" });
     expect(look(null, [active("missed-waiting", { dueAt: at(17, 3, 0) })])).toMatchObject({ tone: "warning", words: "missed · waiting for you", sub: "today 3:00" });
     expect(look(null, [active("queued"), active("running", { run: "r2" })])).toMatchObject({ words: "running", run: "r2" });
     const waiting = active("running", { kind: "agent", agent: { ...{ agent: "claude", name: "claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-17T11:31:00.000Z", exit: "/exit", exitSentAt: null, waitedMs: 0 }, waiting: { prompt: "permission", since: at(17, 12, 40) } } });
     expect(look(record("done"), [waiting])).toMatchObject({ tone: "warning", live: false, words: "waiting for you", help: "st.waiting", sub: "started 12:31 · 17m" });
+  });
+
+  it("says a job the loop guard paused, after any run going, with no run to open", () => {
+    const paused = (going: ActiveRun[] = []) => lastLook(script, { runs: runs({ last: record("done") }), active: going, service: undefined, pausedAt: at(16, 18, 40) }, now);
+    expect(paused()).toMatchObject({ tone: "warning", words: "paused · looks like a loop", help: "st.paused", sub: "yesterday 18:40 · 10× in 10 min", run: null });
+    expect(paused([active("running")])).toMatchObject({ words: "running" });
   });
 
   it("says a service by its state, with no run to open", () => {

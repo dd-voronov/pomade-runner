@@ -7,9 +7,11 @@ import { newRoute } from "../integrations/runner-api";
 import type { Job, ServiceJob } from "../jobs/model";
 import { GIT_OPERATION_WORDS } from "../jobs/words";
 import type { ServiceStatus } from "../keeper/model";
-import { runWords, waitingAt, waitsWords, type ActiveRun, type JobRuns, type RunRecord } from "../scheduler/model";
+import { FIRING_LIMIT, FIRING_WINDOW_MS } from "../scheduler/loop-guard";
+import { runWords, TRIGGER_WORDS, waitingAt, type ActiveRun, type JobRuns, type RunRecord, type RunTrigger } from "../scheduler/model";
 import type { HelpKey } from "./help";
 import type { DotTone } from "./kit";
+import { shortDuration } from "./runLook";
 import { serviceLook, shortClock, upWords, whenWords } from "./serviceWords";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -40,12 +42,18 @@ export interface NextLook {
   none: boolean;
 }
 
-/** A finished run's line: when it ended, then how long it took — a done git run's commit instead,
- *  as History's result says it ("yesterday 20:00 · a1b2c3d"). */
+/** What started a run, said on the row only when it is not the job's own trigger: "caught up", "manual". */
+function offTrigger(trigger: RunTrigger): string | null {
+  return trigger === "caught-up" || trigger === "manual" ? TRIGGER_WORDS[trigger] : null;
+}
+
+/** A finished run's line: when it started (or was due), then how long it took — a done git run's
+ *  commit instead, as History's result says it ("yesterday 20:00 · a1b2c3d") — then a trigger that
+ *  is not the job's own ("today 8:32 · 4m 12s · caught up"). */
 function finished(record: RunRecord, now: number): Pick<LastLook, "sub" | "subHelp"> {
   const commit = record.state === "done" ? record.git?.results.find((result) => result.commit !== null)?.commit : undefined;
-  const after = typeof commit === "string" ? commit.slice(0, 7) : record.durationMs === null ? null : upWords(record.durationMs);
-  return { sub: [whenWords(record.endedAt, now), after].filter((part) => part !== null).join(" · "), subHelp: null };
+  const after = typeof commit === "string" ? commit.slice(0, 7) : record.durationMs === null ? null : shortDuration(record.durationMs);
+  return { sub: [whenWords(record.startedAt ?? record.dueAt, now), after, offTrigger(record.trigger)].filter((part) => part !== null).join(" · "), subHelp: null };
 }
 
 /** A finished run's chip: the status of its result, its words as History says them. */
@@ -73,13 +81,14 @@ function activeLook(run: ActiveRun, now: number): LastLook {
   const base = { subHelp: null, run: run.run };
   switch (run.state) {
     case "running": {
-      const sub = `started ${shortClock(run.startedAt ?? run.dueAt)} · ${upWords(now - (run.startedAt ?? run.dueAt))}`;
+      // Running: how long so far ("3h 02m · manual"); waiting for you: since when it waits on you.
+      const going = upWords(now - (run.startedAt ?? run.dueAt));
       return waitingAt(run) === null
-        ? { ...base, tone: "accent", live: true, words: "running", help: "st.running", sub }
-        : { ...base, tone: "warning", live: false, words: "waiting for you", help: "st.waiting", sub };
+        ? { ...base, tone: "accent", live: true, words: "running", help: "st.running", sub: [going, offTrigger(run.trigger)].filter((part) => part !== null).join(" · ") }
+        : { ...base, tone: "warning", live: false, words: "waiting for you", help: "st.waiting", sub: `started ${shortClock(run.startedAt ?? run.dueAt)} · ${going}` };
     }
     case "queued":
-      return { ...base, tone: "hollow", live: false, words: "queued", help: "st.queued", sub: waitsWords(run.waits) };
+      return { ...base, tone: "hollow", live: false, words: runWords(run), help: "st.queued", sub: `since ${shortClock(run.dueAt)}` };
     case "missed-waiting":
       return { ...base, tone: "warning", live: false, words: "missed · waiting for you", help: "st.missed", sub: whenWords(run.dueAt, now) };
   }
@@ -91,14 +100,19 @@ function shownRun(active: readonly ActiveRun[]): ActiveRun | undefined {
 }
 
 /** A job's Last result: a service's state (`serviceLook`); for any other job the run going — or
- *  queued, or missed and waiting — else its latest finished one, else "never ran". */
-export function lastLook(job: Job, parts: { runs: JobRuns | undefined; active: readonly ActiveRun[]; service: ServiceStatus | undefined }, now: number): LastLook {
+ *  queued, or missed and waiting — else the loop guard's pause (`pausedAt`, when it paused the job),
+ *  else its latest finished run, else "never ran". */
+export function lastLook(job: Job, parts: { runs: JobRuns | undefined; active: readonly ActiveRun[]; service: ServiceStatus | undefined; pausedAt?: number | null }, now: number): LastLook {
   if (job.kind === "service") {
     const look = serviceLook(parts.service ?? fallbackService(job), job.ready, now);
     return { tone: look.tone, live: look.live, words: look.words, help: look.help, sub: look.sub, subHelp: look.subHelp, run: null };
   }
   const going = shownRun(parts.active);
   if (going !== undefined) return activeLook(going, now);
+  if (parts.pausedAt !== undefined && parts.pausedAt !== null) {
+    const sub = `${whenWords(parts.pausedAt, now)} · ${FIRING_LIMIT}× in ${FIRING_WINDOW_MS / 60_000} min`;
+    return { tone: "warning", live: false, words: "paused · looks like a loop", help: "st.paused", sub, subHelp: null, run: null };
+  }
   const last = parts.runs?.last ?? null;
   if (last === null) return { tone: "hollow", live: false, words: "never ran", help: null, sub: "", subHelp: null, run: null };
   return recordLook(last, now);

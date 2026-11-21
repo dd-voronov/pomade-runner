@@ -119,6 +119,7 @@ test.describe("the Runner tab", () => {
   test("the services route opens the Services view: each service with its project, folder, command and state", async ({ page }) => {
     await page.goto(harness({ route: "services" }));
     await expect(app(page).getByTestId("services-empty")).toContainText("A service is a command Runner keeps running");
+    await expect(app(page).getByTestId("services-empty-new-job")).toHaveText("New job");
     await expect(app(page).getByTestId("nav-services")).toHaveAttribute("aria-current", "page");
     await writeJob(page, "alpha/coda-web.md", VALID);
     const row = app(page).getByTestId("service-row");
@@ -357,7 +358,7 @@ test.describe("runs", () => {
     await writeJob(page, "backup.md", SCRIPT);
     const row = app(page).getByTestId("job-row");
     await row.getByRole("button", { name: "Run now" }).click();
-    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerBackup started");
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerBackup started · trigger “manual”");
     const toggle = row.getByRole("switch");
     await expect(toggle).toHaveAttribute("aria-checked", "true");
     await toggle.click();
@@ -972,6 +973,8 @@ test.describe("the job form", () => {
     await writeJob(page, "alpha/coda-web.md", VALID);
     await app(page).getByTestId("new-job").click();
     const form = app(page).getByTestId("form-service");
+    // A new job's form opens with the cursor in Name, as the prototype's does.
+    await expect(form.getByRole("textbox", { name: "Name", exact: true })).toBeFocused();
     // Nothing is wrong before a Save: an empty field is not an error yet.
     await expect(form.getByRole("alert")).toHaveCount(0);
     await app(page).getByTestId("form-save").click();
@@ -1286,10 +1289,13 @@ test.describe("the Jobs view", () => {
     await expect(row("alpha/pull").getByTestId("job-next")).toHaveText(/^(Today|Tomorrow|[A-Z][a-z]{2}) \d+:\d\d$/);
     // A run going shows ahead of the last finished one.
     await expect(row("beta/lint").getByTestId("job-status")).toHaveText("running");
-    await expect(row("beta/lint").getByTestId("job-last-sub")).toHaveText(/^started \d+:\d\d · 3m$/);
+    await expect(row("beta/lint").getByTestId("job-last-sub")).toHaveText("3m");
     await expect(row("beta/lint").getByTestId("job-status")).toHaveAttribute("data-help", "st.running");
     await expect(row("mount").getByTestId("job-next")).toHaveText("paused");
-    await expect(row("mount").getByTestId("job-status")).toHaveText("never ran");
+    // The loop guard's pause is the job's last result, as the prototype has it.
+    await expect(row("mount").getByTestId("job-status")).toHaveText("paused · looks like a loop");
+    await expect(row("mount").getByTestId("job-status")).toHaveAttribute("data-help", "st.paused");
+    await expect(row("mount").getByTestId("job-last-sub")).toHaveText(/^today \d+:\d\d · 10× in 10 min$/);
     await expect(row("alpha/coda-web").getByTestId("job-next")).toHaveText("always on");
     await expect(row("alpha/coda-web").getByTestId("job-status")).toHaveText(/^running · up /);
     // A click on the last result opens that run's card; a service and a job that never ran have none.
@@ -1332,7 +1338,7 @@ test.describe("the Jobs view", () => {
     await start(page);
     const row = (job: string) => app(page).locator(`[data-testid="job-row"][data-job="${job}"]`);
     await row("backup").getByRole("button", { name: "Run now" }).click();
-    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerBackup started");
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerBackup started · trigger “manual”");
     await row("alpha/coda-web").getByRole("button", { name: "Open terminal" }).click();
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:alpha.coda-web" }, title: "Coda web" }]);
     expect(await page.evaluate(() => window.runnerCalls)).toEqual([{ method: "jobs.run", params: { job: "backup" } }]);
@@ -1517,7 +1523,7 @@ test.describe("services: Running now and the Services view", () => {
       await expect(rows.nth(1).getByTestId("service-sub")).toHaveAttribute("data-help", "st.restarted");
       await expect(rows.nth(0).getByRole("button")).toHaveText(["Start", "", "", ""]);
       await expect(rows.nth(1).getByRole("button")).toHaveText(["Restart", "Stop", "", "", ""]);
-      await expect(rows.nth(1).getByRole("button", { name: "Open terminal (log)" })).toBeVisible();
+      await expect(rows.nth(1).getByRole("button", { name: "Open terminal", exact: true })).toBeVisible();
       const invalid = app(page).getByTestId("service-invalid");
       await expect(invalid).toContainText("api.md");
       await expect(invalid).toContainText("Invalid: line 6: ready.port — 99999 is not a port.");
@@ -1536,7 +1542,7 @@ test.describe("services: Running now and the Services view", () => {
         { method: "services.restart", params: { job: "alpha/coda-web" } },
       ]);
 
-      await rows.nth(1).getByRole("button", { name: "Open terminal (log)" }).click();
+      await rows.nth(1).getByRole("button", { name: "Open terminal" }).click();
       await rows.nth(1).getByRole("button", { name: "Open file" }).click();
       await invalid.getByRole("button", { name: "Open file" }).click();
       await expect
@@ -1680,6 +1686,8 @@ test.describe("History and result cards", () => {
     await expect(rows).toHaveCount(1);
     await page.evaluate((report) => window.setRuns({ report, history: [] }), quiet);
     await expect(app(page).getByTestId("history-empty")).toContainText("Every run lands here with its result and output.");
+    await app(page).getByTestId("history-empty-new-job").click();
+    await expect(app(page).getByTestId("form-save")).toBeVisible();
   });
 
   test("older runs load as History scrolls to its end", async ({ page }) => {
@@ -1713,6 +1721,11 @@ test.describe("History and result cards", () => {
     const dialog = app(page).getByTestId("run-dialog");
     await expect(app(page).getByTestId("run-result")).toHaveText("Queued");
     await expect(dialog.getByTestId("run-waits")).toHaveText("Low-priority runs are going in every free slot — 1 run ahead. This one starts when one of them finishes.");
+    // The low-priority runs holding the slots are named, as the prototype's card names them.
+    const backup: ActiveRun = { ...running, job: "backup", name: "Photo backup", run: "20261117-000600-gggggg" };
+    const holding: [RunsReport, RunRecord[]] = [{ ...quiet, active: [running, backup, queued] }, [skipped]];
+    await page.evaluate(([report, history]) => window.setRuns({ report, history }), holding);
+    await expect(dialog.getByTestId("run-waits")).toHaveText("Two low-priority runs are going (Lint, Photo backup). This one starts when one of them finishes.");
     await page.evaluate((route) => window.mounted.navigate(route), `run/health/${skipped.run}`);
     await expect(app(page).getByTestId("run-result")).toHaveText("Skipped");
     await expect(dialog.getByTestId("run-reason")).toHaveText("Previous run still going.");

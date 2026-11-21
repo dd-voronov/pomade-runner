@@ -449,7 +449,7 @@ function FormBody({
             })}
           </div>
           {error("kind")}
-          <NameField {...props} placeholder={ui.namePlaceholder} />
+          <NameField {...props} placeholder={ui.namePlaceholder} focus={path === null} />
         </FormSection>
         {build.sections(props)}
         <FormSection title="Policies" sub={sentence.customised ? "customised" : `defaults for ${ui.label}`} testId="form-policies">
@@ -507,10 +507,11 @@ const FIELD_WORDS: Record<FormField, string> = {
   prompt: "prompt",
 };
 
-function NameField({ state, set, error, placeholder }: FormProps & { placeholder: string }): React.JSX.Element {
+/** The job's name; a new job's form opens with the cursor in it (`focus`), as the prototype's does. */
+function NameField({ state, set, error, placeholder, focus }: FormProps & { placeholder: string; focus: boolean }): React.JSX.Element {
   return (
     <Field label="Name" help="f.name" error={error("name")}>
-      {(id) => <TextInput id={id} value={state.values.name} bad={error("name") !== undefined} placeholder={placeholder} data-field="name" onChange={(event) => set("name", event.target.value)} />}
+      {(id) => <TextInput id={id} value={state.values.name} bad={error("name") !== undefined} placeholder={placeholder} autoFocus={focus} data-field="name" onChange={(event) => set("name", event.target.value)} />}
     </Field>
   );
 }

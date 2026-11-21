@@ -81,7 +81,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
     </TabShell>
   );
 
-  const history = <HistoryView host={host} active={report?.active ?? []} open={open} thisProject={thisProject} onThisProject={setThisProject} />;
+  const history = <HistoryView host={host} active={report?.active ?? []} open={open} thisProject={thisProject} onThisProject={setThisProject} newJob={newJob} />;
 
   if (jobs.status === "loading") return shell("tab-loading", null);
   if (view.view === "new" || view.view === "edit") {
@@ -127,12 +127,12 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
         `tab-${view.view === "prompt" ? "run" : view.view}`,
         <>
           {history}
-          {view.view !== "history" && <RunDialog key={`${view.job}/${view.run}`} host={host} job={view.job} run={view.run} needsYou={report?.needsYou ?? []} open={open} />}
+          {view.view !== "history" && <RunDialog key={`${view.job}/${view.run}`} host={host} job={view.job} run={view.run} needsYou={report?.needsYou ?? []} active={report?.active ?? []} open={open} />}
           {view.view === "prompt" && <PromptOpener key={`${view.job}/${view.run}`} host={host} job={view.job} run={view.run} open={open} />}
         </>,
       );
     case "services":
-      return shell("tab-services", <ServicesView host={host} jobs={entries} services={serviceStates} open={open} thisProject={thisProject} onThisProject={setThisProject} />);
+      return shell("tab-services", <ServicesView host={host} jobs={entries} services={serviceStates} open={open} thisProject={thisProject} onThisProject={setThisProject} newJob={newJob} />);
     case "settings":
       return shell(
         "tab-settings",

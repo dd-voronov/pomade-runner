@@ -23,6 +23,7 @@ export function HistoryView({
   open,
   thisProject,
   onThisProject,
+  newJob,
 }: {
   host: HostClient;
   active: readonly ActiveRun[];
@@ -30,6 +31,8 @@ export function HistoryView({
   /** The "This project" chip, kept by the tab: it holds across the Jobs, History and Services views. */
   thisProject: boolean;
   onThisProject: (on: boolean) => void;
+  /** The New job button the empty view offers. */
+  newJob: (testId: string) => React.JSX.Element;
 }): React.JSX.Element {
   const history = useHistoryPages(host);
   const settings = useSettings(host);
@@ -63,7 +66,7 @@ export function HistoryView({
   const all: RunView[] = [...active, ...ready.records];
   if (all.length === 0) {
     return (
-      <EmptyBlock title="Nothing here yet" testId="history-empty">
+      <EmptyBlock title="Nothing here yet" testId="history-empty" action={newJob("history-empty-new-job")}>
         <p>Every run lands here with its result and output.</p>
       </EmptyBlock>
     );

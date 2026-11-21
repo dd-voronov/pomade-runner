@@ -45,7 +45,7 @@ export const HELP = {
   'hist.dur': ['From start to finish. Time spent waiting for you counts; time queued doesn\'t.', 'Example: 4m 12s.'],
   'kind.service': ['Keeps a command running: starts it at login, restarts it on a crash, outlives Pomade.', 'Example: Coda web — ./start.sh.'],
   'kind.script': ['Runs a command once each time its trigger fires, as if typed in a terminal in its folder.', 'Example: ./scripts/health.sh every 30 min.'],
-  'kind.agent': ['Starts an agent with a prompt, unattended, and ends its session once its turn is done. Needs Pomade running: a run due while it is closed fails.', 'Example: claude writes the morning summary at 7:00.'],
+  'kind.agent': ['Starts an agent with a prompt, unattended, and ends its session once its turn is done. Needs Pomade — Runner opens it if it is closed.', 'Example: claude writes the morning summary at 7:00.'],
   'kind.git': ['Runs a git operation on one or more repos, with Pomade\'s safety rails.', 'Example: Commit & push Knowledge at 13:00 and 20:00.'],
   'f.name': ['Shown everywhere and used for the file name.', 'Example: "Coda web" → coda-web.md.'],
   'f.command': ['Runs in the folder below, in your login-shell environment — same PATH and keys as your terminals.', 'Example: ./start.sh'],
@@ -99,7 +99,7 @@ export const HELP = {
   'c.exit': ['0 means success; anything else marks the run failed.', 'Example: exit code 1.'],
   'c.lastmsg': ['The agent\'s final message of the run.', 'Example: the summary itself.'],
   'c.session': ['Opens the agent session in a Pomade tab so you can ask follow-ups.', 'Example: "expand on the second point".'],
-  'c.output': ['The full captured log of the run, kept 30 days.', 'Example: everything the script printed.'],
+  'c.output': ['The full captured log of the run, kept as long as "Keep history and output" in Settings says.', 'Example: everything the script printed.'],
   'c.steps': ['What Pomade\'s git did in each repo, in order.', 'Example: committed a1b2c3d · pulled · pushed.'],
   'c.runat': ['Runs the missed job once at the time you pick.', 'Example: tonight 23:00 · +2h.'],
   't.owned': ['Runner owns this terminal session. Closing the tab only detaches — the process keeps running.', 'Example: quit Pomade and Coda web still answers on its port.']

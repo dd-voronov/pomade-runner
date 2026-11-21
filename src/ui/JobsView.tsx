@@ -78,7 +78,7 @@ function useRowActions(host: HostClient): {
           const queued = "run" in answer && answer.run.state === "queued";
           toast(
             <>
-              <b>{job.name}</b> {queued ? "queued" : "started"}
+              <b>{job.name}</b> {queued ? "queued" : "started"} · trigger “manual”
             </>,
           );
         },
@@ -153,7 +153,8 @@ function JobRow({
   service: ServiceStatus | undefined;
   report: RunsReport | null;
   active: readonly ActiveRun[];
-  paused: boolean;
+  /** When the loop guard paused the job; `null` while it is not paused. */
+  paused: number | null;
   /** The workspace's repo names; `null` while they are not known. */
   repos: ReadonlySet<string> | null;
   /** The row the route marks. */
@@ -168,8 +169,8 @@ function JobRow({
   }, [marked]);
   const openTab = useOpenServiceTab(host);
   const runs = report?.jobs.find((info) => info.job === job.id);
-  const last = lastLook(job, { runs, active, service }, now);
-  const next = nextLook(job, runs, paused, now);
+  const last = lastLook(job, { runs, active, service, pausedAt: paused }, now);
+  const next = nextLook(job, runs, paused !== null, now);
   const trigger = jobTriggerWords(job, names, new Date(now));
   const git = job.kind === "git" ? gitDetail(job, repos) : null;
   const status = job.kind === "service" ? (service ?? fallbackService(job)) : null;
@@ -277,7 +278,7 @@ export function JobsView({
   const shown = thisProject ? jobs.filter((entry) => projectOf(entry) === activeId) : jobs;
   const groups = groupsOf(shown, projects);
   const invalid = shown.filter((entry) => !entry.valid).length;
-  const paused = new Set((report?.needsYou ?? []).flatMap((item) => (item.kind === "loop-paused" ? [item.job] : [])));
+  const paused = new Map((report?.needsYou ?? []).flatMap((item) => (item.kind === "loop-paused" ? [[item.job, item.at] as const] : [])));
   const jobNames = new Map(jobs.flatMap((entry) => (entry.valid ? [[entry.job.id, entry.job.name] as const] : [])));
   const names: WordNames = { job: (id) => jobNames.get(id) ?? id, project: (id) => projects.find((project) => project.id === id)?.name ?? id };
   const activeRuns = (id: string): ActiveRun[] => (report?.active ?? []).filter((run) => run.job === id);
@@ -321,7 +322,7 @@ export function JobsView({
                   service={services.find((status) => status.job === entry.job.id)}
                   report={report}
                   active={activeRuns(entry.job.id)}
-                  paused={paused.has(entry.job.id)}
+                  paused={paused.get(entry.job.id) ?? null}
                   repos={known}
                   marked={entry.job.id === marked}
                   now={now}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ActiveRun, RunRecord, RunView } from "../scheduler/model";
-import { promptLines, byDay, dayWords, filterCounts, keeps, runDuration, runLook, runTime, shortDuration, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
+import { promptLines, byDay, dayWords, filterCounts, keeps, runDuration, runLook, runTime, shortDuration, slotHolders, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
 
 /** Tue 17 Nov 2026, 12:48 — the prototype's "now". */
 const NOW = new Date(2026, 10, 17, 12, 48).getTime();
@@ -196,6 +196,20 @@ describe("what started a run, and what a queued one waits for", () => {
     expect(waitsSentence({ kind: "previous-run" }, NOW)).toBe("The job's previous run is still going. This one starts when it finishes.");
     expect(waitsSentence({ kind: "pomade" }, NOW)).toBe("An agent run needs Pomade, so Runner is opening it. The run starts once Pomade and the Agents app are ready.");
     expect(waitsSentence(null, NOW)).toBe("It is about to start.");
+  });
+
+  it("a run waiting for a slot names the low-priority runs holding the slots, as the prototype's card does", () => {
+    expect(waitsSentence({ kind: "slot", ahead: 1 }, NOW, ["Wiki lint", "Photo backup"])).toBe("Two low-priority runs are going (Wiki lint, Photo backup). This one starts when one of them finishes.");
+    expect(waitsSentence({ kind: "slot", ahead: 1 }, NOW, ["Wiki lint"])).toBe("One low-priority run is going (Wiki lint). This one starts when it finishes.");
+    expect(waitsSentence({ kind: "slot", ahead: 3 }, NOW, ["A", "B"])).toBe("Two low-priority runs are going (A, B). This one starts once 3 runs ahead of it have finished.");
+    const going = [
+      active({ name: "Wiki lint" }),
+      active({ name: "Normal", lowPriority: false }),
+      active({ name: "Queued", state: "queued", startedAt: null }),
+      active({ name: "At a prompt", agent: { ...AGENT, waiting: { prompt: "permission", since: at(17, 12, 31) } } }),
+      record({ name: "Ended" }),
+    ];
+    expect(slotHolders(going)).toEqual(["Wiki lint"]);
   });
 });
 

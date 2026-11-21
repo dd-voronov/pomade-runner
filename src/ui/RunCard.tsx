@@ -22,7 +22,7 @@ import {
 import { MessageText } from "./MessageText";
 import { Button, Dialog, DialogBody, DialogFoot, DialogHead, Help, Icon, LinkButton, Pill, useToast } from "./kit";
 import styles from "./RunCard.module.css";
-import { dayWords, isRecord, KIND_WORDS, promptLines, runDuration, runLook, runTime, shortDuration, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
+import { dayWords, isRecord, KIND_WORDS, promptLines, runDuration, runLook, runTime, shortDuration, slotHolders, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
 import { shortClock, upWords } from "./serviceWords";
 import { aheadMoment } from "./panelWords";
 import { RunAtField } from "./RunAtField";
@@ -37,7 +37,22 @@ import { useRun } from "./useRunnerApi";
  *  run's repos, why one never started, what a queued one waits for; its foot what can be done —
  *  View output opens the run's output tab beside the Runner tab.
  *  Opening a failed run that is a Needs-you item resolves the item. */
-export function RunDialog({ host, job, run, needsYou, open }: { host: HostClient; job: string; run: string; needsYou: readonly NeedsYouItem[]; open: (route: string) => void }): React.JSX.Element {
+export function RunDialog({
+  host,
+  job,
+  run,
+  needsYou,
+  active,
+  open,
+}: {
+  host: HostClient;
+  job: string;
+  run: string;
+  needsYou: readonly NeedsYouItem[];
+  /** The runs going: a queued run's card names the low-priority ones holding the slots. */
+  active: readonly ActiveRun[];
+  open: (route: string) => void;
+}): React.JSX.Element {
   const close = (): void => open("history");
   const view = useRun(host, job, run);
   const item = needsYou.find((candidate) => candidate.kind === "run-failed" && candidate.job === job && candidate.run === run);
@@ -67,14 +82,14 @@ export function RunDialog({ host, job, run, needsYou, open }: { host: HostClient
   }
   return (
     <Dialog onClose={close} testId="run-dialog" tone={runLook(value).cardTone}>
-      <RunCard host={host} view={value} open={open} close={close} />
+      <RunCard host={host} view={value} going={slotHolders(active)} open={open} close={close} />
     </Dialog>
   );
 }
 
 const capital = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
 
-function RunCard({ host, view, open, close }: { host: HostClient; view: RunView; open: (route: string) => void; close: () => void }): React.JSX.Element {
+function RunCard({ host, view, going, open, close }: { host: HostClient; view: RunView; going: readonly string[]; open: (route: string) => void; close: () => void }): React.JSX.Element {
   const now = useNow(10_000);
   const toast = useToast();
   const [runAt, setRunAt] = useState<string | null>(null);
@@ -234,7 +249,7 @@ function RunCard({ host, view, open, close }: { host: HostClient; view: RunView;
           {view.state === "missed-waiting" ? (
             <MissedBody view={view} now={now} runAt={runAt} setRunAt={setRunAt} onSet={(at) => choose({ choice: "run-at", at })} onClose={() => setRunAt(null)} />
           ) : view.state === "queued" ? (
-            <p data-testid="run-waits">{waitsSentence(view.waits, now)}</p>
+            <p data-testid="run-waits">{waitsSentence(view.waits, now, going)}</p>
           ) : view.state === "running" && wait !== null ? (
             <WaitingBody host={host} view={view} wait={wait} />
           ) : view.state === "running" ? (

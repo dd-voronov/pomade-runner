@@ -621,7 +621,7 @@ head is red, a run that waits for you amber. Its body, by what the run left:
 | Agent, ended | a failed run's reason in red; the agent's last message (`sessions.lastMessage` by the run's session, its Markdown drawn as text: paragraphs, lists, bold, emphasis, code), or why it cannot be read — no session known, none written yet, the Agents app not running | **Open session** (a Pomade agent tab resuming the session — `agentTabs.resume` in the job's project and folder — or the live tab already on it) · **View output** · **Run again** |
 | Running | the latest output, followed while it runs | **Open terminal** · **Stop run** |
 | Agent, waiting for you | what it waits at ("The agent stopped at a permission prompt and waits for your answer."), **Waiting at**: the end of its output from the step that asks (`promptLines`), and that the time limit is paused | **Open at the prompt** (its terminal tab) · **Stop run** |
-| Queued | what it waits for, in a sentence | **Run now** |
+| Queued | what it waits for, in a sentence — waiting for a slot, the low-priority runs holding the slots by name ("Two low-priority runs are going (Wiki lint, Photo backup). This one starts when one of them finishes.") | **Run now** |
 | Missed, waiting for you | when it was due, and that its policy waits for you; **Run at…** opens a field that reads the time as it is typed | **Run now** · **Run at…** · **Skip** |
 | Skipped or missed; a chain's action on a service | why it never started, or what the chain did | **Run now** (scripts and git jobs) |
 
@@ -915,12 +915,16 @@ to it, light theme only.
     result**, **Next run**, the actions, and the **Disable** toggle. A disabled row is dimmed.
   - **Last result** (`lastLook`, `src/ui/jobWords.ts`): a chip with the status's help over a sub line.
     A service shows its state as the Services view does (`serviceLook`). Any other job shows the run
-    going — "running" over "started 12:31 · 17m", amber "waiting for you" over the same for an agent
-    run at a prompt, "queued" over what it waits for, "missed · waiting for you" — else its latest finished one: "done", "failed · exit 1", "stopped: time limit, 45 min",
-    "skipped · …", "missed · …", "stopped by you", over "today 11:20 · 3s" — a done git run's commit
-    in place of the duration, "yesterday 20:00 · a1b2c3d"; "never ran" for none. A
-    click on a job's cell opens that run's result card (`run/<job>/<run>`); a service's and a
-    never-ran job's cell has none.
+    going — "running" over how long so far ("3m", "3h 02m · manual"), amber "waiting for you" over
+    "started 12:31 · 17m" for an agent run at a prompt, "queued · 1 ahead" over "since 12:46",
+    "missed · waiting for you" over when it was due — else the loop guard's pause, amber "paused ·
+    looks like a loop" over "yesterday 18:40 · 10× in 10 min" — else its latest finished one:
+    "done", "failed · exit 1", "stopped: time limit, 45 min", "skipped · …", "missed · …", "stopped
+    by you", over when it started (or, one that never did, was due) and how long it took, "today
+    8:32 · 4m 12s" — a done git run's commit in place of the duration, "yesterday 20:00 · a1b2c3d" —
+    and a trigger that is not the job's own, "· caught up" or "· manual"; "never ran" for none. A
+    click on a job's cell opens that run's result card (`run/<job>/<run>`); a service's, a paused
+    job's and a never-ran job's cell has none.
   - **Next run** (`nextLook`): "disabled", "paused" (the loop guard's), "always on" (a service), "on
     event" (a hook or a chain), "finished" (a schedule with nothing ahead), else the next time —
     "Today 13:00", "Tomorrow 7:00", "Wed 7:00", "Wed 25 Nov 7:00" — with "in N min" under it within the
@@ -928,7 +932,7 @@ to it, light theme only.
   - **Actions**, always visible icon buttons: **Run now** (a service: **Open terminal**, its attached
     tab), **Edit** (`edit/<encoded job id>`), **Delete** — the bin in the row's icon colour, red under
     the pointer and on focus — which opens the confirm of "Deleting a job". Run now, a refused Run now
-    or toggle and Delete report as toasts. The toggle writes `enabled:` (`jobs.setEnabled`).
+    or toggle and Delete report as toasts — Run now's "<job> started · trigger “manual”". The toggle writes `enabled:` (`jobs.setEnabled`).
   - **An invalid file** is a red row with its file name, its help, its first error and **Open file**.
   - **The route `jobs/<job>`** marks that job's row — the accent bar and wash — and scrolls to it.
 - **History** (`src/ui/HistoryView.tsx`): the runs going (`runs.list`'s `active`: running — an
@@ -945,18 +949,24 @@ to it, light theme only.
   page of 100 records, the newest page again on every `runs.changed`, and the next older page
   each time the list's end comes into sight (`useHistoryPages`); while older pages remain, a
   count is of the runs loaded and says so ("3+"). A row — click, Enter or Space — opens the run's
-  result card.
-- **Services** (`src/ui/ServicesView.tsx`): every service file in start order — a valid one's row:
-  the kind icon, the name, project · folder · command; the status (`serviceLook`,
-  `src/ui/serviceWords.ts`) — "running · up 3d 4h" over "no crashes" or "restarted 3× · last
-  crash 14:02", "starting" over what it waits for, "failed · gave up" over "crashed 5× in 1 min ·
-  today 11:20", "stopped by you" over when, and "queued", "restarting", "waiting for first open" over "starts on
-  first open of job-hunt", "disabled" — each with its help; **Restart · Stop** while it is up or starting, **Start**
-  otherwise; then Open terminal (its attached tab), Edit (the `edit/<encoded job id>` route) and
-  Open file. Each action toasts its outcome or why it was refused. An invalid service file is a red
-  row with its first error, its help and Open file. The "This project" chip (the tab's, as in Jobs), with the open
-  project's name, keeps that project's services ("No services in this project." when none); with
-  no service files, the view says what a service is.
+  result card. With no runs at all, the view says "Nothing here yet" with **New job**.
+- **Services** (`src/ui/ServicesView.tsx`): the "This project" chip (the tab's, as in Jobs) with
+  the open project's name, and the summary "Services keep running when Pomade quits · the switch
+  never pauses them"; the table head **Service · project · folder · command** and **Status**; then
+  every service file in start order — a valid one's row: the kind icon, the name, project · folder
+  · command; the status (`serviceLook`, `src/ui/serviceWords.ts`) — "running · up 3d 4h" over "no
+  crashes" or "restarted 3× · last crash 14:02" (and "restart to apply its file" after an edit of
+  its command or folder), "starting" over what it waits for ("waiting for port 4000", "up once it
+  has run 5 s"), "failed · gave up" over "crashed 5× in 1 min · today 11:20", "stopped by you" over
+  when, "queued" over "starts when the one before it is up", "restarting" over its crashes or
+  "again at 14:03", "waiting for first open" over "starts on first open of job-hunt", "disabled",
+  "stopping" over "its file is gone" — each with its help; **Restart · Stop** while it is up or
+  starting, **Start** otherwise; then the icon buttons **Open terminal** (its attached tab),
+  **Edit** (the `edit/<encoded job id>` route) and **Open file**. Each action toasts its outcome or
+  why it was refused. An invalid service file is a red row with its file name, its help, "Invalid:
+  line N: …" and **Open file**. The chip keeps the open project's services ("No services in this
+  project." when none); with no service files, the view says what a service is and offers **New
+  job**, as History does with no runs.
 - **Settings** (`src/ui/SettingsView.tsx`): cards of rows — a name with its (i), a line under it, the
   control at the end.
   - **Load** and **History:** the four settings ("Settings"), each a stepper (− number +, its unit
@@ -1047,19 +1057,25 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   left alone is never written. Each schedule error the checker names lands on its control by its
   path (`schedule.daily.at[1]` → the second time), and the error shows under the box.
 
-  When something happens has the **Event** list — the hooks the engine fires (`EVENT_CHOICES`:
-  Mac login, Pomade started, First open of a project since Pomade started, Project created), then
-  **Another job finished**, a chain, always last — its (i) following the event. The first open
-  picks, in a box under it, its **Project**: Any project, then Pomade's projects by name (one the
-  file names that Pomade lacks stays, by its id). A chain picks, in a box under it, the **Job**
-  (every valid job but services and the job itself, by name; one the file names that is not among
-  them stays, by its id) and **When it**: Is done · Fails · Either. Under them, the trigger in
-  words: "Runs at Mac login · Once per login, after the 2-minute warm-up" (the warm-up as the
-  settings say it); "Runs when Pomade starts", "Runs on first open of job-hunt", "Runs when a
-  project is created" · "Fires only while Pomade is running, so there are no missed runs."; or
+  When something happens has the **Event** list — the six hooks the engine fires (`EVENT_CHOICES`:
+  Mac login, Pomade started, First open of a project since Pomade started, Project created, Agent
+  session finished, Session status changed to…), then **Another job finished**, a chain, always
+  last — its (i) following the event. The first open picks, in a box under it, its **Project**:
+  Any project, then Pomade's projects by name (one the file names that Pomade lacks stays, by its
+  id). The two agent session hooks pick, in a box under them, a status change's **Status** (the
+  Agents app's statuses by its names, Done for a new hook), then **Only in project** (Any project
+  first) and **Only agent** (Any agent first, then the roster's ids; one the roster lacks stays,
+  with a red line under it); without the Agents app the box says so. A chain picks, in a box under
+  it, the **Job** (every valid job but services and the job itself, by name; one the file names
+  that is not among them stays, by its id) and **When it**: Is done · Fails · Either. Under them,
+  the trigger in words: "Runs at Mac login · Once per login, after the 2-minute warm-up" (the
+  warm-up as the settings say it); "Runs when Pomade starts", "Runs on first open of job-hunt",
+  "Runs when a project is created", "Runs after a claude session finishes in Pomade", "Runs when a
+  session is marked Done" · "Fires only while Pomade is running, so there are no missed runs."; or
   "Runs after Pull is done · A chain. History will show “chain: after Pull”". The file gets
   `hook: { event: login }`, `hook: { event: project-first-open, project: <id> }` (no `project` for
-  any) or `after: { job, result }`, as a hand-written one has them; the filters the form does not
+  any), `hook: { event: session-status, status: done, project: <id>, agent: <id> }` (a filter left
+  at Any is not written) or `after: { job, result }`, as a hand-written one has them; the filters the form does not
   edit are not the form's, so an edit that keeps the hook writes no hook. A chain's errors show under its picker in the
   checker's words — a chain that leads back to itself names the loop's jobs ("the chain loops
   back: a → b → a"), with the (i) on why — and keep Save from writing. A hook on an event the form

@@ -166,8 +166,17 @@ export function whyWords(view: RunView, now: number): string | null {
   return null;
 }
 
-/** What a queued run waits for, as its card says it. */
-export function waitsSentence(waits: Waits | null, now: number): string {
+const COUNT_WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"] as const;
+
+/** The low-priority runs holding the slots, as a queued run's card names them: those running, not
+ *  waiting at a prompt (a run waiting for you gives up its slot). */
+export function slotHolders(active: readonly RunView[]): string[] {
+  return active.filter((view) => !isRecord(view) && view.state === "running" && view.lowPriority && waitingAt(view) === null).map((view) => view.name);
+}
+
+/** What a queued run waits for, as its card says it; `going` names the low-priority runs holding
+ *  the slots ("Two low-priority runs are going (Wiki lint, Photo backup). …"). */
+export function waitsSentence(waits: Waits | null, now: number, going: readonly string[] = []): string {
   if (waits === null) return "It is about to start.";
   switch (waits.kind) {
     case "time":
@@ -180,8 +189,13 @@ export function waitsSentence(waits: Waits | null, now: number): string {
       return "The job's previous run is still going. This one starts when it finishes.";
     case "pomade":
       return "An agent run needs Pomade, so Runner is opening it. The run starts once Pomade and the Agents app are ready.";
-    case "slot":
-      return `Low-priority runs are going in every free slot — ${waits.ahead} ${waits.ahead === 1 ? "run" : "runs"} ahead. This one starts when one of them finishes.`;
+    case "slot": {
+      const starts = waits.ahead === 1 ? "This one starts when one of them finishes." : `This one starts once ${waits.ahead} runs ahead of it have finished.`;
+      if (going.length === 0) return `Low-priority runs are going in every free slot — ${waits.ahead} ${waits.ahead === 1 ? "run" : "runs"} ahead. ${starts}`;
+      const count = COUNT_WORDS[going.length] ?? String(going.length);
+      const after = going.length === 1 && waits.ahead === 1 ? "This one starts when it finishes." : starts;
+      return `${count} low-priority ${going.length === 1 ? "run is" : "runs are"} going (${going.join(", ")}). ${after}`;
+    }
   }
 }
 

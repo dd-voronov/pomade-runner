@@ -41,6 +41,7 @@ export function ServicesView({
   open,
   thisProject,
   onThisProject,
+  newJob,
 }: {
   host: HostClient;
   jobs: readonly JobEntry[];
@@ -50,6 +51,8 @@ export function ServicesView({
   /** The "This project" chip, kept by the tab: it holds across the Jobs and Services views. */
   thisProject: boolean;
   onThisProject: (on: boolean) => void;
+  /** The New job button the empty view offers. */
+  newJob: (testId: string) => React.JSX.Element;
 }): React.JSX.Element {
   const projectName = useProjectNames(host);
   const active = useActiveProject(host);
@@ -60,7 +63,7 @@ export function ServicesView({
 
   if (all.length === 0) {
     return (
-      <EmptyBlock title="Nothing here yet" testId="services-empty">
+      <EmptyBlock title="Nothing here yet" testId="services-empty" action={newJob("services-empty-new-job")}>
         <p>A service is a command Runner keeps running: it starts at login, restarts on a crash and outlives Pomade.</p>
       </EmptyBlock>
     );
@@ -174,7 +177,7 @@ export function ServicesView({
                   </Button>
                 )}
                 <span className={styles.gap} />
-                <IconButton icon="terminal" label="Open terminal (log)" onClick={() => openTab(status)} />
+                <IconButton icon="terminal" label="Open terminal" onClick={() => openTab(status)} />
                 <IconButton icon="edit" label="Edit" onClick={() => open(editRoute(job.id))} />
                 <IconButton icon="file" label="Open file" onClick={() => openFile(job.path)} />
               </div>

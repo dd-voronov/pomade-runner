@@ -602,10 +602,10 @@ test.describe("Runner in Pomade", () => {
       expect(await readFile(file, "utf8")).toContain("Notes kept.\n");
       await expect(row.getByTestId("job-next")).toHaveText("on event");
       await row.getByRole("button", { name: "Run now" }).click();
-      await expect(tab.getByTestId("toast").last()).toHaveText(/^RunnerRow script (started|queued)$/);
+      await expect(tab.getByTestId("toast").last()).toHaveText(/^RunnerRow script (started|queued) · trigger “manual”$/);
       await expect.poll(() => history("row-script")).toEqual([expect.objectContaining({ state: "done", exitCode: 0, trigger: "manual" }) as RunRecord]);
       await expect(row.getByTestId("job-status")).toHaveText("done");
-      await expect(row.getByTestId("job-last-sub")).toHaveText(/^today \d+:\d\d · \d+s$/);
+      await expect(row.getByTestId("job-last-sub")).toHaveText(/^today \d+:\d\d · \d+s · manual$/);
       await shoot(page, "pomade-jobs-row-done");
 
       // Delete: the confirm names the file, Cancel keeps it, Delete job removes it.
