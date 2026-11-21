@@ -240,8 +240,23 @@ disk.
   - Pomade's projects are read once Pomade is ready, and again on `project.created` and
     `project.renamed`: before it is ready, its workspace may not be loaded, and its list may miss
     projects.
+- **The Agents app's events** (`src/integrations/agent-events.ts`, `pomade.ts`, `scheduler.ts`) —
+  `pomade-agents:session.closed` (B) and `pomade-agents:session.statusChanged` (C), subscribed in
+  the manifest, as `../pomade-agents/docs/CONTRACTS.md` "Published events" defines them. Each
+  payload is checked against the contract before Runner trusts it; one that is not the contract's
+  is logged and ignored. Like Pomade's, they are heard only while the scheduler is connected; the
+  Agents app replays none.
+  - **Agent session finished** fires on B, whatever its `reason` — one Runner does not know is an
+    end too. A session with `startedByRunner: true` never fires it (the loop guard for B): its run's
+    end, or its tab's when the Owner attached, would fire it, and a hook that runs an agent would
+    start the next.
+  - **Session status changed to X** fires on C when its `status` is the event's `to`. It always
+    fires, a session Runner started too: a status change is the Owner's.
+  - Both filter on the session's project (its stable id; a session in the Workspace bucket has none,
+    so only a hook without a project filter takes it) and its agent (roster id).
 - A hook run has trigger `hook` and its event in `cause` (History: "hook: Mac login", "hook: first
-  open of job-hunt"; its card: "First open of job-hunt"). It joins the queue and waits for the
+  open of job-hunt", "hook: agent session finished", "hook: session marked Done"; its card: "First
+  open of job-hunt"). It joins the queue and waits for the
   warm-up while a staged start is under way ("Missed runs and load"). It has no missed-run policy:
   the switch holds it, and it runs late on release.
 
@@ -278,8 +293,11 @@ disk.
   it has heard them once)
 - a hook's context, as its event gives it: `project-first-open` and `project-created` give
   `POMADE_PROJECT` and `POMADE_PROJECT_PATH` of the event's project (over a project job's own);
-  `login` and `pomade-started` give none; the agents' events give `POMADE_PROJECT`,
-  `POMADE_PROJECT_PATH`, `POMADE_SESSION_ID`, `POMADE_AGENT`, `POMADE_SESSION_STATUS`
+  `login` and `pomade-started` give none; the agents' events give `POMADE_SESSION_ID`,
+  `POMADE_AGENT` (roster id), `POMADE_SESSION_STATUS` (the session's status then — for a status
+  change, the new one), `POMADE_SESSION_TRANSCRIPT` (the session's latest transcript file,
+  absolute) and, for a session in a project, `POMADE_PROJECT` and `POMADE_PROJECT_PATH` of its
+  project (over a project job's own)
 - `POMADE_PARENT_JOB` (the parent's id), `POMADE_PARENT_RUN_ID`, `POMADE_PARENT_RESULT` (`done` ·
   `failed`) (chains)
 - a git run gets the same, and `POMADE_WORKSPACE`: `pomade-git` resolves repo names in the
@@ -1285,7 +1303,7 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
 | Platform (`pomade:E-034`) | attached terminals: the pane, `tabs.openAttached`, `attachedTab.action` |
 | `pomade-git` (`pomade:E-042`) | git operations, structured results |
 | `pomade-kit` | SDK, schedule format, date phrases, agent scanners, the keeper library and attach protocol, the git runs contract |
-| `pomade-agents` (`calls`) | `roster.list`, `roster.launchSpec`, `roster.projectsFor`, `sessions.lastMessage`, `sessions.find` (`src/integrations/agents.ts`); events B and C |
+| `pomade-agents` (`calls`) | `roster.list`, `roster.launchSpec`, `roster.projectsFor`, `sessions.lastMessage`, `sessions.find` (`src/integrations/agents.ts`); events B `session.closed` and C `session.statusChanged` (`src/integrations/agent-events.ts`, the agents' hooks) |
 
 ## Stack
 

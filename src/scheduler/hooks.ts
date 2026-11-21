@@ -1,7 +1,7 @@
 // Hooks (docs/DESIGN.md "Hooks"): an event fires every job whose `hook` names it and whose filters
 // it passes — a filter left out takes any value. Runner's own event is `login`; Pomade's —
-// `pomade-started`, `project-first-open`, `project-created` — and `pomade-agents`' come in through
-// the same firing path (`Runs.hook`). Pure.
+// `pomade-started`, `project-first-open`, `project-created` — and `pomade-agents`' —
+// `session-finished`, `session-status` — come in through the same firing path (`Runs.hook`). Pure.
 
 import { join } from "node:path";
 
@@ -36,6 +36,37 @@ export function projectFiring(event: "project-first-open" | "project-created", p
   const context: Record<string, string> = { POMADE_PROJECT: project.id };
   if (workspace !== null) context.POMADE_PROJECT_PATH = join(workspace, project.root);
   return { event, project: project.id, agent: null, status: null, context, projectName: project.name };
+}
+
+/** An agent session as its event tells of it (`src/integrations/agent-events.ts`). */
+export interface SessionOfEvent {
+  sessionId: string;
+  agent: string;
+  /** Its project's stable id and folder, workspace-relative; `null` for the Workspace bucket. */
+  project: { id: string; root: string } | null;
+  transcript: string;
+  status: SessionStatus;
+}
+
+/** An agent session's event — it finished, or its status changed (to `session.status`): the
+ *  project and agent filters look at the session's, the status filter at its new status; its runs
+ *  get `POMADE_SESSION_ID`, `POMADE_AGENT`, `POMADE_SESSION_STATUS`, `POMADE_SESSION_TRANSCRIPT`
+ *  and, in a project, `POMADE_PROJECT` and, with the workspace known, `POMADE_PROJECT_PATH`
+ *  (absolute). `projectName` is the project's name as Runner last heard it. */
+export function sessionFiring(event: "session-finished" | "session-status", session: SessionOfEvent, workspace: string | null, projectName: string | null): HookFiring {
+  const context: Record<string, string> = {
+    POMADE_SESSION_ID: session.sessionId,
+    POMADE_AGENT: session.agent,
+    POMADE_SESSION_STATUS: session.status,
+    POMADE_SESSION_TRANSCRIPT: session.transcript,
+  };
+  if (session.project !== null) {
+    context.POMADE_PROJECT = session.project.id;
+    if (workspace !== null) context.POMADE_PROJECT_PATH = join(workspace, session.project.root);
+  }
+  const firing: HookFiring = { event, project: session.project?.id ?? null, agent: session.agent, status: event === "session-status" ? session.status : null, context };
+  if (session.project !== null && projectName !== null) firing.projectName = projectName;
+  return firing;
 }
 
 /** The jobs an event fires: valid, enabled scripts, git and agent jobs whose hook it matches. */

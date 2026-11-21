@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import { checkJobs } from "../jobs/check";
-import { hooked, LOGIN, POMADE_STARTED, projectFiring, type HookFiring } from "./hooks";
+import { hooked, LOGIN, POMADE_STARTED, projectFiring, sessionFiring, type HookFiring } from "./hooks";
 import { runTriggerWords } from "./model";
 
 const script = (name: string, hook: string, extra = ""): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ./x.sh\nhook: ${hook}\n${extra}---\n`;
@@ -79,5 +79,28 @@ describe("hooks", () => {
     expect(hook("project-first-open")).toBe("hook: first open of a project");
     expect(hook("project-created", "job-hunt")).toBe("hook: project job-hunt created");
     expect(hook("project-created")).toBe("hook: project created");
+    expect(hook("session-finished", "One")).toBe("hook: agent session finished");
+    expect(hook("session-status")).toBe("hook: session status changed");
+    const marked = (status: string): string => runTriggerWords({ trigger: "hook", cause: { kind: "hook", event: "session-status", context: { POMADE_SESSION_STATUS: status } } });
+    expect(["done", "on-hold", "done-skip", "active", "parked"].map(marked)).toEqual(["hook: session marked Done", "hook: session marked On hold", "hook: session marked Done–skip/Failed", "hook: session marked Active", "hook: session status changed"]);
+  });
+
+  it("the agents' events as the firing path takes them: the session's project, agent and new status for the filters, the session for the runs", () => {
+    const session = { sessionId: "s-1", agent: "claude", project: { id: "p1", root: "Projects/one" }, transcript: "/t/s-1.jsonl", status: "done" as const };
+    const finished = sessionFiring("session-finished", session, "/ws", "One");
+    expect(finished).toEqual({
+      event: "session-finished",
+      project: "p1",
+      agent: "claude",
+      status: null,
+      context: { POMADE_PROJECT: "p1", POMADE_PROJECT_PATH: "/ws/Projects/one", POMADE_SESSION_ID: "s-1", POMADE_AGENT: "claude", POMADE_SESSION_STATUS: "done", POMADE_SESSION_TRANSCRIPT: "/t/s-1.jsonl" },
+      projectName: "One",
+    });
+    expect(hooked(snapshot, finished).map((job) => job.id)).toEqual(["finished-any", "finished-claude-p1"]);
+    const status = sessionFiring("session-status", { ...session, agent: "codex", project: null }, "/ws", null);
+    expect(status).toEqual({ event: "session-status", project: null, agent: "codex", status: "done", context: { POMADE_SESSION_ID: "s-1", POMADE_AGENT: "codex", POMADE_SESSION_STATUS: "done", POMADE_SESSION_TRANSCRIPT: "/t/s-1.jsonl" } });
+    expect(hooked(snapshot, status).map((job) => job.id)).toEqual(["status-done-codex", "status-done"]);
+    expect(sessionFiring("session-status", session, null, null).context.POMADE_PROJECT_PATH).toBeUndefined();
+    expect(sessionFiring("session-status", session, null, null).projectName).toBeUndefined();
   });
 });

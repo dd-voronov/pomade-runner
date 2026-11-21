@@ -2,8 +2,10 @@
 // follow, the trigger in words under the editor, and which checker error is a chain that loops back.
 
 import { LOOP_PROBLEM } from "../../jobs/check";
-import type { ChainResult, JobError, JobsSnapshot, ProjectRecord, ServiceAction } from "../../jobs/model";
-import { chainWords } from "../../jobs/words";
+import type { RosterAgent } from "pomade-kit/protocol";
+
+import { SESSION_STATUS_WORDS, SESSION_STATUSES, type ChainResult, type JobError, type JobsSnapshot, type ProjectRecord, type ServiceAction } from "../../jobs/model";
+import { chainWords, hookWords } from "../../jobs/words";
 import type { HelpKey } from "../help";
 import type { SelectOption } from "../kit";
 import type { FormValues } from "./state";
@@ -17,6 +19,8 @@ export const EVENT_CHOICES: readonly { value: string; label: string; help: HelpK
   { value: "pomade-started", label: "Pomade started", help: "hk.pomade-started" },
   { value: "project-first-open", label: "First open of a project since Pomade started", help: "hk.project-first-open" },
   { value: "project-created", label: "Project created", help: "hk.project-created" },
+  { value: "session-finished", label: "Agent session finished", help: "hk.session-finished" },
+  { value: "session-status", label: "Session status changed to…", help: "hk.session-status" },
   { value: CHAIN_CHOICE, label: "Another job finished", help: "hk.job-finished" },
 ];
 
@@ -75,6 +79,22 @@ export function projectPicks(records: readonly ProjectRecord[], current: string,
   return current === "" && placeholder !== null ? [{ value: "", label: placeholder }, ...options] : options;
 }
 
+/** A status hook's Status picker: the Agents app's statuses, by its names; a status the file names
+ *  that is not one of them stays, as written. */
+export function statusPicks(current: string): SelectOption[] {
+  const options: SelectOption[] = SESSION_STATUSES.map((status) => ({ value: status, label: SESSION_STATUS_WORDS[status] }));
+  if (current !== "" && !(SESSION_STATUSES as readonly string[]).includes(current)) options.push({ value: current, label: current });
+  return options;
+}
+
+/** An agent session hook's Only agent picker: Any agent, then the roster's agents by id; an agent
+ *  the file names that the roster does not list (or with the roster not at hand), by its id. */
+export function agentPicks(roster: readonly RosterAgent[], current: string): SelectOption[] {
+  const options: SelectOption[] = [{ value: "", label: "Any agent" }, ...roster.map((agent) => ({ value: agent.id, label: agent.id }))];
+  if (current !== "" && !roster.some((agent) => agent.id === current)) options.push({ value: current, label: current });
+  return options;
+}
+
 /** The trigger in words under the hook editor: what fires the job, and a line on how it runs. */
 export interface HookBoxWords {
   title: string;
@@ -109,6 +129,16 @@ export function hookBoxWords(values: FormValues, snapshot: JobsSnapshot, warmUpM
     }
     case "project-created":
       return { title: "Runs when a project is created", sub: POMADE_HOOK_SUB };
+    case "session-finished":
+    case "session-status": {
+      const pick = (value: string): string | null => (value.trim() === "" ? null : value.trim());
+      const status = SESSION_STATUSES.find((one) => one === values.hookStatus.trim());
+      const words = hookWords(
+        { event: values.hookEvent, project: pick(values.hookProject), agent: pick(values.hookAgent), status: values.hookEvent === "session-status" ? (status ?? null) : null },
+        { project: (id) => projects.find((project) => project.id === id)?.name ?? id },
+      );
+      return { title: `Runs ${words}`, sub: POMADE_HOOK_SUB };
+    }
     default:
       return { title: "Runs at Mac login", sub: `Once per login, ${warmUpWords(warmUpMinutes)}.` };
   }

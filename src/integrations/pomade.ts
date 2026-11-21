@@ -1,8 +1,9 @@
 // The scheduler's connection to Pomade over the Host API socket: kept up while Pomade runs,
 // retried while it is closed. While connected, the scheduler serves Runner's API through the
 // broker, publishes Runner's events, follows Pomade's projects, hears the header actions clicked
-// on attached tabs of Runner's sessions, hears Pomade's events its hooks fire on — Pomade ready, a
-// project's first open, a project created — and sets the badge once Pomade is ready.
+// on attached tabs of Runner's sessions, hears the events its hooks fire on — Pomade's: Pomade
+// ready, a project's first open, a project created; the Agents app's: a session finished, a
+// session's status changed — and sets the badge once Pomade is ready.
 
 import { stayConnected } from "pomade-kit/node";
 import { REPO_JOBS_METHOD, type AttachedTabActionPayload, type JsonValue, type RepoJob, type RepoJobsParams, type RepoJobsResult } from "pomade-kit/protocol";
@@ -10,6 +11,7 @@ import { HostError, type HostClient } from "pomade-kit/sdk";
 
 import type { JobsSnapshot, ProjectRecord } from "../jobs/model";
 import { APP_ID } from "../app";
+import { readSessionClosed, readStatusChanged, SESSION_CLOSED_EVENT, SESSION_STATUS_CHANGED_EVENT, type SessionClosed, type StatusChanged } from "./agent-events";
 import type { ServiceActionResult, ServicesReport } from "../keeper/model";
 import type { EnvironmentReport } from "../scheduler/environment";
 import {
@@ -139,6 +141,10 @@ export interface RunnerOffer {
   opened(project: ProjectRecord): void;
   /** A project was added to the workspace (`project.created`). */
   created(project: ProjectRecord): void;
+  /** An agent session's process ended (`pomade-agents:session.closed`). */
+  sessionClosed(event: SessionClosed): void;
+  /** The Owner changed a session's status (`pomade-agents:session.statusChanged`). */
+  statusChanged(event: StatusChanged): void;
   log(message: string): void;
 }
 
@@ -209,7 +215,8 @@ function historyParams(params: JsonValue): { job: string | null; before: string 
  * On a new connection: serve Runner's API — the jobs, the git jobs that target a repo (to Pomade),
  * the services and their Start, Stop and Restart, the runs, the history, Run now, Enable / Disable, Needs you and a missed run's choice,
  * Stop on a run, the switch, Resume on a job the loop guard paused, the settings — follow the projects, hear tab actions,
- * `pomade.ready`, `project.opened` and `project.created`, and announce the jobs, the services, the runs and the settings: a frame that
+ * `pomade.ready`, `project.opened` and `project.created`, the Agents app's `session.closed` and
+ * `session.statusChanged` — a payload that is not the contract's is logged and ignored — and announce the jobs, the services, the runs and the settings: a frame that
  * found no scheduler before asks again when it hears `jobs.changed`, `services.changed`,
  * `runs.changed` or `settings.changed`.
  */
@@ -301,6 +308,16 @@ export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise
       if (project !== null) offer.opened(project);
     });
     await host.events.subscribe("attachedTab.action", offer.tabAction);
+    await host.events.subscribe(SESSION_CLOSED_EVENT, (payload) => {
+      const event = readSessionClosed(payload);
+      if (event === null) offer.log(`ignored a ${SESSION_CLOSED_EVENT} that is not the Agents app's contract: ${JSON.stringify(payload)}`);
+      else offer.sessionClosed(event);
+    });
+    await host.events.subscribe(SESSION_STATUS_CHANGED_EVENT, (payload) => {
+      const event = readStatusChanged(payload);
+      if (event === null) offer.log(`ignored a ${SESSION_STATUS_CHANGED_EVENT} that is not the Agents app's contract: ${JSON.stringify(payload)}`);
+      else offer.statusChanged(event);
+    });
     // Pomade's projects are read once it is ready: before, its workspace may not be loaded, and the
     // list it gives may miss projects.
     await host.events.subscribe("pomade.ready", () => {

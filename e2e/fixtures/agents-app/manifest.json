@@ -3,8 +3,31 @@
   "name": "Agents (Runner's test stand-in)",
   "version": "0.1.0",
   "hostApi": 0,
-  "capabilities": ["project.read", "agentTabs.read"],
-  "backend": { "entry": "backend/main.mjs", "mode": "with-pomade" },
-  "api": ["roster.list", "roster.launchSpec", "roster.projectsFor", "roster.agentsFor", "sessions.lastMessage", "sessions.find"],
-  "events": { "subscribe": ["pomade-runner:run.started", "pomade-runner:run.finished"] }
+  "capabilities": [
+    "project.read",
+    "agentTabs.read"
+  ],
+  "backend": {
+    "entry": "backend/main.mjs",
+    "mode": "with-pomade"
+  },
+  "api": [
+    "roster.list",
+    "roster.launchSpec",
+    "roster.projectsFor",
+    "roster.agentsFor",
+    "sessions.lastMessage",
+    "sessions.find",
+    "test.publish"
+  ],
+  "events": {
+    "publish": [
+      "session.closed",
+      "session.statusChanged"
+    ],
+    "subscribe": [
+      "pomade-runner:run.started",
+      "pomade-runner:run.finished"
+    ]
+  }
 }

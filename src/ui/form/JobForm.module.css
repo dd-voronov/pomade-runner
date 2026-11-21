@@ -322,6 +322,11 @@
   padding-left: var(--space-4);
 }
 
+/* A notice inside a box (the Agents app absent, under an agent session hook's pickers): the box spaces it. */
+.subBox > .notice {
+  margin-bottom: 0;
+}
+
 .errorLine {
   display: block;
 }

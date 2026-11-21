@@ -78,8 +78,9 @@ A service runs all the time (`start`). Every script, agent and git job has **exa
   ```
 
   Times are `H:MM`, 24-hour. No cron syntax.
-- **`hook`** — on an event: `{ event: <event>, …filters }`. Pomade's events fire only while Pomade
-  runs; one that happened while it or Runner was not listening is not caught up.
+- **`hook`** — on an event: `{ event: <event>, …filters }`. Pomade's and the Agents app's events
+  fire only while Pomade runs; one that happened while it or Runner was not listening is not caught
+  up.
 
   | Event | Fires | Filters |
   |---|---|---|
@@ -87,8 +88,8 @@ A service runs all the time (`start`). Every script, agent and git job has **exa
   | `pomade-started` | when Pomade is ready (tabs restored) | — |
   | `project-first-open` | the first open of a project since Pomade started | `project` (none = any project) |
   | `project-created` | a project is created in Pomade | — |
-  | `session-finished` | an agent session the user ran ends (never Runner's own runs) | `project`, `agent` |
-  | `session-status` | a session's status changes to `status` | `status` (required: `active` · `on-hold` · `done` · `done-skip`), `project`, `agent` |
+  | `session-finished` | an agent session the user ran ends (never one Runner started, so it can't loop) | `project`, `agent` (a roster id) |
+  | `session-status` | the user changes a session's status to `status` in the Agents app (Runner's sessions too) | `status` (required: `active` · `on-hold` · `done` · `done-skip`), `project`, `agent` |
 - **`after`** — a chain: `{ job: <id>, result: done | failed | any }` (default `done`). `<id>` is
   the other job's path inside the jobs folder without `.md`: `backup`, `coda-helper/git-pull`.
   `failed` is any failure — an exit code, a signal, a time limit; a run the user stopped fires no
@@ -111,7 +112,7 @@ N ahead". A job with `low-priority: false` neither waits for nor takes a slot.
 
 ## Examples
 
-One complete file per kind, plus a chain and two hooks. They form one valid jobs folder.
+One complete file per kind, plus a chain and three hooks. They form one valid jobs folder.
 
 A **service** — a project's web server, restarted after its repo is pulled.
 File: `Apps/pomade-runner/jobs/coda-helper/coda-web.md`
@@ -219,6 +220,21 @@ hook: { event: project-created }
 The script gets POMADE_PROJECT and POMADE_PROJECT_PATH.
 ```
 
+An **agent session** hook — analyze a session once the user marks it Done.
+File: `Apps/pomade-runner/jobs/session-analyzer.md`
+
+```markdown
+---
+kind: script
+name: Session Analyzer
+folder: .
+command: ./scripts/analyze-session.sh "$POMADE_SESSION_TRANSCRIPT"
+hook: { event: session-status, status: done }
+---
+The script gets POMADE_SESSION_ID, POMADE_AGENT, POMADE_SESSION_STATUS, POMADE_SESSION_TRANSCRIPT
+and, for a session in a project, POMADE_PROJECT and POMADE_PROJECT_PATH.
+```
+
 A **login** one-shot — mount a drive once after each Mac login.
 File: `Apps/pomade-runner/jobs/mount-drive.md`
 
@@ -241,7 +257,10 @@ Pomade closed it checks everything but project ids, and says so.
 A script runs in its folder, by the login shell, with `POMADE_JOB` (its id), `POMADE_RUN_ID`,
 `POMADE_TRIGGER` (`scheduled`, `caught-up` for a missed run run late, `manual`, `hook` or `chain`)
 and, for a project job, `POMADE_PROJECT` and `POMADE_PROJECT_PATH` in its environment — on a
-`project-first-open` or `project-created` hook, the event's project's; a chain's
+`project-first-open` or `project-created` hook, the event's project's; a `session-finished` or
+`session-status` hook's run also gets `POMADE_SESSION_ID`, `POMADE_AGENT`, `POMADE_SESSION_STATUS`
+and `POMADE_SESSION_TRANSCRIPT` (the session's transcript file, absolute), and the session's
+project, if it has one, as `POMADE_PROJECT` and `POMADE_PROJECT_PATH`; a chain's
 run also gets `POMADE_PARENT_JOB`, `POMADE_PARENT_RUN_ID` and `POMADE_PARENT_RESULT` (`done` or
 `failed`). Exit 0 is done, anything else failed. A git job runs Pomade's `pomade-git` on its repos,
 with Pomade open or closed: a commit it makes reads `Committed automatically · job "<name>" · <date

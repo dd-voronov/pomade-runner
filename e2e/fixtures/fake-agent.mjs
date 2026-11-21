@@ -11,13 +11,14 @@
 // each session's record — the id (`--session-id`'s, else one of its own, as Codex), the agent, the
 // start folder and time, its arguments and its last message — which the fixture Agents app answers
 // `sessions.find` and `sessions.lastMessage` from; and, as Claude Code does, a transcript at
-// `$HOME/.claude/projects/<folder>/<id>.jsonl`, which Pomade's resume looks for. `--resume <id>`
+// `$HOME/.claude/projects/<folder>/<id>.jsonl` — the prompt, then each answer — which Pomade's
+// resume looks for and the real Agents app reads. `--resume <id>`
 // shows that session again and waits for the exit command.
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const argv = process.argv.slice(2);
 const option = (name) => {
@@ -100,10 +101,10 @@ if (resume !== null) {
   const startedAt = new Date().toISOString();
   const record = { id, provider: provider === "claude" ? "claude-code" : "codex", agent, cwd, startedAt, args, prompt, lastMessage: null, at: null };
   save(record);
+  const transcript = join(home, ".claude", "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${id}.jsonl`);
   if (provider === "claude") {
-    const transcripts = join(home, ".claude", "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
-    mkdirSync(transcripts, { recursive: true });
-    writeFileSync(join(transcripts, `${id}.jsonl`), `${JSON.stringify({ type: "user", sessionId: id, cwd, timestamp: startedAt, message: { role: "user", content: prompt } })}\n`);
+    mkdirSync(dirname(transcript), { recursive: true });
+    writeFileSync(transcript, `${JSON.stringify({ type: "user", sessionId: id, cwd, timestamp: startedAt, message: { role: "user", content: prompt } })}\n`);
   }
   title(IDLE);
   listen();
@@ -114,7 +115,12 @@ if (resume !== null) {
   };
   const finish = (message) => {
     clearInterval(spin);
-    save({ ...record, lastMessage: message, at: new Date().toISOString() });
+    const at = new Date().toISOString();
+    save({ ...record, lastMessage: message, at });
+    if (provider === "claude") {
+      const usage = { input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 10 };
+      appendFileSync(transcript, `${JSON.stringify({ type: "assistant", sessionId: id, cwd, timestamp: at, message: { model: "claude-fake", id: `msg_${id}`, type: "message", role: "assistant", content: [{ type: "text", text: message }], stop_reason: "end_turn", usage } })}\n`);
+    }
     process.stdout.write(`● ${message}\r\n> `);
     title(IDLE);
   };

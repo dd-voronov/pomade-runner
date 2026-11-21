@@ -487,6 +487,8 @@ const FIELD_WORDS: Record<FormField, string> = {
   schedule: "schedule",
   hookEvent: "event",
   hookProject: "event's project",
+  hookAgent: "event's agent",
+  hookStatus: "event's status",
   serviceChain: "chain",
   chainJob: "chain's job",
   chainResult: "chain's result",

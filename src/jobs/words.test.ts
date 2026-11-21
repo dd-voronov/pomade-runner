@@ -30,6 +30,9 @@ describe("a job's trigger in words", () => {
         "created.md": script("hook: { event: project-created }"),
         "finished.md": script("hook: { event: session-finished }"),
         "status.md": script("hook: { event: session-status, status: on-hold }"),
+        "finished-f.md": script("hook: { event: session-finished, agent: claude, project: p1 }"),
+        "status-f.md": script("hook: { event: session-status, status: done, agent: opus-coder }"),
+        "status-skip.md": script("hook: { event: session-status, status: done-skip, project: p1 }"),
       }),
     ).toEqual({
       login: "at Mac login",
@@ -37,8 +40,11 @@ describe("a job's trigger in words", () => {
       first: "on first open of a project",
       "first-p1": "on first open of p1",
       created: "when a project is created",
-      finished: "when an agent session finishes",
-      status: "when a session's status changes to on-hold",
+      finished: "after an agent session finishes",
+      status: "when a session is marked On hold",
+      "finished-f": "after a claude session finishes in p1",
+      "status-f": "when an opus-coder session is marked Done",
+      "status-skip": "when a session is marked Done–skip/Failed in p1",
     });
   });
 

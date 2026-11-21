@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { createFakeHost, type FakeHost } from "pomade-kit/fake-host";
 import type { LaunchResult } from "pomade-kit/node";
 import { connect, type HostClient } from "pomade-kit/sdk";
-import { checkRepoJobs, REPO_JOBS_APP_ID, REPO_JOBS_METHOD, type NoticeParams, type RepoJobsParams, type Surface } from "pomade-kit/protocol";
+import { checkRepoJobs, REPO_JOBS_APP_ID, REPO_JOBS_METHOD, type JsonValue, type NoticeParams, type RepoJobsParams, type Surface } from "pomade-kit/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import manifest from "../../app/manifest.json" with { type: "json" };
@@ -978,6 +978,93 @@ describe("scheduler and Pomade's hooks", () => {
     fake.emitEvent("project.created", { id: "gamma", kind: "project", name: "Gamma", root: "Projects/gamma" });
     await vi.waitFor(() => expect(started()).toEqual([{ job: "init", trigger: "hook", project: "gamma", path: join(workspace, "Projects/gamma") }]));
     expect(lines).toContain("project Gamma (gamma) created");
+  });
+
+  /** An Agents app session event's payload (`../pomade-agents/docs/CONTRACTS.md` "Published events"). */
+  const sessionPayload = (more: Record<string, JsonValue>): JsonValue => ({
+    sessionId: "s-1",
+    provider: "claude-code",
+    agent: "claude",
+    project: { id: "alpha", root: "Projects/alpha" },
+    cwd: join(workspace, "Projects/alpha"),
+    transcript: "/home/.claude/projects/x/s-1.jsonl",
+    name: null,
+    status: "active",
+    startedByRunner: false,
+    job: null,
+    at: "2026-11-21T10:00:00.000Z",
+    ...more,
+  });
+
+  /** The session context the runs of `job` got. */
+  const sessionEnv = (job: string): Record<string, string | undefined>[] =>
+    sessions.spawned
+      .filter((spawn) => spawn.job === job)
+      .map(({ command }) => ({
+        project: command.env?.POMADE_PROJECT,
+        path: command.env?.POMADE_PROJECT_PATH,
+        session: command.env?.POMADE_SESSION_ID,
+        agent: command.env?.POMADE_AGENT,
+        status: command.env?.POMADE_SESSION_STATUS,
+        transcript: command.env?.POMADE_SESSION_TRANSCRIPT,
+      }));
+
+  it("an agent session finished fires its hooks by project and agent, with the session in the run's environment — never one Runner started, whatever its reason", async () => {
+    await writeFile(join(jobs, "lint.md"), script("Lint", "{ event: session-finished, project: alpha, agent: claude }"));
+    await writeFile(join(jobs, "any-end.md"), script("Any end", "{ event: session-finished }"));
+    await start();
+    await connect();
+    // Pomade's projects are read once it is ready: the run's cause names the project.
+    fake.ready();
+    await vi.waitFor(() => expect(lines).toContain("Pomade started"));
+    fake.emitEvent("pomade-agents:session.closed", sessionPayload({ reason: "exit" }));
+    const alpha = { project: "alpha", path: join(workspace, "Projects/alpha"), session: "s-1", agent: "claude", status: "active", transcript: "/home/.claude/projects/x/s-1.jsonl" };
+    await vi.waitFor(() => expect([sessionEnv("lint"), sessionEnv("any-end")]).toEqual([[alpha], [alpha]]));
+
+    // Another agent in the Workspace bucket: only the hook without filters, without a project.
+    fake.emitEvent("pomade-agents:session.closed", sessionPayload({ sessionId: "s-2", agent: "codex", provider: "codex", project: null, reason: "crash", status: "done" }));
+    await vi.waitFor(() => expect(sessionEnv("any-end")).toHaveLength(2));
+    expect(sessionEnv("any-end")[1]).toEqual({ project: undefined, path: undefined, session: "s-2", agent: "codex", status: "done", transcript: "/home/.claude/projects/x/s-1.jsonl" });
+    // A reason Runner does not know is an end too.
+    fake.emitEvent("pomade-agents:session.closed", sessionPayload({ sessionId: "s-3", reason: "detached" }));
+    await vi.waitFor(() => expect(sessionEnv("lint")).toHaveLength(2));
+
+    // The loop guard: a session Runner started fires nothing, by a run's end or a tab's.
+    fake.emitEvent("pomade-agents:session.closed", sessionPayload({ sessionId: "s-4", startedByRunner: true, job: "Nightly", reason: "run-finished" }));
+    fake.emitEvent("pomade-agents:session.closed", sessionPayload({ sessionId: "s-5", startedByRunner: true, job: "Nightly", reason: "tab-closed" }));
+    await vi.waitFor(() => expect(lines).toContain("agent session s-5 (claude) finished: tab-closed, started by Runner (Nightly)"));
+    // A payload that is not the contract's is logged and ignored.
+    fake.emitEvent("pomade-agents:session.closed", sessionPayload({ sessionId: "s-6", status: "parked", reason: "exit" }));
+    await vi.waitFor(() => expect(lines.some((line) => line.startsWith("ignored a pomade-agents:session.closed that is not the Agents app's contract:"))).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect([sessionEnv("lint").length, sessionEnv("any-end").length]).toEqual([2, 3]);
+    const report = await (await frame(fake)).apps.call("pomade-runner", RUNS_LIST_METHOD);
+    if (!isRunsReport(report)) throw new Error("no report");
+    expect(report.active.find((run) => run.job === "lint")?.cause).toMatchObject({ kind: "hook", event: "session-finished", projectName: "Alpha" });
+  });
+
+  it("a session's status changed fires the hooks on its new status, a session Runner started too", async () => {
+    await writeFile(join(jobs, "analyze.md"), script("Analyze", "{ event: session-status, status: done }"));
+    await writeFile(join(jobs, "held.md"), script("Held", "{ event: session-status, status: on-hold, agent: codex }"));
+    await start();
+    await connect();
+    fake.emitEvent("pomade-agents:session.statusChanged", sessionPayload({ status: "done", from: "active", to: "done", startedByRunner: true, job: "Nightly" }));
+    await vi.waitFor(() => expect(sessionEnv("analyze")).toEqual([{ project: "alpha", path: join(workspace, "Projects/alpha"), session: "s-1", agent: "claude", status: "done", transcript: "/home/.claude/projects/x/s-1.jsonl" }]));
+    // On hold, but not codex's; then codex's.
+    fake.emitEvent("pomade-agents:session.statusChanged", sessionPayload({ status: "on-hold", from: "active", to: "on-hold" }));
+    fake.emitEvent("pomade-agents:session.statusChanged", sessionPayload({ sessionId: "s-2", agent: "codex", status: "on-hold", from: "done", to: "on-hold" }));
+    await vi.waitFor(() => expect(sessionEnv("held")).toHaveLength(1));
+    expect(sessionEnv("held")[0]?.session).toBe("s-2");
+    // `status` must be `to`.
+    fake.emitEvent("pomade-agents:session.statusChanged", sessionPayload({ status: "active", from: "active", to: "done" }));
+    await vi.waitFor(() => expect(lines.some((line) => line.startsWith("ignored a pomade-agents:session.statusChanged that is not the Agents app's contract:"))).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(sessionEnv("analyze")).toHaveLength(1);
+
+    // The safety net: a job fired more than 10 times in 10 minutes by the agents' events is paused.
+    for (let index = 0; index < 10; index++) fake.emitEvent("pomade-agents:session.statusChanged", sessionPayload({ sessionId: `s-loop-${index}`, status: "done", from: "active", to: "done" }));
+    await vi.waitFor(() => expect(lines).toContain("job analyze: fired more than 10 times in 10 min by hooks or chains — looks like a loop; paused until Resume"));
+    expect(sessionEnv("analyze")).toHaveLength(10);
   });
 
   it("a service that starts on a project's first open starts then, not at login", async () => {

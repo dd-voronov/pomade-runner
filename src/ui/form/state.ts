@@ -13,6 +13,8 @@ import { FIELD_ORDER, jobFileCandidates, newJobText, setJobFields, type FieldCha
 import {
   CHAIN_RESULTS,
   GIT_OPERATIONS,
+  HOOK_EVENTS,
+  HOOK_FILTERS,
   JOB_KINDS,
   JOBS_FOLDER,
   MISSED_POLICIES,
@@ -22,6 +24,8 @@ import {
   SERVICE_STARTS,
   type ChainResult,
   type GitOperation,
+  type HookEvent,
+  type HookFilter,
   type JobError,
   type JobKind,
   type JobsSnapshot,
@@ -69,8 +73,13 @@ export interface FormValues {
   /** The hook's event as written: the form edits the events it offers (`triggerWords.ts`), and says
    *  any other in words. */
   hookEvent: string;
-  /** A first-open hook's project filter, its id as written; empty is any project. */
+  /** A first open's or an agent session hook's project filter, its id as written; empty is any
+   *  project. */
   hookProject: string;
+  /** An agent session hook's agent filter, its roster id as written; empty is any agent. */
+  hookAgent: string;
+  /** A session status hook's status (`active` · `on-hold` · `done` · `done-skip`), as written. */
+  hookStatus: string;
   /** A service: whether a chain acts on it (`after:`). */
   serviceChain: boolean;
   /** A chain's job, its id as written; empty until one is chosen. A script's chain and a service's
@@ -173,9 +182,10 @@ const SERVICE: KindFile = {
 /** A job that runs once per trigger writes its one trigger — a schedule, a hook's event, or a chain
  *  — and, for a schedule, its missed-run policy (`worth-until` only with `run-on-wake`); and its
  *  overlap and time limit. A policy at its default is left out; a limit of digits only is written
- *  as a number, so the checker says it has no unit. A hook writes its event and the filters the form
- *  edits for it — a first open's project; other filters are not the form's: an edit that keeps the
- *  file's hook writes no hook, so they stay. */
+ *  as a number, so the checker says it has no unit. A hook writes its event and the filters its
+ *  event takes — a first open's project; a session finished's project and agent; a status change's
+ *  status, project and agent — a filter left empty is left out; an edit that keeps the file's hook
+ *  writes no hook, so a comment on it stays. */
 function runFields(values: FormValues): Record<string, FieldInput | undefined> {
   const scheduled = values.trigger === "schedule";
   const timeLimit = values.timeLimit.trim();
@@ -190,11 +200,18 @@ function runFields(values: FormValues): Record<string, FieldInput | undefined> {
   };
 }
 
-/** A hook's `hook:` — its event, and a first open's project when one is picked. */
+/** A hook's `hook:` — its event, then the filters its event takes that are picked. */
 function hookInput(values: FormValues): FieldInput {
-  const project = values.hookProject.trim();
-  return values.hookEvent === "project-first-open" && project !== "" ? { event: values.hookEvent, project } : { event: values.hookEvent };
+  const event = values.hookEvent;
+  const picked = (filter: HookFilter): string => (filter === "project" ? values.hookProject : filter === "agent" ? values.hookAgent : values.hookStatus).trim();
+  const filters = HOOK_FILTER_ORDER.filter((filter) => isHookEvent(event) && [...HOOK_FILTERS[event].required, ...HOOK_FILTERS[event].optional].includes(filter) && picked(filter) !== "");
+  return { event, ...Object.fromEntries(filters.map((filter) => [filter, picked(filter)])) };
 }
+
+/** The order a hook's filters are written in: `{ event: session-status, status: done, project: p1, agent: claude }`. */
+const HOOK_FILTER_ORDER: readonly HookFilter[] = ["status", "project", "agent"];
+
+const isHookEvent = (event: string): event is HookEvent => (HOOK_EVENTS as readonly string[]).includes(event);
 
 /** A hook's errors show on the trigger; a chain's — a chain that loops back among them — on its job. */
 const RUN_ERROR_FIELDS: Readonly<Record<string, FormField>> = {
@@ -247,7 +264,7 @@ export interface FormState {
 }
 
 export function blankValues(kind: JobKind): FormValues {
-  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", startProject: "", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), hookEvent: "login", hookProject: "", serviceChain: false, chainJob: "", chainResult: "done", chainAction: "restart", worth: "next-run", worthAt: "12:00", timeLimit: "", operation: "commit-push", repos: [], agent: "claude", mode: "normal", prompt: "", ...kindDefaults(kind) };
+  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", startProject: "", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), hookEvent: "login", hookProject: "", hookAgent: "", hookStatus: "done", serviceChain: false, chainJob: "", chainResult: "done", chainAction: "restart", worth: "next-run", worthAt: "12:00", timeLimit: "", operation: "commit-push", repos: [], agent: "claude", mode: "normal", prompt: "", ...kindDefaults(kind) };
 }
 
 /** A new job's form. */
@@ -291,6 +308,8 @@ export function valuesFromText(text: string): FormValues | null {
     schedule: readSchedule(fields.schedule),
     hookEvent: isMapping(hook) ? asText(hook.event).trim() : hook === undefined ? values.hookEvent : "",
     hookProject: isMapping(hook) ? asText(hook.project).trim() : "",
+    hookAgent: isMapping(hook) ? asText(hook.agent).trim() : "",
+    hookStatus: isMapping(hook) && hook.status != null ? asText(hook.status).trim() : values.hookStatus,
     serviceChain: kind === "service" && after !== undefined,
     chainJob: isMapping(after) ? asText(after.job).trim() : "",
     chainResult: isMapping(after) ? choice(after.result, CHAIN_RESULTS, values.chainResult) : values.chainResult,

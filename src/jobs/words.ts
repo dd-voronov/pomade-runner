@@ -5,7 +5,7 @@
 
 import { addDays, describeDate, describeSchedule, localDateOf, type Schedule } from "pomade-kit/schedule";
 
-import type { Chain, GitOperation, Hook, Job, ServiceAction } from "./model";
+import { SESSION_STATUS_WORDS, type Chain, type GitOperation, type Hook, type Job, type ServiceAction } from "./model";
 
 /** A git operation as the Git panel and the job form name it. */
 export const GIT_OPERATION_WORDS: Record<GitOperation, string> = { "commit-push": "Commit & push", pull: "Pull", push: "Push", fetch: "Fetch" };
@@ -21,9 +21,24 @@ const HOOK_TRIGGER_WORDS: Record<Hook["event"], (hook: Hook, names: WordNames) =
   "pomade-started": () => "when Pomade starts",
   "project-first-open": (hook, names) => `on first open of ${projectWords(hook.project, names)}`,
   "project-created": () => "when a project is created",
-  "session-finished": () => "when an agent session finishes",
-  "session-status": (hook) => `when a session's status changes to ${hook.status ?? "any"}`,
+  "session-finished": (hook, names) => `after ${sessionWords(hook.agent, "an agent")} session finishes${inProject(hook.project, names)}`,
+  "session-status": (hook, names) => `when ${sessionWords(hook.agent, "a")} session is marked ${hook.status === null ? "any status" : SESSION_STATUS_WORDS[hook.status]}${inProject(hook.project, names)}`,
 };
+
+/** A hook in words: "at Mac login", "after a claude session finishes in Pomade". */
+export function hookWords(hook: Hook, names: WordNames = {}): string {
+  return HOOK_TRIGGER_WORDS[hook.event](hook, names);
+}
+
+/** "a claude", "an agent" — an agent filter's article and id; `none` without one. */
+function sessionWords(agent: string | null, none: string): string {
+  return agent === null ? none : `${/^[aeiou]/i.test(agent) ? "an" : "a"} ${agent}`;
+}
+
+/** " in Pomade" — a project filter in words; nothing without one. */
+function inProject(project: string | null, names: WordNames): string {
+  return project === null ? "" : ` in ${projectWords(project, names)}`;
+}
 
 /** A project in words: its name when the caller knows it, else its id; "a project" for none. */
 function projectWords(project: string | null, names: WordNames): string {
@@ -61,7 +76,7 @@ export function jobTriggerWords(job: Job, names: WordNames = {}, now: Date = new
     case "schedule":
       return scheduleWords(job.trigger.schedule, now);
     case "hook":
-      return HOOK_TRIGGER_WORDS[job.trigger.hook.event](job.trigger.hook, names);
+      return hookWords(job.trigger.hook, names);
     case "chain":
       return chainWords(job.trigger.chain, names);
   }

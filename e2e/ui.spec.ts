@@ -2035,26 +2035,26 @@ test.describe("the Script form and the schedule picker", () => {
     expect(await fileText(page, `${JOBS}/tidy.md`)).toBe(text.replace("at: 7:00", "at: 7:30"));
   });
 
-  test("a script whose hook is on an event the form does not offer keeps it: said in words, changed in the file", async ({ page }) => {
-    const text = "---\nkind: script\nname: Init\nfolder: .\ncommand: ./init.sh\nhook: { event: session-finished, agent: claude } # after claude\n---\n";
+  test("a script whose hook is on an event the checker does not know keeps it: said in words, changed in the file, Save held", async ({ page }) => {
+    const text = "---\nkind: script\nname: Init\nfolder: .\ncommand: ./init.sh\nhook: { event: session-opened, agent: claude } # after claude\n---\n";
     await start(page, "edit/init");
     await page.evaluate((t) => window.fakeHost.writeFile("Apps/pomade-runner/jobs/init.md", t), text);
     const frame = app(page);
     const choice = frame.getByTestId("trigger-choice");
     await expect(choice.getByRole("button", { name: "When something happens" })).toHaveAttribute("aria-pressed", "true");
-    await expect(frame.getByTestId("file-trigger")).toContainText("Runs when an agent session finishesThis hook is set in the job file: hook:");
+    await expect(frame.getByTestId("file-trigger")).toContainText("Runs on its hookThis hook is set in the job file: hook:");
     await expect(frame.getByTestId("hook-event")).toHaveCount(0);
     await frame.getByTestId("trigger-open-file").click();
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: `${JOBS}/init.md` }]);
-    // To a schedule and back: the hook is the file's again, and nothing of it is written.
+    // To a schedule and back: the hook is the file's again.
     await choice.getByRole("button", { name: "On a schedule" }).click();
     await expect(frame.getByTestId("schedule-words")).toBeVisible();
     await choice.getByRole("button", { name: "When something happens" }).click();
     await expect(frame.getByTestId("file-trigger")).toBeVisible();
     await frame.getByRole("textbox", { name: "Command", exact: true }).fill("./init-all.sh");
     await frame.getByTestId("form-save").click();
-    await expect(frame.getByTestId("tab-jobs")).toBeVisible();
-    expect(await fileText(page, `${JOBS}/init.md`)).toBe(text.replace("./init.sh", "./init-all.sh"));
+    await expect(frame.getByTestId("form-error-count")).toBeVisible();
+    expect(await fileText(page, `${JOBS}/init.md`)).toBe(text);
   });
 
   const BACKUP = "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\nschedule:\n  daily: { at: 13:00 }\n---\n";
@@ -2074,7 +2074,7 @@ test.describe("the Script form and the schedule picker", () => {
     await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
     const event = frame.getByTestId("hook-event");
     // The hooks the engine fires, then the chain, last.
-    await expect(event.locator("option")).toHaveText(["Mac login", "Pomade started", "First open of a project since Pomade started", "Project created", "Another job finished"]);
+    await expect(event.locator("option")).toHaveText(["Mac login", "Pomade started", "First open of a project since Pomade started", "Project created", "Agent session finished", "Session status changed to…", "Another job finished"]);
     await expect(event).toHaveValue("login");
     await expect(frame.getByTestId("hook-words")).toHaveText("Runs at Mac loginOnce per login, after the 2-minute warm-up.");
     await frame.getByTestId("form-policies").getByRole("button", { name: "Change" }).click();
@@ -2148,6 +2148,71 @@ test.describe("the Script form and the schedule picker", () => {
     await page.evaluate(() => window.mounted.navigate("edit/scraper"));
     await expect(app(page).getByTestId("hook-event")).toHaveValue("project-first-open");
     await expect(app(page).getByTestId("hook-project")).toHaveValue("alpha");
+  });
+
+  test("T-014 · a script on the agents' hooks: Agent session finished and Session status changed to…, with their status, project and agent pickers — the roster's agents — each with its (i), the words, and the file a hand-written hook is", async ({ page }) => {
+    await start(page, "");
+    const pomade = "Fires only while Pomade is running, so there are no missed runs.";
+    let frame = await newScript(page, "Lint after session");
+    await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
+    await frame.getByTestId("hook-event").selectOption({ label: "Agent session finished" });
+    await expect(frame.getByTestId("hook-status")).toHaveCount(0);
+    const project = frame.getByTestId("hook-project");
+    const agent = frame.getByTestId("hook-agent");
+    await expect(project.locator("option")).toHaveText(["Any project", "Alpha"]);
+    await expect(agent.locator("option")).toHaveText(["Any agent", "claude", "claude-libra", "claude-coder", "claude-pm", "codex"]);
+    await expect(frame.getByTestId("hook-box").getByRole("combobox", { name: "Only in project" })).toBeVisible();
+    await expect(frame.getByTestId("hook-box").getByRole("combobox", { name: "Only agent" })).toBeVisible();
+    await expect(frame.getByTestId("hook-words")).toHaveText(`Runs after an agent session finishes${pomade}`);
+    await frame.getByTestId("help-hk.session-finished").hover();
+    await expect(frame.getByRole("tooltip")).toHaveText(HELP["hk.session-finished"].join(""));
+    await project.selectOption({ label: "Alpha" });
+    await agent.selectOption({ label: "claude" });
+    await expect(frame.getByTestId("hook-words")).toHaveText(`Runs after a claude session finishes in Alpha${pomade}`);
+    await frame.getByTestId("hook-words").hover();
+    await shoot(page, "tab-form-hook-session-finished");
+    expect(await create(page, "lint-after-session")).toBe(`${header("Lint after session")}hook: { event: session-finished, project: alpha, agent: claude }\n---\n`);
+
+    frame = await newScript(page, "Session Analyzer");
+    await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
+    await frame.getByTestId("hook-event").selectOption({ label: "Session status changed to…" });
+    const status = frame.getByTestId("hook-status");
+    await expect(status.locator("option")).toHaveText(["Active", "On hold", "Done", "Done–skip/Failed"]);
+    await expect(status).toHaveValue("done");
+    await expect(frame.getByTestId("hook-box").getByRole("combobox")).toHaveCount(3);
+    await expect(frame.getByTestId("hook-box").getByRole("combobox", { name: "Status" })).toBeVisible();
+    await expect(frame.getByTestId("hook-words")).toHaveText(`Runs when a session is marked Done${pomade}`);
+    await frame.getByTestId("help-hk.session-status").hover();
+    await expect(frame.getByRole("tooltip")).toHaveText(HELP["hk.session-status"].join(""));
+    await frame.getByTestId("hook-words").hover();
+    await shoot(page, "tab-form-hook-session-status");
+    await status.selectOption({ label: "On hold" });
+    await frame.getByTestId("hook-agent").selectOption({ label: "codex" });
+    await expect(frame.getByTestId("hook-words")).toHaveText(`Runs when a codex session is marked On hold${pomade}`);
+    await status.selectOption({ label: "Done" });
+    await frame.getByTestId("hook-agent").selectOption({ label: "Any agent" });
+    expect(await create(page, "session-analyzer")).toBe(`${header("Session Analyzer")}hook: { event: session-status, status: done }\n---\n`);
+    await expect(app(page).getByTestId("job-trigger")).toContainText(["after a claude session finishes in Alpha", "when a session is marked Done"]);
+
+    // Edited: the form shows the file's hook and its filters.
+    await page.evaluate(() => window.mounted.navigate("edit/lint-after-session"));
+    await expect(app(page).getByTestId("hook-event")).toHaveValue("session-finished");
+    await expect(app(page).getByTestId("hook-project")).toHaveValue("alpha");
+    await expect(app(page).getByTestId("hook-agent")).toHaveValue("claude");
+  });
+
+  test("T-014 · without the Agents app an agent session hook says so under its pickers, and keeps the file's agent", async ({ page }) => {
+    await page.clock.setFixedTime(NOW);
+    await page.goto(harness({ route: "", agents: "none" }));
+    await page.waitForFunction(() => typeof window.setServiceStatus === "function" && typeof window.mounted === "object");
+    await page.evaluate((t) => window.fakeHost.writeFile("Apps/pomade-runner/jobs/lint.md", t), "---\nkind: script\nname: Lint\nfolder: .\ncommand: ./lint.sh\nhook: { event: session-finished, agent: claude }\n---\n");
+    await expect(app(page).getByTestId("job-row")).toHaveCount(1);
+    await page.evaluate(() => window.mounted.navigate("edit/lint"));
+    const frame = app(page);
+    await expect(frame.getByTestId("agents-absent")).toHaveText("The Agents app (pomade-agents) is not running. Runner lists the agents from its roster, and the Agents app tells Runner of its sessions: this hook fires only while it runs.");
+    await expect(frame.getByTestId("hook-agent").locator("option")).toHaveText(["Any agent", "claude"]);
+    await expect(frame.getByTestId("hook-agent")).toHaveValue("claude");
+    await shoot(page, "tab-form-hook-session-absent");
   });
 
   test("T-013 · a service's Starts: on first open of a project, with its project picked; the file has start-project, the Jobs view says it", async ({ page }) => {

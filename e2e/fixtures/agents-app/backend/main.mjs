@@ -5,7 +5,11 @@
 // `roster.projectsFor`, `roster.agentsFor`, `sessions.lastMessage` and `sessions.find` — from the
 // spec's configuration and the fake agent's session records under `$HOME/.fake-agents/`
 // (`config.json`: `{ roster, projects }`; `sessions/<id>.json`). It records every `run.started` and
-// `run.finished` Runner publishes in `events.jsonl` there, as the subscriber the contract names.
+// `run.finished` Runner publishes in `events.jsonl` there, as the subscriber the contract names; on
+// an agent run's `run.finished` it publishes event B `session.closed` for the run's session, with
+// `startedByRunner: true` and reason `run-finished`, as the real app does ("Published events").
+// `test.publish` `{ event, payload }` is the specs' test publisher: it publishes B or C
+// (`session.statusChanged`) with the payload given, as the Agents app would.
 // Dev-linked from the repo, so `pomade-kit` resolves from its node_modules.
 
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, realpathSync } from "node:fs";
@@ -67,14 +71,43 @@ const handlers = {
 
 const record = (event) => (payload) => appendFileSync(join(dir, "events.jsonl"), `${JSON.stringify({ event, payload })}\n`);
 
+/** Event B for a Runner agent run that finished, as the real app publishes it. */
+const runEnded = (host) => (payload) => {
+  record("run.finished")(payload);
+  if (payload?.kind !== "agent" || typeof payload.sessionId !== "string") return;
+  host.events
+    .publish("session.closed", {
+      sessionId: payload.sessionId,
+      provider: payload.agent === "codex" ? "codex" : "claude-code",
+      agent: payload.agent,
+      project: payload.project === null ? null : { id: payload.project, root: payload.folder },
+      cwd: payload.cwd,
+      transcript: join(dir, "sessions", `${payload.sessionId}.json`),
+      name: null,
+      status: "active",
+      startedByRunner: true,
+      job: payload.name,
+      at: new Date().toISOString(),
+      reason: "run-finished",
+    })
+    .catch(() => undefined);
+};
+
 const link = stayConnected(
   {},
   {
     onConnect(host) {
+      const serving = {
+        ...handlers,
+        "test.publish": async ({ event, payload }) => {
+          await host.events.publish(event, payload);
+          return {};
+        },
+      };
       host.api
-        .serve(Object.fromEntries(Object.entries(handlers).map(([method, handle]) => [method, (params) => handle(params ?? {})])))
+        .serve(Object.fromEntries(Object.entries(serving).map(([method, handle]) => [method, (params) => handle(params ?? {})])))
         .then(() => host.events.subscribe("pomade-runner:run.started", record("run.started")))
-        .then(() => host.events.subscribe("pomade-runner:run.finished", record("run.finished")))
+        .then(() => host.events.subscribe("pomade-runner:run.finished", runEnded(host)))
         .catch(() => undefined);
     },
   },

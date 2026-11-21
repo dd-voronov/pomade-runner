@@ -6,7 +6,7 @@
 
 import { isGitRunOutput, type GitRunOutput } from "pomade-kit/protocol";
 
-import { HOOK_EVENTS, JOB_KINDS, SERVICE_ACTIONS, type HookEvent, type JobKind, type ServiceAction } from "../jobs/model";
+import { HOOK_EVENTS, JOB_KINDS, SERVICE_ACTIONS, SESSION_STATUS_WORDS, SESSION_STATUSES, type HookEvent, type JobKind, type ServiceAction } from "../jobs/model";
 import { isServiceStatus, type ServiceStatus } from "../keeper/model";
 
 /** What started a run: its schedule on time · `caught-up`, a missed run run late, once however many
@@ -644,7 +644,8 @@ export function dayTime(epochMs: number): string {
 /** What started a run, in words: "scheduled", "caught up", "manual", "hook", "chain". */
 export const TRIGGER_WORDS: Record<RunTrigger, string> = { scheduled: "scheduled", "caught-up": "caught up", manual: "manual", hook: "hook", chain: "chain" };
 
-/** A hook's event in words, as a run's cause says it: "Mac login", "first open of job-hunt". */
+/** A hook's event in words, as a run's cause says it: "Mac login", "first open of job-hunt",
+ *  "agent session finished", "session marked Done". */
 export function hookCauseWords(cause: Extract<RunCause, { kind: "hook" }>): string {
   const project = cause.projectName;
   switch (cause.event) {
@@ -658,8 +659,10 @@ export function hookCauseWords(cause: Extract<RunCause, { kind: "hook" }>): stri
       return project === undefined ? "project created" : `project ${project} created`;
     case "session-finished":
       return "agent session finished";
-    case "session-status":
-      return "session status changed";
+    case "session-status": {
+      const status = SESSION_STATUSES.find((one) => one === cause.context.POMADE_SESSION_STATUS);
+      return status === undefined ? "session status changed" : `session marked ${SESSION_STATUS_WORDS[status]}`;
+    }
   }
 }
 

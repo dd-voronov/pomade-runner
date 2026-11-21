@@ -187,6 +187,8 @@ describe("editing a job file", () => {
       schedule: blankSchedule(),
       hookEvent: "login",
       hookProject: "",
+      hookAgent: "",
+      hookStatus: "done",
       serviceChain: false,
       chainJob: "",
       chainResult: "done",

@@ -21,6 +21,7 @@ import { agentsOf } from "../integrations/agents";
 import { announce, offerRunner, type LinkPomade, type PomadeLinkHandlers } from "../integrations/pomade";
 import { pomadeOpener } from "../integrations/pomade-open";
 import { pomadeStarts } from "../integrations/pomade-start";
+import type { SessionClosed, StatusChanged } from "../integrations/agent-events";
 import {
   JOBS_CHANGED_EVENT,
   RUN_FINISHED_EVENT,
@@ -53,7 +54,7 @@ import type { Log } from "./log";
 import type { DeleteResult, EnableResult, JobListing, RunActionResult, RunsReport } from "./model";
 import { runFinishedPayload, runStartedPayload } from "./run-events";
 import { createNeedsYou, fileNeedsYouStore } from "./needs-you";
-import { POMADE_STARTED, projectFiring } from "./hooks";
+import { POMADE_STARTED, projectFiring, sessionFiring } from "./hooks";
 import { applyMove, planMove, projectMoves, type ProjectMove } from "./project-moves";
 import { projectsMemory } from "./projects";
 import { renamedJobs } from "./renamed";
@@ -440,6 +441,16 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     void runs.hook(projectFiring("project-first-open", project, workspace()));
   };
 
+  /** An agent session finished, or its status changed: its hooks fire. A session Runner started
+   *  never fires "agent session finished" — its run's end would fire it, and a hook that runs an
+   *  agent would start the next (the loop guard). A status change always fires: it is the Owner's. */
+  const sessionEvent = (event: "session-finished" | "session-status", session: SessionClosed | StatusChanged, how: string): void => {
+    log(`agent session ${session.sessionId} (${session.agent}) ${event === "session-finished" ? "finished" : "status changed"}: ${how}`);
+    if (event === "session-finished" && session.startedByRunner) return;
+    const name = session.project === null ? null : (projects.list().find((project) => project.id === session.project?.id)?.name ?? null);
+    void runs.hook(sessionFiring(event, session, workspace(), name));
+  };
+
   const linkHandlers: PomadeLinkHandlers = {
     connected(client) {
       host = client;
@@ -491,6 +502,13 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
           projects.add(project);
           log(`project ${project.name} (${project.id}) created`);
           void runs.hook(projectFiring("project-created", project, workspace()));
+        },
+        sessionClosed: (event) => {
+          if (host !== client) return;
+          sessionEvent("session-finished", event, `${event.reason}${event.startedByRunner ? `, started by Runner (${event.job ?? "a job"})` : ""}`);
+        },
+        statusChanged: (event) => {
+          if (host === client) sessionEvent("session-status", event, `${event.from} → ${event.to}`);
         },
         log,
       });

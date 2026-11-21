@@ -5,7 +5,7 @@ import { describeJobError } from "../../jobs/format";
 import type { JobError, JobsSnapshot, ProjectRecord } from "../../jobs/model";
 import { parseJobFile } from "../../jobs/parse";
 import { blocksSave, editForm, errorShows, errorsByPlace, fieldChanges, formErrors, newForm, setFolder, setValue, switchKind, wouldBe, type FormState } from "./state";
-import { chainJobOptions, formOffersHook, hookBoxWords, isLoopError, jobName } from "./triggerWords";
+import { agentPicks, chainJobOptions, EVENT_CHOICES, formOffersHook, hookBoxWords, isLoopError, jobName, statusPicks } from "./triggerWords";
 
 const PROJECTS: ProjectRecord[] = [{ id: "p-coda", name: "coda-helper", root: "Projects/coda-helper" }];
 const JOBS = "Apps/pomade-runner/jobs";
@@ -60,6 +60,29 @@ describe("a script on a hook or a chain, made in the form", () => {
     expect(parseJobFile({ path: "hook.md", text: text(hooked("project-first-open", "p-coda")) }).job).toMatchObject({ trigger: { kind: "hook", hook: { event: "project-first-open", project: "p-coda" } } });
   });
 
+  it("on the agents' events: a status change's status, then the project and agent filters picked, each as the checker reads a hand-written one", () => {
+    const hooked = (event: string, filters: { project?: string; agent?: string; status?: string } = {}): FormState => {
+      let state = setValue(setValue(newScript("Hook"), "trigger", "hook"), "hookEvent", event);
+      if (filters.project !== undefined) state = setValue(state, "hookProject", filters.project);
+      if (filters.agent !== undefined) state = setValue(state, "hookAgent", filters.agent);
+      if (filters.status !== undefined) state = setValue(state, "hookStatus", filters.status);
+      return state;
+    };
+    const text = (state: FormState): string => wouldBe(state, SNAPSHOT, PROJECTS).text;
+    expect(text(hooked("session-finished"))).toContain("\nhook: { event: session-finished }\n");
+    expect(text(hooked("session-finished", { project: "p-coda", agent: "claude" }))).toContain("\nhook: { event: session-finished, project: p-coda, agent: claude }\n");
+    // A status is a status change's alone; it starts at Done.
+    expect(text(hooked("session-finished", { status: "on-hold" }))).toContain("\nhook: { event: session-finished }\n");
+    expect(text(hooked("session-status"))).toContain("\nhook: { event: session-status, status: done }\n");
+    expect(text(hooked("session-status", { status: "on-hold", agent: "codex" }))).toContain("\nhook: { event: session-status, status: on-hold, agent: codex }\n");
+    // The agent is the session hooks' alone.
+    expect(text(hooked("project-first-open", { agent: "claude", project: "p-coda" }))).toContain("\nhook: { event: project-first-open, project: p-coda }\n");
+    for (const state of [hooked("session-finished", { agent: "claude" }), hooked("session-status", { project: "p-coda" })]) expect(formErrors(state, SNAPSHOT, PROJECTS)).toEqual([]);
+    expect(parseJobFile({ path: "hook.md", text: text(hooked("session-status", { status: "done-skip", project: "p-coda", agent: "claude" })) }).job).toMatchObject({
+      trigger: { kind: "hook", hook: { event: "session-status", status: "done-skip", project: "p-coda", agent: "claude" } },
+    });
+  });
+
   it("after another job: the job and the result in after:, as a hand-written chain has them", () => {
     let state = setValue(newScript("Cleanup"), "trigger", "chain");
     state = setValue(setValue(state, "chainJob", "backup"), "chainResult", "failed");
@@ -84,8 +107,8 @@ describe("editing a script's hook or chain", () => {
   const CHAIN = "---\nkind: script\nname: Tests\nfolder: .\ncommand: ./t.sh\nafter: { job: backup } # nightly\n---\n";
 
   it("a hook on an event the form does not offer stays byte for byte, filter and comment too", () => {
-    const state = edit("lint.md", SESSION);
-    expect(state.values).toMatchObject({ trigger: "hook", hookEvent: "session-finished" });
+    const state = edit("lint.md", SESSION.replace("session-finished", "session-opened"));
+    expect(state.values).toMatchObject({ trigger: "hook", hookEvent: "session-opened" });
     expect(formOffersHook(state.values.hookEvent)).toBe(false);
     const next = setValue(state, "command", "./lint.sh");
     expect(fieldChanges(next)).toEqual({ command: "./lint.sh" });
@@ -100,6 +123,18 @@ describe("editing a script's hook or chain", () => {
     expect(fieldChanges(setValue(state, "command", "./scrape.sh"))).toEqual({ command: "./scrape.sh" });
     expect(fieldChanges(setValue(state, "hookProject", "p-hunt"))).toEqual({ hook: { event: "project-first-open", project: "p-hunt" } });
     expect(wouldBe(setValue(state, "hookProject", ""), SNAPSHOT, PROJECTS).text).toContain("\nhook: { event: project-first-open } # job-hunt\n");
+  });
+
+  it("an agent session hook reads its filters; another agent or status rewrites hook:; an edit elsewhere keeps it byte for byte", () => {
+    const state = edit("lint.md", SESSION);
+    expect(state.values).toMatchObject({ trigger: "hook", hookEvent: "session-finished", hookProject: "", hookAgent: "claude" });
+    expect(formOffersHook(state.values.hookEvent)).toBe(true);
+    expect(fieldChanges(setValue(state, "command", "./lint.sh"))).toEqual({ command: "./lint.sh" });
+    expect(fieldChanges(setValue(state, "hookAgent", ""))).toEqual({ hook: { event: "session-finished" } });
+    expect(wouldBe(setValue(state, "hookProject", "p-coda"), SNAPSHOT, PROJECTS).text).toContain("\nhook: { event: session-finished, project: p-coda, agent: claude } # after claude\n");
+    const status = edit("analyze.md", "---\nkind: script\nname: Analyze\nfolder: .\ncommand: ./a.sh\nhook: { event: session-status, status: on-hold }\n---\n");
+    expect(status.values).toMatchObject({ hookEvent: "session-status", hookStatus: "on-hold", hookAgent: "" });
+    expect(fieldChanges(setValue(status, "hookStatus", "done"))).toEqual({ hook: { event: "session-status", status: "done" } });
   });
 
   it("to a schedule: the hook goes, the schedule comes", () => {
@@ -159,9 +194,26 @@ describe("a service's chain", () => {
 });
 
 describe("triggerWords", () => {
-  it("offers the hooks the engine fires — Mac login and Pomade's — and not the chain's own entry or the agents' events", () => {
-    expect(["login", "pomade-started", "project-first-open", "project-created"].map(formOffersHook)).toEqual([true, true, true, true]);
-    expect(["chain", "session-finished", "session-status", ""].map(formOffersHook)).toEqual([false, false, false, false]);
+  it("offers every hook the engine fires — Mac login, Pomade's and the agents' — in the prototype's order, and not the chain's own entry", () => {
+    expect(EVENT_CHOICES.map((choice) => choice.label)).toEqual(["Mac login", "Pomade started", "First open of a project since Pomade started", "Project created", "Agent session finished", "Session status changed to…", "Another job finished"]);
+    expect(["login", "pomade-started", "project-first-open", "project-created", "session-finished", "session-status"].map(formOffersHook)).toEqual([true, true, true, true, true, true]);
+    expect(["chain", "session-opened", ""].map(formOffersHook)).toEqual([false, false, false]);
+  });
+
+  it("the agent session pickers: the statuses by the Agents app's names, Any agent then the roster by id; a value the file names stays", () => {
+    expect(statusPicks("done")).toEqual([
+      { value: "active", label: "Active" },
+      { value: "on-hold", label: "On hold" },
+      { value: "done", label: "Done" },
+      { value: "done-skip", label: "Done–skip/Failed" },
+    ]);
+    expect(statusPicks("parked").at(-1)).toEqual({ value: "parked", label: "parked" });
+    const roster = [{ id: "claude", name: "Claude", command: "claude", provider: "claude" as const, configDir: "/h/.claude" }];
+    expect(agentPicks(roster, "")).toEqual([
+      { value: "", label: "Any agent" },
+      { value: "claude", label: "claude" },
+    ]);
+    expect(agentPicks([], "codex").map((option) => option.value)).toEqual(["", "codex"]);
   });
 
   it("the chain's picker: valid jobs that finish, by name, without the job itself; a job the file names stays, by id", () => {
@@ -184,6 +236,10 @@ describe("triggerWords", () => {
     expect(hookBoxWords({ ...login, hookEvent: "project-first-open" }, SNAPSHOT, 2, PROJECTS)).toEqual({ title: "Runs on first open of a project", sub: pomade });
     expect(hookBoxWords({ ...login, hookEvent: "project-first-open", hookProject: "p-coda" }, SNAPSHOT, 2, PROJECTS).title).toBe("Runs on first open of coda-helper");
     expect(hookBoxWords({ ...login, hookEvent: "project-first-open", hookProject: "p-gone" }, SNAPSHOT, 2, PROJECTS).title).toBe("Runs on first open of p-gone");
+    expect(hookBoxWords({ ...login, hookEvent: "session-finished" }, SNAPSHOT, 2, PROJECTS)).toEqual({ title: "Runs after an agent session finishes", sub: pomade });
+    expect(hookBoxWords({ ...login, hookEvent: "session-finished", hookAgent: "claude", hookProject: "p-coda", hookStatus: "on-hold" }, SNAPSHOT, 2, PROJECTS).title).toBe("Runs after a claude session finishes in coda-helper");
+    expect(hookBoxWords({ ...login, hookEvent: "session-status" }, SNAPSHOT, 2, PROJECTS)).toEqual({ title: "Runs when a session is marked Done", sub: pomade });
+    expect(hookBoxWords({ ...login, hookEvent: "session-status", hookStatus: "on-hold", hookAgent: "opus", hookProject: "p-gone" }, SNAPSHOT, 2, PROJECTS).title).toBe("Runs when an opus session is marked On hold in p-gone");
     expect(hookBoxWords(login, SNAPSHOT, 2, PROJECTS)).toEqual({ title: "Runs at Mac login", sub: "Once per login, after the 2-minute warm-up." });
     expect(hookBoxWords(login, SNAPSHOT, 0, PROJECTS).sub).toBe("Once per login, once the services are up.");
     expect(hookBoxWords(login, SNAPSHOT, null, PROJECTS).sub).toBe("Once per login, after the warm-up.");

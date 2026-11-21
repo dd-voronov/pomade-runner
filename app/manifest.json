@@ -45,7 +45,9 @@
       "project.created",
       "project.renamed",
       "project.opened",
-      "attachedTab.action"
+      "attachedTab.action",
+      "pomade-agents:session.closed",
+      "pomade-agents:session.statusChanged"
     ]
   },
   "backend": {

@@ -14,6 +14,7 @@ import { parseJobFile } from "../../jobs/parse";
 import { jobTriggerWords } from "../../jobs/words";
 import type { HelpKey } from "../help";
 import { Button, Check, Checks, DayButton, Field, FieldError, Help, Icon, IconButton, LinkButton, Segmented, Select, TextInput, Toggle, type SelectOption } from "../kit";
+import { useRoster } from "../useAgents";
 import { useSettings } from "../useRunnerApi";
 import type { FormProps } from "./FolderField";
 import styles from "./JobForm.module.css";
@@ -37,7 +38,7 @@ import {
   type ScheduleTarget,
   type ScheduleValues,
 } from "./schedule";
-import { ACTION_OPTIONS, CHAIN_CHOICE, chainJobOptions, EVENT_CHOICES, formOffersHook, hookBoxWords, isLoopError, projectPicks, RESULT_CHOICES, SERVICE_RESULT_OPTIONS } from "./triggerWords";
+import { ACTION_OPTIONS, agentPicks, CHAIN_CHOICE, chainJobOptions, EVENT_CHOICES, formOffersHook, hookBoxWords, isLoopError, projectPicks, RESULT_CHOICES, SERVICE_RESULT_OPTIONS, statusPicks } from "./triggerWords";
 
 /** The time now, a fresh one every minute: the next runs move on while the form is open. */
 function useNow(): Date {
@@ -177,6 +178,7 @@ function HookEditor(props: FormProps): React.JSX.Element {
           </Field>
         </div>
       )}
+      {!chain && (values.hookEvent === "session-finished" || values.hookEvent === "session-status") && <SessionFilters {...props} />}
       {chain && (
         <div className={styles.subBox} data-testid="chain-box">
           <div className={styles.row}>
@@ -204,6 +206,49 @@ function HookEditor(props: FormProps): React.JSX.Element {
     </>
   );
 }
+
+/** An agent session hook's filters in a box: a status change's Status, then Only in project and
+ *  Only agent — the roster's agents; without the Agents app, the box says so. */
+function SessionFilters({ host, state, set, projects }: FormProps): React.JSX.Element {
+  const { values } = state;
+  const roster = useRoster(host);
+  const agent = values.hookAgent.trim();
+  return (
+    <div className={styles.subBox} data-testid="hook-box">
+      {values.hookEvent === "session-status" && (
+        <Field label="Status">
+          {(id) => <Select id={id} auto options={statusPicks(values.hookStatus.trim())} value={values.hookStatus.trim()} data-testid="hook-status" onChange={(e) => set("hookStatus", e.target.value)} />}
+        </Field>
+      )}
+      <div className={styles.row}>
+        <Field label="Only in project">
+          {(id) => (
+            <Select
+              id={id}
+              options={[{ value: "", label: "Any project" }, ...projectPicks(projects.records, values.hookProject.trim(), null)]}
+              value={values.hookProject.trim()}
+              data-testid="hook-project"
+              onChange={(e) => set("hookProject", e.target.value)}
+            />
+          )}
+        </Field>
+        <Field label="Only agent" hint={roster.status === "loading" ? "Reading the Agents app's roster…" : roster.status === "ready" && agent !== "" && !roster.value.some((one) => one.id === agent) ? <span className={styles.problem}>{agent} is not in the Agents app's roster.</span> : undefined}>
+          {(id) => <Select id={id} options={agentPicks(roster.status === "ready" ? roster.value : [], agent)} value={agent} data-testid="hook-agent" onChange={(e) => set("hookAgent", e.target.value)} />}
+        </Field>
+      </div>
+      {(roster.status === "absent" || roster.status === "failed") && (
+        <div className={styles.notice} role="status" data-testid="agents-absent">
+          <Icon name="warn" />
+          <p>
+            {roster.status === "absent" ? `${capitalised(roster.message)}.` : `The Agents app's roster cannot be read: ${roster.message}.`} Runner lists the agents from its roster, and the Agents app tells Runner of its sessions: this hook fires only while it runs.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const capitalised = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
 
 function HookWords({ host, state, jobs, projects }: FormProps): React.JSX.Element {
   const settings = useSettings(host);

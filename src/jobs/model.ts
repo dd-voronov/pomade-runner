@@ -39,6 +39,9 @@ export type HookEvent = (typeof HOOK_EVENTS)[number];
 export const SESSION_STATUSES = ["active", "on-hold", "done", "done-skip"] as const;
 export type SessionStatus = (typeof SESSION_STATUSES)[number];
 
+/** A session status as the Agents app names it. */
+export const SESSION_STATUS_WORDS: Record<SessionStatus, string> = { active: "Active", "on-hold": "On hold", done: "Done", "done-skip": "Done–skip/Failed" };
+
 /** Which filters each hook event takes; `required` ones must be given. */
 export const HOOK_FILTERS: Record<HookEvent, { optional: readonly HookFilter[]; required: readonly HookFilter[] }> = {
   login: { optional: [], required: [] },
