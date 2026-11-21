@@ -28,9 +28,13 @@
 .when {
   flex: none;
   width: 62px;
+  overflow: hidden;
   color: var(--text-muted);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
+  /* A run more than a week ahead ("Thu 1 Jan 7:00") is cut, not wrapped over the next row; its tooltip has it whole. */
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kind {

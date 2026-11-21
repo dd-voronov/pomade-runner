@@ -1,7 +1,7 @@
 import type { HostClient } from "pomade-kit/sdk";
 
 import { runRoute } from "../integrations/runner-api";
-import { runWords, type ActiveRun } from "../scheduler/model";
+import { runWords, waitingAt, type ActiveRun } from "../scheduler/model";
 import { PanelEmpty, PanelRow, useToast } from "./kit";
 import { upWords } from "./serviceWords";
 import { useNow } from "./useNow";
@@ -14,8 +14,9 @@ export function placeWords(project: string | null, projectName: (id: string | nu
   return `${project === null ? "workspace" : projectName(project)} · ${folder === "" ? root : folder}`;
 }
 
-/** One run going in Running now: running ("running 3m") or queued with what it waits for ("queued ·
- *  1 ahead"); a click opens the run's card. */
+/** One run going in Running now: running ("running 3m"), an agent run waiting for you at a prompt
+ *  ("waiting for you · 17m", amber), or queued with what it waits for ("queued · 1 ahead"); a click
+ *  opens what `onOpen` opens for it. */
 export function ActiveRunRow({
   run,
   now,
@@ -28,13 +29,16 @@ export function ActiveRunRow({
   onOpen: (run: ActiveRun) => void;
 }): React.JSX.Element {
   const running = run.state === "running";
+  const waiting = running && waitingAt(run) !== null;
+  const ran = run.startedAt === null ? "" : upWords(now - run.startedAt);
   return (
     <PanelRow
       name={run.name}
-      tone={running ? "accent" : "hollow"}
-      live={running}
-      status={running ? `running ${run.startedAt === null ? "" : upWords(now - run.startedAt)}`.trim() : runWords(run)}
-      statusHelp={running ? "st.running" : "st.queued"}
+      tone={waiting ? "warning" : running ? "accent" : "hollow"}
+      live={running && !waiting}
+      status={waiting ? `waiting for you${ran === "" ? "" : ` · ${ran}`}` : running ? `running ${ran}`.trim() : runWords(run)}
+      statusHelp={waiting ? "st.waiting" : running ? "st.running" : "st.queued"}
+      statusTone={waiting ? "warning" : undefined}
       place={place}
       onClick={() => onOpen(run)}
       testId="active-run"

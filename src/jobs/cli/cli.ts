@@ -306,7 +306,7 @@ async function history(job: string | null, deps: CliDeps): Promise<number> {
 
 /** A run going in one line: `backup  Backup  run 20261118-…  queued · 1 ahead`. */
 function activeLine(run: ActiveRun): string {
-  const since = run.state === "running" && run.startedAt !== null ? `, since ${iso(run.startedAt)}` : run.state === "missed-waiting" ? `, due ${iso(run.dueAt)}` : "";
+  const since = run.state === "running" && run.startedAt !== null ? `, since ${iso(run.agent?.waiting?.since ?? run.startedAt)}` : run.state === "missed-waiting" ? `, due ${iso(run.dueAt)}` : "";
   return `${run.job}  ${run.name}  run ${run.run}  ${runWords(run)}${since}`;
 }
 
@@ -319,6 +319,8 @@ function needsYouLine(item: NeedsYouItem): string {
       return `needs you: ${item.name} — gave up: ${item.detail}`;
     case "missed":
       return `needs you: ${item.name} — ${item.detail}; it waits for you: Run now, Run at… or Skip in Runner`;
+    case "waiting":
+      return `needs you: ${item.name} — ${item.detail}, since ${dayTime(item.at)}; answer it in the run's terminal tab in Pomade`;
     case "long-run":
       return `needs you: ${item.name} — ${item.detail}`;
     case "loop-paused":

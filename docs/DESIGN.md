@@ -486,7 +486,18 @@ hooks, chains, History, notices and Needs you.
   there 15 s later is stopped (reason `stopped`) and the run is **done** all the same. An end before
   the exit was typed is **failed**, "the agent exited before its turn was done", a status 0
   included; a crash after it **failed** with its exit code; Stop, the time limit and a lost session
-  read as a script's. A permission or trust prompt is no finished turn: the run keeps going.
+  read as a script's. A permission or trust prompt is no finished turn: the run waits for you.
+- **Waiting for you.** A permission or trust prompt on the agent's screen (the scanner's
+  `waiting`) makes the running run wait for you: `waiting` on its `AgentRun` — the prompt and since
+  when — a Needs-you item and a notice. It holds no low-priority slot and its time limit pauses:
+  `waitedMs` adds up its waits, which `ranFor` leaves out. Answered — the agent works or idles
+  again — the wait ends, the item goes, and the turn finishes as any turn. A prompt that turns into
+  another is one wait, noticed once. A fresh snapshot — an attach, a reconnect, a scheduler
+  restart — draws the screen without a window title: a prompt on it is a wait (noticed when the
+  run had none), a screen without one ends the wait the run had. Whether the agent is idle is
+  read from the title alone, so a restarted scheduler learns a turn is done only from the next
+  title the agent sets. A run that ends while it waits keeps the wait in `waitedMs`. A record or a
+  run going of an older build reads as one that never waited.
 
 **Git runs** (`src/scheduler/git-runs.ts`, `runs.ts`) run Pomade's `pomade-git` and keep its
 structured result. Everything else about the run is a script run's: run id, queue (a git job is
@@ -531,10 +542,10 @@ the Git panel's failure mark reads. It posts no notice: Runner notifies about a 
 
 **Result card** (`src/ui/RunCard.tsx`, its look in `src/ui/runLook.ts`). One per run, a dialog
 over History. Its head: the kind icon, the job's name, the result as a pill with its help
-("Done", "Failed", "Stopped: time limit", "Missed · waiting for you"), then when it ran (or was due), how long and what
+("Done", "Failed", "Stopped: time limit", "Waiting for you", "Missed · waiting for you"), then when it ran (or was due), how long and what
 started it — with its help — an agent run's agent and mode ("claude · Normal"), and a why line: a hook's event ("Mac login"), a caught-up run's
 missed time, a chain's "After Pull: done" whose name opens the run it followed. A failed run's
-head is red, a missed run that waits for you amber. Its body, by what the run left:
+head is red, a run that waits for you amber. Its body, by what the run left:
 
 | Run | Card body | Card foot |
 |---|---|---|
@@ -542,6 +553,7 @@ head is red, a missed run that waits for you amber. Its body, by what the run le
 | Git, ended | each repo: its commit hash and its steps (✓ done, ✗ failed, faint skipped), and a reason a step does not say | **View output** · **Run again** |
 | Agent, ended | a failed run's reason in red; the agent's last message (`sessions.lastMessage` by the run's session, its Markdown drawn as text: paragraphs, lists, bold, emphasis, code), or why it cannot be read — no session known, none written yet, the Agents app not running | **Open session** (a Pomade agent tab resuming the session — `agentTabs.resume` in the job's project and folder — or the live tab already on it) · **View output** · **Run again** |
 | Running | the latest output, followed while it runs | **Open terminal** · **Stop run** |
+| Agent, waiting for you | what it waits at ("The agent stopped at a permission prompt and waits for your answer."), **Waiting at**: the end of its output from the step that asks (`promptLines`), and that the time limit is paused | **Open at the prompt** (its terminal tab) · **Stop run** |
 | Queued | what it waits for, in a sentence | **Run now** |
 | Missed, waiting for you | when it was due, and that its policy waits for you; **Run at…** opens a field that reads the time as it is typed | **Run now** · **Run at…** · **Skip** |
 | Skipped or missed; a chain's action on a service | why it never started, or what the chain did | **Run now** (scripts and git jobs) |
@@ -626,7 +638,7 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
   5. a **slot**: at most `max-low-priority-runs` (default 2) low-priority runs run at once.
   - **What takes a slot:** a running run of a low-priority job. A job with `low-priority: false` —
     git, by default — neither takes nor waits for one; neither does a missed run waiting for you.
-    An agent run waiting for you at a permission prompt (E-004) holds no slot: it is idle, and a
+    An agent run waiting for you at a permission prompt holds no slot: it is idle, and a
     forgotten prompt must not hold back every low-priority job; once answered it goes on, past the
     cap if need be.
   - **"queued · N ahead"**: N runs have to end before it starts — the slot-waiting runs ahead of it
@@ -661,8 +673,8 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
   (`ranFor`); at the limit Runner stops it, once (SIGTERM, then SIGKILL after 3 s; reason
   `time-limit`): **failed**, and it reads **stopped: time limit, 45 min** — the job's limit — in
   History, on its card, in its notice and in `pomade-runner history`; red, and noticed as a failure.
-  The job file as it is now sets the limit. An agent run's wait for you (E-004) is left out of
-  `ranFor`, so the limit pauses while it waits.
+  The job file as it is now sets the limit. An agent run's waits for you are left out of
+  `ranFor`, so the limit pauses while it waits; so does the long-run warning.
 - **Long-run warning**, always on, never stops a run. A run going longer than `long-run-warning`
   (default 3h) becomes a Needs-you item *"Wiki lint has been running 3 h — still expected?"* with
   Open (its attached tab) · Stop (stopped by you) · Dismiss (gone for this run), noticed once. Its
@@ -724,13 +736,18 @@ history-days: 30           # run history and output logs kept
   - **A missed run that waits for you** (`missed:<job>`, one per job) is an item while it waits;
     noticed when it comes ("Inbox triage · missed Sun 03:00"), its click opening the run's card.
     Actions: Run now · Run at… · Skip (`runs.missed`).
+  - **An agent run waiting for you** (`waiting:<job>:<run>`) at a permission or trust prompt is an
+    item while it waits; it cannot be dismissed. Noticed when the wait begins: "<job> needs your
+    approval", what it waits at and that the time limit is paused; the notice opens the Runner tab
+    at `prompt/<job>/<run>`, which opens the run's terminal tab at the prompt. Action: Open at the
+    prompt (its terminal tab).
   - **A long-run warning** (`long-run:<job>:<run>`) is an item while its run runs, until dismissed;
     noticed once. Actions: Open · Stop (`runs.stop`) · Dismiss (`needsYou.dismiss`).
   - **A job the loop guard paused** (`loop-paused:<job>`) is an item while it is paused and its file
     is there: *"Paused: triggered 10× in 10 min — looks like a loop"*; noticed once, when it
     pauses. Actions: Resume (`jobs.resume`) · Edit job (its form). It cannot be dismissed.
   - The failed runs' items, and the giving-ups already noticed, are in `needs-you.json` in Runner's
-    records folder; the missed runs, the warnings and the loop guard's pauses are the runs' own, in
+    records folder; the missed runs, the waits, the warnings and the loop guard's pauses are the runs' own, in
     `runs.json`: a restarted scheduler neither forgets an item nor notices one twice.
 - **Posting:** the scheduler posts every notice: over its connection while Pomade runs, into
   Pomade's closed-Pomade queue (`<userData>/notices/queue/`) otherwise — and when posting over the
@@ -755,7 +772,7 @@ to it, light theme only.
    "Low-priority jobs are held. Services keep running." / "Every scheduled job is held. Services
    keep running." — with the (i) of what becomes of a held run;
 2. **Needs you** (`src/ui/NeedsYou.tsx`): a card per item (`PanelCard`) — the status dot (red: a failed
-   run, a service that gave up · amber: a missed run, a paused job · accent: a long run), the
+   run, a service that gave up · amber: a missed run, a run waiting for you, a paused job · accent: a long run), the
    job's name, the (i) help of that kind, the time at the card's end, one line of text, and the
    actions inline, the first one primary (`needLook`, `src/ui/panelWords.ts`):
 
@@ -764,12 +781,13 @@ to it, light theme only.
    | failed run | when it failed | "Failed: exit 1 · 2×" (the count when more than one) | Open · Run now · Dismiss |
    | service gave up | its last crash | "Crashed 5× in 1 min — gave up." | Start · View output |
    | missed run waits | when it was missed | "Missed — it waits for you to pick a time." | Run now · Run at… · Skip |
+   | agent run waits for you | how long it has waited ("17m") | "Waiting for approval at a permission prompt." / "Waiting for you to trust its folder." | Open at the prompt |
    | long run | how long it has gone ("3h 02m") | "Running 3h — still expected?" | Open (its terminal) · Stop · Dismiss |
    | job paused by the loop guard | when it paused | "Paused: triggered 10× in 10 min." | Resume · Edit job |
 
    The time reads "11:20" today, "yesterday", "Sun 3:00" within the week, else "13 Nov". The
    job's name is a link to what the card is about: the run's result card (a failed run, a missed
-   run, a long run), the service's terminal tab, the job in the Jobs view (a paused job). **Run
+   run, a run waiting for you, a long run), the service's terminal tab, the job in the Jobs view (a paused job). **Run
    at…** opens a field below the buttons, filled with "tonight 23:00" and focused; under it what the
    text comes to ("→ today 23:00") or "Try: tonight 23:00 · tomorrow 7:00 · +2h"; Set (or Enter)
    sends it as typed, Esc closes it. Every outcome is a toast ("<job> started", "<job> will run
@@ -779,14 +797,14 @@ to it, light theme only.
 3. **Running now** (`src/ui/RunningNow.tsx`): the services that are up or starting, in start
    order, then the runs going, as one list of rows (`PanelRow`): the status dot, the name and at
    its end where it stands with its help ("up 3d 4h", "starting", "running 3m", "queued · 1
-   ahead"); project · folder below ("workspace · git-base" for the workspace root); a third line
+   ahead", an agent run at a prompt amber "waiting for you · 17m"); project · folder below ("workspace · git-base" for the workspace root); a third line
    only for news ("waiting for port 5173", "restarted 3× · last crash 14:02", "restart to apply
    its file"). A row's status words explain themselves on hover (no (i) in rows). A service's row
    opens its attached tab, titled with its name; a running run's row its terminal (the run's
    attached session); a queued run's row — it has no session yet — its result card;
 4. **Next up** (`src/ui/NextUp.tsx`): the next five runs (`NEXT_UP_RUNS`), soonest first — a job
    as many times as it comes among them — "in 40 min" within the hour, then the time ("13:00",
-   "tmrw 7:00", "Thu 7:00"; the full moment on hover), the job's kind icon and its name, and on a
+   "tmrw 7:00", "Thu 7:00", a later date cut short with "…"; the full moment on hover), the job's kind icon and its name, and on a
    run the switch holds (`held`) its name faint and the amber **held** tag with the switch's help;
    a row opens the job in the Jobs view (`jobs/<encoded job id>`); "Nothing is scheduled." when
    none;
@@ -808,8 +826,8 @@ to it, light theme only.
     result**, **Next run**, the actions, and the **Disable** toggle. A disabled row is dimmed.
   - **Last result** (`lastLook`, `src/ui/jobWords.ts`): a chip with the status's help over a sub line.
     A service shows its state as the Services view does (`serviceLook`). Any other job shows the run
-    going — "running" over "started 12:31 · 17m", "queued" over what it waits for, "missed · waiting
-    for you" — else its latest finished one: "done", "failed · exit 1", "stopped: time limit, 45 min",
+    going — "running" over "started 12:31 · 17m", amber "waiting for you" over the same for an agent
+    run at a prompt, "queued" over what it waits for, "missed · waiting for you" — else its latest finished one: "done", "failed · exit 1", "stopped: time limit, 45 min",
     "skipped · …", "missed · …", "stopped by you", over "today 11:20 · 3s" — a done git run's commit
     in place of the duration, "yesterday 20:00 · a1b2c3d"; "never ran" for none. A
     click on a job's cell opens that run's result card (`run/<job>/<run>`); a service's and a
@@ -824,11 +842,13 @@ to it, light theme only.
     or toggle and Delete report as toasts. The toggle writes `enabled:` (`jobs.setEnabled`).
   - **An invalid file** is a red row with its file name, its help, its first error and **Open file**.
   - **The route `jobs/<job>`** marks that job's row — the accent bar and wash — and scrolls to it.
-- **History** (`src/ui/HistoryView.tsx`): the runs going (`runs.list`'s `active`: running,
-  queued with what they wait for, missed and waiting for you) and every record, one list newest
+- **History** (`src/ui/HistoryView.tsx`): the runs going (`runs.list`'s `active`: running — an
+  agent run at a prompt amber, "waiting for you" — queued with what they wait for, missed and
+  waiting for you) and every record, one list newest
   first by when each started — or, one that has not, was due — under day heads (Today, Yesterday,
   "Sun 15 Nov"). Each row: the time, the kind icon, the job, the result (`runLook`: dot and words
-  — "failed · exit 1", "done · restarted", "queued · 1 ahead", "running · 3h — still expected?" —
+  — "failed · exit 1", "done · restarted", "queued · 1 ahead", "running · 3h — still expected?",
+  "waiting for you" —
   explaining itself on hover), the duration (a running run's so far) and what started it
   (scheduled · caught up · manual · hook: Mac login · chain: after Pull), with its help. The
   result chips — All · Active · Failed · Skipped & missed, each but All with its count — and
@@ -864,7 +884,9 @@ to it, light theme only.
 **Routes of the Runner tab** (`parseRoute`, `src/integrations/runner-api.ts`): `""` Jobs ·
 `jobs/<encoded job id>` Jobs at one job, its row marked and scrolled to (what a repo row's Scheduled
 line opens) · `history` · `services` · `settings` · `run/<encoded job id>/<run id>` a run's result
-card, a dialog over History (what a run's notice opens) · `output/<encoded job id>/<run id>` its
+card, a dialog over History (what a run's notice opens) · `prompt/<encoded job id>/<run id>` a
+waiting run's notice: the run's terminal tab opens at the prompt, and the Runner tab goes to its
+card · `output/<encoded job id>/<run id>` its
 full output — the route of the run's output tab (below) · `new` the job form for a new job (what
 **New job** opens; `newRoute`), `new/<encoded project id>` for one that starts in that project · `edit/<encoded job id>` the job form editing a job (`editRoute`).
 An unknown route is Jobs. The tab follows Pomade's `route.changed`, and tells Pomade each route it

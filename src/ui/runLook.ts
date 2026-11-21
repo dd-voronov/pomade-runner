@@ -3,7 +3,7 @@
 // duration, and what started it. Pure.
 
 import type { JobKind } from "../jobs/model";
-import { ACTION_DONE_WORDS, HOOK_WORDS, runWords, SWITCH_WORDS, type RunRecord, type RunTrigger, type RunView, type Waits } from "../scheduler/model";
+import { ACTION_DONE_WORDS, HOOK_WORDS, runWords, SWITCH_WORDS, waitingAt, type RunRecord, type RunTrigger, type RunView, type Waits } from "../scheduler/model";
 import type { HelpKey } from "./help";
 import type { DotTone, PillTone } from "./kit";
 import { shortClock } from "./serviceWords";
@@ -22,7 +22,7 @@ export interface RunLook {
   /** History's result: "failed · exit 1", "done · restarted", "queued · 1 ahead". */
   words: string;
   help: HelpKey;
-  /** The card's pill: "Done", "Failed", "Missed · waiting for you". */
+  /** The card's pill: "Done", "Failed", "Waiting for you", "Missed · waiting for you". */
   label: string;
   pill: PillTone;
   /** The card's head: red for a failed run, amber for one that waits for you. */
@@ -43,8 +43,11 @@ function doneWords(view: RunRecord): string {
 }
 
 /** A run's look; with `now`, a running run that has become a long-run warning says so: "running ·
- *  3h — still expected?". */
+ *  3h — still expected?". An agent run at a prompt waits for you: amber, "waiting for you". */
 export function runLook(view: RunView, now?: number): RunLook {
+  if (view.state === "running" && waitingAt(view) !== null) {
+    return { tone: "warning", live: false, words: "waiting for you", help: "st.waiting", label: "Waiting for you", pill: "warning", cardTone: "warning", filter: "active" };
+  }
   switch (view.state) {
     case "done":
       return { tone: "ok", live: false, words: isRecord(view) ? doneWords(view) : "done", help: "st.done", label: "Done", pill: "ok", cardTone: undefined, filter: null };
@@ -182,3 +185,20 @@ export function waitsSentence(waits: Waits | null, now: number): string {
 
 /** A job kind's name: the card icon's tooltip. */
 export const KIND_WORDS: Record<JobKind, string> = { service: "Service", script: "Script", agent: "Agent", git: "Git" };
+
+/** How many lines from the end of an agent run's output its waiting card looks at for the prompt. */
+const PROMPT_LINES = 14;
+
+/** The step an agent CLI marks with its bullet ("● Moving 14 notes…"): the one that asked. */
+const AGENT_STEP = /^\s*[●⏺•]/;
+
+/** What a waiting card shows of an agent's output (plain lines): of the last `PROMPT_LINES`, from
+ *  the last step the agent marked — the one that asks — else from the first that is not blank. */
+export function promptLines(lines: readonly string[]): string[] {
+  const end = lines.slice(-PROMPT_LINES);
+  while (end.length > 0 && (end.at(-1) ?? "").trim() === "") end.pop();
+  let first = -1;
+  for (let i = end.length - 1; i >= 0 && first === -1; i--) if (AGENT_STEP.test(end[i] ?? "")) first = i;
+  if (first === -1) first = end.findIndex((line) => line.trim() !== "");
+  return first === -1 ? [] : end.slice(first);
+}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ActiveRun, RunRecord, RunView } from "../scheduler/model";
-import { byDay, dayWords, filterCounts, keeps, runDuration, runLook, runTime, shortDuration, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
+import { promptLines, byDay, dayWords, filterCounts, keeps, runDuration, runLook, runTime, shortDuration, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
 
 /** Tue 17 Nov 2026, 12:48 — the prototype's "now". */
 const NOW = new Date(2026, 10, 17, 12, 48).getTime();
@@ -58,6 +58,8 @@ const active = (extra: Partial<ActiveRun> = {}): ActiveRun => ({
   ...extra,
 });
 
+const AGENT = { agent: "claude", name: "claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-17T11:31:00.000Z", exit: "/exit", exitSentAt: null, waitedMs: 0 };
+
 describe("a run's status: tone, words, help, pill, chip", () => {
   const cases: [string, RunView, Partial<ReturnType<typeof runLook>>][] = [
     ["done", record(), { tone: "ok", words: "done", help: "st.done", label: "Done", pill: "ok", cardTone: undefined, filter: null }],
@@ -68,6 +70,12 @@ describe("a run's status: tone, words, help, pill, chip", () => {
       { tone: "danger", words: "stopped: time limit, 45 min", help: "st.limit", label: "Stopped: time limit", pill: "danger", cardTone: "danger", filter: "failed" },
     ],
     ["running", active(), { tone: "accent", live: true, words: "running", help: "st.running", label: "Running", filter: "active" }],
+    [
+      "waiting for you at a prompt",
+      active({ kind: "agent", agent: { ...AGENT, waiting: { prompt: "permission", since: at(17, 12, 46) } } }),
+      { tone: "warning", live: false, words: "waiting for you", help: "st.waiting", label: "Waiting for you", pill: "warning", cardTone: "warning", filter: "active" },
+    ],
+    ["an agent running, not waiting", active({ kind: "agent", agent: { ...AGENT, waiting: null } }), { tone: "accent", live: true, words: "running", help: "st.running" }],
     ["queued", active({ state: "queued", startedAt: null, waits: { kind: "slot", ahead: 1 } }), { tone: "hollow", words: "queued · 1 ahead", help: "st.queued", label: "Queued", filter: "active" }],
     ["missed-waiting", active({ state: "missed-waiting", startedAt: null }), { tone: "warning", words: "missed · waiting for you", help: "st.missed", label: "Missed · waiting for you", pill: "warning", cardTone: "warning", filter: "missed" }],
     ["skipped", record({ state: "skipped", reason: "previous run still going", startedAt: null, durationMs: null }), { tone: "hollow", words: "skipped · previous run still going", help: "st.skipped", label: "Skipped", filter: "missed" }],
@@ -87,6 +95,11 @@ describe("a run's status: tone, words, help, pill, chip", () => {
       git: { op: "commit-push", job: "K", at: "2026-11-17T12:00:00Z", results: [{ repo: "K", path: "/k", op: "commit-push", status: "done", reason: null, steps: [], commit: "a1b2c3d4e5f6" }] },
     });
     expect(runLook(git).words).toBe("done · a1b2c3d");
+  });
+
+  it("a waiting run says it waits, over a long-run warning too", () => {
+    const long = active({ kind: "agent", agent: { ...AGENT, waiting: { prompt: "trust", since: NOW } }, startedAt: NOW - 4 * 3_600_000, warnedAt: NOW - 60_000 });
+    expect(runLook(long, NOW).words).toBe("waiting for you");
   });
 
   it("a long-run warning asks whether the run is still expected, until it is dismissed", () => {
@@ -182,5 +195,18 @@ describe("what started a run, and what a queued one waits for", () => {
     expect(waitsSentence({ kind: "warm-up", until: null }, NOW)).toBe("It waits for the warm-up after login or wake: the services start first.");
     expect(waitsSentence({ kind: "previous-run" }, NOW)).toBe("The job's previous run is still going. This one starts when it finishes.");
     expect(waitsSentence(null, NOW)).toBe("It is about to start.");
+  });
+});
+
+describe("what a waiting card shows of the agent's output", () => {
+  it("starts at the step that asks, and drops the blank end", () => {
+    expect(promptLines(["● Read 14 files", "● Moving 14 notes", "", "  Do you want to proceed?", "  ❯ 1. Yes", "", ""])).toEqual(["● Moving 14 notes", "", "  Do you want to proceed?", "  ❯ 1. Yes"]);
+  });
+
+  it("without a marked step, starts at the first line that is not blank, within the last 14", () => {
+    const lines = ["", ...Array.from({ length: 20 }, (_, i) => `line ${i}`)];
+    expect(promptLines(lines)).toEqual(lines.slice(-14));
+    expect(promptLines(["", "", "Press enter to confirm"])).toEqual(["Press enter to confirm"]);
+    expect(promptLines(["", " "])).toEqual([]);
   });
 });

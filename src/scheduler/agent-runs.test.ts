@@ -6,24 +6,25 @@
 
 process.env.TZ = "Europe/Madrid";
 
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
+import type { NoticeParams } from "pomade-kit/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentsError } from "../integrations/agents";
 import type { RunFinishedPayload, RunStartedPayload } from "../integrations/runner-api";
 import { checkJobs } from "../jobs/check";
 import type { JobsSnapshot } from "../jobs/model";
-import { recordsFolderOf, stateFolderOf } from "../locations";
+import { recordsFolderOf, runsRecordPath, stateFolderOf } from "../locations";
 import { AGENT_EXIT_WAIT_MS, agentArgv, agentEnd, lookupWindow, pickSession } from "./agent-runs";
 import { createHistory, keepOutputLog } from "./history";
-import type { ActiveRun, AgentRun, RunRecord } from "./model";
+import { parseRunRecord, type ActiveRun, type AgentRun, type RunRecord } from "./model";
 import { runFinishedPayload, runStartedPayload } from "./run-events";
-import { createRuns, type Runs } from "./runs";
+import { createRuns, fileRunsStore, type Runs } from "./runs";
 import { FakeAgents, FakeSessions, FakeTurns, memoryStore, memorySwitch } from "./runs-fixture";
-import { DEFAULT_SETTINGS } from "./settings";
+import { DEFAULT_SETTINGS, type Settings } from "./settings";
 
 const agentFile = (extra = "", body = "Write my morning summary."): string => `---\nkind: agent\nname: Morning summary\nfolder: Projects/x\nagent: claude\n${extra}schedule:\n  daily: { at: 7:00 }\n---\n${body}\n`;
 
@@ -75,6 +76,8 @@ describe("agent runs", () => {
   let lines: string[];
   let runs: Runs;
   let store: ReturnType<typeof memoryStore>;
+  let notices: NoticeParams[];
+  let settings: Settings;
 
   function load(): void {
     snapshot = checkJobs(
@@ -87,14 +90,14 @@ describe("agent runs", () => {
     runs = createRuns({
       sessions,
       jobs: () => snapshot,
-      settings: () => DEFAULT_SETTINGS,
+      settings: () => settings,
       servicesSettled: () => true,
       clock: { now: () => now },
       log: (line) => lines.push(line),
       history: createHistory(recordsFolderOf(dir), stateFolderOf(dir), () => undefined),
       store,
       switchStore: memorySwitch(),
-      post: () => undefined,
+      post: (notice) => notices.push(notice),
       projectPath: () => null,
       agents: () => (connected ? agents : null),
       turns,
@@ -130,6 +133,8 @@ describe("agent runs", () => {
     started = [];
     finished = [];
     lines = [];
+    notices = [];
+    settings = DEFAULT_SETTINGS;
     await open();
   });
 
@@ -153,7 +158,7 @@ describe("agent runs", () => {
     const cwd = await realpath(join(workspace, "Projects/x"));
     const line = `claude '--session-id' '${sessionId}' 'Write my morning summary.'`;
     expect(spawn?.command).toMatchObject({ title: "Morning summary", argv: ["/bin/zsh", "-l", "-i", "-c", line], cwd, background: true });
-    expect(run.agent).toEqual({ agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId, cwd, startedAt: new Date(now).toISOString(), exit: "/exit", exitSentAt: null });
+    expect(run.agent).toEqual({ agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId, cwd, startedAt: new Date(now).toISOString(), exit: "/exit", exitSentAt: null, waiting: null, waitedMs: 0 });
     expect(turns.watched()).toEqual([run.session]);
   });
 
@@ -255,6 +260,128 @@ describe("agent runs", () => {
     expect(sessions.spawned).toEqual([]);
   });
 
+  const minutes = (n: number): void => {
+    now = new Date(now.getTime() + n * 60_000);
+  };
+
+  it("waits for you at a permission prompt — a Needs-you item and one notice that opens it at the prompt — and goes on once answered", async () => {
+    const run = await runNow();
+    const session = run.session ?? "";
+    minutes(2);
+    turns.waits(session, "permission");
+    await runs.tick();
+    const waitingSince = now.getTime();
+    expect(runs.active()[0]?.agent?.waiting).toEqual({ prompt: "permission", since: waitingSince });
+    expect(runs.needsYou()).toEqual([{ id: `waiting:summary:${run.run}`, kind: "waiting", job: "summary", name: "Morning summary", project: null, run: run.run, prompt: "permission", at: waitingSince, detail: "waiting for approval" }]);
+    expect(notices).toEqual([
+      {
+        title: "Morning summary needs your approval",
+        body: "The agent waits at a permission prompt. Open it to answer; the time limit is paused meanwhile.",
+        action: { kind: "openApp", route: `prompt/summary/${run.run}` },
+      },
+    ]);
+    // The same prompt read again — a resync, a restart — is the same wait: no second notice.
+    turns.waits(session, "permission");
+    await runs.tick();
+    expect(notices).toHaveLength(1);
+    minutes(5);
+    turns.waits(session, null);
+    await runs.tick();
+    expect(runs.active()[0]?.agent).toMatchObject({ waiting: null, waitedMs: 5 * 60_000 });
+    expect(runs.needsYou()).toEqual([]);
+    expect(turns.typed).toEqual([]);
+    turns.done(session);
+    await runs.tick();
+    expect(turns.typed).toEqual([{ session, text: "/exit" }]);
+    sessions.end(session, "exited", 0);
+    await runs.tick();
+    expect(finished[0]).toMatchObject({ state: "done", agent: { waiting: null, waitedMs: 5 * 60_000 } });
+  });
+
+  it("pauses the time limit while it waits for you", async () => {
+    files = { "summary.md": agentFile("time-limit: 10m\n") };
+    load();
+    const run = await runNow();
+    const session = run.session ?? "";
+    minutes(4);
+    turns.waits(session, "permission");
+    await runs.tick();
+    minutes(30);
+    await runs.tick();
+    expect(sessions.stops).toEqual([]);
+    turns.waits(session, null);
+    await runs.tick();
+    minutes(5);
+    await runs.tick();
+    expect(sessions.stops).toEqual([]);
+    minutes(1);
+    await runs.tick();
+    expect(sessions.stops).toEqual([{ id: session, reason: "time-limit" }]);
+  });
+
+  it("keeps a trust prompt that follows a permission prompt as one wait, and a run that ends at a prompt keeps how long it waited", async () => {
+    const run = await runNow();
+    const session = run.session ?? "";
+    turns.waits(session, "trust");
+    await runs.tick();
+    const since = now.getTime();
+    minutes(1);
+    turns.waits(session, "permission");
+    await runs.tick();
+    expect(runs.active()[0]?.agent?.waiting).toEqual({ prompt: "permission", since });
+    expect(notices).toHaveLength(1);
+    minutes(2);
+    sessions.end(session, "stopped-by-you", 130, 180_000, "SIGINT");
+    await runs.tick();
+    expect(finished[0]).toMatchObject({ state: "stopped-by-you", agent: { waiting: null, waitedMs: 3 * 60_000 } });
+    expect(runs.needsYou()).toEqual([]);
+  });
+
+  it("frees its low-priority slot while it waits, and goes on past the cap once answered", async () => {
+    settings = { ...DEFAULT_SETTINGS, maxLowPriorityRuns: 1 };
+    files = { ...files, "other.md": agentFile().replace("name: Morning summary", "name: Other") };
+    load();
+    const run = await runNow();
+    const other = await runs.runNow("other");
+    expect(other.ok && "run" in other && other.run.state).toBe("queued");
+    turns.waits(run.session ?? "", "permission");
+    await runs.tick();
+    expect(runs.active().map((candidate) => [candidate.job, candidate.state])).toEqual([
+      ["summary", "running"],
+      ["other", "running"],
+    ]);
+    turns.waits(run.session ?? "", null);
+    await runs.tick();
+    expect(runs.active().filter((candidate) => candidate.state === "running")).toHaveLength(2);
+  });
+
+  it("still waits for you after a restart, with no second notice", async () => {
+    const run = await runNow();
+    turns.waits(run.session ?? "", "permission");
+    await runs.tick();
+    await runs.close();
+    turns = new FakeTurns();
+    await open();
+    await runs.tick();
+    expect(turns.watched()).toEqual([run.session]);
+    turns.waits(run.session ?? "", "permission");
+    await runs.tick();
+    expect(runs.needsYou().map((item) => item.kind)).toEqual(["waiting"]);
+    expect(notices).toHaveLength(1);
+  });
+
+  it("reads a run going and a record of an older build, with no wait fields, as ones that never waited", async () => {
+    const run = await runNow();
+    const { waiting: _waiting, waitedMs: _waitedMs, ...older } = run.agent ?? ({} as AgentRun);
+    const records = recordsFolderOf(dir);
+    await mkdir(dirname(runsRecordPath(records)), { recursive: true });
+    await writeFile(runsRecordPath(records), JSON.stringify({ active: [{ ...run, agent: older }], last: {} }));
+    const [going] = (await fileRunsStore(records, stateFolderOf(dir), () => undefined).load()).active;
+    expect(going?.agent).toEqual({ ...older, waiting: null, waitedMs: 0 });
+    const record = parseRunRecord({ ...run, state: "done", action: null, reason: null, endedAt: 1, durationMs: 1, exitCode: 0, signal: null, lastLines: [], git: null, agent: older });
+    expect(record?.agent).toEqual({ ...older, waiting: null, waitedMs: 0 });
+  });
+
   it("follows a running agent run's turns again after a restart", async () => {
     const run = await runNow();
     await runs.close();
@@ -267,7 +394,7 @@ describe("agent runs", () => {
 });
 
 describe("agent run rules", () => {
-  const agent: AgentRun = { agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-18T11:00:00.000Z", exit: "/exit", exitSentAt: null };
+  const agent: AgentRun = { agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-18T11:00:00.000Z", exit: "/exit", exitSentAt: null, waiting: null, waitedMs: 0 };
   const end = { state: "done" as const, reason: null, exitCode: 0, signal: null, limitHit: null };
 
   it("runs the line in the shell, interactive and login", () => {

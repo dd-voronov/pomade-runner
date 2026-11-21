@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { APP_TAB_KEY_RE } from "pomade-kit/protocol";
 
-import { editRoute, jobsRoute, newRoute, outputRoute, outputTab, outputTabKey, parseRoute, runRoute } from "../integrations/runner-api";
+import { editRoute, jobsRoute, newRoute, outputRoute, outputTab, outputTabKey, parseRoute, promptRoute, runRoute } from "../integrations/runner-api";
 import { MAX_ENCODED_JOB_ID } from "../keeper/ids";
 import { clockTime, dayTime, durationWords, isActiveRun, isRunsReport, runWords, type ActiveRun, type RunRecord } from "./model";
 
@@ -24,9 +24,12 @@ const active: ActiveRun = {
 const queued: ActiveRun = { ...active, state: "queued", startedAt: null, session: null, log: null };
 const record: RunRecord = { ...base, state: "failed", action: null, reason: null, startedAt: 1, endedAt: 2, durationMs: 1, exitCode: 1, signal: null, log: "/o.log", lastLines: [], git: null, limitHit: null };
 
+const AGENT = { agent: "claude", name: "Claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: null, cwd: "/ws", startedAt: "2026-11-17T12:00:00.000Z", exit: "/exit", exitSentAt: null, waiting: null, waitedMs: 0 };
+
 describe("runs in words", () => {
   it("says each state", () => {
     expect(runWords(active)).toBe("running");
+    expect(runWords({ ...active, kind: "agent", agent: { ...AGENT, waiting: { prompt: "permission", since: 2 } } })).toBe("waiting for you");
     expect(runWords({ ...queued, waits: { kind: "previous-run" } })).toBe("queued · after the previous run");
     expect(runWords({ ...queued, waits: { kind: "slot", ahead: 1 } })).toBe("queued · 1 ahead");
     expect(runWords({ ...queued, waits: { kind: "switch", position: "pause-low" } })).toBe("queued · held · Pause low-priority");
@@ -86,6 +89,8 @@ describe("routes", () => {
     expect(outputRoute("Café", "r1")).toBe("output/Caf_c3_a9/r1");
     expect(parseRoute(runRoute("coda/web", "20261117-120000-abcdef"))).toEqual({ view: "run", job: "coda/web", run: "20261117-120000-abcdef" });
     expect(parseRoute(outputRoute("Café", "r1"))).toEqual({ view: "output", job: "Café", run: "r1" });
+    expect(promptRoute("coda/web", "r1")).toBe("prompt/coda.web/r1");
+    expect(parseRoute(promptRoute("coda/web", "r1"))).toEqual({ view: "prompt", job: "coda/web", run: "r1" });
     expect(parseRoute("history")).toEqual({ view: "history" });
     expect(parseRoute("services")).toEqual({ view: "services" });
     expect(parseRoute("settings")).toEqual({ view: "settings" });
@@ -126,7 +131,7 @@ describe("routes", () => {
 describe("isRunsReport", () => {
   it("checks a runs report's shape", () => {
     const report = {
-      active: [active],
+      active: [active, { ...active, kind: "agent", agent: { ...AGENT, waiting: { prompt: "trust", since: 2 }, waitedMs: 5 } }],
       nextUp: [{ job: "a", name: "A", project: null, at: 5, held: true }],
       jobs: [{ job: "a", next: null, finished: true, last: record }],
       needsYou: [
@@ -134,6 +139,7 @@ describe("isRunsReport", () => {
         { id: "service-failed:w", kind: "service-failed", job: "w", name: "W", project: null, at: 1, detail: "x" },
         { id: "missed:a", kind: "missed", job: "a", name: "A", project: null, run: "r", at: 1, detail: "x" },
         { id: "long-run:a:r", kind: "long-run", job: "a", name: "A", project: null, run: "r", at: 2, startedAt: 1, detail: "x" },
+        { id: "waiting:a:r", kind: "waiting", job: "a", name: "A", project: null, run: "r", prompt: "permission", at: 2, detail: "x" },
       ],
       switch: { position: "pause-low", since: 3 },
     };
@@ -146,6 +152,9 @@ describe("isRunsReport", () => {
       { ...report, needsYou: [{ ...report.needsYou[0], count: "1" }] },
       { ...report, needsYou: [{ ...report.needsYou[1], kind: "other" }] },
       { ...report, needsYou: [{ ...report.needsYou[3], startedAt: null }] },
+      { ...report, needsYou: [{ ...report.needsYou[4], prompt: "other" }] },
+      { ...report, active: [{ ...active, agent: { ...AGENT, waiting: { prompt: "permission" } } }] },
+      { ...report, active: [{ ...active, agent: { ...AGENT, waitedMs: null } }] },
       { ...report, switch: { position: "off", since: null } },
       { ...report, switch: undefined },
       { active: [] },

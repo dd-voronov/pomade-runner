@@ -116,6 +116,14 @@ function NeedCard({ host, item }: { host: HostClient; item: NeedsYouItem }): Rea
         </>
       );
       break;
+    case "waiting":
+      title = () => openRoute(runRoute(item.job, item.run));
+      actions = (
+        <Button size="sm" variant="primary" onClick={() => openSession(sessionIdOf({ kind: "run", job: item.job, run: item.run }) ?? "")}>
+          Open at the prompt
+        </Button>
+      );
+      break;
     case "long-run": {
       const open = (): void => openSession(sessionIdOf({ kind: "run", job: item.job, run: item.run }) ?? "");
       title = () => openRoute(runRoute(item.job, item.run));

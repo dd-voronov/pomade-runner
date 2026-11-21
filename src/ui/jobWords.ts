@@ -7,7 +7,7 @@ import { newRoute } from "../integrations/runner-api";
 import type { Job, ServiceJob } from "../jobs/model";
 import { GIT_OPERATION_WORDS } from "../jobs/words";
 import type { ServiceStatus } from "../keeper/model";
-import { runWords, waitsWords, type ActiveRun, type JobRuns, type RunRecord } from "../scheduler/model";
+import { runWords, waitingAt, waitsWords, type ActiveRun, type JobRuns, type RunRecord } from "../scheduler/model";
 import type { HelpKey } from "./help";
 import type { DotTone } from "./kit";
 import { serviceLook, shortClock, upWords, whenWords } from "./serviceWords";
@@ -72,8 +72,12 @@ function recordLook(record: RunRecord, now: number): LastLook {
 function activeLook(run: ActiveRun, now: number): LastLook {
   const base = { subHelp: null, run: run.run };
   switch (run.state) {
-    case "running":
-      return { ...base, tone: "accent", live: true, words: "running", help: "st.running", sub: `started ${shortClock(run.startedAt ?? run.dueAt)} · ${upWords(now - (run.startedAt ?? run.dueAt))}` };
+    case "running": {
+      const sub = `started ${shortClock(run.startedAt ?? run.dueAt)} · ${upWords(now - (run.startedAt ?? run.dueAt))}`;
+      return waitingAt(run) === null
+        ? { ...base, tone: "accent", live: true, words: "running", help: "st.running", sub }
+        : { ...base, tone: "warning", live: false, words: "waiting for you", help: "st.waiting", sub };
+    }
     case "queued":
       return { ...base, tone: "hollow", live: false, words: "queued", help: "st.queued", sub: waitsWords(run.waits) };
     case "missed-waiting":

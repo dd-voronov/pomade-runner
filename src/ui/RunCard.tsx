@@ -4,11 +4,25 @@ import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
 import { DISMISS_METHOD, editRoute, MISSED_METHOD, outputTab, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute } from "../integrations/runner-api";
-import { isMissedChoiceResult, isRunActionResult, isRunStopResult, LAST_LINES, limitWords, plainLines, TRIGGER_WORDS, type ActiveRun, type NeedsYouItem, type RunRecord, type RunView } from "../scheduler/model";
+import {
+  isMissedChoiceResult,
+  isRunActionResult,
+  isRunStopResult,
+  LAST_LINES,
+  limitWords,
+  plainLines,
+  TRIGGER_WORDS,
+  waitingAt,
+  type ActiveRun,
+  type AgentWait,
+  type NeedsYouItem,
+  type RunRecord,
+  type RunView,
+} from "../scheduler/model";
 import { MessageText } from "./MessageText";
 import { Button, Dialog, DialogBody, DialogFoot, DialogHead, Help, Icon, LinkButton, Pill, useToast } from "./kit";
 import styles from "./RunCard.module.css";
-import { dayWords, isRecord, KIND_WORDS, runDuration, runLook, runTime, shortDuration, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
+import { dayWords, isRecord, KIND_WORDS, promptLines, runDuration, runLook, runTime, shortDuration, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
 import { shortClock, upWords } from "./serviceWords";
 import { aheadMoment } from "./panelWords";
 import { RunAtField } from "./RunAtField";
@@ -153,6 +167,7 @@ function RunCard({ host, view, open, close }: { host: HostClient; view: RunView;
 
   const record = isRecord(view) ? view : null;
   const started = view.startedAt !== null;
+  const wait = view.state === "running" ? waitingAt(view) : null;
   let foot: React.ReactNode;
   if (view.state === "missed-waiting") {
     foot = (
@@ -172,7 +187,7 @@ function RunCard({ host, view, open, close }: { host: HostClient; view: RunView;
       <>
         {session !== null && (
           <Button variant="primary" onClick={() => openTerminal(session)}>
-            Open terminal
+            {wait === null ? "Open terminal" : "Open at the prompt"}
           </Button>
         )}
         <Button variant="danger" onClick={stop}>
@@ -220,6 +235,8 @@ function RunCard({ host, view, open, close }: { host: HostClient; view: RunView;
             <MissedBody view={view} now={now} runAt={runAt} setRunAt={setRunAt} onSet={(at) => choose({ choice: "run-at", at })} onClose={() => setRunAt(null)} />
           ) : view.state === "queued" ? (
             <p data-testid="run-waits">{waitsSentence(view.waits, now)}</p>
+          ) : view.state === "running" && wait !== null ? (
+            <WaitingBody host={host} view={view} wait={wait} />
           ) : view.state === "running" ? (
             <RunningBody host={host} view={view} />
           ) : record === null ? null : record.action !== null || !started ? (
@@ -374,6 +391,28 @@ function RunningBody({ host, view }: { host: HostClient; view: ActiveRun }): Rea
   const lines = plainLines(output.value.text);
   if (lines.at(-1) === "") lines.pop();
   return <Lines lines={lines.slice(-LAST_LINES)} title="Latest output" testId="run-last-lines" />;
+}
+
+/** An agent run that waits for you: what it waits at — the end of its output, the prompt — and
+ *  that its time limit is paused. */
+function WaitingBody({ host, view, wait }: { host: HostClient; view: ActiveRun; wait: AgentWait }): React.JSX.Element {
+  const output = useRunOutput(host, view.job, view.run, true);
+  const lines = output.status === "ready" ? plainLines(output.value.text) : [];
+  return (
+    <>
+      <p data-testid="run-waits">
+        {wait.prompt === "permission" ? "The agent stopped at a permission prompt and waits for your answer." : "The agent stopped to ask whether it may trust its folder, and waits for your answer."}
+      </p>
+      {output.status === "ready" ? (
+        <Lines lines={promptLines(lines)} title="Waiting at" testId="run-prompt" />
+      ) : (
+        <p className={styles.note}>{output.status === "loading" ? "Reading its output…" : output.status === "failed" ? output.message : "Runner's scheduler is not running."}</p>
+      )}
+      <p className={styles.note}>
+        The time limit is paused while it waits. <Help k="st.waiting" />
+      </p>
+    </>
+  );
 }
 
 const STEP_CLASS = { done: styles.yes, failed: styles.no, skipped: styles.skip } as const;

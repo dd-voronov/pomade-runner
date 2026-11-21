@@ -144,6 +144,8 @@ export type RunnerRoute =
   | { view: "run"; job: string; run: string }
   /** A run's full output. */
   | { view: "output"; job: string; run: string }
+  /** An agent run waiting for you: its terminal tab opens at the prompt, the Runner tab at its card. */
+  | { view: "prompt"; job: string; run: string }
   /** The job form, for a new job; `project` is the project it starts in, `null` for none. */
   | { view: "new"; project: string | null }
   /** The job form, editing a job. */
@@ -157,6 +159,12 @@ export function jobsRoute(job: string): string {
 /** A run's result card: `run/<encoded job id>/<run id>` — what a run's notice opens. */
 export function runRoute(job: string, run: string): string {
   return `run/${encodeJobId(job)}/${run}`;
+}
+
+/** An agent run waiting for you at a prompt: `prompt/<encoded job id>/<run id>` — what its notice
+ *  opens. The Runner tab opens the run's terminal tab, at the prompt, and goes to the run's card. */
+export function promptRoute(job: string, run: string): string {
+  return `prompt/${encodeJobId(job)}/${run}`;
 }
 
 /** A run's full output: `output/<encoded job id>/<run id>`. */
@@ -209,10 +217,10 @@ export function parseRoute(route: string): RunnerRoute {
   if (route === "settings") return { view: "settings" };
   const at = /^jobs\/([^/]+)$/.exec(route);
   if (at !== null) return { view: "jobs", job: decodeJobId(at[1] ?? "") };
-  const match = /^(run|output)\/([^/]+)\/([^/]+)$/.exec(route);
+  const match = /^(run|output|prompt)\/([^/]+)\/([^/]+)$/.exec(route);
   const job = match === null ? null : decodeJobId(match[2] ?? "");
   if (match === null || job === null) return { view: "jobs", job: null };
-  return { view: match[1] === "run" ? "run" : "output", job, run: match[3] ?? "" };
+  return { view: match[1] === "run" ? "run" : match[1] === "output" ? "output" : "prompt", job, run: match[3] ?? "" };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

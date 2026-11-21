@@ -6,7 +6,7 @@ import type { NeedsYouItem } from "../scheduler/model";
 import type { HelpKey } from "./help";
 import type { DotTone } from "./kit";
 import { aheadWords } from "./runWords";
-import { shortClock } from "./serviceWords";
+import { shortClock, upWords } from "./serviceWords";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
@@ -69,6 +69,8 @@ export function needLook(item: NeedsYouItem, now: number): NeedLook {
       return { tone: "danger", help: "need.crashloop", when: pastWhen(item.at, now), text: "Crashed 5× in 1 min — gave up." };
     case "missed":
       return { tone: "warning", help: "need.waitforme", when: pastWhen(item.at, now), text: "Missed — it waits for you to pick a time." };
+    case "waiting":
+      return { tone: "warning", help: "need.approval", when: upWords(now - item.at), text: item.prompt === "permission" ? "Waiting for approval at a permission prompt." : "Waiting for you to trust its folder." };
     case "long-run": {
       const ran = now - item.startedAt;
       const hours = Math.floor(ran / 3_600_000);

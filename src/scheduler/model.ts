@@ -83,6 +83,22 @@ export interface AgentRun {
   exit: string;
   /** When Runner typed `exit` once the turn was done (epoch ms, the scheduler's clock); `null` before. */
   exitSentAt: number | null;
+  /** The prompt the agent waits at for the person now; `null` while it does not wait. */
+  waiting: AgentWait | null;
+  /** How long its earlier waits for the person lasted (ms): left out of its time limit. */
+  waitedMs: number;
+}
+
+/** What an agent waits at: approval of a tool call, or trust for the folder it started in — the
+ *  kit's `AgentPrompt` — and since when (epoch ms, the scheduler's clock). */
+export interface AgentWait {
+  prompt: "permission" | "trust";
+  since: number;
+}
+
+/** An agent run going that waits for the person at a prompt. */
+export function waitingAt(run: { agent: AgentRun | null }): AgentWait | null {
+  return run.agent?.waiting ?? null;
 }
 
 /** What every run carries, going or ended. */
@@ -199,7 +215,8 @@ export interface JobRuns {
 }
 
 /** Something Runner cannot settle alone: a run that failed, a service that gave up, a missed run of
- *  a `wait-for-me` job, a run going longer than the long-run warning, a job the loop guard paused. */
+ *  a `wait-for-me` job, an agent run waiting for the person at a prompt, a run going longer than the
+ *  long-run warning, a job the loop guard paused. */
 export type NeedsYouItem =
   | {
       /** `run-failed:<job>`: one per job. */
@@ -253,6 +270,20 @@ export type NeedsYouItem =
       at: number;
       /** When the run started (epoch ms). */
       startedAt: number;
+      detail: string;
+    }
+  | {
+      /** `waiting:<job>:<run>`: an agent run at a permission or trust prompt. */
+      id: string;
+      kind: "waiting";
+      job: string;
+      name: string;
+      project: string | null;
+      run: string;
+      /** What it waits at. */
+      prompt: AgentWait["prompt"];
+      /** When it began to wait (epoch ms). */
+      at: number;
       detail: string;
     }
   | {
@@ -379,10 +410,16 @@ function isRunCause(value: unknown): value is RunCause {
   }
 }
 
+function isAgentWait(value: unknown): value is AgentWait {
+  return isRecord(value) && (value.prompt === "permission" || value.prompt === "trust") && finite(value.since);
+}
+
 function isAgentRun(value: unknown): value is AgentRun {
   if (!isRecord(value)) return false;
-  const { agent, name, provider, mode, modeName, sessionId, cwd, startedAt, exit, exitSentAt } = value;
+  const { agent, name, provider, mode, modeName, sessionId, cwd, startedAt, exit, exitSentAt, waiting, waitedMs } = value;
   return (
+    (waiting === null || isAgentWait(waiting)) &&
+    finite(waitedMs) &&
     typeof agent === "string" &&
     typeof name === "string" &&
     (provider === "claude" || provider === "codex") &&
@@ -476,10 +513,15 @@ export function isRunRecord(value: unknown): value is RunRecord {
   );
 }
 
+/** A run's agent as a file keeps it; a field a record of an older build lacks gets its default. */
+export function withAgentDefaults(agent: unknown): unknown {
+  return isRecord(agent) ? { waiting: null, waitedMs: 0, ...agent } : (agent ?? null);
+}
+
 /** A history record as a file keeps it; a field a record of an older build lacks gets its default. */
 export function parseRunRecord(value: unknown): RunRecord | null {
   if (!isRecord(value)) return null;
-  const record = { cause: null, action: null, git: null, limitHit: null, agent: null, ...value };
+  const record = { cause: null, action: null, git: null, limitHit: null, ...value, agent: withAgentDefaults(value.agent) };
   return isRunRecord(record) ? record : null;
 }
 
@@ -498,6 +540,8 @@ function isNeedsYouItem(value: unknown): value is NeedsYouItem {
       return true;
     case "missed":
       return typeof value.run === "string";
+    case "waiting":
+      return typeof value.run === "string" && (value.prompt === "permission" || value.prompt === "trust");
     case "long-run":
       return typeof value.run === "string" && finite(value.startedAt);
     case "loop-paused":
@@ -639,7 +683,7 @@ export function runWords(view: RunView): string {
     case "queued":
       return `queued · ${waitsWords(view.waits)}`;
     case "running":
-      return "running";
+      return waitingAt(view) === null ? "running" : "waiting for you";
     case "done":
       return "action" in view && view.action !== null ? ACTION_DONE_WORDS[view.action] : "done";
     case "stopped-by-you":

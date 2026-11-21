@@ -45,7 +45,15 @@ function fates(active: ActiveRun[], s: QueueState = state()): Record<string, unk
   return Object.fromEntries(active.filter((r) => r.state === "queued").map((r) => [r.job, plan.start.includes(r) ? "start" : plan.waits.get(r)]));
 }
 
+const waitingAgent = { agent: "claude", name: "Claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: null, cwd: "/ws", startedAt: "", exit: "/exit", exitSentAt: null, waiting: { prompt: "permission" as const, since: 0 }, waitedMs: 0 };
+
 describe("the queue", () => {
+  it("an agent run waiting for you at a prompt holds no slot; answered, it counts again", () => {
+    const waiting = run("w", "running", { kind: "agent", agent: waitingAgent });
+    expect(fates([waiting, run("a", "running"), run("b", "queued")])).toEqual({ b: "start" });
+    expect(fates([{ ...waiting, agent: { ...waitingAgent, waiting: null } }, run("a", "running"), run("b", "queued")])).toEqual({ b: { kind: "slot", ahead: 1 } });
+  });
+
   it("three low-priority runs due at once: two start, the third is queued · 1 ahead; then 2, 3 ahead", () => {
     expect(fates([run("a", "queued"), run("b", "queued"), run("c", "queued")])).toEqual({ a: "start", b: "start", c: { kind: "slot", ahead: 1 } });
     expect(fates([run("a", "queued"), run("b", "queued"), run("c", "queued"), run("d", "queued"), run("e", "queued")])).toEqual({

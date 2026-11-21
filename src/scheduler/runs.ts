@@ -82,8 +82,10 @@ import {
   runTriggerWords,
   SWITCH_WORDS,
   waitsWords,
+  withAgentDefaults,
   type ActiveRun,
   type AgentRun,
+  type AgentWait,
   type JobRuns,
   type MissedChoice,
   type MissedChoiceResult,
@@ -99,7 +101,7 @@ import {
   type SwitchPosition,
   type SwitchState,
 } from "./model";
-import { longRunNotice, loopNotice, missedNotice } from "./needs-you";
+import { longRunNotice, loopNotice, missedNotice, waitingNotice, WAIT_WORDS } from "./needs-you";
 import { holds, planQueue } from "./queue";
 import type { Settings } from "./settings";
 import type { SwitchStore } from "./switch";
@@ -147,7 +149,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function parseActiveRun(value: unknown): ActiveRun | null {
   if (!isRecord(value)) return null;
   const kind = typeof value.kind === "string" && Object.hasOwn(KIND_DEFAULTS, value.kind) ? (value.kind as keyof typeof KIND_DEFAULTS) : "script";
-  const run = { lowPriority: KIND_DEFAULTS[kind].lowPriority, cause: null, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false, agent: null, ...value };
+  const run = { lowPriority: KIND_DEFAULTS[kind].lowPriority, cause: null, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false, ...value, agent: withAgentDefaults(value.agent) };
   return isActiveRun(run) ? run : null;
 }
 
@@ -219,10 +221,13 @@ export function runEnv(job: Job, run: string, trigger: RunTrigger, projectPath: 
   return env;
 }
 
-/** How long a run has counted toward its time limit and its long-run warning. Agent runs (E-004)
- *  leave out the time they wait for the person here, so the limit pauses while they wait. */
+/** How long a run has counted toward its time limit and its long-run warning: an agent run leaves
+ *  out the time it waited for the person at a prompt, so the limit pauses while it waits. */
 export function ranFor(run: ActiveRun, now: number): number {
-  return run.startedAt === null ? 0 : Math.max(0, now - run.startedAt);
+  if (run.startedAt === null) return 0;
+  const wait = run.agent?.waiting ?? null;
+  const waited = (run.agent?.waitedMs ?? 0) + (wait === null ? 0 : Math.max(0, now - wait.since));
+  return Math.max(0, now - run.startedAt - waited);
 }
 
 /** The jobs that run once per trigger: scripts, git jobs and agent jobs. */
@@ -619,7 +624,7 @@ export function createRuns(options: RunsOptions): Runs {
         command: spec.line,
         argv: agentArgv(options.shell, spec.line),
         cwd,
-        agent: { agent: agent.id, name: agent.name, provider: agent.provider, mode: mode.id, modeName: mode.name, sessionId: spec.sessionId, cwd, startedAt: new Date().toISOString(), exit: spec.exit, exitSentAt: null },
+        agent: { agent: agent.id, name: agent.name, provider: agent.provider, mode: mode.id, modeName: mode.name, sessionId: spec.sessionId, cwd, startedAt: new Date().toISOString(), exit: spec.exit, exitSentAt: null, waiting: null, waitedMs: 0 },
       };
     } catch (err) {
       return `cannot start — ${errorText(err)}`;
@@ -877,11 +882,39 @@ export function createRuns(options: RunsOptions): Runs {
     }
   }
 
-  /** Follow a running agent run's turns: once the turn is done, its exit command is typed. */
+  /** Follow a running agent run's turns: a prompt it waits at makes it wait for the person; once
+   *  the turn is done, its exit command is typed. */
   function follow(run: ActiveRun, agent: AgentRun): void {
     if (run.session === null || agent.exitSentAt !== null) return;
     const { job, run: id } = run;
-    options.turns.watch(run.session, agent.provider, () => void inLane(async () => endTurn(job, id)));
+    options.turns.watch(run.session, agent.provider, {
+      onTurnDone: () => void inLane(async () => endTurn(job, id)),
+      onWaiting: (prompt) => void inLane(async () => waitAt(job, id, prompt)),
+    });
+  }
+
+  /** An agent run's prompt for the person came (`prompt`) or went (`null`): it waits for you — a
+   *  Needs-you item and a notice — or goes on, its wait left out of its time limit. A prompt that
+   *  turns into another is one wait. */
+  function waitAt(job: string, id: string, prompt: AgentWait["prompt"] | null): void {
+    const run = active.find((candidate) => candidate.job === job && candidate.run === id && candidate.state === "running");
+    if (run?.agent == null) return;
+    const agent = run.agent;
+    const at = now().getTime();
+    const wait = agent.waiting;
+    if (prompt === null) {
+      if (wait === null) return;
+      agent.waitedMs += Math.max(0, at - wait.since);
+      agent.waiting = null;
+      log(`run ${job} ${id}: answered; the agent goes on`);
+    } else {
+      if (wait?.prompt === prompt) return;
+      agent.waiting = { prompt, since: wait?.since ?? at };
+      log(`run ${job} ${id}: waiting for you — ${WAIT_WORDS[prompt]}`);
+      if (wait === null) options.post(waitingNotice(run, prompt));
+    }
+    save();
+    options.onChange();
   }
 
   /** An agent run's turn is done: type its exit command, once. */
@@ -948,6 +981,11 @@ export function createRuns(options: RunsOptions): Runs {
       const age = session?.info.exit == null ? null : Date.now() - session.info.exit.at;
       if (age !== null && age >= 0 && age < LOG_SETTLE_MS) continue;
       if (run.agent !== null) await lookUp(run, run.agent, true);
+      if (run.agent?.waiting != null) {
+        // A run that ended at a prompt: its record keeps how long it waited.
+        run.agent.waitedMs += Math.max(0, now().getTime() - run.agent.waiting.since);
+        run.agent.waiting = null;
+      }
       const scriptEnd = endOf(session, run);
       const end = run.agent === null ? scriptEnd : agentEnd(scriptEnd, run.agent, session?.info.exit?.reason ?? null);
       const durationMs = session?.info.exit == null ? null : Math.max(0, session.info.exit.at - session.info.startedAt);
@@ -1197,9 +1235,11 @@ export function createRuns(options: RunsOptions): Runs {
       const runs = active.flatMap((run): NeedsYouItem[] => {
         const base = { job: run.job, name: run.name, project: run.project, run: run.run };
         if (run.state === "missed-waiting") return [{ id: `missed:${run.job}`, kind: "missed", ...base, at: run.dueAt, detail: `missed ${dayTime(run.dueAt)}` }];
-        if (run.state !== "running" || run.warnedAt === null || run.warningDismissed || run.startedAt === null) return [];
+        const wait = run.state === "running" ? (run.agent?.waiting ?? null) : null;
+        const waiting: NeedsYouItem[] = wait === null ? [] : [{ id: `waiting:${run.job}:${run.run}`, kind: "waiting", ...base, prompt: wait.prompt, at: wait.since, detail: WAIT_WORDS[wait.prompt] }];
+        if (run.state !== "running" || run.warnedAt === null || run.warningDismissed || run.startedAt === null) return waiting;
         const words = durationWords(minutesOf(run.warnedAt - run.startedAt));
-        return [{ id: `long-run:${run.job}:${run.run}`, kind: "long-run", ...base, at: run.warnedAt, startedAt: run.startedAt, detail: `running ${words} — still expected?` }];
+        return [...waiting, { id: `long-run:${run.job}:${run.run}`, kind: "long-run", ...base, at: run.warnedAt, startedAt: run.startedAt, detail: `running ${words} — still expected?` }];
       });
       // A paused job's item shows while its file is there; the pause itself lasts until Resume.
       const present = new Set(options.jobs().jobs.map(entryId));

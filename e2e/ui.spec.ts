@@ -2248,6 +2248,7 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
     { id: "missed:weekly", kind: "missed", job: "weekly", name: "Weekly", project: null, run: "20261117-030000-bbbbbb", at: now - 2 * 86_400_000, detail: "missed" },
     { id: "long-run:lint:20261117-100000-cccccc", kind: "long-run", job: "lint", name: "Lint", project: null, run: "20261117-100000-cccccc", at: now, startedAt: now - minutes(3 * 60 + 2), detail: "running 3 h" },
     { id: "loop-paused:echo", kind: "loop-paused", job: "echo", name: "Echo", project: null, at: now - 86_400_000, detail: "triggered 10× in 10 min — looks like a loop" },
+    { id: "waiting:triage:20261117-123100-dddddd", kind: "waiting", job: "triage", name: "Inbox triage", project: null, run: "20261117-123100-dddddd", prompt: "permission", at: now - minutes(17), detail: "waiting for approval" },
   ];
 
   async function panel(page: Page, report: (now: number) => RunsReport): Promise<void> {
@@ -2271,14 +2272,15 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
 
   test("every kind of item is a card: the dot, the name, the (i), the time, the line of text, and its actions", async ({ page }) => {
     await panel(page, withItems);
-    await expect(app(page).getByTestId("needs-you-item")).toHaveCount(5);
-    await expect(app(page).getByTestId("section-needs-you-head-count")).toHaveText("5");
+    await expect(app(page).getByTestId("needs-you-item")).toHaveCount(6);
+    await expect(app(page).getByTestId("section-needs-you-head-count")).toHaveText("6");
     const look: Record<string, { help: string; words: string; when: RegExp; buttons: string[] }> = {
       "run-failed": { help: "need.failed", words: "Failed: exit 2 · 2×", when: /^\d{1,2}:\d{2}$/, buttons: ["Backup", "", "Open", "Run now", "Dismiss"] },
       "service-failed": { help: "need.crashloop", words: "Crashed 5× in 1 min — gave up.", when: /^\d{1,2}:\d{2}$/, buttons: ["Web", "", "Start", "View output"] },
       missed: { help: "need.waitforme", words: "Missed — it waits for you to pick a time.", when: /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d{1,2}:\d{2}$/, buttons: ["Weekly", "", "Run now", "Run at…", "Skip"] },
       "long-run": { help: "need.longrun", words: "Running 3h — still expected?", when: /^3h 0[23]m$/, buttons: ["Lint", "", "Open", "Stop", "Dismiss"] },
       "loop-paused": { help: "need.loopguard", words: "Paused: triggered 10× in 10 min.", when: /^yesterday$/, buttons: ["Echo", "", "Resume", "Edit job"] },
+      waiting: { help: "need.approval", words: "Waiting for approval at a permission prompt.", when: /^17m$/, buttons: ["Inbox triage", "", "Open at the prompt"] },
     };
     for (const [kind, expected] of Object.entries(look)) {
       const item = card(page, kind);
@@ -2288,7 +2290,7 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
       await expect(item.locator("h2 ~ span")).toHaveText(expected.when);
     }
     // The first action of each card but the long run's is the primary one.
-    for (const kind of ["run-failed", "service-failed", "missed", "loop-paused"]) await expect(card(page, kind).getByRole("button").nth(2)).toHaveCSS("background-color", "rgb(47, 146, 178)");
+    for (const kind of ["run-failed", "service-failed", "missed", "loop-paused", "waiting"]) await expect(card(page, kind).getByRole("button").nth(2)).toHaveCSS("background-color", "rgb(47, 146, 178)");
     await expect(card(page, "long-run").getByRole("button").nth(2)).not.toHaveCSS("background-color", "rgb(47, 146, 178)");
     await shoot(page, "panel-needs-you");
 
@@ -2339,7 +2341,7 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
     await expect(toasts(page)).toHaveText("RunnerBackup started");
     await card(page, "run-failed").getByRole("button", { name: "Dismiss" }).click();
     await expect(card(page, "run-failed")).toHaveCount(0);
-    await expect(count).toHaveText("4");
+    await expect(count).toHaveText("5");
 
     await card(page, "long-run").getByRole("button", { name: "Open" }).click();
     await card(page, "long-run").getByRole("button", { name: "Stop" }).click();
@@ -2347,9 +2349,13 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
     await card(page, "long-run").getByRole("button", { name: "Dismiss" }).click();
     await expect(toasts(page).last()).toHaveText("RunnerOK — it keeps running. No more reminders for this run.");
     await expect(card(page, "long-run")).toHaveCount(0);
-    await expect(count).toHaveText("3");
+    await expect(count).toHaveText("4");
     expect((await calls(page)).map((call) => call.method)).toEqual(["jobs.run", "needsYou.dismiss", "runs.stop", "needsYou.dismiss"]);
     expect((await page.evaluate(() => window.fakeHost.openedTabs))[0]).toEqual({ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "run:lint:20261117-100000-cccccc" }, title: "Lint" });
+
+    // A run waiting for you: Open at the prompt opens its terminal tab; it cannot be dismissed.
+    await card(page, "waiting").getByRole("button", { name: "Open at the prompt" }).click();
+    await expect.poll(async () => (await page.evaluate(() => window.fakeHost.openedTabs))[1]).toEqual({ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "run:triage:20261117-123100-dddddd" }, title: "Inbox triage" });
   });
 
   test("a missed run: Run now, Skip, and Run at… with its field, what the time comes to, and Set", async ({ page }) => {
@@ -2401,7 +2407,7 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
     await expect(app(page).getByTestId("needs-you")).toHaveText("Nothing needs you.");
     await shoot(page, "panel-quiet");
     await page.evaluate((r) => window.setRuns({ report: r, history: [] }), withItems(Date.now()));
-    await expect(count).toHaveText("5");
+    await expect(count).toHaveText("6");
     await expect(count).toHaveCSS("background-color", "rgb(209, 73, 91)");
   });
 
@@ -2491,7 +2497,7 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
         active: [run("backup", "A job with a really long name that cannot fit the panel", "20261120-120000-aaaaaa", {}, now)],
         nextUp: [{ job: "backup", name: "A job with a really long name that cannot fit the panel", project: null, at: now + minutes(40), held: false }],
       }));
-      await expect(app(page).getByTestId("needs-you-item")).toHaveCount(5);
+      await expect(app(page).getByTestId("needs-you-item")).toHaveCount(6);
       const overflow = await app(page).locator("body").evaluate(() => {
         const wide = [...document.querySelectorAll("*")].filter((el) => el.getBoundingClientRect().right > document.documentElement.clientWidth + 0.5 || el.getBoundingClientRect().left < -0.5);
         return { wide: wide.map((el) => el.tagName + "." + el.className), scroll: document.documentElement.scrollWidth - document.documentElement.clientWidth };
@@ -2914,7 +2920,7 @@ test.describe("agent jobs", () => {
     trigger: "scheduled",
     cause: null,
     dueAt: at(7, 0),
-    agent: { agent: "claude", name: "claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: SESSION, cwd: "/fake/workspace", startedAt: new Date(at(7, 0)).toISOString(), exit: "/exit", exitSentAt: at(7, 4) },
+    agent: { agent: "claude", name: "claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: SESSION, cwd: "/fake/workspace", startedAt: new Date(at(7, 0)).toISOString(), exit: "/exit", exitSentAt: at(7, 4), waiting: null, waitedMs: 0 },
     state: "done",
     action: null,
     reason: null,
@@ -3048,6 +3054,49 @@ test.describe("agent jobs", () => {
     await shoot(page, "agent-card-done");
     await dialog.getByRole("button", { name: "Open session" }).click();
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedAgentTabs)).toEqual([{ kind: "agent", tabId: expect.any(String) as unknown as string, projectId: "__workspace__", agentId: "claude", cwd: "", mode: "normal", sessionId: SESSION }]);
+  });
+
+  test("a run waiting for you: the amber card with the prompt it waits at, Open at the prompt opens its terminal tab; its notice's route opens that tab and then the card", async ({ page }) => {
+    const session = `run:morning-summary:${RUN}`;
+    const waiting: ActiveRun = {
+      ...done,
+      state: "running",
+      lowPriority: true,
+      runAt: null,
+      deadline: null,
+      waits: null,
+      startedAt: Date.now() - 17 * 60_000,
+      session,
+      log: "/ud/output/morning-summary/r.log",
+      limitHit: null,
+      warnedAt: null,
+      warningDismissed: false,
+      agent: { ...done.agent!, exitSentAt: null, waiting: { prompt: "permission", since: Date.now() - 60_000 }, waitedMs: 0 },
+    };
+    const output = ["● Read 14 files", "● Moving 14 notes", "", "  Bash command", "  git mv a b", "", "  Do you want to proceed?", "  ❯ 1. Yes", "  3. No", "", "  Esc to cancel", ""].join("\r\n");
+    await start(page, { route: "history" });
+    await page.evaluate(([a, o]) => window.setRuns({ report: { active: [a], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } }, history: [], output: o }), [waiting, output] as const);
+    const row = app(page).locator('[data-testid="history-row"][data-job="morning-summary"]');
+    await expect(row.getByTestId("history-result")).toHaveText("waiting for you");
+    await row.click();
+    const dialog = app(page).getByTestId("run-dialog");
+    await expect(dialog).toHaveAttribute("data-tone", "warning");
+    await expect(app(page).getByTestId("run-result")).toHaveText("Waiting for you");
+    await expect(dialog.getByTestId("run-waits")).toHaveText("The agent stopped at a permission prompt and waits for your answer.");
+    await expect(dialog.getByTestId("run-prompt")).toHaveText("● Moving 14 notes\n \n  Bash command\n  git mv a b\n \n  Do you want to proceed?\n  ❯ 1. Yes\n  3. No\n \n  Esc to cancel");
+    await expect(dialog).toContainText("The time limit is paused while it waits.");
+    await expect(dialog.getByTestId("dialog-foot").getByRole("button")).toHaveText(["Open at the prompt", "Stop run", "Edit job"]);
+    await shoot(page, "agent-card-waiting");
+    await dialog.getByRole("button", { name: "Open at the prompt" }).click();
+    const attached = (): Promise<unknown[]> => page.evaluate(() => window.fakeHost.openedTabs.map((tab) => ("session" in tab ? tab.session : null)));
+    await expect.poll(attached).toEqual([{ app: "pomade-runner", session }]);
+    await page.evaluate((route) => window.mounted.navigate(route), `prompt/morning-summary/${RUN}`);
+    await expect.poll(attached).toEqual([
+      { app: "pomade-runner", session },
+      { app: "pomade-runner", session },
+    ]);
+    await expect(app(page).getByTestId("tab-run")).toBeVisible();
+    await expect(app(page).getByTestId("run-result")).toHaveText("Waiting for you");
   });
 
   test("a failed agent run's card is red with the reason; a session the Agents app has no answer of yet says so", async ({ page }) => {

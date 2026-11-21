@@ -10,12 +10,13 @@
 // 5. **a slot** — at most `maxLowPriority` low-priority runs go at once. A low-priority run that finds
 //    them taken waits, first come first served, as "N ahead": the slot-waiting runs ahead of it, and
 //    the run whose slot it takes. Runs of jobs that are not low-priority (git, by default) never
-//    take or wait for a slot.
+//    take or wait for a slot; nor does an agent run waiting for you at a prompt — it is idle, and a
+//    forgotten prompt must not hold back every low-priority job.
 //
 // Pure.
 
 import type { OverlapPolicy } from "../jobs/model";
-import type { ActiveRun, RunTrigger, SwitchPosition, Waits } from "./model";
+import { waitingAt, type ActiveRun, type RunTrigger, type SwitchPosition, type Waits } from "./model";
 
 /** Whether the switch at `position` holds a run: Run now never; the rest by the run's priority. */
 export function holds(position: SwitchPosition, run: { trigger: RunTrigger; lowPriority: boolean }): boolean {
@@ -46,7 +47,7 @@ export interface QueuePlan {
 
 export function planQueue(active: readonly ActiveRun[], state: QueueState): QueuePlan {
   const running = active.filter((run) => run.state === "running");
-  let taken = running.filter((run) => run.lowPriority).length;
+  let taken = running.filter((run) => run.lowPriority && waitingAt(run) === null).length;
   const busy = new Set(running.map((run) => run.job));
   const start: ActiveRun[] = [];
   const waits = new Map<ActiveRun, Waits>();

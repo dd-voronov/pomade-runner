@@ -3,10 +3,10 @@
 // a script job file.
 
 import type { ExitReason, RosterAgent } from "pomade-kit/protocol";
-import type { AgentKind } from "pomade-kit/scanners";
+import type { AgentKind, AgentPrompt } from "pomade-kit/scanners";
 
 import { agentMode, type AgentsApi, type AgentsError, type FoundSession, type LastMessage, type LaunchSpec, type LaunchSpecParams } from "../integrations/agents";
-import type { AgentTurns } from "../keeper/agent-turns";
+import type { AgentTurns, TurnHandlers } from "../keeper/agent-turns";
 import { sessionIdOf, type SessionOwner } from "../keeper/ids";
 import type { KeeperLink, RunnerSession } from "../keeper/model";
 import type { SessionCommand, Sessions, StopReason } from "../keeper/sessions";
@@ -132,14 +132,15 @@ export function memorySwitch(): SwitchStore & { saved: SwitchState } {
   return store;
 }
 
-/** Agent runs' turns as a test plays them: `done(session)` is the agent's turn completing; what
- *  Runner typed is in `typed`. */
+/** Agent runs' turns as a test plays them: `done(session)` is the agent's turn completing,
+ *  `waits(session, prompt)` a prompt coming up for the person and `waits(session, null)` it
+ *  answered; what Runner typed is in `typed`. */
 export class FakeTurns implements AgentTurns {
-  readonly followed = new Map<string, () => void>();
+  readonly followed = new Map<string, TurnHandlers>();
   readonly typed: { session: string; text: string }[] = [];
 
-  watch(session: string, _provider: AgentKind, onTurnDone: () => void): void {
-    if (!this.followed.has(session)) this.followed.set(session, onTurnDone);
+  watch(session: string, _provider: AgentKind, handlers: TurnHandlers): void {
+    if (!this.followed.has(session)) this.followed.set(session, handlers);
   }
 
   type(session: string, text: string): void {
@@ -155,7 +156,12 @@ export class FakeTurns implements AgentTurns {
 
   /** The agent of `session` finished its turn. */
   done(session: string): void {
-    this.followed.get(session)?.();
+    this.followed.get(session)?.onTurnDone();
+  }
+
+  /** The agent of `session` waits at `prompt` for the person; `null`: the prompt was answered. */
+  waits(session: string, prompt: AgentPrompt | null): void {
+    this.followed.get(session)?.onWaiting(prompt);
   }
 }
 

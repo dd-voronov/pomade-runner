@@ -64,6 +64,12 @@ describe("a Needs-you card's look", () => {
     });
   });
 
+  it("says what an agent run waits at, and how long it has waited", () => {
+    const item: NeedsYouItem = { ...base, id: "waiting:job:r", kind: "waiting", run: "r", prompt: "permission", at: NOW - 17 * 60_000, detail: "waiting for approval" };
+    expect(look(item)).toEqual({ tone: "warning", help: "need.approval", when: "17m", text: "Waiting for approval at a permission prompt." });
+    expect(look({ ...item, prompt: "trust", at: NOW - 12_000 })).toEqual({ tone: "warning", help: "need.approval", when: "12s", text: "Waiting for you to trust its folder." });
+  });
+
   it("counts a long run's time and says it in hours", () => {
     const item: NeedsYouItem = { ...base, id: "long-run:job:r", kind: "long-run", run: "r", at: NOW, startedAt: NOW - (3 * 60 + 2) * 60_000, detail: "x" };
     expect(look(item)).toEqual({ tone: "accent", help: "need.longrun", when: "3h 02m", text: "Running 3h — still expected?" });

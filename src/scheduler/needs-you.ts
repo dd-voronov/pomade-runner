@@ -8,8 +8,9 @@
 //   the run's result or dismisses it, when a run of the job is done, or when the job's file is gone.
 // - **A service that gave up** after a crash loop is an item while it stays `failed` (Start, a fixed
 //   or disabled file, or its removal end it), and is noticed once — Needs-you items always notify.
-// - Missed runs that wait for the person, long-run warnings and the jobs the loop guard paused are
-//   runs' items (`runs.ts`), noticed with `missedNotice`, `longRunNotice` and `loopNotice`.
+// - Missed runs that wait for the person, agent runs waiting at a prompt, long-run warnings and the
+//   jobs the loop guard paused are runs' items (`runs.ts`), noticed with `missedNotice`,
+//   `waitingNotice`, `longRunNotice` and `loopNotice`.
 //
 // The items live in `needs-you.json` in Runner's state folder, with the giving-ups already noticed,
 // so a restarted scheduler neither forgets an item nor notices one twice.
@@ -19,13 +20,13 @@ import { dirname } from "node:path";
 
 import type { NoticeParams } from "pomade-kit/protocol";
 
-import { runRoute } from "../integrations/runner-api";
+import { promptRoute, runRoute } from "../integrations/runner-api";
 import { entryId, type JobsSnapshot, type Notify } from "../jobs/model";
 import type { ServicesReport, ServiceStatus } from "../keeper/model";
 import { needsYouRecordPath, type RecordsFolder } from "../locations";
 import type { Log } from "./log";
 import { FIRING_LIMIT, FIRING_WINDOW_MS } from "./loop-guard";
-import { ACTION_DONE_WORDS, dayTime, durationWords, failureWords, type ActiveRun, type NeedsYouItem, type RunRecord } from "./model";
+import { ACTION_DONE_WORDS, dayTime, durationWords, failureWords, type ActiveRun, type AgentWait, type NeedsYouItem, type RunRecord } from "./model";
 
 /** A failed-run item as it is kept. */
 interface Failure {
@@ -139,6 +140,19 @@ export function missedNotice(run: ActiveRun): NoticeParams {
     title: `${run.name} · missed ${dayTime(run.dueAt)}`,
     body: "It waits for you: Run now, Run at… or Skip.",
     action: { kind: "openApp", route: runRoute(run.job, run.run) },
+  };
+}
+
+/** What an agent run waits at, in words: a Needs-you item's detail. */
+export const WAIT_WORDS: Record<AgentWait["prompt"], string> = { permission: "waiting for approval", trust: "waiting for you to trust its folder" };
+
+/** The notice for an agent run that waits for the person at a prompt. Its click opens the run's
+ *  terminal tab at the prompt. */
+export function waitingNotice(run: ActiveRun, prompt: AgentWait["prompt"]): NoticeParams {
+  return {
+    title: `${run.name} needs your approval`,
+    body: prompt === "permission" ? "The agent waits at a permission prompt. Open it to answer; the time limit is paused meanwhile." : "The agent asks whether to trust its folder. Open it to answer; the time limit is paused meanwhile.",
+    action: { kind: "openApp", route: promptRoute(run.job, run.run) },
   };
 }
 

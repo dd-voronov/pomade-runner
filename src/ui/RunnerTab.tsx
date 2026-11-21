@@ -1,14 +1,14 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { HostClient } from "pomade-kit/sdk";
 
-import { APP_NAME, APP_VERSION } from "../app";
-import { parseRoute, type RunnerRoute } from "../integrations/runner-api";
+import { APP_ID, APP_NAME, APP_VERSION } from "../app";
+import { parseRoute, runRoute, type RunnerRoute } from "../integrations/runner-api";
 import { JobForm } from "./form/JobForm";
 import { HistoryView } from "./HistoryView";
 import { newJobRoute } from "./jobWords";
 import { JobsView } from "./JobsView";
 import { JobsProblem } from "./JobsProblem";
-import { Button, EmptyBlock } from "./kit";
+import { Button, EmptyBlock, useToast } from "./kit";
 import { OutputPage } from "./OutputPage";
 import { RunDialog } from "./RunCard";
 import styles from "./RunnerTab.module.css";
@@ -16,18 +16,39 @@ import { ServicesView } from "./ServicesView";
 import { SettingsView } from "./SettingsView";
 import { TabShell, type TabView } from "./shell/TabShell";
 import { SERVICE_RUNS } from "./serviceWords";
-import { useActiveProject, useJobs, useRoute, useRuns, useServices } from "./useRunnerApi";
+import { useActiveProject, useJobs, useRoute, useRun, useRuns, useServices } from "./useRunnerApi";
 
 /** The header's view for a route: a run's card belongs to History; the job form, to Jobs. */
 function tabView(route: Exclude<RunnerRoute, { view: "output" }>): TabView {
   if (route.view === "new" || route.view === "edit") return "jobs";
-  return route.view === "run" ? "history" : route.view;
+  return route.view === "run" || route.view === "prompt" ? "history" : route.view;
+}
+
+/** At `prompt/<job>/<run>` — a waiting run's notice — the run's terminal tab opens at the prompt
+ *  while the run still runs; the Runner tab goes to the run's card either way. */
+function PromptOpener({ host, job, run, open }: { host: HostClient; job: string; run: string; open: (route: string) => void }): null {
+  const view = useRun(host, job, run);
+  const toast = useToast();
+  const value = view.status === "ready" ? view.value : null;
+  const settled = view.status !== "loading";
+  // Once per arrival at the route: the route moves on to the card at once.
+  const fired = useRef(false);
+  useEffect(() => {
+    if (!settled || fired.current) return;
+    fired.current = true;
+    if (value !== null && value.state === "running" && value.session !== null) {
+      host.tabs.openAttached({ session: { app: APP_ID, session: value.session }, title: value.name }).catch((err: unknown) => toast(`Could not open ${value.name}'s terminal: ${err instanceof Error ? err.message : String(err)}`));
+    }
+    open(runRoute(job, run));
+  }, [settled, value, host, job, run, open, toast]);
+  return null;
 }
 
 /** A Runner tab frame by its route: the Runner tab — the shell's four views: every job (at one job,
  *  from a repo row's Scheduled line), the history with the runs going — a run's result card over
- *  it — the services, the settings with Runner's version — or, at `output/<job>/<run>`, a run's
- *  output tab (View output opens it, keyed by the run). */
+ *  it, or a waiting run's at `prompt/<job>/<run>` with its terminal tab opened at the prompt — the
+ *  services, the settings with Runner's version — or, at `output/<job>/<run>`, a run's output tab
+ *  (View output opens it, keyed by the run). */
 export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   const jobs = useJobs(host);
   const services = useServices(host);
@@ -100,12 +121,14 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
     }
     case "history":
     case "run":
-      // One tree for both, so History stays mounted under the card and focus returns to its row.
+    case "prompt":
+      // One tree for all three, so History stays mounted under the card and focus returns to its row.
       return shell(
-        `tab-${view.view}`,
+        `tab-${view.view === "prompt" ? "run" : view.view}`,
         <>
           {history}
-          {view.view === "run" && <RunDialog key={`${view.job}/${view.run}`} host={host} job={view.job} run={view.run} needsYou={report?.needsYou ?? []} open={open} />}
+          {view.view !== "history" && <RunDialog key={`${view.job}/${view.run}`} host={host} job={view.job} run={view.run} needsYou={report?.needsYou ?? []} open={open} />}
+          {view.view === "prompt" && <PromptOpener key={`${view.job}/${view.run}`} host={host} job={view.job} run={view.run} open={open} />}
         </>,
       );
     case "services":
