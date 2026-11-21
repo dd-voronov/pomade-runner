@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveWorkspace } from "pomade-kit/node";
+import { launchPomade, resolveWorkspace } from "pomade-kit/node";
 import { POMADE_ENV } from "pomade-kit/protocol";
 
 import { noticePoster } from "../integrations/notices";
@@ -66,6 +66,7 @@ if (state === null || socketPath === null || userData === null) {
       tickMs: tick,
       log,
       linkPomade,
+      launchPomade: () => launchPomade({ role: "backend" }),
       sessions: createSessions({ socketPath: keeperSocket, key, keeper: { entry: KEEPER_ENTRY, version: KEEPER_VERSION }, state, clock, log }),
       supervision: fileStore(state, records, log),
       probe: probeReadiness,

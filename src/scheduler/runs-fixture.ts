@@ -1,11 +1,12 @@
 // Stand-ins for the run lifecycle's tests (`runs.test.ts`, `load.test.ts`): sessions held in memory
 // as the keeper would hold them, records and the switch kept in memory as their files keep them, and
-// a script job file.
+// a script job file; the Agents app and Pomade for agent runs as a test scripts them.
 
 import type { ExitReason, RosterAgent } from "pomade-kit/protocol";
 import type { AgentKind, AgentPrompt } from "pomade-kit/scanners";
 
 import { agentMode, type AgentsApi, type AgentsError, type FoundSession, type LastMessage, type LaunchSpec, type LaunchSpecParams } from "../integrations/agents";
+import type { PomadeForRuns } from "../integrations/pomade-open";
 import type { AgentTurns, TurnHandlers } from "../keeper/agent-turns";
 import { sessionIdOf, type SessionOwner } from "../keeper/ids";
 import type { KeeperLink, RunnerSession } from "../keeper/model";
@@ -205,5 +206,30 @@ export class FakeAgents implements AgentsApi {
   lastMessage(): Promise<LastMessage | null> {
     this.check();
     return Promise.resolve(null);
+  }
+}
+
+/** Pomade for agent runs as a test scripts it: `isUp` says whether it is up; each opening is held
+ *  until the test settles it (`settle`), and counted in `opened`. */
+export class FakePomade implements PomadeForRuns {
+  isUp = true;
+  opened = 0;
+  private pending: ((why: string | null) => void) | null = null;
+
+  up = (): boolean => this.isUp && this.pending === null;
+
+  open(): Promise<string | null> {
+    this.opened++;
+    return new Promise((resolve) => {
+      this.pending = resolve;
+    });
+  }
+
+  /** End the opening under way: up (`null`), or why not. */
+  settle(why: string | null): void {
+    const resolve = this.pending;
+    this.pending = null;
+    if (why === null) this.isUp = true;
+    resolve?.(why);
   }
 }

@@ -10,6 +10,7 @@
 
 import { join } from "node:path";
 
+import type { LaunchResult } from "pomade-kit/node";
 import type { AttachedTabActionPayload } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
@@ -17,7 +18,8 @@ import { APP_ID, APP_VERSION } from "../app";
 import type { PostNotice } from "../integrations/notices";
 import { setBadge } from "../integrations/notices";
 import { agentsOf } from "../integrations/agents";
-import { announce, offerRunner, type LinkPomade } from "../integrations/pomade";
+import { announce, offerRunner, type LinkPomade, type PomadeLinkHandlers } from "../integrations/pomade";
+import { pomadeOpener } from "../integrations/pomade-open";
 import {
   JOBS_CHANGED_EVENT,
   RUN_FINISHED_EVENT,
@@ -71,6 +73,9 @@ export interface SchedulerOptions {
   tickMs: number;
   log: Log;
   linkPomade: LinkPomade;
+  /** Start Pomade the way it recorded and wait for its socket to answer (`launchPomade`): an agent
+   *  run due while Pomade is not up opens it. */
+  launchPomade(): Promise<LaunchResult>;
   /** The workspace root (absolute): its jobs, settings and records are the scheduler's. */
   workspace: string;
   /** The keeper's sessions; the scheduler refreshes them on every tick and closes them on stop. */
@@ -118,6 +123,10 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
 
   const { sessions } = options;
   let host: HostClient | null = null;
+  /** Set by `stop()`: nothing connects again. */
+  let stopped = false;
+  /** Whether Pomade restored its tabs (`pomade.ready`) on the current connection. */
+  let ready = false;
   const publish = (event: string, payload?: unknown): void => {
     if (host !== null) announce(host, event, log, payload);
   };
@@ -186,6 +195,17 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     serviceAction: supervisor.chainAction,
     pomadeGit: options.pomadeGit,
     agents: () => (host === null ? null : agentsOf(host)),
+    pomade: pomadeOpener({
+      launch: options.launchPomade,
+      connected: () => host !== null,
+      agents: () => (host === null || !ready ? null : agentsOf(host)),
+      reconnect: () => {
+        if (stopped) return;
+        link.stop();
+        link = options.linkPomade(linkHandlers);
+      },
+      log,
+    }),
     turns: options.turns,
     shell: options.shell,
     gitResult: (job, run) => gitResultPath(state, job, run),
@@ -333,9 +353,10 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     });
   };
 
-  const link = options.linkPomade({
+  const linkHandlers: PomadeLinkHandlers = {
     connected(client) {
       host = client;
+      ready = false;
       pomade = "connected";
       badged = null;
       log("connected to Pomade");
@@ -370,13 +391,18 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         environment: () => readEnvironment(options.workspace),
         setSetting: settings.write,
         deleteJob: removeJob,
-        ready: () => showBadge(needsYou.items().length),
+        ready: () => {
+          if (host !== client) return;
+          ready = true;
+          showBadge(needsYou.items().length);
+        },
         log,
       });
       showBadge(needsYou.items().length);
     },
     disconnected() {
       host = null;
+      ready = false;
       pomade = "disconnected";
       log("Pomade went away; reconnecting");
     },
@@ -384,7 +410,8 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
       pomade = "rejected";
       log(`Pomade refused the connection: ${reason}`);
     },
-  });
+  };
+  let link = options.linkPomade(linkHandlers);
 
   let prunedAt = Number.NEGATIVE_INFINITY;
   /** Drop history and output logs past what the settings keep, at most once an hour; never a log in
@@ -431,6 +458,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
       status,
       jobs: jobs.snapshot,
       async stop() {
+        stopped = true;
         clearInterval(ticker);
         jobs.stop();
         link.stop();

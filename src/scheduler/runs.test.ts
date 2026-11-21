@@ -65,6 +65,7 @@ describe("runs", () => {
       post: (notice) => notices.push(notice),
       projectPath: (project) => (project === "p1" ? "/ws/Projects/one" : null),
       agents: () => null,
+      pomade: { up: () => false, open: () => Promise.resolve("Pomade could not be opened: not in this test") },
       turns: new FakeTurns(),
       shell: "/bin/sh",
       pomadeGit: join(dir, "bin", "pomade-git"),
@@ -487,7 +488,8 @@ describe("runs", () => {
       expect(await runs.runNow("nope")).toEqual({ ok: false, reason: 'no job "nope"' });
       expect(await runs.runNow("off")).toEqual({ ok: false, reason: '"Off" is disabled in its file; enable it first' });
       expect(await runs.runNow("bad")).toMatchObject({ ok: false, reason: expect.stringContaining('the job "bad" is invalid') as string });
-      expect(await runs.runNow("agent")).toEqual({ ok: false, reason: "cannot start — Pomade is not running, and an agent run needs it" });
+      // An agent job is queued behind the opening of Pomade (`agent-runs.test.ts`).
+      expect(await runs.runNow("agent")).toMatchObject({ ok: true, run: { state: "queued", waits: { kind: "pomade" } } });
       sessions.following = false;
       expect(await runs.runNow("backup")).toEqual({ ok: false, reason: "the keeper is not connected" });
       sessions.following = true;

@@ -18,7 +18,9 @@
 //   on release its occurrences come due — on time, or missed and to its policy. A queued run it
 //   held goes to its job's policy on release when it is late by then.
 // - **The queue** (`queue.ts`) starts what it can, oldest first; the rest wait — for Run at…'s time,
-//   the switch, the warm-up, the job's previous run, or a low-priority slot.
+//   the switch, the warm-up, the job's previous run, Pomade (an agent run), or a low-priority slot.
+//   An agent run that waits for Pomade has Runner open it (`pomade-open.ts`), one opening for every
+//   run that waits; when Pomade cannot be opened, those runs fail with why.
 // - **Overlap**, when the job has a run going: `skip` records a skipped run ("previous run still
 //   going") · `parallel` queues another · `queue` holds one queued run; while one is held, a further
 //   one is skipped ("a run is already queued"). An on-time run covers a caught-up one still queued.
@@ -54,6 +56,7 @@ import { isGitRunOutput, type GitRunOutput, type NoticeParams } from "pomade-kit
 import { nextOccurrence } from "pomade-kit/schedule";
 
 import { agentMode, modeWords, type AgentsApi } from "../integrations/agents";
+import type { PomadeForRuns } from "../integrations/pomade-open";
 import { entryId, type AgentJob, type GitJob, type Job, type JobsSnapshot, type ScriptJob, type ServiceAction, type ServiceJob } from "../jobs/model";
 import { KIND_DEFAULTS } from "../jobs/parse";
 import type { AgentTurns } from "../keeper/agent-turns";
@@ -274,8 +277,10 @@ export interface RunsOptions {
   /** A chain's action on a service, through the supervisor; `why` names the chain, for its log. */
   serviceAction(job: string, action: ServiceAction, why: string): Promise<ChainActionOutcome>;
   /** The Agents app through Pomade's broker while Runner is connected to Pomade; `null` while it
-   *  is not — an agent run then cannot start. */
+   *  is not. */
   agents(): AgentsApi | null;
+  /** Pomade for agent runs: whether it is up for them, and opening it when it is not. */
+  pomade: PomadeForRuns;
   /** Following agent runs' turns in their sessions. */
   turns: AgentTurns;
   /** The user's login shell: an agent run's line runs in it, interactive. */
@@ -407,6 +412,10 @@ export function createRuns(options: RunsOptions): Runs {
   const exitDeadlines = new Map<string, number>();
   /** Agent runs whose session is looked up: by session, when it was last asked (`performance.now()`). */
   const lookedUp = new Map<string, number>();
+  /** Whether Runner is opening Pomade for the agent runs that wait for it. */
+  let opening = false;
+  /** Set by `close()`: an opening that ends later changes nothing. */
+  let closed = false;
 
   const now = (): Date => clock.now();
   const key = (job: string, run: string): string => `${job}\n${run}`;
@@ -607,7 +616,7 @@ export function createRuns(options: RunsOptions): Runs {
    *  Runner makes and the job's prompt, in the job's folder — or why it cannot start. */
   async function agentLaunch(job: AgentJob, workspace: string): Promise<Launch | string> {
     const api = options.agents();
-    if (api === null) return "cannot start — Pomade is not running, and an agent run needs it";
+    if (api === null) return "cannot start — Runner is not connected to Pomade, and an agent run needs it";
     let cwd: string;
     try {
       cwd = await realpath(join(workspace, job.folder));
@@ -751,6 +760,7 @@ export function createRuns(options: RunsOptions): Runs {
         position: switchState.position,
         warmUp: warmUp(at),
         overlap,
+        pomadeUp: options.pomade.up(),
       });
       if (plan.start.length === 0) {
         let changed = false;
@@ -765,10 +775,34 @@ export function createRuns(options: RunsOptions): Runs {
           save();
           options.onChange();
         }
+        if ([...plan.waits.values()].some((waits) => waits.kind === "pomade")) openPomade();
         return;
       }
       for (const run of plan.start) await start(run);
     }
+  }
+
+  /** Open Pomade for the agent runs that wait for it, unless that is under way. Once it is up, they
+   *  start as the queue lets them; when it cannot be, the runs waiting for it then fail with why. */
+  function openPomade(): void {
+    if (opening) return;
+    opening = true;
+    void options.pomade.open().then((why) =>
+      inLane(async () => {
+        opening = false;
+        if (closed) return;
+        if (why === null) {
+          log("Pomade: up for agent runs");
+          if (sessions.followed() && options.jobs().workspace !== null) await advance();
+          return;
+        }
+        const reason = `cannot start — ${why}`;
+        for (const run of active.filter((candidate) => candidate.state === "queued" && candidate.waits?.kind === "pomade")) {
+          log(`run ${run.job} ${run.run}: ${reason}`);
+          await record(notStarted(run, "failed", reason));
+        }
+      }),
+    );
   }
 
   /** A missed run of a `wait-for-me` job waits for the person: one per job, at its latest missed time. */
@@ -1290,6 +1324,7 @@ export function createRuns(options: RunsOptions): Runs {
     },
 
     async close() {
+      closed = true;
       while (acting.size > 0) await Promise.all(acting);
       await lane;
       save();

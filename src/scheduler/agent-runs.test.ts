@@ -23,7 +23,7 @@ import { createHistory, keepOutputLog } from "./history";
 import { parseRunRecord, type ActiveRun, type AgentRun, type RunRecord } from "./model";
 import { runFinishedPayload, runStartedPayload } from "./run-events";
 import { createRuns, fileRunsStore, type Runs } from "./runs";
-import { FakeAgents, FakeSessions, FakeTurns, memoryStore, memorySwitch } from "./runs-fixture";
+import { FakeAgents, FakePomade, FakeSessions, FakeTurns, memoryStore, memorySwitch, script } from "./runs-fixture";
 import { DEFAULT_SETTINGS, type Settings } from "./settings";
 
 const agentFile = (extra = "", body = "Write my morning summary."): string => `---\nkind: agent\nname: Morning summary\nfolder: Projects/x\nagent: claude\n${extra}schedule:\n  daily: { at: 7:00 }\n---\n${body}\n`;
@@ -71,6 +71,7 @@ describe("agent runs", () => {
   let turns: FakeTurns;
   let agents: FakeAgents;
   let connected: boolean;
+  let pomade: FakePomade;
   let started: ActiveRun[];
   let finished: RunRecord[];
   let lines: string[];
@@ -100,6 +101,7 @@ describe("agent runs", () => {
       post: (notice) => notices.push(notice),
       projectPath: () => null,
       agents: () => (connected ? agents : null),
+      pomade,
       turns,
       shell: "/bin/zsh",
       pomadeGit: join(dir, "bin", "pomade-git"),
@@ -130,6 +132,7 @@ describe("agent runs", () => {
       { id: "codex", name: "Codex", command: "codex", provider: "codex" },
     ];
     connected = true;
+    pomade = new FakePomade();
     started = [];
     finished = [];
     lines = [];
@@ -242,7 +245,7 @@ describe("agent runs", () => {
       return result.ok ? "started" : result.reason;
     };
     connected = false;
-    expect(await reason()).toBe("cannot start — Pomade is not running, and an agent run needs it");
+    expect(await reason()).toBe("cannot start — Runner is not connected to Pomade, and an agent run needs it");
     connected = true;
     agents.fail = new AgentsError("absent", "the Agents app (pomade-agents) is not running");
     expect(await reason()).toBe("cannot start — the Agents app (pomade-agents) is not running");
@@ -263,6 +266,96 @@ describe("agent runs", () => {
   const minutes = (n: number): void => {
     now = new Date(now.getTime() + n * 60_000);
   };
+
+  /** Let an opening that was settled reach the lane, and the lane run it. */
+  async function settled(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await runs.tick();
+  }
+
+  describe("Pomade opened for a run", () => {
+    beforeEach(async () => {
+      await mkdir(join(workspace, "Projects/x"), { recursive: true });
+      files = {
+        "summary.md": agentFile(),
+        "inbox.md": agentFile().replace("name: Morning summary", "name: Inbox triage").replace("at: 7:00", "at: 7:01"),
+        "backup.md": script("Backup", "schedule:\n  daily: { at: 7:00 }\n").replace("folder: Projects/x", "folder: ."),
+      };
+      load();
+      pomade.isUp = false;
+      now = new Date("2026-11-18T06:59:30");
+      await runs.tick();
+    });
+
+    const kinds = (): string[] => sessions.spawned.map((spawn) => spawn.owner.job);
+
+    it("an agent run due while Pomade is not up waits while Runner opens it; one due meanwhile waits for the same opening; up, they start in their order — a script never waits", async () => {
+      minutes(1);
+      await runs.tick();
+      expect(pomade.opened).toBe(1);
+      expect(kinds()).toEqual(["backup"]);
+      expect(runs.active().find((run) => run.job === "summary")).toMatchObject({ state: "queued", waits: { kind: "pomade" } });
+      expect(lines).toContainEqual(expect.stringMatching(/^run summary \S+: queued · opening Pomade$/));
+      minutes(1);
+      await runs.tick();
+      expect(pomade.opened).toBe(1);
+      expect(runs.active().filter((run) => run.kind === "agent").map((run) => [run.job, run.state, run.waits?.kind])).toEqual([
+        ["summary", "queued", "pomade"],
+        ["inbox", "queued", "pomade"],
+      ]);
+      expect(finished).toEqual([]);
+      pomade.settle(null);
+      await settled();
+      // The script and the first agent run take the two low-priority slots; the second agent run is
+      // next, first come first served.
+      expect(kinds()).toEqual(["backup", "summary"]);
+      expect(runs.active().find((run) => run.job === "inbox")).toMatchObject({ state: "queued", waits: { kind: "slot", ahead: 1 } });
+      sessions.end(sessions.list().find((session) => session.job === "backup")?.id ?? "", "exited", 0);
+      await runs.tick();
+      expect(kinds()).toEqual(["backup", "summary", "inbox"]);
+      expect(pomade.opened).toBe(1);
+    });
+
+    it("Run now of an agent job while Pomade is not up queues it behind the opening", async () => {
+      const result = await runs.runNow("summary");
+      expect(result).toMatchObject({ ok: true, run: { state: "queued", waits: { kind: "pomade" } } });
+      expect(pomade.opened).toBe(1);
+      pomade.settle(null);
+      await settled();
+      expect(kinds()).toEqual(["summary"]);
+    });
+
+    it("an opening that fails fails every run waiting for it with why; the next one due opens Pomade again", async () => {
+      minutes(2);
+      await runs.tick();
+      expect(pomade.opened).toBe(1);
+      pomade.settle("Pomade could not be opened: Pomade did not become ready in time");
+      await settled();
+      expect(finished.filter((record) => record.kind === "agent").map((record) => [record.job, record.state, record.reason, record.startedAt]).sort()).toEqual([
+        ["inbox", "failed", "cannot start — Pomade could not be opened: Pomade did not become ready in time", null],
+        ["summary", "failed", "cannot start — Pomade could not be opened: Pomade did not become ready in time", null],
+      ]);
+      expect(runs.active().filter((run) => run.kind === "agent")).toEqual([]);
+      expect(kinds()).toEqual(["backup"]);
+      await runs.runNow("summary");
+      expect(pomade.opened).toBe(2);
+    });
+
+    it("a scheduler restarted while a run waits for Pomade opens it again, and the run starts once it is up", async () => {
+      minutes(1);
+      await runs.tick();
+      await runs.close();
+      pomade = new FakePomade();
+      pomade.isUp = false;
+      await open();
+      await runs.tick();
+      expect(runs.active().find((run) => run.job === "summary")).toMatchObject({ state: "queued", waits: { kind: "pomade" } });
+      expect(pomade.opened).toBe(1);
+      pomade.settle(null);
+      await settled();
+      expect(kinds()).toEqual(["backup", "summary"]);
+    });
+  });
 
   it("waits for you at a permission prompt — a Needs-you item and one notice that opens it at the prompt — and goes on once answered", async () => {
     const run = await runNow();

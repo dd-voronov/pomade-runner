@@ -31,6 +31,7 @@ describe("runs in words", () => {
     expect(runWords(active)).toBe("running");
     expect(runWords({ ...active, kind: "agent", agent: { ...AGENT, waiting: { prompt: "permission", since: 2 } } })).toBe("waiting for you");
     expect(runWords({ ...queued, waits: { kind: "previous-run" } })).toBe("queued · after the previous run");
+    expect(runWords({ ...queued, waits: { kind: "pomade" } })).toBe("queued · opening Pomade");
     expect(runWords({ ...queued, waits: { kind: "slot", ahead: 1 } })).toBe("queued · 1 ahead");
     expect(runWords({ ...queued, waits: { kind: "switch", position: "pause-low" } })).toBe("queued · held · Pause low-priority");
     expect(runWords({ ...queued, waits: { kind: "warm-up", until: null } })).toBe("queued · warm-up · services start first");
@@ -60,6 +61,7 @@ describe("runs in words", () => {
   it("checks an active run's shape", () => {
     expect(isActiveRun(active)).toBe(true);
     expect(isActiveRun({ ...queued, runAt: 5, deadline: 9, waits: { kind: "time", at: 5 } })).toBe(true);
+    expect(isActiveRun({ ...queued, kind: "agent", waits: { kind: "pomade" } })).toBe(true);
     expect(isActiveRun({ ...queued, trigger: "hook", cause: { kind: "hook", event: "login", context: {} } })).toBe(true);
     expect(isActiveRun({ ...queued, trigger: "chain", cause: { kind: "chain", job: "a", name: "A", run: "r", result: "failed" } })).toBe(true);
     for (const bad of [

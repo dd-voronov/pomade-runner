@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createFakeHost, type FakeHost } from "pomade-kit/fake-host";
+import type { LaunchResult } from "pomade-kit/node";
 import { connect, type HostClient } from "pomade-kit/sdk";
 import { checkRepoJobs, REPO_JOBS_APP_ID, REPO_JOBS_METHOD, type NoticeParams, type RepoJobsParams, type Surface } from "pomade-kit/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -172,6 +173,8 @@ const postNotice: PostNotice = (notice) => {
 /** Supervision records kept nowhere. */
 const noStore: SupervisionStore = { load: () => Promise.resolve(new Map()), save: () => undefined, flush: () => Promise.resolve() };
 const supervision = { supervision: noStore, probe: () => Promise.resolve(false) };
+/** No Pomade to open: the scheduler's tests connect it themselves. */
+const noLaunch = (): Promise<LaunchResult> => Promise.resolve({ status: "failed", reason: "no Pomade in this test" });
 
 /** A client of the fake host: a frame of Runner, or its backend. */
 async function frame(fake: FakeHost, surface: Surface = "tab"): Promise<HostClient> {
@@ -205,7 +208,7 @@ describe("scheduler", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh",
+      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -281,7 +284,7 @@ describe("scheduler", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh",
+      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch,
     });
     expect(result).toEqual({ status: "already-running" });
     expect(second.refreshes).toBe(0);
@@ -343,7 +346,7 @@ describe("scheduler", () => {
 
   it("refuses a socket path macOS cannot bind", async () => {
     socketPath = join(dir, "x".repeat(120), "scheduler.sock");
-    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: join(dir, "ws"), sessions, ...supervision, state: stateFolderOf(join(dir, "ud")), postNotice, pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh" });
+    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: join(dir, "ws"), sessions, ...supervision, state: stateFolderOf(join(dir, "ud")), postNotice, pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch });
     expect(result.status).toBe("failed");
   });
 
@@ -387,7 +390,7 @@ describe("scheduler and the job files", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh",
+      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -599,7 +602,7 @@ describe("scheduler and runs", () => {
       sessions,
       ...supervision,
       postNotice: noticePoster(join(dir, "ud"), log),
-      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh",
+      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);

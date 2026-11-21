@@ -194,6 +194,7 @@ describe("what started a run, and what a queued one waits for", () => {
     expect(waitsSentence({ kind: "warm-up", until: at(17, 8, 32) }, NOW)).toBe("It waits for the warm-up after login or wake, until 8:32.");
     expect(waitsSentence({ kind: "warm-up", until: null }, NOW)).toBe("It waits for the warm-up after login or wake: the services start first.");
     expect(waitsSentence({ kind: "previous-run" }, NOW)).toBe("The job's previous run is still going. This one starts when it finishes.");
+    expect(waitsSentence({ kind: "pomade" }, NOW)).toBe("An agent run needs Pomade, so Runner is opening it. The run starts once Pomade and the Agents app are ready.");
     expect(waitsSentence(null, NOW)).toBe("It is about to start.");
   });
 });

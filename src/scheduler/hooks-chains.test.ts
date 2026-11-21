@@ -71,6 +71,7 @@ describe("hooks and chains", () => {
       switchStore,
       projectPath: () => null,
       agents: () => null,
+      pomade: { up: () => false, open: () => Promise.resolve("Pomade could not be opened: not in this test") },
       turns: new FakeTurns(),
       shell: "/bin/sh",
       pomadeGit: "/nowhere/bin/pomade-git",

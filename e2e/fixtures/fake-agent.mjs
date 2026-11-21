@@ -2,7 +2,7 @@
 // up the provider's idle title, works on the prompt (the provider's working title, a few lines of
 // output), goes idle again with its answer on screen, and ends on the exit command typed into it
 // (`/exit`, then Enter) — or on Ctrl+C. Words in the prompt script it: `[exit-early]` ends it with
-// status 0 while it works; `[slow]` makes the turn last 4 s; `[ask]` puts up a permission prompt
+// status 0 while it works; `[slow]` makes the turn last 4 s, `[long]` 15 s; `[ask]` puts up a permission prompt
 // midway — the provider's dialog, as the kit's scanner reads it — and waits for the answer: `1` or
 // Enter allows it and the turn goes on, Esc (or the provider's "No") denies it and the turn ends
 // there; `[ask-late]` puts it up 5 s into the turn.
@@ -119,7 +119,7 @@ if (resume !== null) {
     title(IDLE);
   };
   const turn = () =>
-    setTimeout(() => finish(`**Done.** ${prompt.split("\n")[0]}`), prompt.includes("[slow]") ? 4000 : 1200);
+    setTimeout(() => finish(`**Done.** ${prompt.split("\n")[0]}`), prompt.includes("[long]") ? 15000 : prompt.includes("[slow]") ? 4000 : 1200);
   setTimeout(() => {
     work();
     process.stdout.write(`● Working on: ${prompt}\r\n`);

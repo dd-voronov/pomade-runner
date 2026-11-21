@@ -35,8 +35,8 @@ outside it, is just a terminal.
 
 **Pomade is never required for a run to keep going.** Services, scripts and git jobs run while
 Pomade is closed. An agent run needs Pomade to start — its launch spec comes from `pomade-agents`
-through Pomade's broker: one due while Runner is not connected to Pomade fails, "cannot start —
-Pomade is not running, and an agent run needs it". Once started it runs in the keeper like any run.
+through Pomade's broker: one due while Pomade is closed has Runner open Pomade first ("Agent runs",
+**Pomade opened for a run**). Once started it runs in the keeper like any run.
 
 ## Jobs
 
@@ -460,14 +460,30 @@ keeps no table of providers: what runs, the session id and how to end the agent 
 through Pomade's broker (the manifest's `calls: ["pomade-agents"]`). Everything else is a script
 run's: run id, queue (an agent job is low priority by default), overlap, switch, time limit, Run now,
 hooks, chains, History, notices and Needs you.
-- **Launch.** With Runner connected to Pomade: the agent from `roster.list` (its name, provider and
+- **Pomade opened for a run** (`src/integrations/pomade-open.ts`). An agent run starts only while
+  Pomade is up for it: Runner connected, Pomade ready (`pomade.ready`) and no opening under way.
+  Until then it is **queued · opening Pomade** (the queue's wait `pomade`) and Runner opens Pomade:
+  when Runner is not connected, `pomade-kit/node`'s `launchPomade()` runs the launch Pomade recorded
+  in `host.json` and waits for its socket to answer (60 s); Runner closes that probe connection and
+  reconnects at once; then it waits, at most 60 s, until its connection is back, Pomade is ready and
+  the Agents app answers `roster.list`. One opening at a time: every agent run due meanwhile — or
+  Run now — waits for the same one, and once Pomade is up they start in the order they queued, as
+  the slots let them. Scripts, git runs and services never wait for it. An opening that fails fails
+  every run waiting for it, without starting, with why — "cannot start — Pomade could not be
+  opened: this Pomade recorded no way to launch it (no host.json)", "…: Pomade did not become ready
+  in time", "cannot start — Pomade opened, but after 60 s the Agents app (pomade-agents) is not
+  running" — and each failure's notice goes where every notice goes: into Pomade's closed-Pomade
+  queue while it is not connected, shown at its next start. The next agent run due opens Pomade
+  again. Runner leaves the Pomade it opened running. A scheduler restarted while a run waits finds
+  it queued in `runs.json` and opens Pomade again.
+- **Launch.** With Pomade up: the agent from `roster.list` (its name, provider and
   modes; none listed are the provider's — Normal, Full autonomy), the job's mode among them, then
   `roster.launchSpec({ agent, mode, sessionId, prompt })` — `mode` always, a UUID Runner makes as
   `sessionId`, the job's prompt. The session `run:<job>:<run id>` runs the spec's `line` — one
   POSIX-shell line, the profile's command (maybe an alias) and its quoted arguments — as
   `$SHELL -l -i -c <line>`: a login shell for the user's `PATH`, interactive for the aliases of the
   rc files; in the job's folder, its realpath kept as the run's `cwd`. It fails without starting,
-  with the reason: Pomade not connected; the Agents app absent or not answering ("the Agents app
+  with the reason: Runner not connected to Pomade (it went away between the queue and the launch); the Agents app absent or not answering ("the Agents app
   (pomade-agents) is not running"); an agent not in the roster; a mode the agent lacks ("claude-pm
   has no Full autonomy mode"); a folder that does not exist.
 - **The run's agent** (`AgentRun` on the run and its record): the agent's id and name, provider,
@@ -635,7 +651,9 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
   2. the **switch**;
   3. the **warm-up**, for a caught-up run — a Run at… one included — and a hook run;
   4. the job's **previous run**, unless its overlap is `parallel`;
-  5. a **slot**: at most `max-low-priority-runs` (default 2) low-priority runs run at once.
+  5. **Pomade**, for an agent run, while Pomade is not up for it — Runner opens it ("Agent runs",
+     **Pomade opened for a run**); such a run holds no slot;
+  6. a **slot**: at most `max-low-priority-runs` (default 2) low-priority runs run at once.
   - **What takes a slot:** a running run of a low-priority job. A job with `low-priority: false` —
     git, by default — neither takes nor waits for one; neither does a missed run waiting for you.
     An agent run waiting for you at a permission prompt holds no slot: it is idle, and a
@@ -644,7 +662,8 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
   - **"queued · N ahead"**: N runs have to end before it starts — the slot-waiting runs ahead of it
     and the one whose slot it takes. Three low-priority runs due at once: two run, the third is
     "queued · 1 ahead", a fourth would be "2 ahead". The others: "queued · at Wed 23:00", "queued ·
-    held · Pause all", "queued · warm-up until 08:32", "queued · after the previous run".
+    held · Pause all", "queued · warm-up until 08:32", "queued · after the previous run", "queued ·
+    opening Pomade".
   - Run now joins the queue too: the switch never holds it, a slot may.
 - **Staged start after login or wake.** A login — a scheduler start that finds no keeper running
   ("Firing hooks") — and every wake begin a staged start; a scheduler restarted with its keeper

@@ -36,7 +36,7 @@ function run(job: string, state: "queued" | "running", extra: Partial<ActiveRun>
 
 function state(extra: Partial<QueueState> & { overlaps?: Record<string, OverlapPolicy> } = {}): QueueState {
   const { overlaps = {}, ...rest } = extra;
-  return { now: 1000, maxLowPriority: 2, position: "running", warmUp: { over: true }, overlap: (job) => overlaps[job] ?? "skip", ...rest };
+  return { now: 1000, maxLowPriority: 2, position: "running", warmUp: { over: true }, overlap: (job) => overlaps[job] ?? "skip", pomadeUp: true, ...rest };
 }
 
 /** Each queued run's fate: `start`, or what it waits for. */
@@ -48,6 +48,17 @@ function fates(active: ActiveRun[], s: QueueState = state()): Record<string, unk
 const waitingAgent = { agent: "claude", name: "Claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: null, cwd: "/ws", startedAt: "", exit: "/exit", exitSentAt: null, waiting: { prompt: "permission" as const, since: 0 }, waitedMs: 0 };
 
 describe("the queue", () => {
+  it("while Pomade is not up, agent runs wait for it, in their order and holding no slot; scripts and git runs go on", () => {
+    const agent = (job: string): ActiveRun => run(job, "queued", { kind: "agent" });
+    const down = state({ pomadeUp: false, maxLowPriority: 1 });
+    expect(fates([agent("a"), run("s", "queued"), agent("b"), run("g", "queued", { kind: "git", lowPriority: false })], down)).toEqual({ a: { kind: "pomade" }, s: "start", b: { kind: "pomade" }, g: "start" });
+    // Up, they start in their order, the slot first come first served.
+    expect(fates([agent("a"), agent("b")], state({ maxLowPriority: 1 }))).toEqual({ a: "start", b: { kind: "slot", ahead: 1 } });
+    // The switch and the previous run hold first.
+    expect(fates([agent("a")], state({ pomadeUp: false, position: "pause-all" }))).toEqual({ a: { kind: "switch", position: "pause-all" } });
+    expect(fates([run("p", "running", { kind: "agent" }), agent("p")], state({ pomadeUp: false }))).toEqual({ p: { kind: "previous-run" } });
+  });
+
   it("an agent run waiting for you at a prompt holds no slot; answered, it counts again", () => {
     const waiting = run("w", "running", { kind: "agent", agent: waitingAgent });
     expect(fates([waiting, run("a", "running"), run("b", "queued")])).toEqual({ b: "start" });

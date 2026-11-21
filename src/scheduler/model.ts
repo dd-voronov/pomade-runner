@@ -50,13 +50,15 @@ export interface SwitchState {
 
 /** What a queued run waits for, the first that holds it: Run at…'s time · the switch · the warm-up
  *  after login or wake (a caught-up or hook run; `until` is `null` while the services still start) · the
- *  job's previous run (overlap `queue`) · a free low-priority slot, with how many runs have to end
- *  before it starts: the slot-waiting runs ahead of it and the one whose slot it takes. */
+ *  job's previous run (overlap `queue`) · Pomade, for an agent run while Runner opens it · a free
+ *  low-priority slot, with how many runs have to end before it starts: the slot-waiting runs ahead
+ *  of it and the one whose slot it takes. */
 export type Waits =
   | { kind: "time"; at: number }
   | { kind: "switch"; position: Exclude<SwitchPosition, "running"> }
   | { kind: "warm-up"; until: number | null }
   | { kind: "previous-run" }
+  | { kind: "pomade" }
   | { kind: "slot"; ahead: number };
 
 export type RunState = ActiveState | RunResult;
@@ -461,6 +463,7 @@ function isWaits(value: unknown): value is Waits {
     case "warm-up":
       return nullableNumber(value.until);
     case "previous-run":
+    case "pomade":
       return true;
     case "slot":
       return typeof value.ahead === "number" && Number.isSafeInteger(value.ahead) && value.ahead >= 1;
@@ -670,6 +673,8 @@ export function waitsWords(waits: Waits | null): string {
       return waits.until === null ? "warm-up · services start first" : `warm-up until ${clockTime(waits.until)}`;
     case "previous-run":
       return "after the previous run";
+    case "pomade":
+      return "opening Pomade";
     case "slot":
       return `${waits.ahead} ahead`;
   }

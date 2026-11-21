@@ -178,6 +178,8 @@ export function waitsSentence(waits: Waits | null, now: number): string {
       return waits.until === null ? "It waits for the warm-up after login or wake: the services start first." : `It waits for the warm-up after login or wake, until ${shortClock(waits.until)}.`;
     case "previous-run":
       return "The job's previous run is still going. This one starts when it finishes.";
+    case "pomade":
+      return "An agent run needs Pomade, so Runner is opening it. The run starts once Pomade and the Agents app are ready.";
     case "slot":
       return `Low-priority runs are going in every free slot — ${waits.ahead} ${waits.ahead === 1 ? "run" : "runs"} ahead. This one starts when one of them finishes.`;
   }
