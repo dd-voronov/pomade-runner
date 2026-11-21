@@ -9,7 +9,7 @@ import { baseName } from "pomade-kit/protocol";
 import { checkJobAmong, projectJobsFolder } from "../../jobs/check";
 import { readJobDocument } from "../../jobs/document";
 import { FIELD_ORDER, jobFileCandidates, newJobText, setJobFields, type FieldChanges, type FieldInput } from "../../jobs/edit";
-import { JOB_KINDS, JOBS_FOLDER, NOTIFY_VALUES, OVERLAP_POLICIES, SERVICE_STARTS, type JobError, type JobKind, type JobsSnapshot, type Notify, type OverlapPolicy, type ProjectRecord, type ServiceStart } from "../../jobs/model";
+import { JOB_KINDS, JOBS_FOLDER, MISSED_POLICIES, NOTIFY_VALUES, OVERLAP_POLICIES, SERVICE_STARTS, type JobError, type JobKind, type JobsSnapshot, type MissedPolicy, type Notify, type OverlapPolicy, type ProjectRecord, type ServiceStart } from "../../jobs/model";
 import { KIND_DEFAULTS } from "../../jobs/parse";
 import { blankSchedule, readSchedule, scheduleInput, type ScheduleValues } from "./schedule";
 
@@ -19,6 +19,9 @@ export type ReadyCheck = "alive" | "port" | "url";
 /** Which trigger a script's file has: the form edits a schedule; a hook or a chain stays as the file
  *  says. */
 export type TriggerKind = "schedule" | "hook" | "chain";
+
+/** Until when a caught-up run is worth starting: the job's next scheduled run, or a time of day. */
+export type WorthUntil = "next-run" | "time";
 
 /** Every value the form shows. A kind writes the ones it takes; the others are kept for a switch back. */
 export interface FormValues {
@@ -38,8 +41,16 @@ export interface FormValues {
   /** Script, agent, git: the trigger, and the schedule's values. */
   trigger: TriggerKind;
   schedule: ScheduleValues;
+  /** What a missed run becomes; applies to a job on a schedule. */
+  missed: MissedPolicy;
+  /** With `missed: run-on-wake`: until the next scheduled run, or until `worthAt`. */
+  worth: WorthUntil;
+  /** A time of day as typed; written when `worth` is `time`. */
+  worthAt: string;
   overlap: OverlapPolicy;
   lowPriority: boolean;
+  /** A duration as typed (`45m`, `2h`, `1h30m`); empty is no limit. */
+  timeLimit: string;
   notify: Notify;
 }
 
@@ -56,10 +67,10 @@ export interface KindFile {
 }
 
 /** The values whose default depends on the kind: switching kind resets them unless the person set them. */
-export const KIND_DEFAULT_FIELDS = ["overlap", "lowPriority", "notify"] as const satisfies readonly FormField[];
+export const KIND_DEFAULT_FIELDS = ["missed", "overlap", "lowPriority", "notify"] as const satisfies readonly FormField[];
 
 function kindDefaults(kind: JobKind): Pick<FormValues, (typeof KIND_DEFAULT_FIELDS)[number]> {
-  return { overlap: "skip", lowPriority: KIND_DEFAULTS[kind].lowPriority, notify: KIND_DEFAULTS[kind].notify };
+  return { missed: KIND_DEFAULTS[kind].missed ?? "run-on-wake", overlap: "skip", lowPriority: KIND_DEFAULTS[kind].lowPriority, notify: KIND_DEFAULTS[kind].notify };
 }
 
 /** The fields every kind writes the same way. */
@@ -104,17 +115,32 @@ const SERVICE: KindFile = {
 };
 
 /** A job that runs once per trigger writes its schedule — a hook or a chain stays as the file has it
- *  — and its overlap. */
+ *  — and, for a schedule, its missed-run policy (`worth-until` only with `run-on-wake`); and its
+ *  overlap and time limit. A policy at its default is left out; a limit of digits only is written
+ *  as a number, so the checker says it has no unit. */
 function runFields(values: FormValues): Record<string, FieldInput | undefined> {
+  const scheduled = values.trigger === "schedule";
+  const timeLimit = values.timeLimit.trim();
   return {
-    schedule: values.trigger === "schedule" ? scheduleInput(values.schedule) : undefined,
+    schedule: scheduled ? scheduleInput(values.schedule) : undefined,
+    missed: scheduled && values.missed !== kindDefaults(values.kind).missed ? values.missed : undefined,
+    "worth-until": scheduled && values.missed === "run-on-wake" && values.worth === "time" ? values.worthAt.trim() : undefined,
     overlap: values.overlap === "skip" ? undefined : values.overlap,
+    "time-limit": timeLimit === "" ? undefined : /^\d+$/.test(timeLimit) ? Number(timeLimit) : timeLimit,
   };
 }
 
 /** A hook's or a chain's errors — a chain that loops back among them — show on the trigger the form
  *  shows from the file, and keep Save from writing. */
-const RUN_ERROR_FIELDS: Readonly<Record<string, FormField>> = { schedule: "schedule", hook: "trigger", after: "trigger", overlap: "overlap" };
+const RUN_ERROR_FIELDS: Readonly<Record<string, FormField>> = {
+  schedule: "schedule",
+  hook: "trigger",
+  after: "trigger",
+  missed: "missed",
+  "worth-until": "worthAt",
+  overlap: "overlap",
+  "time-limit": "timeLimit",
+};
 
 const SCRIPT: KindFile = {
   fields: (values) => ({ ...commonFields(values), command: values.command.trim(), ...runFields(values) }),
@@ -147,7 +173,7 @@ export interface FormState {
 }
 
 export function blankValues(kind: JobKind): FormValues {
-  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), ...kindDefaults(kind) };
+  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), worth: "next-run", worthAt: "12:00", timeLimit: "", ...kindDefaults(kind) };
 }
 
 /** A new job's form. */
@@ -170,6 +196,8 @@ export function valuesFromText(text: string): FormValues | null {
   const values = blankValues(kind);
   const ready = fields.ready;
   const choice = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T => (allowed.find((candidate) => candidate === value) ?? fallback);
+  const worthUntil = asText(fields["worth-until"]).trim();
+  const worthTime = worthUntil !== "" && worthUntil !== "next-run";
   return {
     ...values,
     name: asText(fields.name),
@@ -183,7 +211,11 @@ export function valuesFromText(text: string): FormValues | null {
     url: isMapping(ready) ? asText(ready.url) : "",
     trigger: kind !== "service" && fields.schedule === undefined && fields.hook !== undefined ? "hook" : kind !== "service" && fields.schedule === undefined && fields.after !== undefined ? "chain" : "schedule",
     schedule: readSchedule(fields.schedule),
+    missed: choice(fields.missed, MISSED_POLICIES, values.missed),
+    worth: worthTime ? "time" : "next-run",
+    worthAt: worthTime ? worthUntil : values.worthAt,
     overlap: choice(fields.overlap, OVERLAP_POLICIES, values.overlap),
+    timeLimit: asText(fields["time-limit"]).trim(),
     lowPriority: typeof fields["low-priority"] === "boolean" ? fields["low-priority"] : values.lowPriority,
     notify: choice(fields.notify, NOTIFY_VALUES, values.notify),
   };
@@ -323,16 +355,27 @@ export function formErrors(state: FormState, snapshot: JobsSnapshot, projects: r
 /** Where an error shows: on a form field, or — about something the form has no field for — on the file. */
 export type ErrorPlace = FormField | "file";
 
-export function errorPlace(error: JobError, kind: JobKind): ErrorPlace {
+export function errorPlace(error: JobError, values: FormValues): ErrorPlace {
   const top = error.field.split(/[.[]/)[0] ?? "";
-  return formKind(kind)?.errorFields[top] ?? "file";
+  const place = formKind(values.kind)?.errorFields[top] ?? "file";
+  return place !== "file" && !drawn(values, place) ? "file" : place;
+}
+
+/** Whether the form draws the control of a field now: a missed-run policy only for a job on a
+ *  schedule, and its time of day only with `run-on-wake` until a time. An error about a control
+ *  that is not drawn is the file's. */
+function drawn(values: FormValues, field: FormField): boolean {
+  const scheduled = values.trigger === "schedule";
+  if (field === "missed") return scheduled;
+  if (field === "worthAt") return scheduled && values.missed === "run-on-wake" && values.worth === "time";
+  return true;
 }
 
 /** Errors by where they show, each in the validator's order. */
-export function errorsByPlace(errors: readonly JobError[], kind: JobKind): Map<ErrorPlace, JobError[]> {
+export function errorsByPlace(errors: readonly JobError[], values: FormValues): Map<ErrorPlace, JobError[]> {
   const places = new Map<ErrorPlace, JobError[]>();
   for (const error of errors) {
-    const place = errorPlace(error, kind);
+    const place = errorPlace(error, values);
     places.set(place, [...(places.get(place) ?? []), error]);
   }
   return places;

@@ -86,7 +86,7 @@ export const HELP = {
   'p.worth': ['After this point a catch-up run is pointless and is skipped instead.', 'Example: until 12:00 — opening the Mac at 15:00 skips the morning summary.'],
   'p.overlap': ['What to do when the previous run of this job is still going at the next start.', 'Example: Skip → "skipped · previous run still going".'],
   'p.low': ['Runs at macOS background priority: slower, never in your way. At most 2 low-priority runs go at once.', 'Example: on for agents and scripts, off for git and services.'],
-  'p.limit': ['Stops the run when it takes longer than this. Paused while an agent waits for you.', 'Example: 45m → "Stopped: ran over 45 min". Empty = no limit.'],
+  'p.limit': ['Stops the run when it takes longer than this, and it counts as failed. Paused while an agent waits for you.', 'Example: 45m, 2h or 1h30m. Empty = no limit.'],
   'p.notify': ['When Runner sends you a notice about this job. "Needs you" items always notify.', 'Example: On failure — silence means it worked.'],
   'f.enabled': ['A disabled job is kept but never runs.', 'Example: switch off the scraper while on holiday.'],
   'f.file': ['Each job is one md file — agents create jobs by writing one. The form changes only the fields, so notes in the file survive.', 'Example: Apps/pomade-runner/jobs/coda-helper/coda-web.md'],

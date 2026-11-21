@@ -147,7 +147,7 @@ describe("the checker's schedule errors land on the control that caused them", (
   it("all on the schedule's place, which keeps a new job's Save", () => {
     const state = setValue(base, "schedule", { ...blankSchedule(), times: ["25:00"] });
     const errors = formErrors(state, EMPTY, PROJECTS);
-    expect(errors.map((error) => errorPlace(error, "script"))).toEqual(["schedule"]);
+    expect(errors.map((error) => errorPlace(error, state.values))).toEqual(["schedule"]);
     expect(blocksSave(state, "schedule")).toBe(true);
   });
 
@@ -165,7 +165,7 @@ describe("the checker's schedule errors land on the control that caused them", (
   it("a filter the shape does not take, from a hand-edited file, is the schedule's", () => {
     const state = edit(scriptFile("schedule:\n  weekly: { days: [mon], at: 7:00 }\n  only: weekdays"));
     const [error] = formErrors(state, EMPTY, PROJECTS);
-    expect(error === undefined ? null : [error.field, scheduleTarget(error.field), errorPlace(error, "script")]).toEqual(["schedule.only", "filter", "schedule"]);
+    expect(error === undefined ? null : [error.field, scheduleTarget(error.field), errorPlace(error, state.values)]).toEqual(["schedule.only", "filter", "schedule"]);
     // The form shows the file's days and times; picking the filter's own shape mends it.
     expect(state.values.schedule).toMatchObject({ shape: "weekly", days: ["mon"], filter: "weekdays" });
     expect(formErrors(setValue(state, "schedule", { ...state.values.schedule, shape: "daily" }), EMPTY, PROJECTS)).toEqual([]);
@@ -184,7 +184,7 @@ describe("the schedule in words and its next runs", () => {
     expect(words("schedule:\n  daily: { at: [13:00, 20:00] }")).toEqual({ words: "daily at 13:00 and 20:00", next: ["today 13:00", "today 20:00", "tomorrow 13:00"] });
     expect(words("schedule:\n  weekly: { days: [mon, tue, wed, thu, fri], at: 7:00 }")).toEqual({ words: "weekdays at 7:00", next: ["tomorrow 7:00", "Thu 7:00", "Fri 7:00"] });
     expect(words("schedule:\n  monthly: { days: [1, 15, last, first mon], at: 9:00 }")).toEqual({ words: "monthly on the 1st, 15th, the last day and the first Monday at 9:00", next: ["Mon 30 Nov 9:00", "Tue 1 Dec 9:00", "Mon 7 Dec 9:00"] });
-    expect(words("schedule:\n  once: 2026-11-17 23:00")).toEqual({ words: "once on Nov 17, 2026 at 23:00", next: ["today 23:00"] });
+    expect(words("schedule:\n  once: 2026-11-17 23:00")).toEqual({ words: "once, today at 23:00", next: ["today 23:00"] });
     expect(words("schedule:\n  daily: { at: 7:00 }\n  only: weekends")).toEqual({ words: "weekends at 7:00", next: ["Sat 7:00", "Sun 7:00", "Sat 28 Nov 7:00"] });
   });
 
@@ -248,7 +248,7 @@ describe("a script whose trigger is a hook or a chain", () => {
     );
     const state = editForm("Apps/pomade-runner/jobs/a.md", a);
     if (state === null) throw new Error("not editable");
-    const places = errorsByPlace(formErrors(setValue(state, "command", "./a2.sh"), snapshot, PROJECTS), "script");
+    const places = errorsByPlace(formErrors(setValue(state, "command", "./a2.sh"), snapshot, PROJECTS), state.values);
     expect(places.get("trigger")?.map(describeJobError)).toEqual(["after.job — the chain loops back: a → b → a. Fix: remove after: from one of these jobs, or point it at a job outside the loop."]);
     expect(blocksSave(state, "trigger")).toBe(true);
   });

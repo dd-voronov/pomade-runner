@@ -157,6 +157,10 @@
   width: 240px;
 }
 
+.limit {
+  width: 88px;
+}
+
 .kinds {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -270,6 +274,10 @@
   color: var(--text);
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
+}
+
+.policyLabelMuted {
+  color: var(--text-muted);
 }
 
 .policyControl {
@@ -475,10 +483,4 @@
   display: block;
   color: var(--text-muted);
   font-size: var(--fs-xs);
-}
-
-/* A policy the form shows from the file only: its value, then where it is changed. */
-.fileOnlyValue {
-  color: var(--text);
-  font-weight: var(--fw-medium);
 }

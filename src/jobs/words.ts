@@ -2,6 +2,8 @@
 // "at Mac login", "after backup is done", "always on, from login; restarts after git-pull is done".
 // Pure.
 
+import { addDays, describeDate, describeSchedule, localDateOf, type Schedule } from "pomade-kit/schedule";
+
 import type { Chain, GitOperation, Hook, Job, ServiceAction } from "./model";
 
 /** A git operation as the Git panel and the job form name it. */
@@ -30,15 +32,28 @@ export function chainWords(chain: Chain, names: WordNames = {}): string {
   return `after ${names.job?.(chain.job) ?? chain.job} ${RESULT_WORDS[chain.result]}`;
 }
 
-/** A job's trigger in words; `names` says a job or a project by its name instead of its id. */
-export function jobTriggerWords(job: Job, names: WordNames = {}): string {
+/** A schedule in words, the kit's — except a `once` on today's or tomorrow's date, which reads
+ *  "once, today at 23:00" / "once, tomorrow at 7:00": the day as the Owner would say it, on `now`'s
+ *  local calendar. */
+export function scheduleWords(schedule: Schedule, now: Date = new Date()): string {
+  const words = describeSchedule(schedule);
+  const { rule } = schedule;
+  if (rule.kind !== "once") return words;
+  const today = localDateOf(now);
+  const day = rule.date === today ? "today" : rule.date === addDays(today, 1) ? "tomorrow" : null;
+  return day === null ? words : words.replace(`once on ${describeDate(rule.date)}`, `once, ${day}`);
+}
+
+/** A job's trigger in words; `names` says a job or a project by its name instead of its id, `now`
+ *  is the day a once schedule is said against. */
+export function jobTriggerWords(job: Job, names: WordNames = {}, now: Date = new Date()): string {
   if (job.kind === "service") {
     const start = job.start === "login" ? "always on, from login" : "always on, from its project's first open";
     return job.after === null ? start : `${start}; ${ACTION_WORDS[job.after.action]} ${chainWords(job.after, names)}`;
   }
   switch (job.trigger.kind) {
     case "schedule":
-      return job.trigger.words;
+      return scheduleWords(job.trigger.schedule, now);
     case "hook":
       return HOOK_TRIGGER_WORDS[job.trigger.hook.event](job.trigger.hook, names);
     case "chain":

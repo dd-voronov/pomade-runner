@@ -622,10 +622,46 @@ test.describe("Runner in Pomade", () => {
     expect(checked).toEqual({ code: 0, stdout: "6 job files: no problems.\n", stderr: "" });
   });
 
-  test("a running script is a Running now row in the panel; a click opens its terminal, with the run's output", async () => {
+  test("T-009 policies: a script made in the form with a missed-run policy and a 1-minute time limit — both in its file, the limit enforced by the scheduler", async () => {
+    test.setTimeout(150_000);
     const running = scheduler ?? (await startTheScheduler());
+    const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
+    const file = join(folders.workspace, "Apps/pomade-runner/jobs/form-limit.md");
+    const runner = await connectAsRunner();
+    try {
+      await runner.tabs.openApp({ route: "", projectId: WORKSPACE_PROJECT_ID });
+      await runner.tabs.openApp({ route: "new", projectId: WORKSPACE_PROJECT_ID });
+      await tab.getByTestId("kind-script").click();
+      const form = tab.getByTestId("form-script");
+      await form.getByRole("textbox", { name: "Name", exact: true }).fill("Form limit");
+      await form.getByRole("textbox", { name: "Command", exact: true }).fill("echo limited; sleep 300");
+      await form.getByRole("textbox", { name: "Folder", exact: true }).fill(".");
+      // A schedule that never fires during the test; Run now starts it.
+      await form.getByTestId("schedule-shape").getByRole("button", { name: "Once" }).click();
+      await form.getByRole("textbox", { name: "Or say it in words" }).fill("2037-01-05 23:00");
+      const policies = form.getByTestId("form-policies");
+      await policies.getByRole("button", { name: "Change" }).click();
+      await policies.getByRole("group", { name: "If a run is missed" }).getByRole("button", { name: "Wait for me" }).click();
+      await policies.getByRole("textbox", { name: "Time limit" }).fill("1m");
+      await shoot(page, "pomade-form-policies");
+      await tab.getByTestId("form-save").click();
+      await expect(tab.getByTestId("toast").last()).toHaveText("RunnerCreated Apps/pomade-runner/jobs/form-limit.md");
+      expect(await readFile(file, "utf8")).toBe("---\nkind: script\nname: Form limit\nfolder: .\nenabled: true\ncommand: echo limited; sleep 300\nschedule:\n  once: 2037-01-05 23:00\nmissed: wait-for-me\ntime-limit: 1m\n---\n");
+      expect(await command("check", file)).toEqual({ code: 0, stdout: "1 job file: no problems.\n", stderr: "" });
+      await expect.poll(async () => (await command("list")).stdout).toContain("Form limit");
+      // The scheduler took the file as the form wrote it: the limit stops a run of it.
+      expect((await command("run", "form-limit")).code).toBe(0);
+      await expect.poll(async () => (await history("form-limit")).map((record) => [record.state, record.trigger, record.reason?.includes("1 min")]), { timeout: 110_000 }).toEqual([["failed", "manual", true]]);
+      expect(running.output()).toMatch(/run form-limit \S+: ran over its time limit of 1 min; stopping it\n/);
+    } finally {
+      runner.close();
+    }
+  });
+
+  test("a running script is a Running now row in the panel; a click opens its terminal, with the run's output", async () => {
+    scheduler ??= await startTheScheduler();
     await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/slow.md"), scriptFile("Slow", "echo slow-start; sleep 600"));
-    await expect.poll(() => running.output()).toContain("job files, 0 invalid\n");
+    await expect.poll(async () => (await command("list")).stdout).toContain("Slow");
     expect((await command("run", "slow")).code).toBe(0);
     await page.getByTestId(`strip-${STRIP_KEY}`).click();
     await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
@@ -657,8 +693,11 @@ test.describe("Runner in Pomade", () => {
       await runner.tabs.openApp({ route: "settings", projectId: WORKSPACE_PROJECT_ID });
       const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
       await expect(tab.getByTestId("setting-history-days-stepper-value")).toHaveText("30");
-      await tab.getByTestId("setting-history-days-stepper-more").click();
-      await expect.poll(() => readFile(file, "utf8")).toBe("# mine\nhistory-days: 31  # a month\n");
+      // A tab frame just shown again may not take a click yet: step until the value moves, once.
+      await expect(async () => {
+        if ((await tab.getByTestId("setting-history-days-stepper-value").textContent()) === "30") await tab.getByTestId("setting-history-days-stepper-more").click();
+        expect(await readFile(file, "utf8")).toBe("# mine\nhistory-days: 31  # a month\n");
+      }).toPass({ intervals: [1000, 1500] });
       await expect.poll(() => running.output()).toContain("history 31 days");
       await tab.getByTestId("setting-warm-up-stepper-less").click();
       await expect.poll(() => readFile(file, "utf8")).toBe("# mine\nhistory-days: 31  # a month\nwarm-up: 1m\n");

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { fileLimit, fileMissed, LOW_PRIORITY_WORDS, MISSED_FROM_FILE_WORDS, NOTIFY_WORDS, OVERLAP_WORDS, policySentence, TIME_LIMIT_FROM_FILE_WORDS } from "./policies";
+import { LOW_PRIORITY_WORDS, MISSED_WORDS, NOTIFY_WORDS, OVERLAP_WORDS, policySentence, TIME_LIMIT_WORDS } from "./policies";
 import { blankValues, editForm, newForm, setValue, switchKind, type FormState } from "./state";
 
-const SCRIPT = [MISSED_FROM_FILE_WORDS, OVERLAP_WORDS, LOW_PRIORITY_WORDS, TIME_LIMIT_FROM_FILE_WORDS, NOTIFY_WORDS];
+const SCRIPT = [MISSED_WORDS, OVERLAP_WORDS, LOW_PRIORITY_WORDS, TIME_LIMIT_WORDS, NOTIFY_WORDS];
 const SERVICE = [LOW_PRIORITY_WORDS, NOTIFY_WORDS];
 
 /** The summary as it reads, non-defaults in **bold**. */
@@ -20,35 +20,47 @@ const script = (fields: string): FormState => {
 
 describe("the policies in one sentence", () => {
   it("a new script: what the form edits, at the defaults", () => {
-    expect(sentence(switchKind(newForm("service"), "script"))).toEqual({ text: "Never overlaps itself · low priority · notifies on failure", customised: false });
+    expect(sentence(switchKind(newForm("service"), "script"))).toEqual({ text: "If missed, run on wake · never overlaps itself · low priority · no time limit · notifies on failure", customised: false });
     expect(sentence(newForm("service"), SERVICE)).toEqual({ text: "Normal priority · notifies on failure", customised: false });
   });
 
   it("the person's choices, in bold", () => {
     let state = setValue(switchKind(newForm("service"), "script"), "overlap", "queue");
-    expect(sentence(state)).toEqual({ text: "**Queues behind itself** · low priority · notifies on failure", customised: true });
+    expect(sentence(state)).toEqual({ text: "If missed, run on wake · **queues behind itself** · low priority · no time limit · notifies on failure", customised: true });
     state = setValue(setValue(setValue(state, "overlap", "parallel"), "lowPriority", false), "notify", "never");
-    expect(sentence(state).text).toBe("**May overlap itself** · **normal priority** · **never notifies**");
+    expect(sentence(state).text).toBe("If missed, run on wake · **may overlap itself** · **normal priority** · no time limit · **never notifies**");
   });
 
-  it("a missed-run policy and a time limit the file sets: their values, read from the file", () => {
+  it("a missed-run policy, until when it is worth it, and a time limit", () => {
+    let state = switchKind(newForm("service"), "script");
+    state = setValue(state, "missed", "wait-for-me");
+    expect(sentence(state).text).toBe("**If missed, wait for me** · never overlaps itself · low priority · no time limit · notifies on failure");
+    expect(sentence(setValue(state, "missed", "skip")).text).toContain("**If missed, skip**");
+    // Until a time of day is a change from the default, until the next run is not.
+    state = setValue(setValue(state, "missed", "run-on-wake"), "worth", "time");
+    expect(sentence(state).text).toMatch(/^\*\*If missed, run on wake until 12:00\*\* ·/);
+    expect(sentence(setValue(state, "worthAt", " 7:30 ")).text).toMatch(/^\*\*If missed, run on wake until 7:30\*\*/);
+    expect(sentence(setValue(state, "worth", "next-run")).text).toMatch(/^If missed, run on wake ·/);
+    state = setValue(setValue(state, "worth", "next-run"), "timeLimit", "45m");
+    expect(sentence(state)).toMatchObject({ text: expect.stringContaining("**stops after 45m**") as unknown as string, customised: true });
+    expect(sentence(setValue(state, "timeLimit", "  ")).text).toContain("no time limit");
+  });
+
+  it("what a file sets, read into the form's values, says the same words", () => {
     expect(sentence(script("missed: wait-for-me\noverlap: queue\ntime-limit: 45m\nnotify: always\n"))).toEqual({
       text: "**If missed, wait for me** · **queues behind itself** · low priority · **stops after 45m** · **always notifies**",
       customised: true,
     });
-    expect(sentence(script("missed: run-on-wake\nworth-until: 12:00\n")).text).toBe("**If missed, run on wake until 12:00** · never overlaps itself · low priority · notifies on failure");
+    expect(sentence(script("missed: run-on-wake\nworth-until: 12:00\n")).text).toBe("**If missed, run on wake until 12:00** · never overlaps itself · low priority · no time limit · notifies on failure");
     // The default written out is no change.
-    expect(sentence(script("missed: run-on-wake\nworth-until: next-run\n"))).toEqual({ text: "If missed, run on wake · never overlaps itself · low priority · notifies on failure", customised: false });
-    expect(sentence(script("time-limit:\n")).text).toBe("Never overlaps itself · low priority · notifies on failure");
+    expect(sentence(script("missed: run-on-wake\nworth-until: next-run\n"))).toEqual({ text: "If missed, run on wake · never overlaps itself · low priority · no time limit · notifies on failure", customised: false });
+    expect(sentence(script("time-limit:\n")).text).toBe("If missed, run on wake · never overlaps itself · low priority · no time limit · notifies on failure");
   });
 
-  it("the rows of the policies shown from the file", () => {
-    expect(fileMissed(script("missed: wait-for-me\n"))).toMatchObject({ label: "Wait for me", isDefault: false });
-    expect(fileMissed(script("worth-until: 12:00\n"))).toMatchObject({ label: "Run on wake, until 12:00", policy: "run-on-wake" });
-    expect(fileMissed(script("missed: sometimes\n"))).toMatchObject({ label: "sometimes", words: "if missed: sometimes", policy: null });
-    expect(fileMissed(script(""))).toBeNull();
-    expect(fileLimit(script("time-limit: 1h30m\n"))).toBe("1h30m");
-    expect(fileLimit(script(""))).toBeNull();
+  it("a hook or a chain has no missed runs: the sentence leaves the policy out", () => {
+    const hook = editForm("Apps/pomade-runner/jobs/mount.md", "---\nkind: script\nname: Mount\nfolder: .\ncommand: ./m.sh\nhook: { event: login }\n---\n");
+    if (hook === null) throw new Error("not editable");
+    expect(sentence(hook).text).toBe("Never overlaps itself · low priority · no time limit · notifies on failure");
   });
 });
 

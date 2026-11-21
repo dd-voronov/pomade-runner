@@ -845,7 +845,7 @@ changed). Order: kind → trigger → folder and project (agent: agent → folde
 policies show as one sentence, non-defaults in bold, until **Change**.
 - **State** (`state.ts`, pure): the values the form shows, the fields the person set (`touched`),
   and the file as last read (`base`). Switching kind keeps what the person set and resets the
-  kind-dependent defaults they left alone (overlap, low priority, notify). A folder inside a project
+  kind-dependent defaults they left alone (missed-run policy, overlap, low priority, notify). A folder inside a project
   fills in that project.
 - **Kinds**: a kind the form builds is registered in `FORM_KINDS` (`state.ts`: the file's fields
   from the values, and which form field each file field's errors belong to) and in `KIND_UI`
@@ -860,7 +860,9 @@ policies show as one sentence, non-defaults in bold, until **Change**.
     Weekly on chosen days · Monthly on days of the 1–31 grid, the last day, and nth weekdays added
     as "the [first] [Monday]";
   - **Days**: Every day · Weekdays only · Weekends only, for every and daily (the format's `only:`);
-  - the schedule in words (`describeSchedule`) and its next three runs (`nextOccurrence`), live, from
+  - the schedule in words (`scheduleWords`: the kit's, except a once on today's or tomorrow's date,
+    which reads "once, today at 23:00" / "once, tomorrow at 7:00"; the Jobs view says it the same way)
+    and its next three runs (`nextOccurrence`), live, from
     the text the form would write; "Fix the schedule to see it in words" while the checker finds a
     problem with it.
 
@@ -874,9 +876,22 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   there and keep Save from writing. The choice the form does not make is shown faded, with a tip.
 - **Policies** (`policies.ts` their words, pure; `kinds.tsx` their rows). Each kind lists its
   policies in the sentence's order; a policy's words come from the values, a non-default's in bold.
-  A script's: overlap (**If still running**: Skip · Run in parallel · Queue after), low priority,
-  notify — and its missed-run policy and time limit, shown from the file (in the sentence and as
-  a row "· changed in the job file") only when the file sets them.
+  A script's, in that order:
+  - **If a run is missed**: Run on wake · Wait for me · Skip, each with its own help; with Run on
+    wake, **Still worth it until** the next scheduled run or a time of day (`worth-until`, the time
+    typed). For a script whose trigger is a hook or a chain the row says it does not apply, and the
+    sentence leaves it out. `worth-until` is written only with Run on wake and a time; choosing
+    another policy takes it out of the file.
+  - **If still running**: Skip · Run in parallel · Queue after;
+  - **Low priority**: a switch;
+  - **Time limit**: a duration typed (`45m`, `2h`, `1h30m`), empty for none;
+  - **Notify me**.
+
+  A service's are low priority and notify: the engine applies a missed-run policy, an overlap and
+  a time limit to jobs that run once per trigger only. A policy at its default is left out of the
+  file. Each policy's error lands on its row; an error about a control the form does not draw
+  (`worth-until` beside another policy, a missed-run policy on a hook) shows in the note about the
+  file's problems and does not keep Save from writing.
 - **The file it writes.** A new job: its kind's fields, defaults left out (`enabled` always
   written), in the project's sub-folder (`projectJobsFolder`) or at the top for the Workspace,
   under the first free slug of its name (`createJobFile`). An edit writes only the fields whose
@@ -896,8 +911,9 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   as they are.
 - **Following the file.** Editing, the form follows its file on disk (`followJobFile`): a field
   the person left alone takes the file's value; one they set keeps their edit, and when the file
-  changed it too a note says so — Save writes theirs. The file gone: the form says so and Save is
-  off.
+  changed it too a note says so — Save writes theirs. The file gone: the form says so, Save and
+  Open file are off, and the file coming back lifts the note. Open file, from the form, the
+  Trigger section or the page of a job the form cannot edit, toasts a refusal.
 
 **Deleting a job.** Delete is on a job's row in the Jobs view and in the form, next to Open file.
 One confirm (`DeleteJobDialog`, `src/ui/DeleteJobDialog.tsx`) serves both; it names the file; on it the scheduler's `jobs.delete` (`src/scheduler/delete.ts`):

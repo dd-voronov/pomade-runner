@@ -967,6 +967,38 @@ test.describe("the job form", () => {
     await expect(app(page).getByTestId("form-save")).toBeDisabled();
   });
 
+  test("a job file deleted while its form follows it: the form says so, with no unhandled error", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (err) => errors.push(err.message));
+    await start(page, { route: "edit/alpha.coda-web" });
+    await writeJob(page, "alpha/coda-web.md", HAND);
+    await expect(app(page).getByTestId("form-service")).toBeVisible();
+    await app(page).getByTestId("form-open-file").click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: WEB }]);
+    await page.evaluate((p) => window.fakeHost.deleteFile(p), WEB);
+    await expect(app(page).getByTestId("form-gone")).toBeVisible();
+    await expect(app(page).getByTestId("form-delete")).toBeDisabled();
+    // Nothing to open: Open file is off, so it cannot ask the host for a file that is gone.
+    await expect(app(page).getByTestId("form-open-file")).toBeDisabled();
+    await writeJob(page, "alpha/coda-web.md", HAND);
+    await expect(app(page).getByTestId("form-gone")).toHaveCount(0);
+    await expect(app(page).getByTestId("form-open-file")).toBeEnabled();
+    expect(errors).toEqual([]);
+  });
+
+  test("Open file on a file that vanished before the form heard of it says so in a toast, with no unhandled error", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (err) => errors.push(err.message));
+    await start(page, { route: "edit/alpha.coda-web" });
+    await writeJob(page, "alpha/coda-web.md", HAND);
+    await expect(app(page).getByTestId("form-service")).toBeVisible();
+    // Gone without a change event: the form still has it, and Pomade refuses to open it.
+    await page.evaluate((p) => (window.fakeHost as unknown as { workspace: { deleteFile(path: string): unknown } }).workspace.deleteFile(p), WEB);
+    await app(page).getByTestId("form-open-file").click();
+    await expect(app(page).getByTestId("toast").last()).toHaveText(`RunnerCould not open ${WEB}: "${WEB}" does not exist`);
+    expect(errors).toEqual([]);
+  });
+
   test("Delete sits next to Open file; it confirms with the file's name, and a running service is said to be stopped first", async ({ page }) => {
     await start(page, { route: "edit/alpha.coda-web" });
     await writeJob(page, "alpha/coda-web.md", HAND);
@@ -1721,7 +1753,7 @@ test.describe("the Script form and the schedule picker", () => {
     await frame.getByTestId("schedule-shape").getByRole("button", { name: "Once" }).click();
     await expect(frame.getByRole("combobox", { name: "Date" })).toHaveValue("2026-11-17");
     await expect(frame.getByRole("combobox", { name: "Date" }).locator("option")).toHaveText(["Today", "Tomorrow", "Thu", "Fri", "Sat", "Sun", "Mon"]);
-    await expectWords(frame, "Runs once on Nov 17, 2026 at 23:00", "Next: today 23:00 — then finished · Mac’s local time");
+    await expectWords(frame, "Runs once, today at 23:00", "Next: today 23:00 — then finished · Mac’s local time");
     const phrase = frame.getByRole("textbox", { name: "Or say it in words" });
     await phrase.fill("whenever");
     await expect(frame.getByTestId("schedule-box").getByRole("alert")).toHaveText("Can’t read that — try “tonight 23:00”, “tomorrow 7:00” or “+2h”.");
@@ -1729,7 +1761,10 @@ test.describe("the Script form and the schedule picker", () => {
     await expect(frame.getByTestId("schedule-box").getByRole("alert")).toHaveCount(0);
     await expect(frame.getByRole("combobox", { name: "Date" })).toHaveValue("2026-11-18");
     await expect(frame.getByRole("textbox", { name: "Time" })).toHaveValue("7:30");
-    await expectWords(frame, "Runs once on Nov 18, 2026 at 7:30", "Next: tomorrow 7:30 — then finished · Mac’s local time");
+    await expectWords(frame, "Runs once, tomorrow at 7:30", "Next: tomorrow 7:30 — then finished · Mac’s local time");
+    // A day further out keeps the date: only today and tomorrow are said as such.
+    await phrase.fill("2026-11-19 7:30");
+    await expectWords(frame, "Runs once on Nov 19, 2026 at 7:30", "Next: Thu 7:30 — then finished · Mac’s local time");
     await phrase.fill("+2h");
     await expect(frame.getByRole("textbox", { name: "Time" })).toHaveValue("14:48");
     await shoot(page, "tab-form-script-once");
@@ -1768,11 +1803,11 @@ test.describe("the Script form and the schedule picker", () => {
     expect(await fileText(page, `${JOBS}/report.md`)).toBe(`${header("Report")}schedule:\n  weekly: { days: [sun], at: [9:00, 20:00] }\n---\n`);
   });
 
-  test("policies: one sentence until Change; overlap's options with the default tagged; a non-default in bold; values the file sets shown from it", async ({ page }) => {
+  test("policies: one sentence until Change; overlap's options with the default tagged; a non-default in bold", async ({ page }) => {
     await start(page);
     const frame = await newScript(page, "Sync");
     const policies = frame.getByTestId("form-policies");
-    await expect(policies.getByTestId("policy-summary")).toHaveText("Never overlaps itself · low priority · notifies on failure");
+    await expect(policies.getByTestId("policy-summary")).toHaveText("If missed, run on wake · never overlaps itself · low priority · no time limit · notifies on failure");
     await expect(policies).toContainText("defaults for Script");
     await policies.getByRole("button", { name: "Change" }).click();
     const overlap = policies.getByRole("group", { name: "If still running" });
@@ -1782,17 +1817,99 @@ test.describe("the Script form and the schedule picker", () => {
     await expect(policies).toContainText("customised");
     await shoot(page, "tab-form-script-policies");
     expect(await create(page, "sync")).toBe(`${header("Sync")}schedule:\n  daily: { at: 9:00 }\noverlap: queue\nnotify: never\n---\n`);
+  });
 
-    // A file that sets a missed-run policy and a time limit: the sentence says them, the rows show them.
-    await page.evaluate(() => {
-      window.fakeHost.writeFile("Apps/pomade-runner/jobs/librarian.md", "---\nkind: script\nname: Librarian\nfolder: .\ncommand: ./l.sh\nschedule:\n  weekly: { days: [sun], at: 3:00 }\nmissed: wait-for-me\ntime-limit: 45m\n---\n");
-      window.mounted.navigate("");
-      window.mounted.navigate("edit/librarian");
-    });
-    await expect(policies.getByTestId("policy-summary")).toHaveText("If missed, wait for me · never overlaps itself · low priority · stops after 45m · notifies on failure");
-    await expect(policies.getByTestId("policy-summary").locator("b")).toHaveText(["If missed, wait for me", "stops after 45m"]);
+  test("policies: what a missed run becomes, until when a catch-up is worth it, a time limit — each written to the job file, the file's other fields untouched", async ({ page }) => {
+    await start(page);
+    const frame = await newScript(page, "Librarian");
+    const policies = frame.getByTestId("form-policies");
     await policies.getByRole("button", { name: "Change" }).click();
-    await expect(policies.getByTestId("policy-file-only")).toHaveText(["Wait for me · changed in the job file", "45m · changed in the job file"]);
+    const missed = policies.getByRole("group", { name: "If a run is missed" });
+    await expect(missed.getByRole("button")).toHaveText(["Run on wakedefault", "Wait for me", "Skip"]);
+    const worth = policies.getByRole("group", { name: "Still worth it until" });
+    await expect(worth.getByRole("button", { pressed: true })).toHaveText("the next scheduled run");
+    await expect(policies.getByRole("textbox", { name: "Time limit" })).toHaveAttribute("placeholder", "none");
+    await expect(policies).toContainText("No limit · the “still expected?” warning still applies");
+    // Until a time of day.
+    await worth.getByRole("button", { name: "a time of day" }).click();
+    await expect(policies.getByRole("textbox", { name: "Worth it until" })).toHaveValue("12:00");
+    await policies.getByRole("textbox", { name: "Worth it until" }).fill("8:30");
+    await policies.getByRole("textbox", { name: "Time limit" }).fill("45m");
+    await expect(policies).toContainText("Stops the run with a red card");
+    await shoot(page, "tab-form-script-policies-open");
+    expect(await create(page, "librarian")).toBe(`${header("Librarian")}schedule:\n  daily: { at: 9:00 }\nworth-until: 8:30\ntime-limit: 45m\n---\n`);
+
+    // Edited from the file: the form shows it, a change writes only that field.
+    const text = "---\nkind: script # tidy\nname: Tidy\nfolder: .\ncommand: ./t.sh\nschedule:\n  daily: { at: 7:00 } # early\nworth-until: 12:00\ntime-limit: 45m\nnotify: always # say so\n---\nNotes.\n";
+    await page.evaluate((t) => {
+      window.fakeHost.writeFile("Apps/pomade-runner/jobs/tidy.md", t);
+      window.mounted.navigate("");
+      window.mounted.navigate("edit/tidy");
+    }, text);
+    await expect(policies.getByTestId("policy-summary")).toHaveText("If missed, run on wake until 12:00 · never overlaps itself · low priority · stops after 45m · always notifies");
+    await expect(policies.getByTestId("policy-summary").locator("b")).toHaveText(["If missed, run on wake until 12:00", "stops after 45m", "always notifies"]);
+    await policies.getByRole("button", { name: "Change" }).click();
+    await expect(policies.getByRole("group", { name: "If a run is missed" }).getByRole("button", { pressed: true })).toHaveText("Run on wakedefault");
+    await expect(policies.getByRole("textbox", { name: "Worth it until" })).toHaveValue("12:00");
+    await expect(policies.getByRole("textbox", { name: "Time limit" })).toHaveValue("45m");
+    await expect(frame.getByTestId("form-save")).toHaveText("Saved");
+    await policies.getByRole("group", { name: "If a run is missed" }).getByRole("button", { name: "Wait for me" }).click();
+    // worth-until goes with run-on-wake: its line is gone, and so is the field from the file.
+    await expect(policies.getByRole("group", { name: "Still worth it until" })).toHaveCount(0);
+    await policies.getByRole("textbox", { name: "Time limit" }).fill("");
+    await frame.getByTestId("form-save").click();
+    await expect(frame.getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, `${JOBS}/tidy.md`)).toBe("---\nkind: script # tidy\nname: Tidy\nfolder: .\ncommand: ./t.sh\nschedule:\n  daily: { at: 7:00 } # early\nnotify: always # say so\nmissed: wait-for-me\n---\nNotes.\n");
+  });
+
+  test("policies: a time limit that is no duration and a time of day that is no time say so on their rows, and Save stays", async ({ page }) => {
+    await start(page);
+    const frame = await newScript(page, "Late");
+    const policies = frame.getByTestId("form-policies");
+    await policies.getByRole("button", { name: "Change" }).click();
+    await policies.getByRole("textbox", { name: "Time limit" }).fill("soon");
+    await policies.getByRole("group", { name: "Still worth it until" }).getByRole("button", { name: "a time of day" }).click();
+    await policies.getByRole("textbox", { name: "Worth it until" }).fill("noon");
+    await expect(policies.getByRole("textbox", { name: "Time limit" })).toHaveAttribute("aria-invalid", "true");
+    await expect(policies.getByRole("textbox", { name: "Worth it until" })).toHaveAttribute("aria-invalid", "true");
+    await expect(policies).toContainText('time-limit — "soon" is not a duration. Fix: write minutes or hours, e.g. time-limit: 45m, 2h or 1h30m — or leave it empty for no limit.');
+    await expect(policies).toContainText('worth-until — "noon" is not a time of day. Fix: write a time like worth-until: 12:00 (H:MM, 24-hour), or worth-until: next-run.');
+    await shoot(page, "tab-form-script-policies-errors");
+    await frame.getByTestId("form-save").click();
+    await expect(frame.getByTestId("form-error-count")).toHaveText("2 things to fix before saving");
+    await expect(policies.getByRole("textbox", { name: "Worth it until" })).toBeFocused();
+    expect(await fileText(page, `${JOBS}/late.md`)).toBeNull();
+    await policies.getByRole("textbox", { name: "Worth it until" }).fill("13:00");
+    await policies.getByRole("textbox", { name: "Time limit" }).fill("1h30m");
+    expect(await create(page, "late")).toBe(`${header("Late")}schedule:\n  daily: { at: 9:00 }\nworth-until: 13:00\ntime-limit: 1h30m\n---\n`);
+  });
+
+  test("policies: a missed-run policy only a schedule has — a hook says it does not apply; a stray worth-until is the file's problem, not a blocked Save", async ({ page }) => {
+    await start(page, "edit/mount");
+    const text = "---\nkind: script\nname: Mount\nfolder: .\ncommand: ./mount.sh\nhook: { event: login }\n---\n";
+    await page.evaluate((t) => window.fakeHost.writeFile("Apps/pomade-runner/jobs/mount.md", t), text);
+    const frame = app(page);
+    const policies = frame.getByTestId("form-policies");
+    await expect(policies.getByTestId("policy-summary")).toHaveText("Never overlaps itself · low priority · no time limit · notifies on failure");
+    await policies.getByRole("button", { name: "Change" }).click();
+    await expect(policies.getByTestId("missed-n-a")).toHaveText("Doesn’t apply — hooks fire only while Pomade is running.");
+    await expect(policies.getByRole("group", { name: "If a run is missed" })).toHaveCount(0);
+    await policies.getByRole("textbox", { name: "Time limit" }).fill("5m");
+    await frame.getByTestId("form-save").click();
+    await expect(frame.getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, `${JOBS}/mount.md`)).toBe(text.replace("hook: { event: login }\n", "hook: { event: login }\ntime-limit: 5m\n"));
+
+    const stray = "---\nkind: script\nname: Stray\nfolder: .\ncommand: ./s.sh\nschedule:\n  daily: { at: 7:00 }\nmissed: skip\nworth-until: 12:00\n---\n";
+    await page.evaluate((t) => {
+      window.fakeHost.writeFile("Apps/pomade-runner/jobs/stray.md", t);
+      window.mounted.navigate("");
+      window.mounted.navigate("edit/stray");
+    }, stray);
+    await expect(frame.getByTestId("form-file-errors")).toContainText("worth-until — only applies with missed: run-on-wake");
+    await frame.getByRole("textbox", { name: "Command", exact: true }).fill("./s2.sh");
+    await frame.getByTestId("form-save").click();
+    await expect(frame.getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, `${JOBS}/stray.md`)).toBe(stray.replace("./s.sh", "./s2.sh"));
   });
 
   test("editing a script writes the schedule field only: comments elsewhere and the body stay", async ({ page }) => {
@@ -1838,9 +1955,15 @@ test.describe("the Script form and the schedule picker", () => {
     await frame.getByTestId("kind-script").hover();
     await expect(tip).toHaveText(HELP["kind.script"].join(""));
     await frame.getByTestId("form-policies").getByRole("button", { name: "Change" }).click();
-    const keys = ["f.trigger", "sh.filter", "p.overlap", "p.low", "p.notify", "f.command", "f.folder", "f.project"] as const;
+    const keys = ["f.trigger", "sh.filter", "p.missed", "p.worth", "p.overlap", "p.low", "p.limit", "p.notify", "f.command", "f.folder", "f.project"] as const;
     for (const key of keys) {
       await frame.getByTestId(`help-${key}`).hover();
+      await expect(tip).toHaveText(HELP[key].join(""));
+    }
+    // Each missed-run choice explains itself.
+    const missed = frame.getByRole("group", { name: "If a run is missed" });
+    for (const [name, key] of [["Run on wake", "p.wake"], ["Wait for me", "p.waitme"], ["Skip", "p.skip"]] as const) {
+      await missed.getByRole("button", { name }).hover();
       await expect(tip).toHaveText(HELP[key].join(""));
     }
     await shapes.getByRole("button", { name: "Every…" }).click();

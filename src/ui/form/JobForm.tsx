@@ -173,6 +173,11 @@ function FormBody({
   const [focusTick, setFocusTick] = useState(0);
   const form = useRef<HTMLFormElement>(null);
   const back = (): void => open("");
+  /** Opens the file in Pomade's editor; a file that went away since the form read it is said, not thrown. */
+  const openJobFile = (): void => {
+    if (path === null) return;
+    host.tabs.openFile({ path }).catch((err: unknown) => toast(`Could not open ${path}: ${err instanceof Error ? err.message : String(err)}`));
+  };
 
   // A new job opened from a project starts in it, once Pomade's projects are known — unless the
   // person has set either field by then.
@@ -206,7 +211,7 @@ function FormBody({
   // A Save that found errors: the first field in error takes the focus.
   useEffect(() => {
     if (focusTick === 0 || state === null) return;
-    const places = errorsByPlace(errors, state.values.kind);
+    const places = errorsByPlace(errors, state.values);
     for (const el of form.current?.querySelectorAll<HTMLElement>("[data-field]") ?? []) {
       if (!places.has(el.dataset.field as FormField)) continue;
       const target = el.matches("input, select, textarea, button") ? el : (el.querySelector<HTMLElement>('[aria-invalid="true"]') ?? el.querySelector<HTMLElement>("input, select, textarea, button"));
@@ -236,7 +241,7 @@ function FormBody({
             testId="form-unsupported"
             action={
               file !== null && path !== null ? (
-                <Button icon="file" onClick={() => void host.tabs.openFile({ path })}>
+                <Button icon="file" onClick={openJobFile}>
                   Open file
                 </Button>
               ) : (
@@ -255,7 +260,7 @@ function FormBody({
   const ui = KIND_UI[values.kind];
   const build = ui.build;
   if (build === undefined) throw new Error(`unreachable: ${values.kind} has no sections`);
-  const places = errorsByPlace(errors, values.kind);
+  const places = errorsByPlace(errors, values);
   const blocking = [...places].filter(([place]) => blocksSave(state, place)).flatMap(([, list]) => list);
   const shownCount = state.tried ? blocking.length : 0;
   const errorList = (place: ErrorPlace): readonly JobError[] => (errorShows(state, place) ? (places.get(place) ?? []) : []);
@@ -269,6 +274,8 @@ function FormBody({
     setState((current) => (current === null ? current : next(current)));
   };
   const target = wouldBe(state, jobs, projects.records);
+  const gone = path !== null && file === null;
+  const openFile = path === null || gone ? undefined : openJobFile;
   const props: FormProps = {
     host,
     state,
@@ -277,11 +284,11 @@ function FormBody({
     error,
     errorList,
     wouldBeText: target.text,
+    openFile,
     projects,
     workspaceName: folderName(jobs.workspace),
   };
   const changed = hasChanges(state);
-  const gone = path !== null && file === null;
 
   const save = async (): Promise<void> => {
     if (blocking.length > 0) {
@@ -328,7 +335,7 @@ function FormBody({
       </label>
       {path !== null && (
         <div className={styles.fileActions}>
-          <Button icon="file" onClick={() => void host.tabs.openFile({ path })} data-testid="form-open-file">
+          <Button icon="file" onClick={openFile} disabled={openFile === undefined} data-testid="form-open-file">
             Open file
           </Button>
           <Button icon="trash" variant="danger" onClick={() => setDeleting(true)} disabled={gone} data-testid="form-delete">
@@ -477,8 +484,12 @@ const FIELD_WORDS: Record<FormField, string> = {
   url: "URL",
   trigger: "trigger",
   schedule: "schedule",
+  missed: "if a run is missed",
+  worth: "still worth it until",
+  worthAt: "worth it until",
   overlap: "if still running",
   lowPriority: "low priority",
+  timeLimit: "time limit",
   notify: "notify me",
 };
 

@@ -1,11 +1,9 @@
 // The job form's policies in words, pure: each policy's words in the one-sentence summary and
-// whether it is the kind's default; the summary bolds the others. A policy the form edits reads the
-// values; one it shows from the file only (a missed-run policy, a time limit) reads the file as last
-// read, and is in the sentence only when the file sets it. Its row — the control — is in `kinds.tsx`.
+// whether it is the kind's default; the summary bolds the others. Each reads the form's values. Its
+// row — the control — is in `kinds.tsx`.
 
-import { MISSED_POLICIES, type MissedPolicy, type Notify, type OverlapPolicy } from "../../jobs/model";
-import { KIND_DEFAULTS } from "../../jobs/parse";
-import { fileValue, type FormState, type FormValues } from "./state";
+import type { MissedPolicy, Notify, OverlapPolicy } from "../../jobs/model";
+import type { FormState, FormValues } from "./state";
 
 export interface PolicyWords {
   key: string;
@@ -38,56 +36,22 @@ export const OVERLAP_WORDS: PolicyWords = {
 };
 
 const MISSED_TEXT: Record<MissedPolicy, string> = { "run-on-wake": "if missed, run on wake", "wait-for-me": "if missed, wait for me", skip: "if missed, skip" };
-const MISSED_LABELS: Record<MissedPolicy, string> = { "run-on-wake": "Run on wake", "wait-for-me": "Wait for me", skip: "Skip" };
 
-/** The file's missed-run policy and its worth-until, as written; `null` when it sets neither. A
- *  value the format lacks shows as written. */
-export interface FileMissed {
-  policy: MissedPolicy | null;
-  /** In the sentence: "if missed, wait for me", "if missed, run on wake until 12:00". */
-  words: string;
-  /** In its row: "Wait for me", "Run on wake, until 12:00". */
-  label: string;
-  isDefault: boolean;
-}
-
-const isUnset = (value: unknown): boolean => value === undefined || value === null || (typeof value === "string" && value.trim() === "");
-
-export function fileMissed(state: FormState): FileMissed | null {
-  const missed = fileValue(state, "missed");
-  const worth = fileValue(state, "worth-until");
-  if (isUnset(missed) && isUnset(worth)) return null;
-  const policy = isUnset(missed) ? KIND_DEFAULTS[state.values.kind].missed : (MISSED_POLICIES.find((one) => one === missed) ?? null);
-  const until = typeof worth === "string" && worth.trim() !== "next-run" && !isUnset(worth) ? worth.trim() : null;
-  const head = policy === null ? `if missed: ${String(missed)}` : MISSED_TEXT[policy];
-  const label = policy === null ? String(missed) : MISSED_LABELS[policy];
-  return {
-    policy,
-    words: until === null ? head : `${head} until ${until}`,
-    label: until === null ? label : `${label}, until ${until}`,
-    isDefault: policy === KIND_DEFAULTS[state.values.kind].missed && until === null,
-  };
-}
-
-export const MISSED_FROM_FILE_WORDS: PolicyWords = {
+/** A job on a schedule says what a missed run becomes; a hook or a chain has no missed runs. */
+export const MISSED_WORDS: PolicyWords = {
   key: "missed",
-  words: (state) => fileMissed(state)?.words ?? null,
-  isDefault: (state) => fileMissed(state)?.isDefault ?? true,
+  words: ({ values }) => {
+    if (values.trigger !== "schedule") return null;
+    const until = values.worthAt.trim();
+    return values.missed === "run-on-wake" && values.worth === "time" && until !== "" ? `${MISSED_TEXT["run-on-wake"]} until ${until}` : MISSED_TEXT[values.missed];
+  },
+  isDefault: ({ values }, defaults) => values.missed === defaults.missed && !(values.missed === "run-on-wake" && values.worth === "time"),
 };
 
-/** The file's time limit as written; `null` when it sets none. */
-export function fileLimit(state: FormState): string | null {
-  const limit = fileValue(state, "time-limit");
-  return isUnset(limit) ? null : String(limit).trim();
-}
-
-export const TIME_LIMIT_FROM_FILE_WORDS: PolicyWords = {
+export const TIME_LIMIT_WORDS: PolicyWords = {
   key: "timeLimit",
-  words: (state) => {
-    const limit = fileLimit(state);
-    return limit === null ? null : `stops after ${limit}`;
-  },
-  isDefault: (state) => fileLimit(state) === null,
+  words: ({ values }) => (values.timeLimit.trim() === "" ? "no time limit" : `stops after ${values.timeLimit.trim()}`),
+  isDefault: ({ values }) => values.timeLimit.trim() === "",
 };
 
 /** The summary: each policy's words in order, the first capitalised, and whether any is not the

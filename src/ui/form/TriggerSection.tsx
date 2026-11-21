@@ -63,7 +63,7 @@ function monthDayWords(day: MonthDay): string {
 }
 
 export function TriggerSection(props: FormProps): React.JSX.Element {
-  const { state, host, error } = props;
+  const { state, error } = props;
   const { trigger } = state.values;
   const triggerErrors = error("trigger");
   return (
@@ -87,7 +87,7 @@ export function TriggerSection(props: FormProps): React.JSX.Element {
         <>
           <FileTrigger
             words={fileTriggerWords(state.path, state.text) ?? (trigger === "hook" ? "on its hook" : `after ${chainOf(fileValue(state, "after"))}`)}
-            openFile={state.path === null ? undefined : () => void host.tabs.openFile({ path: state.path ?? "" })}
+            openFile={props.openFile}
           />
           {triggerErrors !== undefined && <FieldError>{triggerErrors}</FieldError>}
         </>

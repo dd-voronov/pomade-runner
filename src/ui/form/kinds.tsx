@@ -5,19 +5,18 @@
 
 import { useState, type ReactNode } from "react";
 
-import type { JobKind, Notify, OverlapPolicy } from "../../jobs/model";
+import type { JobKind, MissedPolicy, Notify, OverlapPolicy } from "../../jobs/model";
 import type { HelpKey } from "../help";
-import { Field, Help, LinkButton, Segmented, Select, TextInput, Toggle, type IconName, type SelectOption } from "../kit";
+import { Field, FieldError, Help, LinkButton, Segmented, Select, TextInput, Toggle, type IconName, type SelectOption } from "../kit";
 import { FolderField, type FormProps } from "./FolderField";
 import { FormSection } from "./FormSection";
 import styles from "./JobForm.module.css";
-import { fileLimit, fileMissed, LOW_PRIORITY_WORDS, MISSED_FROM_FILE_WORDS, NOTIFY_WORDS, OVERLAP_WORDS, TIME_LIMIT_FROM_FILE_WORDS, type PolicyWords } from "./policies";
-import type { FormValues } from "./state";
+import { LOW_PRIORITY_WORDS, MISSED_WORDS, NOTIFY_WORDS, OVERLAP_WORDS, TIME_LIMIT_WORDS, type PolicyWords } from "./policies";
+import type { FormValues, WorthUntil } from "./state";
 import { TriggerSection } from "./TriggerSection";
 
 /** A policy as the Policies section shows it: its words in the summary (`policies.ts`), and its
- *  row once the person presses Change — a control for a policy the form edits, the file's value for
- *  one it shows from the file only. */
+ *  row — its control — once the person presses Change. */
 export interface PolicyRow extends PolicyWords {
   /** Its row; `null` when it shows none. */
   row(props: FormProps & { defaults: FormValues }): ReactNode;
@@ -40,11 +39,12 @@ export interface KindUi {
   };
 }
 
-export function PolicyLine({ label, help, children }: { label: string; help: HelpKey; children: ReactNode }): React.JSX.Element {
+/** A policy's line: its label with its (i), and its control. A `muted` one does not apply. */
+export function PolicyLine({ label, help, muted = false, children }: { label: string; help?: HelpKey; muted?: boolean; children: ReactNode }): React.JSX.Element {
   return (
     <div className={styles.policy}>
-      <div className={styles.policyLabel}>
-        {label} <Help k={help} />
+      <div className={muted ? `${styles.policyLabel} ${styles.policyLabelMuted}` : styles.policyLabel}>
+        {label} {help !== undefined && <Help k={help} />}
       </div>
       <div className={styles.policyControl}>{children}</div>
     </div>
@@ -82,7 +82,7 @@ const NOTIFY: PolicyRow = {
           ]}
         />
       </div>
-      {error("notify")}
+      {error("notify") !== undefined && <FieldError>{error("notify")}</FieldError>}
     </PolicyLine>
   ),
 };
@@ -103,42 +103,93 @@ const OVERLAP: PolicyRow = {
           ]}
         />
       </div>
-      {error("overlap")}
+      {error("overlap") !== undefined && <FieldError>{error("overlap")}</FieldError>}
     </PolicyLine>
   ),
 };
 
-/** A policy the form shows from the file only: its row says it is changed in the job file. */
-function FileOnlyLine({ label, help, value }: { label: string; help: HelpKey; value: string }): React.JSX.Element {
-  return (
-    <PolicyLine key={label} label={label} help={help}>
-      <div className={styles.inline} data-testid="policy-file-only">
-        <span>
-          <b className={styles.fileOnlyValue}>{value}</b> · changed in the job file
-        </span>
-      </div>
-    </PolicyLine>
-  );
-}
+const MISSED_OPTIONS: readonly { value: MissedPolicy; label: string; help: HelpKey }[] = [
+  { value: "run-on-wake", label: "Run on wake", help: "p.wake" },
+  { value: "wait-for-me", label: "Wait for me", help: "p.waitme" },
+  { value: "skip", label: "Skip", help: "p.skip" },
+];
 
-const MISSED_FROM_FILE: PolicyRow = {
-  ...MISSED_FROM_FILE_WORDS,
-  row: ({ state }) => {
-    const read = fileMissed(state);
-    return read === null ? null : <FileOnlyLine key="missed" label="If a run is missed" help="p.missed" value={read.label} />;
+const WORTH_OPTIONS: readonly { value: WorthUntil; label: string }[] = [
+  { value: "next-run", label: "the next scheduled run" },
+  { value: "time", label: "a time of day" },
+];
+
+/** What a missed run becomes — for a job on a schedule; a hook or a chain says it does not apply. */
+const MISSED: PolicyRow = {
+  ...MISSED_WORDS,
+  row: ({ state, set, defaults, error }) => {
+    const { values } = state;
+    if (values.trigger !== "schedule") {
+      return (
+        <PolicyLine key="missed" label="If a run is missed" muted>
+          <div className={styles.inline} data-testid="missed-n-a">
+            {values.trigger === "hook" ? "Doesn’t apply — hooks fire only while Pomade is running." : "Doesn’t apply — a chain runs when the job before it finishes."}
+          </div>
+        </PolicyLine>
+      );
+    }
+    return (
+      <PolicyLine key="missed" label="If a run is missed" help="p.missed">
+        <div data-field="missed">
+          <Segmented<MissedPolicy>
+            label="If a run is missed"
+            value={values.missed}
+            onChange={(value) => set("missed", value)}
+            options={MISSED_OPTIONS.map((option) => ({ ...option, isDefault: defaults.missed === option.value }))}
+          />
+        </div>
+        {error("missed") !== undefined && <FieldError>{error("missed")}</FieldError>}
+        {values.missed === "run-on-wake" && (
+          <>
+            <div className={styles.inline}>
+              Still worth it until
+              <Segmented<WorthUntil> label="Still worth it until" value={values.worth} onChange={(value) => set("worth", value)} options={WORTH_OPTIONS} />
+              {values.worth === "time" && (
+                <TextInput
+                  width="time"
+                  placeholder="13:00"
+                  aria-label="Worth it until"
+                  inputMode="numeric"
+                  value={values.worthAt}
+                  bad={error("worthAt") !== undefined}
+                  data-field="worthAt"
+                  onChange={(event) => set("worthAt", event.target.value)}
+                />
+              )}
+              <Help k="p.worth" />
+            </div>
+            {error("worthAt") !== undefined && <FieldError>{error("worthAt")}</FieldError>}
+          </>
+        )}
+      </PolicyLine>
+    );
   },
 };
 
-const TIME_LIMIT_FROM_FILE: PolicyRow = {
-  ...TIME_LIMIT_FROM_FILE_WORDS,
-  row: ({ state }) => {
-    const limit = fileLimit(state);
-    return limit === null ? null : <FileOnlyLine key="timeLimit" label="Time limit" help="p.limit" value={limit} />;
+/** A run stopped past its time limit; empty is no limit. */
+const TIME_LIMIT: PolicyRow = {
+  ...TIME_LIMIT_WORDS,
+  row: ({ state, set, error }) => {
+    const limited = state.values.timeLimit.trim() !== "";
+    return (
+      <PolicyLine key="timeLimit" label="Time limit" help="p.limit">
+        <div className={styles.inline}>
+          <TextInput className={styles.limit} placeholder="none" aria-label="Time limit" value={state.values.timeLimit} bad={error("timeLimit") !== undefined} data-field="timeLimit" onChange={(event) => set("timeLimit", event.target.value)} />
+          <span>{limited ? "Stops the run with a red card" : "No limit · the “still expected?” warning still applies"}</span>
+        </div>
+        {error("timeLimit") !== undefined && <FieldError>{error("timeLimit")}</FieldError>}
+      </PolicyLine>
+    );
   },
 };
 
 /** A script's policies, in the sentence's order. */
-const SCRIPT_POLICIES: readonly PolicyRow[] = [MISSED_FROM_FILE, OVERLAP, LOW_PRIORITY, TIME_LIMIT_FROM_FILE, NOTIFY];
+const SCRIPT_POLICIES: readonly PolicyRow[] = [MISSED, OVERLAP, LOW_PRIORITY, TIME_LIMIT, NOTIFY];
 
 /** The Script kind: Trigger (a schedule), then Runs. */
 function ScriptSections(props: FormProps): React.JSX.Element {

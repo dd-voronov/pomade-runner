@@ -3,7 +3,9 @@
 import { describe, expect, it } from "vitest";
 
 import { checkJobs } from "./check";
-import { jobTriggerWords } from "./words";
+import { parseSchedule } from "pomade-kit/schedule";
+
+import { jobTriggerWords, scheduleWords } from "./words";
 
 const words = (files: Record<string, string>): Record<string, string> => {
   const snapshot = checkJobs(
@@ -80,5 +82,48 @@ describe("a job's trigger in words", () => {
     expect(web).toBe("always on, from login; restarts after Pull coda-helper is done");
     expect(tests).toBe("after Pull coda-helper finishes");
     expect(first).toBe("on the first open of project One");
+  });
+});
+
+describe("a once schedule in words", () => {
+  const once = (at: string): Parameters<typeof scheduleWords>[0] => {
+    const read = parseSchedule({ once: at }, { resolution: "time" });
+    if (!read.ok) throw new Error("not a schedule");
+    return read.schedule;
+  };
+  const local = (date: string, time: string): Date => new Date(`${date}T${time}`);
+
+  it("today's and tomorrow's date are said as such; any other keeps the kit's words", () => {
+    const now = local("2026-11-17", "12:48:00");
+    expect(scheduleWords(once("2026-11-17 23:00"), now)).toBe("once, today at 23:00");
+    expect(scheduleWords(once("2026-11-18 7:00"), now)).toBe("once, tomorrow at 7:00");
+    expect(scheduleWords(once("2026-11-19 7:00"), now)).toBe("once on Nov 19, 2026 at 7:00");
+    expect(scheduleWords(once("2026-11-16 23:00"), now)).toBe("once on Nov 16, 2026 at 23:00");
+  });
+
+  it("the midnight edges: the last second of a day, the first of the next, a month's end", () => {
+    const schedule = once("2026-11-18 7:00");
+    expect(scheduleWords(schedule, local("2026-11-17", "23:59:59"))).toBe("once, tomorrow at 7:00");
+    expect(scheduleWords(schedule, local("2026-11-18", "00:00:00"))).toBe("once, today at 7:00");
+    expect(scheduleWords(schedule, local("2026-11-18", "23:59:59"))).toBe("once, today at 7:00");
+    expect(scheduleWords(schedule, local("2026-11-19", "00:00:00"))).toBe("once on Nov 18, 2026 at 7:00");
+    expect(scheduleWords(once("2026-12-01 9:00"), local("2026-11-30", "23:59:59"))).toBe("once, tomorrow at 9:00");
+    expect(scheduleWords(once("2027-01-01 9:00"), local("2026-12-31", "23:59:59"))).toBe("once, tomorrow at 9:00");
+  });
+
+  it("the other shapes are the kit's", () => {
+    const read = parseSchedule({ daily: { at: "7:00" } }, { resolution: "time" });
+    if (!read.ok) throw new Error("not a schedule");
+    expect(scheduleWords(read.schedule, local("2026-11-17", "12:00:00"))).toBe("daily at 7:00");
+  });
+
+  it("a job's trigger says it against the day it is asked on", () => {
+    const text = "---\nkind: script\nname: Once\nfolder: .\ncommand: ./x.sh\nschedule:\n  once: 2026-11-17 23:00\n---\n";
+    const snapshot = checkJobs([{ path: "once.md", text }], { workspace: "/ws", projects: [] });
+    const job = snapshot.jobs[0];
+    if (job === undefined || !job.valid) throw new Error("not valid");
+    expect(jobTriggerWords(job.job, {}, local("2026-11-17", "08:00:00"))).toBe("once, today at 23:00");
+    expect(jobTriggerWords(job.job, {}, local("2026-11-16", "23:59:59"))).toBe("once, tomorrow at 23:00");
+    expect(jobTriggerWords(job.job, {}, local("2026-11-18", "00:00:00"))).toBe("once on Nov 17, 2026 at 23:00");
   });
 });

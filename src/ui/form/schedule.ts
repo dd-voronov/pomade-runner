@@ -2,14 +2,16 @@
 // `schedule:` as written and written back in the format `pomade-kit/schedule` reads. The form keeps
 // no copy of the format's rules: what the person typed is written as typed, the one validator says
 // what is wrong, and each of its errors lands on the control it names (`scheduleTarget`). The words
-// and the next runs come from the kit's `describeSchedule` and next-occurrence engine.
+// come from `scheduleWords` (the kit's, a once on today or tomorrow said so) and the next runs
+// from the kit's next-occurrence engine.
 
 import { parseDatePhrase } from "pomade-kit/dates";
-import { addDays, describeSchedule, formatTime, localDateOf, nextOccurrence, parseSchedule, parseTime, WEEKDAYS, weekdayOf, type MonthDay, type Nth, type Schedule, type Weekday } from "pomade-kit/schedule";
+import { addDays, formatTime, localDateOf, nextOccurrence, parseSchedule, parseTime, WEEKDAYS, weekdayOf, type MonthDay, type Nth, type Schedule, type Weekday } from "pomade-kit/schedule";
 
 import { readJobDocument } from "../../jobs/document";
 import type { FieldInput } from "../../jobs/edit";
 import { parseJobFile } from "../../jobs/parse";
+import { scheduleWords } from "../../jobs/words";
 
 /** The schedule shapes the form offers, in the picker's order. */
 export const SCHEDULE_SHAPES = ["once", "every", "daily", "weekly", "monthly"] as const;
@@ -264,7 +266,7 @@ export function schedulePreview(text: string, now: Date): SchedulePreview | null
   if (parseJobFile({ path: "preview.md", text }).errors.some((error) => error.field === "schedule" || error.field.startsWith("schedule."))) return null;
   const parsed = parseSchedule(read.doc.fields.schedule, { resolution: "time" });
   if (!parsed.ok) return null;
-  return { words: describeSchedule(parsed.schedule), next: nextRuns(parsed.schedule, now, 3) };
+  return { words: scheduleWords(parsed.schedule, now), next: nextRuns(parsed.schedule, now, 3) };
 }
 
 const WEEKDAY_SHORT: Record<Weekday, string> = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };

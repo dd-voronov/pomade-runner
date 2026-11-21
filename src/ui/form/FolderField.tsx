@@ -29,6 +29,8 @@ export interface FormProps {
   errorList(field: FormField): readonly JobError[];
   /** The whole text of the file the form would write. */
   wouldBeText: string;
+  /** Opens the job's file in Pomade's editor; `undefined` for a new job or a file that is gone. */
+  openFile: (() => void) | undefined;
   projects: ProjectChoices;
   /** The workspace folder's name ("git-base"). */
   workspaceName: string;

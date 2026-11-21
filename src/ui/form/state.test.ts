@@ -46,7 +46,7 @@ function fill(state: FormState, values: Partial<Record<"name" | "folder" | "comm
 
 /** Each place's errors, in `pomade-runner check`'s words. */
 function shown(state: FormState, snapshot: JobsSnapshot): Record<string, string[]> {
-  const places = errorsByPlace(formErrors(state, snapshot, PROJECTS), state.values.kind);
+  const places = errorsByPlace(formErrors(state, snapshot, PROJECTS), state.values);
   return Object.fromEntries([...places].map(([place, errors]) => [place, errors.map(describeJobError)]));
 }
 
@@ -167,8 +167,12 @@ describe("editing a job file", () => {
       url: "",
       trigger: "schedule",
       schedule: blankSchedule(),
+      missed: "run-on-wake",
+      worth: "next-run",
+      worthAt: "12:00",
       overlap: "skip",
       lowPriority: false,
+      timeLimit: "",
       notify: "on-failure",
     });
     expect(valuesFromText("---\nkind: [x\n---\n")).toBeNull();
@@ -209,7 +213,7 @@ describe("editing a job file", () => {
 
   it("puts a problem the form has no field for on the file, and it does not keep Save from writing", () => {
     const state = edit();
-    const places = errorsByPlace(formErrors(state, WITH_WEB, PROJECTS), "service");
+    const places = errorsByPlace(formErrors(state, WITH_WEB, PROJECTS), state.values);
     expect([...places.keys()]).toEqual(["file"]);
     expect(places.get("file")?.map(describeJobError)).toEqual(["owner — owner is not a job field. Fix: remove it — the pomade-runner-jobs skill lists every field."]);
     expect(errorShows(state, "file")).toBe(true);
@@ -227,5 +231,93 @@ describe("editing a job file", () => {
     const broken = followText(state, "---\nkind: [x\n---\n");
     expect(broken.values).toEqual(state.values);
     expect(broken.text).toBe("---\nkind: [x\n---\n");
+  });
+});
+
+describe("the policies: missed-run, worth-until, time limit", () => {
+  const PATH = "Apps/pomade-runner/jobs/librarian.md";
+  const FILE = (extra: string): string => `---\nkind: script # tidy\nname: Librarian\nfolder: .\ncommand: ./l.sh\nschedule:\n  weekly: { days: [sun], at: 3:00 }\n${extra}---\nNotes.\n`;
+  const edit = (extra: string): FormState => {
+    const state = editForm(PATH, FILE(extra));
+    if (state === null) throw new Error("not editable");
+    return state;
+  };
+  const written = (state: FormState): string => wouldBe(state, EMPTY, PROJECTS).text;
+
+  it("reads them from the file: the policy, a time of day as written, the limit as written", () => {
+    expect(edit("").values).toMatchObject({ missed: "run-on-wake", worth: "next-run", worthAt: "12:00", timeLimit: "" });
+    expect(edit("missed: wait-for-me\ntime-limit: 1h30m\n").values).toMatchObject({ missed: "wait-for-me", timeLimit: "1h30m" });
+    expect(edit("worth-until: 7:30\n").values).toMatchObject({ missed: "run-on-wake", worth: "time", worthAt: "7:30" });
+    expect(edit("worth-until: next-run\n").values).toMatchObject({ worth: "next-run", worthAt: "12:00" });
+    expect(edit("time-limit:\n").values.timeLimit).toBe("");
+    // A policy the format lacks stands at the default; the checker's error is shown on its row.
+    expect(edit("missed: sometimes\n").values.missed).toBe("run-on-wake");
+  });
+
+  it("writes each one field-only: the comment, the other fields and the body stay", () => {
+    let state = setValue(edit(""), "missed", "wait-for-me");
+    expect(fieldChanges(state)).toEqual({ missed: "wait-for-me" });
+    expect(written(state)).toBe(FILE("missed: wait-for-me\n"));
+    state = setValue(edit(""), "timeLimit", " 45m ");
+    expect(fieldChanges(state)).toEqual({ "time-limit": "45m" });
+    expect(written(state)).toBe(FILE("time-limit: 45m\n"));
+    state = setValue(setValue(edit(""), "worth", "time"), "worthAt", "12:00");
+    expect(fieldChanges(state)).toEqual({ "worth-until": "12:00" });
+    expect(written(state)).toBe(FILE("worth-until: 12:00\n"));
+    // Back to the default, or emptied: the field leaves the file.
+    expect(written(setValue(edit("missed: skip\n"), "missed", "run-on-wake"))).toBe(FILE(""));
+    expect(written(setValue(edit("time-limit: 45m\n"), "timeLimit", ""))).toBe(FILE(""));
+    expect(written(setValue(edit("worth-until: 12:00\n"), "worth", "next-run"))).toBe(FILE(""));
+    expect(hasChanges(setValue(setValue(edit("time-limit: 45m\n"), "timeLimit", "1h"), "timeLimit", "45m"))).toBe(false);
+  });
+
+  it("worth-until goes with run-on-wake: another policy takes it out of the file, and back it returns", () => {
+    let state = setValue(edit("worth-until: 12:00\n"), "missed", "wait-for-me");
+    expect(fieldChanges(state)).toEqual({ missed: "wait-for-me", "worth-until": undefined });
+    expect(written(state)).toBe(FILE("missed: wait-for-me\n"));
+    state = setValue(state, "missed", "run-on-wake");
+    expect(fieldChanges(state)).toEqual({});
+    expect(written(setValue(edit("missed: skip\n"), "missed", "run-on-wake"))).toBe(FILE(""));
+  });
+
+  it("a new script writes them after the schedule, in the format's order, and a hook writes no missed policy", () => {
+    let state = fill(switchKind(newForm("service"), "script"), { name: "Sync", folder: ".", command: "./s.sh" });
+    state = setValue(setValue(setValue(state, "missed", "run-on-wake"), "worth", "time"), "worthAt", "12:00");
+    state = setValue(setValue(state, "timeLimit", "2h"), "overlap", "queue");
+    expect(wouldBe(state, EMPTY, PROJECTS).text).toBe("---\nkind: script\nname: Sync\nfolder: .\nenabled: true\ncommand: ./s.sh\nschedule:\n  daily: { at: 9:00 }\nworth-until: 12:00\noverlap: queue\ntime-limit: 2h\n---\n");
+    expect(formErrors(state, EMPTY, PROJECTS)).toEqual([]);
+    const hook = editForm("Apps/pomade-runner/jobs/mount.md", "---\nkind: script\nname: Mount\nfolder: .\ncommand: ./m.sh\nhook: { event: login }\n---\n");
+    if (hook === null) throw new Error("not editable");
+    expect(wouldBe(setValue(setValue(hook, "missed", "skip"), "timeLimit", "5m"), EMPTY, PROJECTS).text).toBe("---\nkind: script\nname: Mount\nfolder: .\ncommand: ./m.sh\nhook: { event: login }\ntime-limit: 5m\n---\n");
+  });
+
+  it("a service writes none of them", () => {
+    const state = setValue(setValue(fill(newForm("service"), { name: "Web", folder: ".", command: "x" }), "timeLimit", "5m"), "missed", "skip");
+    expect(wouldBe(state, EMPTY, PROJECTS).text).toBe("---\nkind: service\nname: Web\nfolder: .\nenabled: true\ncommand: x\n---\n");
+  });
+
+  it("each of the validator's errors on its row, in its words", () => {
+    const state = setValue(setValue(setValue(edit(""), "timeLimit", "soon"), "worth", "time"), "worthAt", "noon");
+    expect(shown(state, EMPTY)).toEqual({
+      worthAt: ['worth-until — "noon" is not a time of day. Fix: write a time like worth-until: 12:00 (H:MM, 24-hour), or worth-until: next-run.'],
+      timeLimit: ['time-limit — "soon" is not a duration. Fix: write minutes or hours, e.g. time-limit: 45m, 2h or 1h30m — or leave it empty for no limit.'],
+    });
+    expect(shown(setValue(edit(""), "timeLimit", "90"), EMPTY).timeLimit).toEqual(["time-limit — 90 has no unit. Fix: add one: time-limit: 90m (minutes) or 90h (hours)."]);
+    // An empty time of day is an error too, not "the next run".
+    expect(shown(setValue(setValue(edit(""), "worth", "time"), "worthAt", " "), EMPTY).worthAt).toHaveLength(1);
+  });
+
+  it("an error about a control the form does not draw is the file's: a stray worth-until, a missed policy on a hook", () => {
+    const stray = edit("missed: skip\nworth-until: 12:00\n");
+    expect(shown(stray, EMPTY)).toEqual({ file: ["worth-until — only applies with missed: run-on-wake. Fix: remove it, or set missed: run-on-wake."] });
+    const hook = editForm("Apps/pomade-runner/jobs/mount.md", "---\nkind: script\nname: Mount\nfolder: .\ncommand: ./m.sh\nhook: { event: login }\nmissed: skip\n---\n");
+    if (hook === null) throw new Error("not editable");
+    expect(Object.keys(shown(hook, EMPTY))).toEqual(["file"]);
+  });
+
+  it("switching kind resets a missed policy the person did not set, and keeps one they did", () => {
+    const state = setValue(switchKind(newForm("service"), "script"), "missed", "skip");
+    expect(switchKind(state, "service").values.missed).toBe("skip");
+    expect(switchKind(switchKind(newForm("service"), "script"), "service").values.missed).toBe("run-on-wake");
   });
 });

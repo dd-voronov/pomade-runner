@@ -169,7 +169,7 @@ function JobRow({
   const runs = report?.jobs.find((info) => info.job === job.id);
   const last = lastLook(job, { runs, active, service }, now);
   const next = nextLook(job, runs, paused, now);
-  const trigger = jobTriggerWords(job, names);
+  const trigger = jobTriggerWords(job, names, new Date(now));
   const git = job.kind === "git" ? gitDetail(job, repos) : null;
   const status = job.kind === "service" ? (service ?? fallbackService(job)) : null;
   return (
