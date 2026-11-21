@@ -97,6 +97,14 @@ describe("a job's last result", () => {
     expect(look(record("stopped-by-you"))).toMatchObject({ tone: "hollow", words: "stopped by you", help: "st.byyou" });
   });
 
+  it("says a done git run's commit instead of how long it took; a run with no commit, or one that failed, its duration", () => {
+    const repo = (commit: string | null) => ({ repo: "Knowledge", path: "/ws/Knowledge", op: "commit-push" as const, status: "done" as const, reason: null, steps: [], commit });
+    const git = (commits: (string | null)[]) => ({ op: "commit-push" as const, job: "K", at: "2026-11-17T11:20:00.000Z", results: commits.map(repo) });
+    expect(look(record("done", { git: git([null, "a1b2c3d4e5f6", "9f8e7d6c5b4a"]) }))).toMatchObject({ words: "done", sub: "today 11:20 · a1b2c3d" });
+    expect(look(record("done", { git: git([null]) }))).toMatchObject({ sub: "today 11:20 · 3s" });
+    expect(look(record("failed", { git: git(["9f8e7d6c5b4a"]), reason: "Knowledge: push rejected" }))).toMatchObject({ sub: "today 11:20 · 3s" });
+  });
+
   it("gives a run that never started its reason and no duration", () => {
     const ended = at(16, 20, 0);
     expect(look(record("skipped", { reason: "previous run still going", durationMs: null, endedAt: ended }))).toMatchObject({

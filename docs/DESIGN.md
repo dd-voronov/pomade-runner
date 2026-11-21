@@ -781,7 +781,8 @@ to it, light theme only.
     A service shows its state as the Services view does (`serviceLook`). Any other job shows the run
     going — "running" over "started 12:31 · 17m", "queued" over what it waits for, "missed · waiting
     for you" — else its latest finished one: "done", "failed · exit 1", "stopped: time limit, 45 min",
-    "skipped · …", "missed · …", "stopped by you", over "today 11:20 · 3s"; "never ran" for none. A
+    "skipped · …", "missed · …", "stopped by you", over "today 11:20 · 3s" — a done git run's commit
+    in place of the duration, "yesterday 20:00 · a1b2c3d"; "never ran" for none. A
     click on a job's cell opens that run's result card (`run/<job>/<run>`); a service's and a
     never-ran job's cell has none.
   - **Next run** (`nextLook`): "disabled", "paused" (the loop guard's), "always on" (a service), "on
@@ -873,7 +874,8 @@ chrome around them (the panel's header with its title and collapse, the tab bar)
 md. A full page in the Runner tab: its head (back to Jobs, "Jobs / <name>", **Enabled**, and —
 editing — **Open file** and **Delete**), the sections, and the Save bar ("Saves to <path>",
 **Cancel**, **Create and start** for a service / **Create job** / **Save**, **Saved** while nothing
-changed). Order: kind → trigger → folder and project (agent: agent → folder → mode) → policies; the
+changed). Order: kind → trigger → folder and project (agent: agent → folder → mode; git: operation →
+repositories → project) → policies; the
 policies show as one sentence, non-defaults in bold, until **Change**.
 - **State** (`state.ts`, pure): the values the form shows, the fields the person set (`touched`),
   and the file as last read (`base`). Switching kind keeps what the person set and resets the
@@ -884,7 +886,7 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   (`kinds.tsx`: its sections between Kind and Policies, its policy rows, its Create button). The
   picker shows every kind; the ones not registered are shown faded, with their help, and cannot be
   chosen. A job of such a kind opens a page saying so, with **Open file**.
-- **Trigger** (script; `TriggerSection.tsx`, the values in `schedule.ts` and `state.ts`, the words
+- **Trigger** (script and git; `TriggerSection.tsx`, the values in `schedule.ts` and `state.ts`, the words
   in `triggerWords.ts`, pure). A choice of **On a schedule** · **When something happens**; back
   from a schedule, the hook or the chain shown last returns. A schedule has the schedule editor:
   - **Repeats**: Once (a date of the coming week and a time, or a phrase typed in words — `tonight
@@ -918,6 +920,14 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   back: a → b → a"), with the (i) on why — and keep Save from writing. A hook on an event the form
   does not offer is said in words (`jobTriggerWords`) with **Open file**, and stays as the file
   has it.
+- **Git** (`GitSections` in `kinds.tsx`): the Trigger section as a script's, then **Git** —
+  **Operation** (Commit & push · Pull · Push · Fetch), **Repositories** and **Project**, no folder
+  (`pomade-git` works in the repos). Repositories has a tick per repo of the workspace, in the order
+  Pomade's git state lists them (`git.read`, followed live), named as its Git panel names them; a
+  repo the file names that the workspace lacks stays, ticked, after them, with a red line saying so
+  that does not keep Save from writing. The file gets `git: { operation, repos }`, the repos in the
+  order they were ticked — the order `pomade-git` runs them in. Its policies are a script's, with
+  the kind's defaults (Skip, normal priority, On failure).
 - **A service's chain** (`ServiceChainLine` in `TriggerSection.tsx`) ends the service's Trigger
   section: **+ Restart, start or stop it after another job**, then the line "**Also** [restart it ·
   start it · stop it] after [job] [is done · fails · finishes]" with **×** to remove it; the file
@@ -935,7 +945,7 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   - **Time limit**: a duration typed (`45m`, `2h`, `1h30m`), empty for none;
   - **Notify me**.
 
-  A service's are low priority and notify: the engine applies a missed-run policy, an overlap and
+  A git job's are a script's. A service's are low priority and notify: the engine applies a missed-run policy, an overlap and
   a time limit to jobs that run once per trigger only. A policy at its default is left out of the
   file. Each policy's error lands on its row; an error about a control the form does not draw
   (`worth-until` beside another policy, a missed-run policy on a hook) shows in the note about the

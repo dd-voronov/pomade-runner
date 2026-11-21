@@ -40,10 +40,13 @@ export interface NextLook {
   none: boolean;
 }
 
-const finished = (record: RunRecord, now: number): Pick<LastLook, "sub" | "subHelp"> => ({
-  sub: [whenWords(record.endedAt, now), record.durationMs === null ? null : upWords(record.durationMs)].filter((part) => part !== null).join(" · "),
-  subHelp: null,
-});
+/** A finished run's line: when it ended, then how long it took — a done git run's commit instead,
+ *  as History's result says it ("yesterday 20:00 · a1b2c3d"). */
+function finished(record: RunRecord, now: number): Pick<LastLook, "sub" | "subHelp"> {
+  const commit = record.state === "done" ? record.git?.results.find((result) => result.commit !== null)?.commit : undefined;
+  const after = typeof commit === "string" ? commit.slice(0, 7) : record.durationMs === null ? null : upWords(record.durationMs);
+  return { sub: [whenWords(record.endedAt, now), after].filter((part) => part !== null).join(" · "), subHelp: null };
+}
 
 /** A finished run's chip: the status of its result, its words as History says them. */
 function recordLook(record: RunRecord, now: number): LastLook {

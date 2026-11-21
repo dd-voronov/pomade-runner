@@ -179,6 +179,8 @@ describe("editing a job file", () => {
       lowPriority: false,
       timeLimit: "",
       notify: "on-failure",
+      operation: "commit-push",
+      repos: [],
     });
     expect(valuesFromText("---\nkind: [x\n---\n")).toBeNull();
     expect(valuesFromText("---\nkind: servce\n---\n")).toBeNull();
@@ -324,5 +326,47 @@ describe("the policies: missed-run, worth-until, time limit", () => {
     const state = setValue(switchKind(newForm("service"), "script"), "missed", "skip");
     expect(switchKind(state, "service").values.missed).toBe("skip");
     expect(switchKind(switchKind(newForm("service"), "script"), "service").values.missed).toBe("run-on-wake");
+  });
+});
+
+describe("a git job", () => {
+  const GIT = "---\nkind: git # Knowledge twice daily\nname: Knowledge commit & push\nproject: p-coda\ngit: { operation: pull, repos: [Knowledge, coda-helper] } # rails\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\nKeep it.\n";
+
+  it("a new one writes its operation and repos, its trigger and no folder; Skip, normal priority and On failure are its defaults", () => {
+    let state = setFolder(switchKind(fill(newForm("script"), { name: "Knowledge commit & push" }), "git"), "Projects/coda-helper", PROJECTS);
+    expect(state.values).toMatchObject({ missed: "skip", lowPriority: false, notify: "on-failure", operation: "commit-push" });
+    state = setValue(state, "repos", ["Knowledge", "coda-helper"]);
+    expect(wouldBe(state, EMPTY, PROJECTS)).toMatchObject({
+      path: "Apps/pomade-runner/jobs/coda-helper/knowledge-commit-push.md",
+      text: "---\nkind: git\nname: Knowledge commit & push\nproject: p-coda\nenabled: true\ngit: { operation: commit-push, repos: [Knowledge, coda-helper] }\nschedule:\n  daily: { at: 9:00 }\n---\n",
+    });
+    expect(shown(state, EMPTY)).toEqual({});
+  });
+
+  it("with no repo picked, the checker's error is on the repos", () => {
+    const state = setValue(fill(newForm("git"), { name: "Pull" }), "repos", []);
+    expect(shown(state, EMPTY)).toEqual({ repos: ["git.repos — names no repos. Fix: list the repos by the name Pomade's Git panel shows: repos: [Knowledge, coda-helper]."] });
+    expect(errorShows(state, "repos")).toBe(false);
+    expect(errorShows({ ...state, tried: true }, "repos")).toBe(true);
+    expect(errorShows(setValue(state, "repos", ["Knowledge"]), "repos")).toBe(true);
+  });
+
+  it("reads its operation and repos — a lone name too — and edits them field-only: the comment-free rest and the body stay", () => {
+    const state = editForm("Apps/pomade-runner/jobs/coda-helper/knowledge.md", GIT);
+    expect(state?.values).toMatchObject({ kind: "git", operation: "pull", repos: ["Knowledge", "coda-helper"], missed: "skip", trigger: "schedule" });
+    expect(valuesFromText("---\nkind: git\nname: P\ngit: { operation: fetch, repos: Knowledge }\n---\n")).toMatchObject({ operation: "fetch", repos: ["Knowledge"] });
+    if (state === null) throw new Error("unreadable");
+    expect(hasChanges(state)).toBe(false);
+    const edited = setValue(setValue(state, "operation", "commit-push"), "repos", ["coda-helper"]);
+    expect(fieldChanges(edited)).toEqual({ git: { operation: "commit-push", repos: ["coda-helper"] } });
+    expect(wouldBe(edited, EMPTY, PROJECTS).text).toBe(GIT.replace("git: { operation: pull, repos: [Knowledge, coda-helper] } # rails", "git: { operation: commit-push, repos: [coda-helper] } # rails"));
+  });
+
+  it("switching a script to git takes its folder and command out of the file", () => {
+    const script = editForm("Apps/pomade-runner/jobs/backup.md", "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./b.sh\nschedule:\n  daily: { at: 13:00 }\n---\n");
+    if (script === null) throw new Error("unreadable");
+    const git = setValue(switchKind(script, "git"), "repos", ["Knowledge"]);
+    expect(fieldChanges(git)).toMatchObject({ kind: "git", folder: undefined, command: undefined, git: { operation: "commit-push", repos: ["Knowledge"] } });
+    expect(shown(git, EMPTY)).toEqual({});
   });
 });

@@ -11,6 +11,7 @@ import { readJobDocument } from "../../jobs/document";
 import { FIELD_ORDER, jobFileCandidates, newJobText, setJobFields, type FieldChanges, type FieldInput } from "../../jobs/edit";
 import {
   CHAIN_RESULTS,
+  GIT_OPERATIONS,
   JOB_KINDS,
   JOBS_FOLDER,
   MISSED_POLICIES,
@@ -19,6 +20,7 @@ import {
   SERVICE_ACTIONS,
   SERVICE_STARTS,
   type ChainResult,
+  type GitOperation,
   type JobError,
   type JobKind,
   type JobsSnapshot,
@@ -82,6 +84,10 @@ export interface FormValues {
   /** A duration as typed (`45m`, `2h`, `1h30m`); empty is no limit. */
   timeLimit: string;
   notify: Notify;
+  /** A git job: the operation, and the repos by the name Pomade's Git panel shows, in the order
+   *  they run. */
+  operation: GitOperation;
+  repos: readonly string[];
 }
 
 export type FormField = keyof FormValues;
@@ -187,8 +193,14 @@ const SCRIPT: KindFile = {
   errorFields: { ...COMMON_ERROR_FIELDS, command: "command", ...RUN_ERROR_FIELDS },
 };
 
+/** A git job names no folder: `pomade-git` works in the repos it names. */
+const GIT: KindFile = {
+  fields: (values) => ({ ...commonFields(values), folder: undefined, git: { operation: values.operation, repos: values.repos }, ...runFields(values) }),
+  errorFields: { ...COMMON_ERROR_FIELDS, git: "repos", ...RUN_ERROR_FIELDS },
+};
+
 /** The kinds the form builds. */
-export const FORM_KINDS: Partial<Record<JobKind, KindFile>> = { service: SERVICE, script: SCRIPT };
+export const FORM_KINDS: Partial<Record<JobKind, KindFile>> = { service: SERVICE, script: SCRIPT, git: GIT };
 
 export function formKind(kind: JobKind): KindFile | null {
   return FORM_KINDS[kind] ?? null;
@@ -213,7 +225,7 @@ export interface FormState {
 }
 
 export function blankValues(kind: JobKind): FormValues {
-  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), hookEvent: "login", serviceChain: false, chainJob: "", chainResult: "done", chainAction: "restart", worth: "next-run", worthAt: "12:00", timeLimit: "", ...kindDefaults(kind) };
+  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), hookEvent: "login", serviceChain: false, chainJob: "", chainResult: "done", chainAction: "restart", worth: "next-run", worthAt: "12:00", timeLimit: "", operation: "commit-push", repos: [], ...kindDefaults(kind) };
 }
 
 /** A new job's form. */
@@ -240,6 +252,7 @@ export function valuesFromText(text: string): FormValues | null {
   const hook = fields.hook;
   const after = fields.after;
   const worthTime = worthUntil !== "" && worthUntil !== "next-run";
+  const git = isMapping(fields.git) ? fields.git : {};
   return {
     ...values,
     name: asText(fields.name),
@@ -265,7 +278,16 @@ export function valuesFromText(text: string): FormValues | null {
     timeLimit: asText(fields["time-limit"]).trim(),
     lowPriority: typeof fields["low-priority"] === "boolean" ? fields["low-priority"] : values.lowPriority,
     notify: choice(fields.notify, NOTIFY_VALUES, values.notify),
+    operation: choice(git.operation, GIT_OPERATIONS, values.operation),
+    repos: gitRepos(git.repos),
   };
+}
+
+/** A git job's repos as the file lists them — one written as a lone name, too; what is not a name
+ *  is left out (the checker says so on the file). */
+function gitRepos(value: unknown): string[] {
+  const list: unknown[] = Array.isArray(value) ? value : [value];
+  return list.flatMap((repo) => (typeof repo === "string" && repo.trim() !== "" ? [repo.trim()] : []));
 }
 
 /** The form editing the job file at `path` with `text`; `null` when the form cannot show it. */
@@ -433,6 +455,7 @@ function filled(values: FormValues, field: FormField): boolean {
   if (field === "schedule") return true;
   if (field === "ready") return values.ready === "alive" || (values.ready === "port" ? values.port : values.url).trim() !== "";
   const value = values[field];
+  if (Array.isArray(value)) return value.length > 0;
   return typeof value !== "string" || value.trim() !== "";
 }
 

@@ -5,9 +5,11 @@
 
 import { useState, type ReactNode } from "react";
 
-import type { JobKind, MissedPolicy, Notify, OverlapPolicy } from "../../jobs/model";
+import { GIT_OPERATIONS, type GitOperation, type JobKind, type MissedPolicy, type Notify, type OverlapPolicy } from "../../jobs/model";
+import { GIT_OPERATION_WORDS } from "../../jobs/words";
 import type { HelpKey } from "../help";
-import { Field, FieldError, Help, LinkButton, Segmented, Select, TextInput, Toggle, type IconName, type SelectOption } from "../kit";
+import { Check, Checks, Field, FieldError, Help, LinkButton, Segmented, Select, TextInput, Toggle, type IconName, type SelectOption } from "../kit";
+import { useRepos } from "../useRunnerApi";
 import { FolderField, type FormProps } from "./FolderField";
 import { FormSection } from "./FormSection";
 import styles from "./JobForm.module.css";
@@ -188,7 +190,7 @@ const TIME_LIMIT: PolicyRow = {
   },
 };
 
-/** A script's policies, in the sentence's order. */
+/** A script's and a git job's policies, in the sentence's order. */
 const SCRIPT_POLICIES: readonly PolicyRow[] = [MISSED, OVERLAP, LOW_PRIORITY, TIME_LIMIT, NOTIFY];
 
 /** The Script kind: Trigger (a schedule, a hook or a chain), then Runs. */
@@ -277,20 +279,95 @@ function ServiceSections(props: FormProps): React.JSX.Element {
 
 /** The folder (with its picker) and the project, side by side. */
 export function FolderAndProject(props: FormProps): React.JSX.Element {
-  const { state, set, error, projects } = props;
-  const { project } = state.values;
-  const options: SelectOption[] = [{ value: "", label: "Workspace (no project)" }];
-  for (const record of projects.list?.projects ?? []) options.push({ value: record.id, label: record.name, group: record.groupPath.length > 0 ? record.groupPath.join(" / ") : undefined });
-  if (project !== null && !options.some((option) => option.value === project)) options.push({ value: project, label: project });
   return (
     <div className={styles.row}>
       <div className={styles.wide}>
         <FolderField {...props} />
       </div>
-      <Field label="Project" help="f.project" error={error("project")}>
-        {(id) => <Select id={id} options={options} value={project ?? ""} bad={error("project") !== undefined} data-field="project" onChange={(event) => set("project", event.target.value === "" ? null : event.target.value)} />}
-      </Field>
+      <ProjectField {...props} />
     </div>
+  );
+}
+
+/** The project: the Workspace, then Pomade's projects under their groups; one the file names that
+ *  Pomade does not list stays, by its id. */
+function ProjectField({ state, set, error, projects }: FormProps): React.JSX.Element {
+  const { project } = state.values;
+  const options: SelectOption[] = [{ value: "", label: "Workspace (no project)" }];
+  for (const record of projects.list?.projects ?? []) options.push({ value: record.id, label: record.name, group: record.groupPath.length > 0 ? record.groupPath.join(" / ") : undefined });
+  if (project !== null && !options.some((option) => option.value === project)) options.push({ value: project, label: project });
+  return (
+    <Field label="Project" help="f.project" error={error("project")}>
+      {(id) => <Select id={id} options={options} value={project ?? ""} bad={error("project") !== undefined} data-field="project" onChange={(event) => set("project", event.target.value === "" ? null : event.target.value)} />}
+    </Field>
+  );
+}
+
+const OPERATION_OPTIONS: readonly { value: GitOperation; label: string }[] = GIT_OPERATIONS.map((value) => ({ value, label: GIT_OPERATION_WORDS[value] }));
+
+/** The Git kind: Trigger (a schedule, a hook or a chain), then Git — the operation, the repos it
+ *  runs on and the project; no folder: `pomade-git` works in the repos. */
+function GitSections(props: FormProps): React.JSX.Element {
+  const { state, set, error } = props;
+  const { values } = state;
+  return (
+    <>
+      <TriggerSection {...props} />
+      <FormSection title="Git" sub="what · where">
+        <Field label="Operation" help="f.gitop" error={error("operation")}>
+          {() => (
+            <div data-field="operation">
+              <Segmented<GitOperation> label="Operation" value={values.operation} onChange={(value) => set("operation", value)} options={OPERATION_OPTIONS} />
+            </div>
+          )}
+        </Field>
+        <RepoPicker {...props} />
+        <div className={styles.narrow}>
+          <ProjectField {...props} />
+        </div>
+      </FormSection>
+    </>
+  );
+}
+
+/** The repos: a check per repo of the workspace, as Pomade's Git panel names them, followed live;
+ *  one the file names that the workspace lacks stays, checked, and is said under them. A repo
+ *  checked runs after the ones checked before it. */
+function RepoPicker({ host, state, set, error }: FormProps): React.JSX.Element {
+  const repos = useRepos(host);
+  const chosen = state.values.repos;
+  const known = repos.status === "ready" ? repos.value.map((repo) => repo.name) : [];
+  const missing = repos.status === "ready" ? chosen.filter((repo) => !known.includes(repo)) : [];
+  const shown = repos.status === "ready" ? [...known, ...missing] : chosen;
+  const toggle = (repo: string): void => set("repos", chosen.includes(repo) ? chosen.filter((name) => name !== repo) : [...chosen, repo]);
+  const hint =
+    repos.status === "loading" ? (
+      "Reading the workspace's repos…"
+    ) : repos.status !== "ready" ? (
+      <span className={styles.problem}>Could not read the workspace's repos: {repos.status === "failed" ? repos.message : "Pomade did not answer"}.</span>
+    ) : missing.length > 0 ? (
+      <span className={styles.problem} data-testid="repos-missing">
+        {missing.join(", ")} {missing.length === 1 ? "is" : "are"} not in this workspace.
+      </span>
+    ) : known.length === 0 ? (
+      "The workspace has no git repos."
+    ) : undefined;
+  return (
+    <Field label="Repositories" help="f.repos" error={error("repos")} hint={hint}>
+      {(id) => (
+        <div id={id} role="group" aria-label="Repositories" data-field="repos" data-testid="repo-picker">
+          {shown.length > 0 && (
+            <Checks>
+              {shown.map((repo) => (
+                <Check key={repo} on={chosen.includes(repo)} data-tip={missing.includes(repo) ? "Not in this workspace" : undefined} aria-invalid={missing.includes(repo) || undefined} onClick={() => toggle(repo)}>
+                  {repo}
+                </Check>
+              ))}
+            </Checks>
+          )}
+        </div>
+      )}
+    </Field>
   );
 }
 
@@ -322,5 +399,16 @@ export const KIND_UI: Record<JobKind, KindUi> = {
     },
   },
   agent: { label: "Agent", line: "Runs an agent with a prompt", icon: "agent", help: "kind.agent", namePlaceholder: "Morning summary" },
-  git: { label: "Git", line: "Git operation on your repos", icon: "git", help: "kind.git", namePlaceholder: "Knowledge commit & push" },
+  git: {
+    label: "Git",
+    line: "Git operation on your repos",
+    icon: "git",
+    help: "kind.git",
+    namePlaceholder: "Knowledge commit & push",
+    build: {
+      sections: (props) => <GitSections {...props} />,
+      policies: SCRIPT_POLICIES,
+      createLabel: () => "Create job",
+    },
+  },
 };

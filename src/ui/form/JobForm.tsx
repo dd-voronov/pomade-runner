@@ -506,11 +506,15 @@ const FIELD_WORDS: Record<FormField, string> = {
   lowPriority: "low priority",
   timeLimit: "time limit",
   notify: "notify me",
+  operation: "operation",
+  repos: "repositories",
 };
 
-/** The kinds the form builds, in words: "services and scripts". */
+const KIND_PLURALS: Record<JobKind, string> = { service: "services", script: "scripts", agent: "agent jobs", git: "git jobs" };
+
+/** The kinds the form builds, in words: "services, scripts and git jobs". */
 function builtKinds(): string {
-  const names = Object.keys(FORM_KINDS).map((kind) => `${kind}s`);
+  const names = (Object.keys(FORM_KINDS) as JobKind[]).map((kind) => KIND_PLURALS[kind]);
   return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1) ?? ""}`;
 }
 

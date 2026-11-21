@@ -1,21 +1,28 @@
 // Git jobs with a real Pomade: the Pomade checkout's built app (`POMADE_REPO`) in test mode on a temp
 // workspace, user data, home and git configuration, with the built `dist/` dev-linked and a
 // throwaway repo `Knowledge` in the workspace (`support/git.ts`). The scheduler is started the way
-// the login item starts it (`pomade.spec.ts`). It runs a git job through the `pomade-git` Pomade
-// wrote into its command folder, and Pomade's Git panel shows the job on the repo's row — the
-// Scheduled line Runner's `jobs.forRepo` answers — whose link opens Runner's tab at the job.
-// `RUNNER_SHOTS=<dir>` saves screenshots of the row and the tab it opens.
+// the login item starts it (`pomade.spec.ts`). A git job made in Runner's job form — the file one
+// written by hand is — runs through the `pomade-git` Pomade wrote into its command folder; Pomade's
+// Git panel shows the job on the repo's row — the Scheduled line Runner's `jobs.forRepo` answers —
+// whose link opens Runner's tab at the job; a conflict fails the run, and its card is red with the
+// conflict as the repo's reason. `RUNNER_SHOTS=<dir>` saves screenshots of the form, the row, the
+// tab it opens and the card.
 
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { connectSocket } from "pomade-kit/node";
+import { WORKSPACE_PROJECT_ID } from "pomade-kit/protocol";
+import type { HostClient } from "pomade-kit/sdk";
 
 import manifest from "../app/manifest.json" with { type: "json" };
 import { callScheduler } from "../src/scheduler/control/client";
 import type { RunRecord } from "../src/scheduler/model";
+import { runRoute } from "../src/integrations/runner-api";
 import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
+import { drawn } from "./support/frames";
 import { createGitFixture, gitEnv, type GitFixture } from "./support/git";
 import { stopKeeper } from "./support/keeper";
 import { pomadeCheckout, pomadeEnv, type PomadeFolders } from "./support/pomade";
@@ -23,7 +30,10 @@ import { startSchedulerProcess, type SchedulerProcess } from "./support/schedule
 
 const SHOTS = process.env.RUNNER_SHOTS;
 const NAME = "Knowledge twice daily";
-const JOB = `---\nkind: git\nname: ${NAME}\ngit: { operation: commit-push, repos: [Knowledge] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n`;
+/** The job's id: the form files it under its name's slug, at the top of the jobs folder. */
+const ID = "knowledge-twice-daily";
+/** The job as a person or an agent writes it by hand. */
+const HAND = `---\nkind: git\nname: ${NAME}\ngit: { operation: commit-push, repos: [Knowledge] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n`;
 
 async function shoot(page: Page, name: string): Promise<void> {
   if (!SHOTS) return;
@@ -53,7 +63,6 @@ test.describe("git jobs in Pomade", () => {
     repos = await createGitFixture(tmp, folders.workspace);
     // A second repo, so the Git panel lists the workspace's repos rather than opening the one.
     repos.git(folders.workspace, "init", "--quiet", "Notes");
-    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/knowledge.md"), JOB);
     // Pomade reads the repo's state with git too: the same throwaway configuration and home.
     app = await electron.launch({ executablePath: pomade.runtime, args: [pomade.main], env: pomadeEnv(folders, { POMADE_DEV_APPS: DIST, HOME: join(tmp, "user"), ...gitEnv(tmp) }) });
     page = await app.firstWindow();
@@ -92,9 +101,30 @@ test.describe("git jobs in Pomade", () => {
   }
 
   async function history(): Promise<RunRecord[]> {
-    const result = await callScheduler(socket(), "history", { job: "knowledge", limit: 50 });
+    const result = await callScheduler(socket(), "history", { job: ID, limit: 50 });
     return result.status === "ok" ? result.value.records : [];
   }
+
+  /** A connection to Pomade as Runner's backend — what opens Runner's tab at a route here. */
+  async function connectAsRunner(): Promise<HostClient> {
+    const host = JSON.parse(await readFile(join(folders.home, "host.json"), "utf8")) as { socket: string };
+    const result = await connectSocket({ socketPath: host.socket, appId: manifest.id, keyFile: join(folders.userData, "app-keys", manifest.id), role: "backend" });
+    if (result.status !== "connected") throw new Error(`Runner's connection to Pomade: ${result.status}`);
+    return result.host;
+  }
+
+  /** Runner's tab at `route`, in the Workspace. */
+  async function openRunnerTab(route: string): Promise<void> {
+    const runner = await connectAsRunner();
+    try {
+      await runner.tabs.openApp({ route, projectId: WORKSPACE_PROJECT_ID });
+    } finally {
+      runner.close();
+    }
+    await drawn(page);
+  }
+
+  const tab = (): ReturnType<Page["frameLocator"]> => page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
 
   /** Open the Git panel at the workspace's repos. Its rows ask Runner for their jobs when they show
    *  and when the window regains focus: the panel stays mounted once shown, so the specs that need
@@ -109,11 +139,33 @@ test.describe("git jobs in Pomade", () => {
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   }
 
+  test("a git job made in the job form — the workspace's repos to pick from — is the file one written by hand is, and pomade-runner check accepts it", async () => {
+    await startTheScheduler();
+    await openRunnerTab("new");
+    await tab().getByTestId("kind-git").click();
+    const form = tab().getByTestId("form-git");
+    await form.getByRole("textbox", { name: "Name", exact: true }).fill(NAME);
+    await form.getByRole("textbox", { name: "Time 1" }).fill("13:00");
+    await form.getByRole("button", { name: "Add time" }).click();
+    await expect(form.getByRole("textbox", { name: "Time 2" })).toHaveValue("20:00");
+    // Pomade's git state: the workspace's repos, by the names its Git panel shows.
+    const picks = form.getByRole("group", { name: "Repositories" }).getByRole("checkbox");
+    await expect(picks).toHaveText(["Knowledge", "Notes"]);
+    await picks.filter({ hasText: "Knowledge" }).click();
+    await expect(form.getByTestId("policy-summary")).toHaveText("If missed, skip · never overlaps itself · normal priority · no time limit · notifies on failure");
+    await shoot(page, "pomade-git-form");
+    await tab().getByTestId("form-save").click();
+    await expect(tab().getByTestId("toast").last()).toHaveText(`RunnerCreated Apps/pomade-runner/jobs/${ID}.md`);
+    const path = join(folders.workspace, `Apps/pomade-runner/jobs/${ID}.md`);
+    expect(await readFile(path, "utf8")).toBe(HAND.replace(`name: ${NAME}\n`, `name: ${NAME}\nenabled: true\n`));
+    const checked = await run(join(folders.home, "bin", "pomade-runner"), ["check", path], { env: cleanEnv(), cwd: tmp });
+    expect(checked).toMatchObject({ code: 0, stdout: "1 job file: no problems.\n" });
+  });
+
   test("a git job runs through the pomade-git Pomade wrote into its command folder; the repo's row shows the run", async () => {
     expect(existsSync(join(folders.home, "bin", "pomade-git"))).toBe(true);
-    await startTheScheduler();
     await writeFile(join(repos.repo, "notes.md"), "# Notes\n\nfirst line\nwritten with Pomade open\n");
-    const ran = await run(join(folders.home, "bin", "pomade-runner"), ["run", "knowledge"], { env: cleanEnv(), cwd: tmp });
+    const ran = await run(join(folders.home, "bin", "pomade-runner"), ["run", ID], { env: cleanEnv(), cwd: tmp });
     expect(ran.code).toBe(0);
     await expect.poll(async () => (await history()).length, { timeout: 30_000 }).toBe(1);
     const [record] = await history();
@@ -130,15 +182,41 @@ test.describe("git jobs in Pomade", () => {
     await windowRegainsFocus();
     const line = page.getByTestId("git-scheduled-Knowledge");
     await expect(line).toHaveText("Scheduled: Commit & push · daily at 13:00 and 20:00 — edit in Runner");
-    await expect(line).toHaveAttribute("data-job", "knowledge");
+    await expect(line).toHaveAttribute("data-job", ID);
     await shoot(page, "pomade-git-scheduled");
 
     await page.getByTestId("git-scheduled-edit-Knowledge").click();
-    const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
-    const row = tab.locator('[data-testid="job-row"][data-job="knowledge"]');
+    const row = tab().locator(`[data-testid="job-row"][data-job="${ID}"]`);
     await expect(row).toHaveAttribute("aria-current", "true");
     await expect(row.getByTestId("job-trigger")).toHaveAttribute("data-tip", "Daily at 13:00 and 20:00 · Commit & push · Knowledge");
     await shoot(page, "pomade-git-job");
+  });
+
+  test("a conflict: the run fails, and its card is red with the conflict as the repo's reason and the step that stopped", async () => {
+    // The other machine has the job's commit, then changes the line this one changes too.
+    repos.git(repos.other, "pull", "--quiet");
+    await writeFile(join(repos.other, "notes.md"), "# Notes\n\nfirst line, as the other machine has it\n");
+    repos.git(repos.other, "commit", "--quiet", "-am", "Theirs");
+    repos.git(repos.other, "push", "--quiet");
+    await writeFile(join(repos.repo, "notes.md"), "# Notes\n\nfirst line, as this machine has it\n");
+    expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", ID], { env: cleanEnv(), cwd: tmp })).code).toBe(0);
+    await expect.poll(async () => (await history()).length, { timeout: 30_000 }).toBe(2);
+    const [record] = await history();
+    expect(record).toMatchObject({ state: "failed", exitCode: 1 });
+    const reason = record?.git?.results[0]?.reason ?? "";
+    expect(reason).toContain("conflict with yours in notes.md");
+
+    await openRunnerTab(runRoute(ID, record?.run ?? ""));
+    const dialog = tab().getByTestId("run-dialog");
+    await expect(dialog).toHaveAttribute("data-tone", "danger");
+    await expect(tab().getByTestId("run-result")).toHaveText("Failed");
+    const repo = dialog.getByTestId("run-git-repo");
+    await expect(repo).toHaveAttribute("data-status", "failed");
+    await expect(repo).toContainText("Knowledge");
+    // The step that stopped says the conflict; the repo's reason — what the conflict left — follows.
+    await expect(repo.locator('[data-testid="run-git-step"][data-outcome="failed"]')).toHaveText("conflict in notes.md");
+    await expect(dialog.getByTestId("run-git-note")).toHaveText(reason);
+    await shoot(page, "pomade-git-conflict");
   });
 
   test("4 · with Runner's scheduler not answering, the row shows no Scheduled line", async () => {

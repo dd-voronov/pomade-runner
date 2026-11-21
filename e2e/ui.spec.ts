@@ -910,8 +910,8 @@ test.describe("the job form", () => {
     await expect(app(page).getByTestId("form-title")).toHaveText("Jobs / New job");
     // Only the kinds the form builds are offered; the others show, with their help.
     await expect(form.getByTestId("kind-service")).toHaveAttribute("aria-checked", "true");
-    await expect(form.getByTestId("kind-script")).not.toHaveAttribute("aria-disabled");
-    for (const kind of ["agent", "git"]) await expect(form.getByTestId(`kind-${kind}`)).toHaveAttribute("aria-disabled", "true");
+    for (const kind of ["script", "git"]) await expect(form.getByTestId(`kind-${kind}`)).not.toHaveAttribute("aria-disabled");
+    await expect(form.getByTestId("kind-agent")).toHaveAttribute("aria-disabled", "true");
     await form.getByTestId("kind-agent").dispatchEvent("click");
     await expect(form.getByTestId("kind-service")).toHaveAttribute("aria-checked", "true");
 
@@ -1155,7 +1155,7 @@ test.describe("the job form", () => {
     await expect(app(page).getByTestId("form-missing")).toContainText("No job file has the id nope.");
     await writeJob(page, "summary.md", "---\nkind: agent\nname: Summary\nfolder: .\nagent: claude\nschedule:\n  daily: { at: 7:00 }\n---\nWrite my summary.\n");
     await navigate(page, "edit/summary");
-    await expect(app(page).getByTestId("form-unsupported")).toContainText("It is an agent job, and this build's form edits services and scripts only. Open its file to change it.");
+    await expect(app(page).getByTestId("form-unsupported")).toContainText("It is an agent job, and this build's form edits services, scripts and git jobs only. Open its file to change it.");
     await app(page).getByTestId("form-unsupported").getByRole("button", { name: "Open file" }).click();
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/summary.md" }]);
     await app(page).getByTestId("form-back").click();
@@ -2777,5 +2777,119 @@ test.describe("the switch and Settings (T-009)", () => {
     await jobs.getByRole("button", { name: "Show in Files" }).click();
     await expect.poll(() => page.evaluate(() => window.fakeHost.reveals)).toEqual([{ projectId: "__workspace__", path: "Apps/pomade-runner/jobs" }]);
     await shoot(page, "tab-settings-files");
+  });
+});
+
+test.describe("the Git form (T-011)", () => {
+  test.use({ viewport: { width: 1040, height: 760 } });
+  /** The prototype's clock: Tue 17 Nov 2026, 12:48. */
+  const NOW = new Date(2026, 10, 17, 12, 48);
+  const JOBS = "Apps/pomade-runner/jobs";
+
+  async function start(page: Page, route: string): Promise<void> {
+    await page.clock.setFixedTime(NOW);
+    await page.goto(harness({ route, projects: "prototype", repos: "coda-helper,job-hunt" }));
+    await page.waitForFunction(() => typeof window.setServiceStatus === "function" && typeof window.mounted === "object");
+  }
+
+  function fileText(page: Page, path: string): Promise<string | null> {
+    return page.evaluate((p) => {
+      try {
+        return window.fakeHost.readFile(p);
+      } catch {
+        return null;
+      }
+    }, path);
+  }
+
+  test("a new git job: the operation, the workspace's repos, a project and no folder; Skip, normal priority and On failure; the file a hand-written one is", async ({ page }) => {
+    await start(page, "new");
+    await app(page).getByTestId("kind-git").click();
+    const form = app(page).getByTestId("form-git");
+    await expect(form.getByRole("region")).toHaveText([/^Kind/, /^Trigger/, /^Git/, /^Policies/]);
+    const git = form.getByRole("region", { name: "Git" });
+    // The operation, Commit & push first; the repos as the Git panel names them; a project, no folder.
+    await expect(git.getByRole("group", { name: "Operation" }).getByRole("button")).toHaveText(["Commit & push", "Pull", "Push", "Fetch"]);
+    await expect(git.getByRole("button", { name: "Commit & push" })).toHaveAttribute("aria-pressed", "true");
+    const repos = git.getByRole("group", { name: "Repositories" }).getByRole("checkbox");
+    await expect(repos).toHaveText(["Knowledge", "coda-helper", "job-hunt"]);
+    await expect(git.getByRole("combobox", { name: "Project" })).toHaveValue("");
+    await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveCount(0);
+    await expect(form.getByRole("textbox", { name: "Command", exact: true })).toHaveCount(0);
+    await expect(form.getByTestId("form-policies")).toContainText("defaults for Git");
+    await expect(form.getByTestId("policy-summary")).toHaveText("If missed, skip · never overlaps itself · normal priority · no time limit · notifies on failure");
+    await form.getByTestId("form-policies").getByRole("button", { name: "Change" }).click();
+    await expect(form.getByTestId("form-policies")).toContainText("Runs at normal priority · default for Git");
+
+    // Save with no repo: the checker's words on the repos.
+    await form.getByRole("textbox", { name: "Name", exact: true }).fill("Pull coda-helper");
+    await app(page).getByTestId("form-save").click();
+    await expect(git.getByRole("alert")).toHaveText("git.repos — names no repos. Fix: list the repos by the name Pomade's Git panel shows: repos: [Knowledge, coda-helper].");
+    await expect(app(page).getByTestId("form-error-count")).toHaveText("1 thing to fix before saving");
+    await shoot(page, "tab-form-git-errors");
+
+    // Picked in the order they run; the project puts the file in its sub-folder.
+    await git.getByRole("button", { name: "Pull" }).click();
+    await repos.filter({ hasText: "coda-helper" }).click();
+    await repos.filter({ hasText: "Knowledge" }).click();
+    await expect(repos.filter({ hasText: "coda-helper" })).toHaveAttribute("aria-checked", "true");
+    await expect(git.getByRole("alert")).toHaveCount(0);
+    await git.getByRole("combobox", { name: "Project" }).selectOption("coda-helper");
+    await expect(app(page).getByTestId("form-path")).toHaveText(`${JOBS}/coda-helper/pull-coda-helper.md`);
+    await shoot(page, "tab-form-git-new");
+    await expect(app(page).getByTestId("form-save")).toHaveText("Create job");
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("toast")).toHaveText(`RunnerCreated ${JOBS}/coda-helper/pull-coda-helper.md`);
+    expect(await fileText(page, `${JOBS}/coda-helper/pull-coda-helper.md`)).toBe(
+      "---\nkind: git\nname: Pull coda-helper\nproject: coda-helper\nenabled: true\ngit: { operation: pull, repos: [coda-helper, Knowledge] }\nschedule:\n  daily: { at: 9:00 }\n---\n",
+    );
+    const row = app(page).locator('[data-testid="job-row"][data-job="coda-helper/pull-coda-helper"]');
+    await expect(row.getByTestId("job-trigger")).toHaveAttribute("data-tip", "Daily at 9:00 · Pull · coda-helper, Knowledge");
+  });
+
+  test("every field of the Git form has a working (i): the kind, the operation, the repos, the project and each policy with its kind's default", async ({ page }) => {
+    await start(page, "new");
+    await app(page).getByTestId("kind-git").click();
+    await expect(app(page).getByTestId("form-git")).toBeVisible();
+    const form = app(page).getByTestId("job-form");
+    await form.getByTestId("form-policies").getByRole("button", { name: "Change" }).click();
+    const tip = app(page).getByRole("tooltip");
+    const keys = ["f.enabled", "f.name", "f.trigger", "f.gitop", "f.repos", "f.project", "p.missed", "p.overlap", "p.low", "p.limit", "p.notify", "f.file"] as const;
+    for (const key of keys) {
+      await form.getByTestId(`help-${key}`).hover();
+      await expect(tip).toHaveText(HELP[key].join(""));
+    }
+    // Skip is the Git kind's default, with its own help.
+    const skip = form.getByRole("group", { name: "If a run is missed" }).getByRole("button", { name: /^Skip/ });
+    await expect(skip).toHaveAttribute("aria-pressed", "true");
+    await expect(skip).toContainText("default");
+    await skip.hover();
+    await expect(tip).toHaveText(HELP["p.skip"].join(""));
+    await form.getByTestId("kind-git").hover();
+    await expect(tip).toHaveText(HELP["kind.git"].join(""));
+  });
+
+  test("editing a git job: its operation and repos as the file says — one the workspace lacks stays, checked and said — and Save writes only what changed", async ({ page }) => {
+    const HAND = "---\nkind: git # twice a day\nname: Knowledge commit & push\nproject: knowledge\ngit: { operation: commit-push, repos: [Knowledge, Notes] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\nThe vault.\n";
+    await start(page, "edit/Knowledge.knowledge-commit");
+    await writeJob(page, "Knowledge/knowledge-commit.md", HAND);
+    const form = app(page).getByTestId("form-git");
+    const git = form.getByRole("region", { name: "Git" });
+    await expect(git.getByRole("button", { name: "Commit & push" })).toHaveAttribute("aria-pressed", "true");
+    const repos = git.getByRole("group", { name: "Repositories" }).getByRole("checkbox");
+    await expect(repos).toHaveText(["Knowledge", "coda-helper", "job-hunt", "Notes"]);
+    await expect(git.locator('[role="checkbox"][aria-checked="true"]')).toHaveText(["Knowledge", "Notes"]);
+    await expect(git.getByTestId("repos-missing")).toHaveText("Notes is not in this workspace.");
+    await expect(git.getByRole("combobox", { name: "Project" })).toHaveValue("knowledge");
+    await expect(app(page).getByTestId("form-save")).toHaveText("Saved");
+    await shoot(page, "tab-form-git-edit");
+
+    await repos.filter({ hasText: "Notes" }).click();
+    await expect(git.getByTestId("repos-missing")).toHaveCount(0);
+    await expect(repos).toHaveText(["Knowledge", "coda-helper", "job-hunt"]);
+    await git.getByRole("button", { name: "Fetch" }).click();
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, `${JOBS}/Knowledge/knowledge-commit.md`)).toBe(HAND.replace("{ operation: commit-push, repos: [Knowledge, Notes] }", "{ operation: fetch, repos: [Knowledge] }"));
   });
 });

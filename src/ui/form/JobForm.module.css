@@ -513,3 +513,13 @@
 .chainJob select {
   max-width: 176px;
 }
+
+/* A field on its own that would be too wide across the section: a git job's Project. */
+.narrow {
+  max-width: 296px;
+}
+
+/* A hint that says something is wrong without keeping Save from writing: a repo the workspace lacks. */
+.problem {
+  color: var(--danger-text);
+}
