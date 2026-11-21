@@ -17,7 +17,7 @@ import { connectKeeper, startKeeper, type KeeperClient } from "pomade-kit/node";
 import { EXIT_REASONS, type SessionAction, type SessionExit, type SessionInfo } from "pomade-kit/protocol";
 
 import { APP_ID } from "../app";
-import { keeperOutPath, outputLogPath, sessionsRecordPath } from "../locations";
+import { keeperOutPath, liveOutputLogPath, sessionsRecordPath, type StateFolder } from "../locations";
 import type { Clock } from "../scheduler/clock";
 import type { Log } from "../scheduler/log";
 import { newRunId, sessionIdOf, sessionOwner, type SessionOwner } from "./ids";
@@ -51,8 +51,8 @@ export interface SessionsOptions {
   key: string;
   /** The shipped keeper: its entry (absolute) and version. */
   keeper: { entry: string; version: string };
-  /** Runner's state folder. */
-  state: string;
+  /** Runner's state folder: the session records, the keeper's own folder, each run's output log. */
+  state: StateFolder;
   clock: Clock;
   log: Log;
 }
@@ -371,7 +371,7 @@ export function createSessions(options: SessionsOptions): Sessions {
       const run = owner.kind === "run" ? owner.run : newRunId(clock.now(), () => randomBytes(3).toString("hex"));
       const id = sessionIdOf(owner.kind === "service" ? owner : { kind: "run", job: owner.job, run });
       if (id === null) throw new Error(`the job id "${owner.job}" is too long to name a session`);
-      const output = outputLogPath(options.state, owner.job, run);
+      const output = liveOutputLogPath(options.state, owner.job, run);
       const info = await keeper.spawn({
         id,
         title: command.title,

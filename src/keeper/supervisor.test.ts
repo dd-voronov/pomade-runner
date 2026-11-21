@@ -1,15 +1,16 @@
 // Service supervision on a clock the tests set, against sessions that stand in for the keeper: every
 // rule — staged start, readiness, back-off, the crash loop, holds, file changes — without waiting.
 
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { ExitReason, SessionAction } from "pomade-kit/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { checkJobs } from "../jobs/check";
 import type { JobsSnapshot } from "../jobs/model";
+import { recordsFolderOf, stateFolderOf, type RecordsFolder, type StateFolder } from "../locations";
 import { sessionIdOf } from "./ids";
 import type { KeeperLink, RunnerSession, ServicesReport, ServiceStatus } from "./model";
 import type { NetworkReadiness } from "./readiness";
@@ -860,29 +861,61 @@ describe("service supervision", () => {
 
 describe("the records on disk", () => {
   let dir: string;
+  let state: StateFolder;
+  let records: RecordsFolder;
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "prsv-"));
+    state = stateFolderOf(join(dir, "ud"));
+    records = recordsFolderOf(join(dir, "ws"));
   });
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("are written whole and read back", async () => {
-    const store = fileStore(dir, () => undefined);
+  const read = async (file: string): Promise<unknown> => JSON.parse(await readFile(file, "utf8"));
+
+  it("keep this Mac's crash counts in the state folder and the services you stopped in the workspace, and read both back", async () => {
+    const store = fileStore(state, records, () => undefined);
     expect(await store.load()).toEqual(new Map());
-    const record: SupervisionRecord = { hold: "failed", restarts: 4, lastCrashAt: 5, crashes: [1, 2, 3, 4, 5], retryAt: null, problem: "p" };
-    store.save(new Map([["coda/web", record]]));
+    const failed: SupervisionRecord = { hold: "failed", restarts: 4, lastCrashAt: 5, crashes: [1, 2, 3, 4, 5], retryAt: null, problem: "p" };
+    const stopped: SupervisionRecord = { hold: "stopped-by-you", restarts: 1, lastCrashAt: 3, crashes: [3], retryAt: null, problem: null };
+    store.save(new Map([["coda/web", failed], ["api", stopped]]));
     await store.flush();
-    expect(JSON.parse(await readFile(join(dir, "services.json"), "utf8"))).toEqual({ services: { "coda/web": record } });
-    expect(await fileStore(dir, () => undefined).load()).toEqual(new Map([["coda/web", record]]));
+    expect(await read(join(dir, "ud/app-state/pomade-runner/services.json"))).toEqual({ services: { "coda/web": failed, api: { ...stopped, hold: null } } });
+    expect(await read(join(dir, "ws/Apps/pomade-runner/records/services.json"))).toEqual({ stoppedByYou: ["api"] });
+    expect(await fileStore(state, records, () => undefined).load()).toEqual(new Map([["coda/web", failed], ["api", stopped]]));
+  });
+
+  it("carry the services you stopped to a Mac that has no crash counts for them, and only those", async () => {
+    const first = fileStore(stateFolderOf(join(dir, "mac-a")), records, () => undefined);
+    first.save(new Map([["api", { hold: "stopped-by-you", restarts: 0, lastCrashAt: null, crashes: [], retryAt: null, problem: null }], ["web", { hold: "failed", restarts: 5, lastCrashAt: 9, crashes: [9], retryAt: null, problem: null }]]));
+    await first.flush();
+    expect(await fileStore(state, records, () => undefined).load()).toEqual(new Map([["api", { hold: "stopped-by-you", restarts: 0, lastCrashAt: null, crashes: [], retryAt: null, problem: null }]]));
+  });
+
+  it("write the workspace's file only when the services you stopped change", async () => {
+    const store = fileStore(state, records, () => undefined);
+    const record = (restarts: number): SupervisionRecord => ({ hold: "stopped-by-you", restarts, lastCrashAt: null, crashes: [], retryAt: null, problem: null });
+    store.save(new Map([["api", record(0)]]));
+    await store.flush();
+    const holds = join(dir, "ws/Apps/pomade-runner/records/services.json");
+    await writeFile(holds, JSON.stringify({ stoppedByYou: ["api"], touched: true }));
+    store.save(new Map([["api", record(1)]]));
+    await store.flush();
+    expect(await read(holds)).toEqual({ stoppedByYou: ["api"], touched: true });
+    store.save(new Map([["api", { ...record(1), hold: null }]]));
+    await store.flush();
+    expect(await read(holds)).toEqual({ stoppedByYou: [] });
   });
 
   it("read what they can of a damaged file, and say when it is not JSON", async () => {
-    await writeFile(join(dir, "services.json"), JSON.stringify({ services: { a: { hold: "maybe", restarts: -1, crashes: [1, "x"], retryAt: "soon" }, b: 7 } }));
-    expect(await fileStore(dir, () => undefined).load()).toEqual(new Map([["a", { hold: null, restarts: 0, lastCrashAt: null, crashes: [1], retryAt: null, problem: null }]]));
-    await writeFile(join(dir, "services.json"), "{ nope");
+    const machine = join(dir, "ud/app-state/pomade-runner/services.json");
+    await mkdir(dirname(machine), { recursive: true });
+    await writeFile(machine, JSON.stringify({ services: { a: { hold: "maybe", restarts: -1, crashes: [1, "x"], retryAt: "soon" }, b: 7 } }));
+    expect(await fileStore(state, records, () => undefined).load()).toEqual(new Map([["a", { hold: null, restarts: 0, lastCrashAt: null, crashes: [1], retryAt: null, problem: null }]]));
+    await writeFile(machine, "{ nope");
     const lines: string[] = [];
-    expect(await fileStore(dir, (line) => lines.push(line)).load()).toEqual(new Map());
-    expect(lines).toEqual([`services: ${join(dir, "services.json")} is not readable JSON; starting with no holds or crash counts`]);
+    expect(await fileStore(state, records, (line) => lines.push(line)).load()).toEqual(new Map());
+    expect(lines).toEqual([`services: ${machine} is not readable JSON; starting with no crash counts`]);
   });
 });

@@ -4,9 +4,10 @@
 // when a starting service is up — and every session's end it hears from the keeper (`onExit`)
 // updates the service's supervision record: a crash schedules a restart after a back-off, and 5
 // crashes within a minute give up (`failed`); Ctrl+C in its tab, or Stop, leaves it stopped until
-// Start. The records are what the keeper does not know — holds, crash counts, a restart due — and
-// live in Runner's state folder (`services.json`), so a restarted scheduler carries on where the
-// last one stopped; it reattaches running services and never restarts them.
+// Start. The records are what the keeper does not know — holds, crash counts, a restart due — so a
+// restarted scheduler carries on where the last one stopped; it reattaches running services and
+// never restarts them. The services the Owner stopped are kept with the workspace, the rest on this
+// Mac (`fileStore`).
 //
 // Every action — a tick, Start, Stop, Restart — runs in one lane, one after another. Time comes from
 // the clock and the network checks from `probe`, both given, so every rule is tested without waiting.
@@ -18,12 +19,13 @@
 // clock, a session started a moment ago is a moment old whatever the real date.
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 
 import type { SessionAction } from "pomade-kit/protocol";
 
 import type { JobsSnapshot, ServiceAction, ServiceJob } from "../jobs/model";
 import { entryId } from "../jobs/model";
+import { serviceHoldsPath, supervisionRecordPath, type RecordsFolder, type StateFolder } from "../locations";
 import type { Clock } from "../scheduler/clock";
 import type { Log } from "../scheduler/log";
 import type { ChainActionOutcome, RunnerSession, ServiceActionResult, ServicesReport, ServiceState, ServiceStatus } from "./model";
@@ -92,43 +94,73 @@ function parseRecord(value: unknown): SupervisionRecord | null {
   };
 }
 
-/** The records in `<state>/services.json`, replaced whole on every save. */
-export function fileStore(state: string, log: Log): SupervisionStore {
-  const file = join(state, "services.json");
+/** Write `text` to `file` whole, through a temporary file beside it. */
+async function replace(file: string, text: string): Promise<void> {
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(`${file}.tmp`, text);
+  await rename(`${file}.tmp`, file);
+}
+
+async function readJson(file: string, log: Log, what: string): Promise<unknown> {
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    log(`services: ${file} is not readable JSON; starting with no ${what}`);
+    return null;
+  }
+}
+
+/** The services the Owner stopped, as `services.json` in the records folder keeps them. */
+export async function readServiceHolds(file: string, log: Log): Promise<string[]> {
+  const data = await readJson(file, log, "services stopped by you");
+  return isRecord(data) && Array.isArray(data.stoppedByYou) ? data.stoppedByYou.filter((job): job is string => typeof job === "string") : [];
+}
+
+/** The holds file's text for `jobs`. */
+export const serviceHoldsText = (jobs: Iterable<string>): string => `${JSON.stringify({ stoppedByYou: [...jobs].sort() }, null, 2)}\n`;
+
+/** The records in two files, each replaced whole when it changes. What the Owner asked for — the
+ *  services they stopped, which stay stopped — is in `services.json` in the records folder, with
+ *  the workspace; what describes this Mac's processes — crash counts, a restart due, a service given
+ *  up on, the last start's problem — is in `services.json` in the state folder. */
+export function fileStore(state: StateFolder, records: RecordsFolder, log: Log): SupervisionStore {
+  const machineFile = supervisionRecordPath(state);
+  const holdsFile = serviceHoldsPath(records);
   let writing: Promise<void> = Promise.resolve();
+  const written = { machine: "", holds: "" };
   return {
     async load() {
-      const records = new Map<string, SupervisionRecord>();
-      let text: string;
-      try {
-        text = await readFile(file, "utf8");
-      } catch {
-        return records;
-      }
-      let data: unknown;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        log(`services: ${file} is not readable JSON; starting with no holds or crash counts`);
-        return records;
-      }
+      const loaded = new Map<string, SupervisionRecord>();
+      const data = await readJson(machineFile, log, "crash counts");
       if (isRecord(data) && isRecord(data.services)) {
         for (const [job, value] of Object.entries(data.services)) {
           const record = parseRecord(value);
-          if (record !== null) records.set(job, record);
+          if (record !== null) loaded.set(job, record.hold === "stopped-by-you" ? { ...record, hold: null } : record);
         }
       }
-      return records;
+      for (const job of await readServiceHolds(holdsFile, log)) loaded.set(job, { ...(loaded.get(job) ?? freshRecord()), hold: "stopped-by-you" });
+      return loaded;
     },
-    save(records) {
-      const data = `${JSON.stringify({ services: Object.fromEntries(records) }, null, 2)}\n`;
-      writing = writing
-        .then(async () => {
-          await mkdir(dirname(file), { recursive: true });
-          await writeFile(`${file}.tmp`, data);
-          await rename(`${file}.tmp`, file);
-        })
-        .catch((err: unknown) => log(`services: cannot write ${file}: ${err instanceof Error ? err.message : String(err)}`));
+    save(next) {
+      const machine = `${JSON.stringify({ services: Object.fromEntries([...next].map(([job, record]) => [job, record.hold === "stopped-by-you" ? { ...record, hold: null } : record])) }, null, 2)}\n`;
+      const holds = serviceHoldsText([...next].flatMap(([job, record]) => (record.hold === "stopped-by-you" ? [job] : [])));
+      writing = writing.then(async () => {
+        for (const [key, file, text] of [["machine", machineFile, machine], ["holds", holdsFile, holds]] as const) {
+          if (written[key] === text) continue;
+          try {
+            await replace(file, text);
+            written[key] = text;
+          } catch (err) {
+            log(`services: cannot write ${file}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      });
     },
     flush: () => writing,
   };

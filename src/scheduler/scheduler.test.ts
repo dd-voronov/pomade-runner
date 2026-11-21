@@ -44,6 +44,7 @@ import { isServiceActionResult, isServicesReport, type RunnerSession } from "../
 import type { SessionOwner } from "../keeper/ids";
 import type { SessionCommand, Sessions } from "../keeper/sessions";
 import type { SupervisionStore } from "../keeper/supervisor";
+import { stateFolderOf } from "../locations";
 import { callScheduler } from "./control/client";
 import { CONTROL_PROTOCOL } from "./control/protocol";
 import { isHistoryPage, isRunActionResult, isRunsReport } from "./model";
@@ -198,10 +199,10 @@ describe("scheduler", () => {
         link = handlers;
         return { stop: () => void (linkStopped = true) };
       },
-      workspace: () => null,
+      workspace: join(dir, "ws"),
       sessions,
       ...supervision,
-      state: join(dir, "state"),
+      state: stateFolderOf(join(dir, "ud")),
       postNotice,
       pomadeGit: "/nowhere/bin/pomade-git",
     });
@@ -233,7 +234,9 @@ describe("scheduler", () => {
       status: "ok",
       value: { version: APP_VERSION, pid: process.pid, startedAt: "2026-11-17T08:00:00.000Z", lastTickAt: null, pomade: "disconnected" },
     });
-    expect(lines).toEqual([`scheduler ${APP_VERSION} started (pid ${process.pid}, tick 1000 ms)`, "login: no keeper was running — the staged start begins; the login hooks run after the warm-up"]);
+    expect(lines).toEqual(
+      expect.arrayContaining([`scheduler ${APP_VERSION} started (pid ${process.pid}, tick 1000 ms)`, "login: no keeper was running — the staged start begins; the login hooks run after the warm-up"]),
+    );
     expect((await stat(socketPath)).mode & 0o777).toBe(0o600);
   });
 
@@ -272,10 +275,10 @@ describe("scheduler", () => {
       linkPomade: () => {
         throw new Error("a second scheduler must not connect to Pomade");
       },
-      workspace: () => null,
+      workspace: join(dir, "ws"),
       sessions: second,
       ...supervision,
-      state: join(dir, "state"),
+      state: stateFolderOf(join(dir, "ud")),
       postNotice,
       pomadeGit: "/nowhere/bin/pomade-git",
     });
@@ -339,7 +342,7 @@ describe("scheduler", () => {
 
   it("refuses a socket path macOS cannot bind", async () => {
     socketPath = join(dir, "x".repeat(120), "scheduler.sock");
-    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: () => null, sessions, ...supervision, state: join(dir, "state"), postNotice, pomadeGit: "/nowhere/bin/pomade-git" });
+    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: join(dir, "ws"), sessions, ...supervision, state: stateFolderOf(join(dir, "ud")), postNotice, pomadeGit: "/nowhere/bin/pomade-git" });
     expect(result.status).toBe("failed");
   });
 
@@ -362,7 +365,7 @@ describe("scheduler", () => {
 
 describe("scheduler and the job files", () => {
   let dir: string;
-  let workspace: string | null;
+  let workspace: string;
   let link: PomadeLinkHandlers | null;
   let sessions: StubSessions;
   const running: Scheduler[] = [];
@@ -378,10 +381,10 @@ describe("scheduler and the job files", () => {
         link = handlers;
         return { stop: () => undefined };
       },
-      workspace: () => workspace,
+      workspace,
       sessions,
       ...supervision,
-      state: join(dir, "state"),
+      state: stateFolderOf(join(dir, "ud")),
       postNotice,
       pomadeGit: "/nowhere/bin/pomade-git",
     });
@@ -409,15 +412,6 @@ describe("scheduler and the job files", () => {
     expect(scheduler.jobs()).toMatchObject({ workspace, projectsChecked: false, jobs: [{ valid: true, job: { id: "a" } }] });
     await writeFile(join(dir, "ws/Apps/pomade-runner/jobs/b.md"), "---\nkind: nope\n---\n");
     await vi.waitFor(() => expect(scheduler.jobs().jobs.map((e) => e.valid)).toEqual([true, false]));
-  });
-
-  it("follows a workspace switch", async () => {
-    const scheduler = await start();
-    expect(scheduler.jobs().jobs).toEqual([]);
-    workspace = join(dir, "other");
-    await mkdir(join(workspace, "Apps/pomade-runner/jobs/alpha"), { recursive: true });
-    await writeFile(join(workspace, "Apps/pomade-runner/jobs/b.md"), job("B"));
-    await vi.waitFor(() => expect(scheduler.jobs()).toMatchObject({ workspace, jobs: [{ job: { id: "b" } }] }));
   });
 
   it("serves jobs.list through Pomade, checks projects, and tells Runner's frames when the jobs change", async () => {
@@ -592,7 +586,7 @@ describe("scheduler and runs", () => {
     const log = (line: string): void => void lines.push(line);
     const result = await startScheduler({
       socketPath: socketPath(),
-      state: join(dir, "state"),
+      state: stateFolderOf(join(dir, "ud")),
       clock: { now: () => new Date() },
       tickMs: 20,
       log,
@@ -600,7 +594,7 @@ describe("scheduler and runs", () => {
         link = handlers;
         return { stop: () => undefined };
       },
-      workspace: () => join(dir, "ws"),
+      workspace: join(dir, "ws"),
       sessions,
       ...supervision,
       postNotice: noticePoster(join(dir, "ud"), log),
@@ -663,7 +657,7 @@ describe("scheduler and runs", () => {
     expect(isHistoryPage(history)).toBe(true);
     expect(history).toMatchObject({ records: [{ job: "backup", run: run.run, state: "failed", exitCode: 1 }], next: null });
     expect(await ui.apps.call("pomade-runner", HISTORY_LIST_METHOD)).toMatchObject({ records: [{ run: run.run }] });
-    expect(await ui.apps.call("pomade-runner", RUN_OUTPUT_METHOD, { job: "backup", run: run.run })).toEqual({ text: "", truncated: false });
+    expect(await ui.apps.call("pomade-runner", RUN_OUTPUT_METHOD, { job: "backup", run: run.run })).toEqual({ text: "", truncated: false, missing: true });
     expect(await ui.apps.call("pomade-runner", RUNS_LIST_METHOD)).toMatchObject({ needsYou: [{ id: "run-failed:backup", run: run.run, count: 1 }], jobs: [{ last: { state: "failed" } }] });
 
     // Opening the result resolves the item; the badge clears.
@@ -739,7 +733,7 @@ describe("scheduler and runs", () => {
     expect(await ui.apps.call("pomade-runner", SWITCH_METHOD, { position: "pause-low" })).toMatchObject({ position: "pause-low" });
     expect(await callScheduler(socketPath(), "switch", { position: null })).toMatchObject({ status: "ok", value: { position: "pause-low" } });
     expect(await callScheduler(socketPath(), "switch", { position: "pause-all" })).toMatchObject({ status: "ok", value: { position: "pause-all" } });
-    expect(JSON.parse(await readFile(join(dir, "state/switch.json"), "utf8"))).toMatchObject({ position: "pause-all" });
+    expect(JSON.parse(await readFile(join(dir, "ws/Apps/pomade-runner/records/switch.json"), "utf8"))).toMatchObject({ position: "pause-all" });
     const runs = await callScheduler(socketPath(), "runs", null);
     expect(runs).toMatchObject({ status: "ok", value: { active: [], switch: { position: "pause-all" } } });
     // Run now still runs; it shows as a run going.

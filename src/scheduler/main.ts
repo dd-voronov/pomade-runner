@@ -1,5 +1,6 @@
 // The always-on backend's entry: Pomade's login item runs it with Pomade's runtime, and it keeps
-// running when Pomade quits.
+// running when Pomade quits. It runs the scheduler on the workspace Pomade records — waiting while
+// there is none, starting again on another (`workspace-follow.ts`).
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -13,10 +14,11 @@ import { linkPomade } from "../integrations/pomade";
 import { probeReadiness } from "../keeper/readiness";
 import { createSessions } from "../keeper/sessions";
 import { fileStore } from "../keeper/supervisor";
-import { keeperSocketPath, pomadeGitPath, schedulerSocketPath, stateDir, userDataDir } from "../locations";
+import { keeperSocketPath, pomadeGitPath, recordsFolderOf, schedulerSocketPath, stateFolder, userDataDir } from "../locations";
 import { clockFrom, systemClock, tickMs } from "./clock";
 import { createLog } from "./log";
-import { startScheduler } from "./scheduler";
+import { startScheduler, type StartResult } from "./scheduler";
+import { followWorkspace } from "./workspace-follow";
 
 /** The version of the keeper this build ships (`src/keeper/version.ts`), set by the build. */
 declare const KEEPER_VERSION: string;
@@ -35,7 +37,7 @@ function readKey(file: string | undefined): string | null {
   }
 }
 
-const state = stateDir(process.env);
+const state = stateFolder(process.env);
 const userData = userDataDir(process.env);
 const socketPath = schedulerSocketPath(process.env);
 const keeperSocket = keeperSocketPath(process.env);
@@ -52,33 +54,37 @@ if (state === null || socketPath === null || userData === null) {
   process.exitCode = 1;
 } else {
   const clock = clockFrom(process.env);
-  const sessions = createSessions({ socketPath: keeperSocket, key, keeper: { entry: KEEPER_ENTRY, version: KEEPER_VERSION }, state, clock, log });
-  const result = await startScheduler({
-    socketPath,
-    state,
-    clock,
-    tickMs: tickMs(process.env),
-    log,
-    linkPomade,
-    workspace: () => resolveWorkspace(),
-    sessions,
-    supervision: fileStore(state, log),
-    probe: probeReadiness,
-    postNotice: noticePoster(userData, log),
-    pomadeGit: pomadeGitPath(process.env),
-  });
-  if (result.status === "already-running") {
+  const tick = tickMs(process.env);
+  const start = (workspace: string): Promise<StartResult> => {
+    const records = recordsFolderOf(workspace);
+    return startScheduler({
+      socketPath,
+      state,
+      workspace,
+      clock,
+      tickMs: tick,
+      log,
+      linkPomade,
+      sessions: createSessions({ socketPath: keeperSocket, key, keeper: { entry: KEEPER_ENTRY, version: KEEPER_VERSION }, state, clock, log }),
+      supervision: fileStore(state, records, log),
+      probe: probeReadiness,
+      postNotice: noticePoster(userData, log),
+      pomadeGit: pomadeGitPath(process.env),
+    });
+  };
+  const following = followWorkspace({ workspace: () => resolveWorkspace(), start, pollMs: tick, log });
+  const shutDown = (): void => {
+    void following.stop().finally(() => process.exit(0));
+  };
+  process.once("SIGTERM", shutDown);
+  process.once("SIGINT", shutDown);
+  const end = await following.ended;
+  if (end.status === "already-running") {
     // A clean exit: launchd restarts a login item only after a failure.
     log("another scheduler is running; this one exits");
-  } else if (result.status === "failed") {
-    log(`not started: ${result.reason}`);
-    process.exitCode = 1;
-  } else {
-    const { scheduler } = result;
-    const shutDown = (): void => {
-      void scheduler.stop().finally(() => process.exit(0));
-    };
-    process.once("SIGTERM", shutDown);
-    process.once("SIGINT", shutDown);
+    process.exit(0);
+  } else if (end.status === "failed") {
+    log(`not started: ${end.reason}`);
+    process.exit(1);
   }
 }

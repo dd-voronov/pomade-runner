@@ -2,13 +2,12 @@
 // as the keeper would hold them, records and the switch kept in memory as their files keep them, and
 // a script job file.
 
-import { join } from "node:path";
-
 import type { ExitReason } from "pomade-kit/protocol";
 
 import { sessionIdOf, type SessionOwner } from "../keeper/ids";
 import type { KeeperLink, RunnerSession } from "../keeper/model";
 import type { SessionCommand, Sessions, StopReason } from "../keeper/sessions";
+import { liveOutputLogPath, stateFolderOf } from "../locations";
 import type { SwitchState } from "./model";
 import type { RunsRecords, RunsStore } from "./runs";
 import type { SwitchStore } from "./switch";
@@ -31,7 +30,8 @@ export class FakeSessions implements Sessions {
 
   constructor(
     private readonly now: () => number,
-    private readonly logs: string,
+    /** The user-data folder whose state folder keeps the runs' output logs. */
+    private readonly userData: string,
   ) {}
 
   keeper = (): KeeperLink => this.link;
@@ -50,7 +50,7 @@ export class FakeSessions implements Sessions {
       job: owner.job,
       kind: "run",
       run: owner.run,
-      log: join(this.logs, `${owner.run}.log`),
+      log: liveOutputLogPath(stateFolderOf(this.userData), owner.job, owner.run),
       info: { id, title: command.title, command: command.command, cwd: command.cwd, pid: 100 + this.spawned.length, startedAt: this.now(), cols: 80, rows: 24, state: "running", exit: null, clients: 0, actions: [] },
     };
     this.sessions.set(id, session);

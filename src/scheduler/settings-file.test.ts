@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { recordsFolderOf, switchRecordPath } from "../locations";
 import type { SettingsReport } from "./settings";
 import { DEFAULT_SETTINGS, SETTINGS_PATH } from "./settings";
 import { readSettingsText, settingsFile } from "./settings-file";
@@ -99,16 +100,16 @@ describe("the switch's file", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("keeps the position machine-local; a missing or broken file is Running", async () => {
-    const store = fileSwitchStore(join(dir, "state"), (line) => lines.push(line));
+  it("keeps the position in the records folder; a missing or broken file is Running", async () => {
+    const store = fileSwitchStore(recordsFolderOf(dir), (line) => lines.push(line));
     expect(await store.load()).toEqual({ position: "running", since: null });
     store.save({ position: "pause-low", since: 5 });
     await store.flush();
-    expect(await fileSwitchStore(join(dir, "state"), () => undefined).load()).toEqual({ position: "pause-low", since: 5 });
-    await writeFile(join(dir, "state/switch.json"), '{ "position": "nap" }');
+    expect(await fileSwitchStore(recordsFolderOf(dir), () => undefined).load()).toEqual({ position: "pause-low", since: 5 });
+    await writeFile(switchRecordPath(recordsFolderOf(dir)), '{ "position": "nap" }');
     expect(await store.load()).toEqual({ position: "running", since: null });
-    expect(lines).toEqual([`switch: ${join(dir, "state/switch.json")} is not a switch position; Running`]);
-    await writeFile(join(dir, "state/switch.json"), "{ not json");
+    expect(lines).toEqual([`switch: ${switchRecordPath(recordsFolderOf(dir))} is not a switch position; Running`]);
+    await writeFile(switchRecordPath(recordsFolderOf(dir)), "{ not json");
     expect(await store.load()).toEqual({ position: "running", since: null });
   });
 });

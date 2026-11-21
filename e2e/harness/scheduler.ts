@@ -74,10 +74,11 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
   });
 
   let snapshot = await read();
-  let runs: { report: RunsReport; history: RunRecord[]; output: string } = {
+  let runs: { report: RunsReport; history: RunRecord[]; output: string; outputMissing: boolean } = {
     report: { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } },
     history: [],
     output: "",
+    outputMissing: false,
   };
   let settingsText: string | null = null;
   let settings: SettingsReport = checkSettings(null);
@@ -150,7 +151,7 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     [RUNS_LIST_METHOD]: () => json(runs.report),
     [HISTORY_LIST_METHOD]: (params) => json(historyPage(params)),
     [RUN_GET_METHOD]: (params) => json(find(params) ?? null),
-    [RUN_OUTPUT_METHOD]: () => json({ text: runs.output, truncated: false }),
+    [RUN_OUTPUT_METHOD]: () => json({ text: runs.output, truncated: false, missing: runs.outputMissing }),
     [RUN_NOW_METHOD]: action(RUN_NOW_METHOD, (params) => {
       const { job } = params as { job: string };
       if (window.refuseActions !== null) return { ok: false, reason: window.refuseActions };

@@ -9,6 +9,7 @@ import type { NoticeParams } from "pomade-kit/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { checkJobs } from "../jobs/check";
+import { needsYouRecordPath, recordsFolderOf } from "../locations";
 import type { Notify } from "../jobs/model";
 import type { ServicesReport, ServiceStatus } from "../keeper/model";
 import type { RunRecord } from "./model";
@@ -195,17 +196,17 @@ describe("needs you", () => {
     const dir = await mkdtemp(join(tmpdir(), "prn-"));
     try {
       const lines: string[] = [];
-      const file = fileNeedsYouStore(dir, (line) => lines.push(line));
+      const file = fileNeedsYouStore(recordsFolderOf(dir), (line) => lines.push(line));
       expect(await file.load()).toEqual({ failures: {}, gaveUp: {} });
       const kept = { failures: { backup: { name: "Backup", project: null, run: "r", at: 1, count: 2, detail: "exit 1" } }, gaveUp: { web: 5 } };
       file.save(kept);
       await file.flush();
       expect(await file.load()).toEqual(kept);
-      await writeFile(join(dir, "needs-you.json"), JSON.stringify({ failures: { a: { name: "A" }, b: { ...kept.failures.backup, count: 0 } }, gaveUp: { web: "x" } }));
+      await writeFile(needsYouRecordPath(recordsFolderOf(dir)), JSON.stringify({ failures: { a: { name: "A" }, b: { ...kept.failures.backup, count: 0 } }, gaveUp: { web: "x" } }));
       expect(await file.load()).toEqual({ failures: {}, gaveUp: {} });
-      await writeFile(join(dir, "needs-you.json"), "nope");
+      await writeFile(needsYouRecordPath(recordsFolderOf(dir)), "nope");
       expect(await file.load()).toEqual({ failures: {}, gaveUp: {} });
-      expect(lines).toEqual([`needs you: ${join(dir, "needs-you.json")} is not readable JSON; starting with no items`]);
+      expect(lines).toEqual([`needs you: ${needsYouRecordPath(recordsFolderOf(dir))} is not readable JSON; starting with no items`]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -95,6 +95,7 @@ async function run(args: string[], status: StatusResult = { status: "not-running
       return Promise.resolve(world.settings ?? null);
     },
     projects: () => Promise.resolve(world.projects === undefined ? null : world.projects),
+    exists: (path) => !path.includes("/elsewhere/"),
   });
   return { code, out, err, asked };
 }
@@ -431,13 +432,20 @@ describe("pomade-runner", () => {
     it("history prints the latest runs, of every job or one — a git run with a line per repo", async () => {
       const calls: { method: ControlMethod; params: unknown }[] = [];
       const chained = { ...failed, job: "web", name: "Web", kind: "service" as const, trigger: "chain" as const, cause: { kind: "chain" as const, job: "x", name: "X", run: "r0", result: "done" as const }, state: "done" as const, action: "restart" as const, startedAt: null, durationMs: null, exitCode: null, log: null };
-      const records = [failed, { ...failed, job: "x", name: "X", trigger: "manual" as const, state: "done" as const, exitCode: 0, log: null }, chained, { ...chained, job: "mount", name: "Mount", kind: "script" as const, trigger: "hook" as const, cause: { kind: "hook" as const, event: "login" as const, context: {} }, action: null }];
+      const records = [
+        failed,
+        { ...failed, job: "x", name: "X", trigger: "manual" as const, state: "done" as const, exitCode: 0, log: null },
+        chained,
+        { ...chained, job: "mount", name: "Mount", kind: "script" as const, trigger: "hook" as const, cause: { kind: "hook" as const, event: "login" as const, context: {} }, action: null },
+        { ...failed, job: "copied", name: "Copied", log: "/elsewhere/output/copied/r.log" },
+      ];
       const r = await run(["history"], undefined, { history: { status: "ok", value: { records, next: null } }, calls });
       expect(r.out).toBe(
         "backup  Backup  scheduled  failed · exit 1, 2026-11-17T12:00:03.000Z, took 3 s  output /ud/output/backup/r.log\n" +
           "x  X  manual  done, 2026-11-17T12:00:03.000Z, took 3 s\n" +
           "web  Web  chain: after X  restarted, 2026-11-17T12:00:03.000Z\n" +
-          "mount  Mount  hook: Mac login  done, 2026-11-17T12:00:03.000Z\n",
+          "mount  Mount  hook: Mac login  done, 2026-11-17T12:00:03.000Z\n" +
+          "copied  Copied  scheduled  failed · exit 1, 2026-11-17T12:00:03.000Z, took 3 s  output not on this Mac\n",
       );
       expect(calls).toEqual([{ method: "history", params: { job: null, limit: 20 } }]);
       expect((await run(["history", "backup"], undefined, { history: { status: "ok", value: { records: [], next: null } }, calls })).out).toBe("No runs of backup yet.\n");

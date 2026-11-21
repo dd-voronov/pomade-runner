@@ -370,6 +370,14 @@ test.describe("runs", () => {
     await shoot(page, "tab-run-output");
     await app(page).getByRole("button", { name: "Back to the result" }).click();
     await expect(card).toBeVisible();
+    // A record that came with the workspace from another Mac: its output log is not here.
+    await page.evaluate(() => window.setRuns({ output: "", outputMissing: true }));
+    await app(page).getByRole("button", { name: "View output" }).click();
+    await expect(app(page).getByTestId("run-output-missing")).toHaveText("This run's output is not on this Mac.");
+    await shoot(page, "tab-run-output-missing");
+    await page.evaluate(() => window.setRuns({ output: "copying\nrsync: connection refused\n", outputMissing: false }));
+    await app(page).getByRole("button", { name: "Back to the result" }).click();
+    await expect(card).toBeVisible();
     await page.keyboard.press("Escape");
     await app(page).getByTestId("nav-jobs").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();

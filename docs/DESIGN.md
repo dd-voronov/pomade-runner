@@ -153,7 +153,7 @@ unknown id, a project job in another project's sub-folder, a hook filter on an u
 
 **The jobs on the UI.** The scheduler owns the loaded jobs. It reads and watches the jobs folder
 itself, from disk, so it works with Pomade closed, and follows the workspace through Pomade's
-workspace pointer. While connected to Pomade it serves Runner's own API method `jobs.list` (the
+workspace pointer ("Data and locations": a new workspace starts the scheduler again on it). While connected to Pomade it serves Runner's own API method `jobs.list` (the
 whole checked snapshot: valid jobs, and invalid ones with their errors) through the broker and
 publishes `jobs.changed` on every change and when it connects. Runner's frames call `jobs.list` on
 Runner itself and call again on `jobs.changed`; no answer means the scheduler is not running, and
@@ -310,8 +310,8 @@ you`. A run that never started is `skipped` or `missed`, with a reason ("missed 
 - **Attach.** A running run opens as an attached tab like a service
   (`tabs.openAttached({ session: { app: "pomade-runner", session: "run:…" } })`).
 - **Records.** The runs going (missed runs waiting for you, queued and running), each job's latest
-  record, the last look and the looks the switch holds are in `runs.json` in Runner's state
-  folder, written on every change and at least once a minute (`ALIVE_EVERY_MS`). A restarted
+  record, the last look and the looks the switch holds are in `runs.json` in Runner's records
+  folder in the workspace, written on every change and at least once a minute (`ALIVE_EVERY_MS`). A restarted
   scheduler picks the runs going up from it, records the ends that came while it was down, and
   never writes a record twice.
 
@@ -334,7 +334,7 @@ stays connected to it as the owner (`connectKeeper`, with the app's key), at
   (`20261117-080509-a1b2c3`), so they sort by start time. A service gets a new run id on every
   start; its session id stays.
 - **Records.** What `list` does not carry — each session's job, run and output log — is in
-  `sessions.json` in Runner's state folder, with the session's end (code, signal, reason, time)
+  `sessions.json` in Runner's state folder (machine-local), with the session's end (code, signal, reason, time)
   once it is reported. Every end is reported once, an end while the scheduler was down included. A session with no record (the file lost) is
   read from its id, without a run or log; an id Runner does not make is skipped.
 - **Spawn:** the job's folder as `cwd`, the `command` run by the user's login shell, `env`, and
@@ -348,8 +348,12 @@ stays connected to it as the owner (`connectKeeper`, with the app's key), at
   `stopped-by-you` · `time-limit` · `lost-in-keeper-crash`. The scheduler logs each end
   (`session svc:web: ended: crashed — code 137, SIGKILL`).
 - **Output.** The keeper keeps ~1,000 lines of scrollback per session. The full history is the
-  run's output log, which the keeper appends to: `output/<encoded job id>/<run id>.log` in Runner's
-  state folder.
+  output log, which the keeper appends to: `output/<encoded job id>/<run id>.log` in Runner's state
+  folder, while the run goes — nothing under the workspace grows with a run's output. When the
+  scheduler records a run's end (an end that came while it was down too), it first moves the log
+  into the records folder beside the record: one rename (across volumes a copy, flushed, then the
+  source removed), safe to repeat after an interruption; a log that cannot move stays where it is,
+  said in the scheduler's log. A service never ends as a run: its output stays in the state folder.
 - **Keeper updates.** The keeper's version is a digest of its bundled entry and the versions of the
   packages it loads (`src/keeper/version.ts`); the build computes it and builds the scheduler with
   it. When the running keeper reports another version — older or newer — the scheduler calls
@@ -435,9 +439,14 @@ the keeper reports updates the service's record.
 - **States** (`ServiceState` in `src/keeper/model.ts`, the one model of the services view, the
   broker API and the command): `queued` · `starting` · `running` · `restarting` · `failed` ·
   `stopped-by-you` · `waiting` · `disabled` · `invalid` · `removed`.
-- **Records.** What the keeper does not know — holds (`stopped by you`, `failed`), crash counts,
-  a restart due, the last start's problem — is in `services.json` in Runner's state folder,
-  written on every change, so a restarted scheduler carries on where the last one stopped.
+- **Records.** What the keeper does not know is written on every change, so a restarted scheduler
+  carries on where the last one stopped, in two files by what each field describes:
+  - the services the Owner stopped (`stopped by you`) — an intent, which holds on any Mac — in
+    `services.json` in the records folder (`{ "stoppedByYou": [...] }`), written only when that
+    list changes;
+  - what describes this Mac's processes — crash counts, a restart due, a service given up on
+    (`failed`), the last start's problem — in `services.json` in the state folder. A service that
+    crash-looped on one Mac is started afresh on another.
 - Without a known workspace, or while the scheduler does not follow the keeper, supervision does
   nothing.
 
@@ -518,6 +527,12 @@ run id, trigger and — a hook or chain run — its cause, a service's chain `ac
 started and ended, how long it ran, the result and its reason, exit code and signal, the output
 log, the last 20 lines of the output as plain text, and a git run's result (`git`). A record of an older build reads with the
 fields it lacks at their defaults.
+- **The output log** is named in a record by job and run (`output/<encoded job id>/<run id>.log`),
+  never by a path on a Mac. Read back, a record names it where it is found (`findOutputLog`): in
+  the records folder, else still in the state folder (before its move, or after one that did not
+  finish). A log in neither — removed, or a record whose log stayed on another Mac — reads as
+  missing: the output page says "This run's output is not on this Mac." and `pomade-runner history`
+  says `output not on this Mac`; the record's last lines still show.
 - **Format:** append-only JSON Lines, one file per day of the runs' ends (UTC):
   `history/YYYY-MM-DD.jsonl`. A record is one line, written once, when the run ends; nothing is
   rewritten, so a crash can at worst leave a half line at a file's end. A reader skips a line that
@@ -526,7 +541,8 @@ fields it lacks at their defaults.
 - **Reading:** newest first, a page at a time (at most 200); a page ends at a cursor
   (`<day>:<line>`) the next page starts before, valid while new runs land.
 - **Retention:** whole days, as many as the settings keep (`history-days`, default 30): a day's file
-  and the output logs of the runs that started that day go once the day is that many days behind,
+  and the output logs of the runs that started that day — in the records folder, and any left in
+  the state folder — go once the day is that many days behind,
   checked at the scheduler's start and every hour; a log a session still writes stays, and so does
   a git result a running run still writes.
 
@@ -606,8 +622,8 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
     the switch held goes to its job's policy on release when it is more than 5 minutes late, or a
     caught-up one: a `run-on-wake` job keeps it while it is worth it, a `wait-for-me` one waits for
     you, a `skip` one records it missed. A release is no wake: no warm-up.
-  - Machine-local: `switch.json` in Runner's state folder, written before the switch answers; it
-    survives restarts.
+  - Kept in `switch.json` in Runner's records folder, written before the switch answers; it
+    survives restarts and goes with the workspace.
   - Set from the panel (`switch.set`, Runner's frames only), by `pomade-runner pause [low|all]`
     (`all` when left out) and `pomade-runner resume`, and the control method `switch`.
 - **Time limit**, per job (`time-limit`), none by default. A run counts from its start
@@ -682,7 +698,7 @@ history-days: 30           # run history and output logs kept
     is there: *"Paused: triggered 10× in 10 min — looks like a loop"*; noticed once, when it
     pauses. Actions: Resume (`jobs.resume`) · Edit job (its form). It cannot be dismissed.
   - The failed runs' items, and the giving-ups already noticed, are in `needs-you.json` in Runner's
-    state folder; the missed runs, the warnings and the loop guard's pauses are the runs' own, in
+    records folder; the missed runs, the warnings and the loop guard's pauses are the runs' own, in
     `runs.json`: a restarted scheduler neither forgets an item nor notices one twice.
 - **Posting:** the scheduler posts every notice: over its connection while Pomade runs, into
   Pomade's closed-Pomade queue (`<userData>/notices/queue/`) otherwise — and when posting over the
@@ -932,25 +948,68 @@ cards, `need.*` Needs-you cards); `Help` shows one by its key.
 
 ## Data and locations
 
+Runner writes in two folders, both named only in `src/locations.ts`, each with its own type
+(`RecordsFolder`, `StateFolder`) so a path in one is never taken for the other:
+
+- **The records folder**, `<workspace>/Apps/pomade-runner/records/` (`RECORDS_FOLDER`): what is part
+  of the Owner's working process — what ran, what failed, what waits, where the switch stands — so
+  a copy of the workspace carries it to another Mac. It sits beside the Owner's `jobs/` and
+  `settings.yaml`, never inside `jobs/`, so the jobs watcher and `pomade-runner check` never read a
+  record as a job. Nothing in it grows while a run goes: a run's output log moves in at the run's
+  end.
+- **The state folder**, `<userData>/app-state/pomade-runner/` of the Pomade that hosts Runner: what
+  describes this Mac's processes — the control socket, the keeper, the output being written, crash
+  counts, Pomade's projects as last heard.
+
 | What | Where |
 |---|---|
 | Job files | `<workspace>/Apps/pomade-runner/jobs/` (synced with the workspace) |
 | Workspace settings (max low-priority runs 2, warm-up 2 min, long-run warning 3h, history 30 days) | `<workspace>/Apps/pomade-runner/settings.yaml` |
-| Run history, captured output, keeper state (`keeper/`), the switch's position, the last alive time | `<userData>/app-state/pomade-runner/` (machine-local) |
-| Session records (job, run, output log, end) | `<userData>/app-state/pomade-runner/sessions.json` |
-| Service supervision records (holds, crash counts, a restart due) | `<userData>/app-state/pomade-runner/services.json` |
-| Run output logs | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.log` |
+| Run history (one file per day, JSON Lines) | `<workspace>/Apps/pomade-runner/records/history/YYYY-MM-DD.jsonl` |
+| A finished run's output log, moved in when the run ends | `<workspace>/Apps/pomade-runner/records/output/<encoded job id>/<run id>.log` |
+| Runs going (missed runs waiting for you, queued, running), each job's latest record, the last alive time, the looks the switch holds, the loop guard's firings and pauses | `<workspace>/Apps/pomade-runner/records/runs.json` |
+| The switch's position | `<workspace>/Apps/pomade-runner/records/switch.json` |
+| Needs-you items, the giving-ups noticed | `<workspace>/Apps/pomade-runner/records/needs-you.json` |
+| The services the Owner stopped | `<workspace>/Apps/pomade-runner/records/services.json` |
+| The output a live run or a service is writing | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.log` |
 | A git run's result while it runs (`pomade-git --json`'s output) | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.json` |
-| Run history (one file per day, JSON Lines) | `<userData>/app-state/pomade-runner/history/YYYY-MM-DD.jsonl` |
-| Runs going (missed runs waiting for you, queued, running), each job's latest record, the last alive time, the looks the switch holds, the loop guard's firings and pauses | `<userData>/app-state/pomade-runner/runs.json` |
-| The switch's position | `<userData>/app-state/pomade-runner/switch.json` |
-| Needs-you items, the giving-ups noticed | `<userData>/app-state/pomade-runner/needs-you.json` |
+| Session records (job, run, output log, end) | `<userData>/app-state/pomade-runner/sessions.json` |
+| Service supervision on this Mac (crash counts, a restart due, a service given up on, the last start's problem) | `<userData>/app-state/pomade-runner/services.json` |
 | Pomade's projects as last heard (for `POMADE_PROJECT_PATH`) | `<userData>/app-state/pomade-runner/projects.json` |
 | The keeper's own state (session records, exit statuses, `keeper.log`) and its stdout and stderr (`keeper.out`) | `<userData>/app-state/pomade-runner/keeper/` |
 | Scheduler log (its stdout and stderr) | `<userData>/app-logs/pomade-runner/backend.log` |
 | Scheduler control socket | `<userData>/app-state/pomade-runner/scheduler.sock` |
 | Keeper socket (`POMADE_KEEPER_SOCKET`) | `<userData>/run/keepers/pomade-runner.sock` |
 | Installed build (the scheduler's login item path) | `<userData>/apps/pomade-runner/` |
+
+**The workspace.** The scheduler, the keeper it starts and the command learn the workspace the one
+way the platform gives: `POMADE_WORKSPACE`, else the workspace pointer in Pomade's home
+(`pomade-kit`'s `resolveWorkspace()`). The scheduler runs on one workspace at a time
+(`src/scheduler/workspace-follow.ts`), looking again every tick:
+- **None known** — Pomade never recorded one: the scheduler waits. It serves no control socket,
+  starts no keeper and writes nothing anywhere; its log says once that it waits. With no workspace
+  there are no jobs, so waiting loses nothing. It starts once one is recorded.
+- **Another one recorded:** the scheduler stops — the keeper and its sessions keep running — and
+  starts again on the new workspace, with that workspace's records; the time since that
+  workspace's last alive time is missed and goes to each job's policy. A pointer that goes away
+  leaves the scheduler where it is.
+
+**The one-time move** (`src/scheduler/records-move.ts`). At every start, before its records load,
+the scheduler moves what the state folder still holds of the records — history, `runs.json`,
+`switch.json`, `needs-you.json`, the services the Owner stopped, and the output logs of the runs
+already finished — into the workspace's records folder:
+- every file reaches its place whole (a temporary file renamed, a log renamed) before its source
+  goes, so a move stopped at any point loses nothing and the next start finishes it; with nothing
+  left to move it only looks;
+- a moved record names its log by job and run; a run going at that moment keeps writing its log in
+  the state folder and moves it at its end; services' logs and git results stay;
+- what the workspace already holds stays: a day of history both have gets the lines it lacks; a
+  `runs.json`, `switch.json` or `needs-you.json` already there is the workspace's own, and this
+  Mac's is left in the state folder, unread; the stopped services are read out of the state
+  folder's `services.json`, which stays for its crash counts, unless the workspace has its list;
+- a file that cannot move is said in the scheduler's log and tried again at the next start.
+
+Two Macs running the same workspace at once is not handled here (`P-008-multi-device-double-fire`).
 
 ## Interfaces
 

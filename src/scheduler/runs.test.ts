@@ -6,16 +6,17 @@
 
 process.env.TZ = "Europe/Madrid";
 
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { ExitReason, GitRunOutput, NoticeParams } from "pomade-kit/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { checkJobs } from "../jobs/check";
+import { keptOutputLogPath, liveOutputLogPath, recordsFolderOf, runsRecordPath, stateFolderOf } from "../locations";
 import type { JobsSnapshot } from "../jobs/model";
-import { createHistory, type History } from "./history";
+import { createHistory, keepOutputLog, type History } from "./history";
 import type { ActiveRun, RunRecord } from "./model";
 import { createRuns, fileRunsStore, runEnv, type Runs } from "./runs";
 import { FakeSessions, memoryStore, memorySwitch, script } from "./runs-fixture";
@@ -40,6 +41,8 @@ describe("runs", () => {
   let changes: number;
   let runs: Runs;
   let randoms: number;
+  /** Why keeping a finished run's log fails; `null` for a move that works. */
+  let keepFails: string | null;
 
   function load(): void {
     snapshot = checkJobs(
@@ -63,6 +66,7 @@ describe("runs", () => {
       projectPath: (project) => (project === "p1" ? "/ws/Projects/one" : null),
       pomadeGit: join(dir, "bin", "pomade-git"),
       gitResult: (job, run) => join(dir, "output", job, `${run}.json`),
+      keepLog: (job, run) => (keepFails === null ? keepOutputLog(recordsFolderOf(dir), stateFolderOf(dir), job, run) : Promise.reject(new Error(keepFails))),
       serviceAction: () => Promise.reject(new Error("no services here")),
       onStarted: (run) => started.push(structuredClone(run)),
       onFinished: (record) => finished.push(record),
@@ -97,6 +101,14 @@ describe("runs", () => {
     }
   }
 
+  /** A run's output log while it goes, in the state folder, and once it ended, in the records folder. */
+  const logOf = (job: string, run: string): string => liveOutputLogPath(stateFolderOf(dir), job, run);
+  const keptLog = (job: string, run: string): string => keptOutputLogPath(recordsFolderOf(dir), job, run);
+  async function writeLog(job: string, run: string, text: string): Promise<void> {
+    await mkdir(dirname(logOf(job, run)), { recursive: true });
+    await writeFile(logOf(job, run), text);
+  }
+
   async function page(): Promise<RunRecord[]> {
     return (await history.page({ job: null, before: null, limit: 200 })).records;
   }
@@ -110,12 +122,13 @@ describe("runs", () => {
     store = memoryStore();
     switchStore = memorySwitch();
     notices = [];
-    history = createHistory(join(dir, "state"), () => undefined);
+    history = createHistory(recordsFolderOf(dir), stateFolderOf(dir), () => undefined);
     lines = [];
     started = [];
     finished = [];
     changes = 0;
     randoms = 0;
+    keepFails = null;
     await open();
   });
 
@@ -160,7 +173,7 @@ describe("runs", () => {
           waits: null,
           startedAt: now.getTime(),
           session: id,
-          log: join(dir, "20261118-120000-000001.log"),
+          log: logOf("backup", "20261118-120000-000001"),
           limitHit: null,
           warnedAt: null,
           warningDismissed: false,
@@ -169,7 +182,7 @@ describe("runs", () => {
       expect(started).toHaveLength(1);
       expect(store.saved.active).toHaveLength(1);
 
-      await writeFile(join(dir, "20261118-120000-000001.log"), "\x1b[32mcopying\x1b[0m\r\nbacked up 3 files\r\n");
+      await writeLog("backup", "20261118-120000-000001", "\x1b[32mcopying\x1b[0m\r\nbacked up 3 files\r\n");
       sessions.end(id, "exited", 0, 2500);
       await at("2026-11-18T13:00:03");
       const record: RunRecord = {
@@ -190,11 +203,14 @@ describe("runs", () => {
         durationMs: 2500,
         exitCode: 0,
         signal: null,
-        log: join(dir, "20261118-120000-000001.log"),
+        log: keptLog("backup", "20261118-120000-000001"),
         lastLines: ["copying", "backed up 3 files"],
         git: null,
       };
       expect(await page()).toEqual([record]);
+      // Its log moved into the records folder before the record was written.
+      expect(await readFile(keptLog("backup", "20261118-120000-000001"), "utf8")).toContain("backed up 3 files");
+      await expect(access(logOf("backup", "20261118-120000-000001"))).rejects.toThrow();
       expect(finished).toEqual([record]);
       expect(runs.active()).toEqual([]);
       expect(sessions.forgotten).toEqual([id]);
@@ -323,7 +339,17 @@ describe("runs", () => {
       const id = await oneRun();
       sessions.sessions.delete(id);
       await at("2026-11-18T13:00:05");
-      expect(finished.at(-1)).toMatchObject({ state: "failed", reason: "its session is gone", durationMs: null, endedAt: now.getTime(), log: join(dir, `${id.slice(-22)}.log`) });
+      expect(finished.at(-1)).toMatchObject({ state: "failed", reason: "its session is gone", durationMs: null, endedAt: now.getTime(), log: logOf("backup", id.slice(-22)) });
+    });
+
+    it("a log that cannot move stays where the keeper wrote it, and the record names it there", async () => {
+      const id = await oneRun();
+      await writeLog("backup", id.slice(-22), "done\n");
+      keepFails = "disk full";
+      sessions.end(id, "exited", 0);
+      await at("2026-11-18T13:00:05");
+      expect(finished.at(-1)).toMatchObject({ state: "done", log: logOf("backup", id.slice(-22)), lastLines: ["done"] });
+      expect(lines).toContain(`run backup ${id.slice(-22)}: cannot keep its output log — disk full; it stays at ${logOf("backup", id.slice(-22))}`);
     });
 
     it("a start the keeper refuses is a failed run that never started", async () => {
@@ -493,22 +519,25 @@ describe("runs", () => {
     });
 
     it("keeps its records in runs.json, and starts empty from a missing or broken file", async () => {
-      const file = fileRunsStore(join(dir, "state"), (line) => lines.push(line));
+      const file = fileRunsStore(recordsFolderOf(dir), stateFolderOf(dir), (line) => lines.push(line));
       expect(await file.load()).toEqual({ active: [], last: {}, lookedAt: null, held: {}, guard: { fired: {}, paused: {} } });
       store.saved = { active: [], last: {}, lookedAt: null, held: {}, guard: { fired: {}, paused: {} } };
       await at("2026-11-18T12:59:59");
       await at("2026-11-18T13:00:00");
       file.save(store.saved);
       await file.flush();
+      // The run going names its output log by job and run, and reads back with this Mac's path.
+      expect(store.saved.active[0]?.log).toBe(logOf("backup", store.saved.active[0]?.run ?? ""));
+      expect(await readFile(runsRecordPath(recordsFolderOf(dir)), "utf8")).toContain(`"log": "output/backup/${store.saved.active[0]?.run ?? ""}.log"`);
       expect(await file.load()).toEqual(store.saved);
-      await writeFile(join(dir, "state/runs.json"), "{ not json");
+      await writeFile(runsRecordPath(recordsFolderOf(dir)), "{ not json");
       expect(await file.load()).toEqual({ active: [], last: {}, lookedAt: null, held: {}, guard: { fired: {}, paused: {} } });
       expect(lines.at(-1)).toContain("is not readable JSON");
-      await writeFile(join(dir, "state/runs.json"), JSON.stringify({ active: [{ job: 1 }], last: { a: { nope: true } }, lookedAt: "soon", held: { a: "x" } }));
+      await writeFile(runsRecordPath(recordsFolderOf(dir)), JSON.stringify({ active: [{ job: 1 }], last: { a: { nope: true } }, lookedAt: "soon", held: { a: "x" } }));
       expect(await file.load()).toEqual({ active: [], last: {}, lookedAt: null, held: {}, guard: { fired: {}, paused: {} } });
       // A run going as an older build kept it: what it lacks gets its default.
       const { lowPriority: _priority, cause: _cause, runAt: _at, deadline: _deadline, waits: _waits, limitHit: _limit, warnedAt: _warned, warningDismissed: _dismissed, ...older } = store.saved.active[0] ?? ({} as ActiveRun);
-      await writeFile(join(dir, "state/runs.json"), JSON.stringify({ active: [older], last: {} }));
+      await writeFile(runsRecordPath(recordsFolderOf(dir)), JSON.stringify({ active: [older], last: {} }));
       expect((await file.load()).active).toEqual(store.saved.active);
     });
 
@@ -601,7 +630,7 @@ describe("runs", () => {
         },
       ]);
       expect(runs.active()).toMatchObject([{ kind: "git", folder: "", state: "running" }]);
-      expect(runs.logsInUse()).toEqual(new Set([join(dir, `${RUN}.log`), resultFile()]));
+      expect(runs.logsInUse()).toEqual(new Set([logOf("knowledge", RUN), resultFile()]));
       await writeFile(resultFile(), JSON.stringify(result("done")));
       sessions.end(ID, "exited", 0);
       await at("2026-11-18T13:00:03");
@@ -627,7 +656,7 @@ describe("runs", () => {
 
     it("no result file is a failed run that says so, its output's last lines kept", async () => {
       await runs.runNow("knowledge");
-      await writeFile(join(dir, `${NOW}.log`), "pomade-git: something broke\r\n");
+      await writeLog("knowledge", NOW, "pomade-git: something broke\r\n");
       sessions.end(NOW_ID, "crashed", 1);
       await runs.tick();
       expect(finished[0]).toMatchObject({ state: "failed", reason: "pomade-git gave no result (exit 1)", git: null, lastLines: ["pomade-git: something broke"] });

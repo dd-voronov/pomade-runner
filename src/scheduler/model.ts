@@ -256,6 +256,9 @@ export interface RunOutput {
   text: string;
   /** Only the end of a longer log is in `text`. */
   truncated: boolean;
+  /** The run has an output log, and it is not on this Mac: its record came with the workspace
+   *  from another Mac, or the log was removed. */
+  missing: boolean;
 }
 
 /** The answer to Run now: the run it started or queued (a service: its status after Start), or why
@@ -479,7 +482,7 @@ export function isHistoryPage(value: unknown): value is HistoryPage {
 }
 
 export function isRunOutput(value: unknown): value is RunOutput {
-  return isRecord(value) && typeof value.text === "string" && typeof value.truncated === "boolean";
+  return isRecord(value) && typeof value.text === "string" && typeof value.truncated === "boolean" && typeof value.missing === "boolean";
 }
 
 export function isRunActionResult(value: unknown): value is RunActionResult {

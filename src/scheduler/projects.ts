@@ -3,9 +3,10 @@
 // run's `POMADE_PROJECT_PATH`.
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 
 import type { ProjectRecord } from "../jobs/model";
+import { projectsRecordPath, type StateFolder } from "../locations";
 import type { Log } from "./log";
 
 export interface ProjectsMemory {
@@ -23,8 +24,8 @@ function isProject(value: unknown): value is ProjectRecord {
   return typeof id === "string" && typeof name === "string" && typeof root === "string";
 }
 
-export function projectsMemory(state: string, log: Log): ProjectsMemory {
-  const file = join(state, "projects.json");
+export function projectsMemory(state: StateFolder, log: Log): ProjectsMemory {
+  const file = projectsRecordPath(state);
   let projects: readonly ProjectRecord[] = [];
   let writing: Promise<void> = Promise.resolve();
   return {

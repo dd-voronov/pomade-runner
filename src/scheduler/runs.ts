@@ -38,7 +38,7 @@
 //   first: one too many within its window pauses the job until Resume. Hook and chain runs join the
 //   queue like any run; a hook run waits for the warm-up, a chain run does not.
 // - **Records.** The runs going, each job's latest record, the last look, the held looks and the
-//   loop guard live in `runs.json` in Runner's state folder, written on every change and at least
+//   loop guard live in `runs.json` in Runner's records folder in the workspace, written on every change and at least
 //   every `ALIVE_EVERY_MS`, so a restarted scheduler picks up the runs that are going — and the ends
 //   that came while it was down, firing their chains once — where the last one left them.
 //
@@ -59,10 +59,11 @@ import { newRunId, sessionIdOf } from "../keeper/ids";
 import type { ChainActionOutcome, RunnerSession } from "../keeper/model";
 import { jobIdOf } from "../keeper/services";
 import type { Sessions } from "../keeper/sessions";
+import { liveOutputLogPath, runsRecordPath, type RecordsFolder, type StateFolder } from "../locations";
 import { chainCause, followers, parentResult } from "./chains";
 import type { Clock } from "./clock";
 import { gitCommandLine, gitRunEnd } from "./git-runs";
-import { lastLines, type History } from "./history";
+import { foundRecord, keptRecord, lastLines, type History } from "./history";
 import { hooked, LOGIN, type HookFiring } from "./hooks";
 import type { Log } from "./log";
 import { createLoopGuard, FIRING_LIMIT, FIRING_WINDOW_MS, parseLoopGuard, type LoopGuardRecords } from "./loop-guard";
@@ -141,9 +142,11 @@ function parseActiveRun(value: unknown): ActiveRun | null {
   return isActiveRun(run) ? run : null;
 }
 
-/** The records in `<state>/runs.json`, replaced whole on every save. */
-export function fileRunsStore(state: string, log: Log): RunsStore {
-  const file = join(state, "runs.json");
+/** The records in `<records>/runs.json`, replaced whole on every save; a run's output log is kept
+ *  by name (`keptRecord`) and read back where it is: a run going's in the state folder, a finished
+ *  one's where a reader finds it (`foundRecord`). */
+export function fileRunsStore(records: RecordsFolder, state: StateFolder, log: Log): RunsStore {
+  const file = runsRecordPath(records);
   let writing: Promise<void> = Promise.resolve();
   return {
     async load() {
@@ -162,12 +165,17 @@ export function fileRunsStore(state: string, log: Log): RunsStore {
         return empty;
       }
       if (!isRecord(data)) return empty;
-      const active = Array.isArray(data.active) ? data.active.flatMap((value) => parseActiveRun(value) ?? []) : [];
+      const active = Array.isArray(data.active)
+        ? data.active.flatMap((value) => {
+            const run = parseActiveRun(value);
+            return run === null ? [] : [run.log === null ? run : { ...run, log: liveOutputLogPath(state, run.job, run.run) }];
+          })
+        : [];
       const last: Record<string, RunRecord> = {};
       if (isRecord(data.last)) {
         for (const [job, value] of Object.entries(data.last)) {
           const record = parseRunRecord(value);
-          if (record !== null) last[job] = record;
+          if (record !== null) last[job] = await foundRecord(records, state, record);
         }
       }
       const lookedAt = typeof data.lookedAt === "number" && Number.isFinite(data.lookedAt) ? data.lookedAt : null;
@@ -175,8 +183,9 @@ export function fileRunsStore(state: string, log: Log): RunsStore {
       if (isRecord(data.held)) for (const [job, at] of Object.entries(data.held)) if (typeof at === "number" && Number.isFinite(at)) held[job] = at;
       return { active, last, lookedAt, held, guard: parseLoopGuard(data.guard) };
     },
-    save(records) {
-      const data = `${JSON.stringify(records, null, 2)}\n`;
+    save(next) {
+      const kept: RunsRecords = { ...next, active: next.active.map(keptRecord), last: Object.fromEntries(Object.entries(next.last).map(([job, record]) => [job, keptRecord(record)])) };
+      const data = `${JSON.stringify(kept, null, 2)}\n`;
       writing = writing
         .then(async () => {
           await mkdir(dirname(file), { recursive: true });
@@ -243,6 +252,9 @@ export interface RunsOptions {
   pomadeGit: string;
   /** Where a git run's result goes (absolute): `pomade-git --json`'s output. */
   gitResult(job: string, run: string): string;
+  /** Move a finished run's output log to where it is kept; where that is, or `null` when there is
+   *  no log. */
+  keepLog(job: string, run: string): Promise<string | null>;
   /** Post a notice: a missed run that waits for the person, a long-run warning, a loop-guard pause. */
   post(notice: NoticeParams): void;
   /** A chain's action on a service, through the supervisor; `why` names the chain, for its log. */
@@ -808,13 +820,24 @@ export function createRuns(options: RunsOptions): Runs {
       const result = run.kind === "git" ? options.gitResult(run.job, run.run) : null;
       const how = result === null ? { ...end, git: null, lastLines: lines } : gitRunEnd(end, await readGitResult(result), lines);
       log(`run ${run.job} ${run.run}: ${how.state}${how.exitCode === null ? "" : ` — exit ${how.exitCode}`}${how.reason === null ? "" : ` — ${how.reason}`}`);
-      await record(ended(run, { ...how, startedAt: run.startedAt, endedAt, durationMs, log: output }));
+      await record(ended(run, { ...how, startedAt: run.startedAt, endedAt, durationMs, log: output === null ? null : await keep(run, output) }));
       // The record holds the result now.
       if (result !== null) await rm(result, { force: true });
       if (session !== undefined) await forget(session.id);
     }
     for (const session of sessions.list()) {
       if (session.kind === "run" && session.info.exit !== null && !active.some((run) => run.session === session.id)) await forget(session.id);
+    }
+  }
+
+  /** A finished run's output log moved to where it is kept, before its record is written; where a
+   *  move that failed left it, said in the log. */
+  async function keep(run: ActiveRun, output: string): Promise<string> {
+    try {
+      return (await options.keepLog(run.job, run.run)) ?? output;
+    } catch (err) {
+      log(`run ${run.job} ${run.run}: cannot keep its output log — ${errorText(err)}; it stays at ${output}`);
+      return output;
     }
   }
 

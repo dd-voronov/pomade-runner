@@ -9,6 +9,10 @@ import { useNow } from "./useNow";
 import { useRunOutput } from "./useRunOutput";
 import { useRun } from "./useRunnerApi";
 
+/** What the page says of a run whose output log is not on this Mac: its record came with the
+ *  workspace from another Mac, or the log was removed. */
+export const OUTPUT_NOT_HERE = "This run's output is not on this Mac.";
+
 /** A run's full output (the prototype's output tab, `outPane`), the whole Runner tab at the route
  *  `output/<job>/<run>`: a head with the way back to the result card, the job's name and what the
  *  log is, then the log as plain text — followed while the run runs. */
@@ -40,7 +44,15 @@ export function OutputPage({ host, job, run, open }: { host: HostClient; job: st
       {output.status === "ready" ? (
         <pre className={styles.term} data-testid="run-output-text">
           {output.value.truncated && <span className={styles.dim}>{"… only the end of a longer log is shown\n"}</span>}
-          {lines.length === 0 ? <span className={styles.dim}>(no output)</span> : lines.join("\n")}
+          {output.value.missing ? (
+            <span className={styles.dim} data-testid="run-output-missing">
+              {OUTPUT_NOT_HERE}
+            </span>
+          ) : lines.length === 0 ? (
+            <span className={styles.dim}>(no output)</span>
+          ) : (
+            lines.join("\n")
+          )}
         </pre>
       ) : (
         output.status !== "loading" && (

@@ -13,6 +13,7 @@ import type { NoticeParams } from "pomade-kit/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { checkJobs } from "../jobs/check";
+import { recordsFolderOf, stateFolderOf } from "../locations";
 import type { JobsSnapshot } from "../jobs/model";
 import { createHistory, type History } from "./history";
 import type { ActiveRun, RunRecord } from "./model";
@@ -60,6 +61,7 @@ describe("missed runs and load", () => {
       projectPath: () => null,
       pomadeGit: "/nowhere/bin/pomade-git",
       gitResult: (job, run) => `/nowhere/output/${job}/${run}.json`,
+      keepLog: () => Promise.resolve(null),
       serviceAction: () => Promise.reject(new Error("no services here")),
       post: (notice) => notices.push(notice),
       onStarted: () => undefined,
@@ -105,7 +107,7 @@ describe("missed runs and load", () => {
     sessions = new FakeSessions(() => now.getTime(), dir);
     store = memoryStore();
     switchStore = memorySwitch();
-    history = createHistory(join(dir, "state"), () => undefined);
+    history = createHistory(recordsFolderOf(dir), stateFolderOf(dir), () => undefined);
     settings = { ...DEFAULT_SETTINGS };
     settled = true;
     lines = [];

@@ -1,5 +1,6 @@
-// Run history (docs/DESIGN.md "History"): one record per finished run, in Runner's state folder,
-// and the run's output log beside it.
+// Run history (docs/DESIGN.md "History"): one record per finished run, in Runner's records folder
+// in the workspace, and the run's output log beside it — moved there from the state folder, where
+// the keeper wrote it while the run went, when the run ends (`keepOutputLog`).
 //
 // - **Format.** Append-only JSON Lines, one file per day of the runs' ends (UTC):
 //   `history/YYYY-MM-DD.jsonl`. A record is written once, when its run ends, as one line; nothing
@@ -12,10 +13,27 @@
 // - **Reading** is newest first, a page at a time; a page ends at a cursor (`<day>:<line>`) the next
 //   page starts before. Records are only appended and days only removed whole, so a cursor stays
 //   valid while new runs land.
+// - **Output.** A record keeps its output log by name (`keptRecord`: `output/<job>/<run>.log`), never
+//   by a path, so a workspace copied to another Mac carries none of the first's; read back, it names
+//   the log where it is found (`findOutputLog`): kept, else still in the state folder.
+// - **The move** of a finished run's log is one rename (a copy, flushed, then the source removed,
+//   across volumes), done before its record is written and safe to repeat: a reader never finds a
+//   record whose log it cannot resolve.
 
-import { appendFile, mkdir, open, readdir, readFile, rm, rmdir } from "node:fs/promises";
-import { join } from "node:path";
+import { access, appendFile, copyFile, mkdir, open, readdir, readFile, rename, rm, rmdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
+import {
+  findOutputLog,
+  historyFolder,
+  keptOutputFolder,
+  keptOutputLogPath,
+  liveOutputFolder,
+  liveOutputLogPath,
+  outputLogName,
+  type RecordsFolder,
+  type StateFolder,
+} from "../locations";
 import type { Log } from "./log";
 import { LAST_LINES, parseRunRecord, plainLines, type HistoryPage, type RunOutput, type RunRecord } from "./model";
 
@@ -41,8 +59,8 @@ export interface History {
   page(options: { job: string | null; before: string | null; limit: number }): Promise<HistoryPage>;
   /** A run's record; `null` when there is none (yet, or any more). */
   find(job: string, run: string): Promise<RunRecord | null>;
-  /** Remove the days `keepDays` behind `now`, with their runs' output logs — except the logs in
-   *  `inUse`. */
+  /** Remove the days `keepDays` behind `now`, with their runs' output logs, kept or in the state
+   *  folder — except the logs in `inUse`. */
   prune(now: Date, keepDays: number, inUse: ReadonlySet<string>): Promise<void>;
 }
 
@@ -59,14 +77,61 @@ function parseLine(line: string): RunRecord | null {
   }
 }
 
+/** A run with an output log, or without one (`log: null`). */
+interface Logged {
+  job: string;
+  run: string;
+  log: string | null;
+}
+
+/** A run as the records folder keeps it: its output log by name, not by a path on this Mac. */
+export function keptRecord<T extends Logged>(record: T): T {
+  return record.log === null ? record : { ...record, log: outputLogName(record.job, record.run) };
+}
+
+/** A kept record with its output log where a reader finds it. */
+export async function foundRecord<T extends Logged>(records: RecordsFolder, state: StateFolder, record: T): Promise<T> {
+  return record.log === null ? record : { ...record, log: await findOutputLog(records, state, record.job, record.run) };
+}
+
+const exists = (path: string): Promise<boolean> => access(path).then(
+  () => true,
+  () => false,
+);
+
+/** Move a finished run's output log from the state folder into the records folder; where it is
+ *  kept, or `null` when it is in neither. Done again after an interruption, it finishes the move. */
+export async function keepOutputLog(records: RecordsFolder, state: StateFolder, job: string, run: string): Promise<string | null> {
+  const live = liveOutputLogPath(state, job, run);
+  const kept = keptOutputLogPath(records, job, run);
+  if (!(await exists(live))) return (await exists(kept)) ? kept : null;
+  await mkdir(dirname(kept), { recursive: true });
+  try {
+    await rename(live, kept);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+    const part = `${kept}.part`;
+    await copyFile(live, part);
+    const handle = await open(part, "r+");
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(part, kept);
+    await rm(live, { force: true });
+  }
+  return kept;
+}
+
 /** A cursor: the day file and the line a page starts before. */
 function parseCursor(cursor: string | null): { day: string; line: number } | null {
   const match = cursor === null ? null : /^(\d{4}-\d{2}-\d{2}):(\d+)$/.exec(cursor);
   return match === null ? null : { day: match[1] ?? "", line: Number(match[2]) };
 }
 
-export function createHistory(state: string, log: Log): History {
-  const folder = join(state, "history");
+export function createHistory(records: RecordsFolder, state: StateFolder, log: Log): History {
+  const folder = historyFolder(records);
   let writing: Promise<void> = Promise.resolve();
   /** Day files whose end this process has checked for a half line. */
   const checked = new Set<string>();
@@ -112,7 +177,7 @@ export function createHistory(state: string, log: Log): History {
     append(record) {
       const day = dayOf(record.endedAt);
       const file = join(folder, `${day}.jsonl`);
-      const line = `${JSON.stringify(record)}\n`;
+      const line = `${JSON.stringify(keptRecord(record))}\n`;
       const done = writing.then(async () => {
         await mkdir(folder, { recursive: true });
         let text = line;
@@ -129,7 +194,7 @@ export function createHistory(state: string, log: Log): History {
     async page({ job, before, limit }) {
       const want = Math.max(1, Math.min(PAGE_MAX, limit));
       const cursor = parseCursor(before);
-      const records: RunRecord[] = [];
+      const found: RunRecord[] = [];
       const all = (await days()).reverse();
       for (const day of all) {
         if (cursor !== null && day > cursor.day) continue;
@@ -138,11 +203,11 @@ export function createHistory(state: string, log: Log): History {
         for (let index = start - 1; index >= 0; index--) {
           const record = parseLine(text[index] ?? "");
           if (record === null || (job !== null && record.job !== job)) continue;
-          if (records.length === want) return { records, next: `${day}:${index + 1}` };
-          records.push(record);
+          if (found.length === want) return { records: await Promise.all(found.map((each) => foundRecord(records, state, each))), next: `${day}:${index + 1}` };
+          found.push(record);
         }
       }
-      return { records, next: null };
+      return { records: await Promise.all(found.map((each) => foundRecord(records, state, each))), next: null };
     },
 
     async find(job, run) {
@@ -153,7 +218,7 @@ export function createHistory(state: string, log: Log): History {
           const line = text[index] ?? "";
           if (!line.includes(needle)) continue;
           const record = parseLine(line);
-          if (record?.job === job && record.run === run) return record;
+          if (record?.job === job && record.run === run) return foundRecord(records, state, record);
         }
       }
       return null;
@@ -167,41 +232,43 @@ export function createHistory(state: string, log: Log): History {
         checked.delete(day);
         log(`history: removed the runs of ${day}`);
       }
-      const output = join(state, "output");
-      let jobs: string[];
-      try {
-        jobs = await readdir(output);
-      } catch {
-        return;
-      }
-      for (const job of jobs) {
-        let logs: string[];
+      for (const output of [keptOutputFolder(records), liveOutputFolder(state)]) {
+        let jobs: string[];
         try {
-          logs = await readdir(join(output, job));
+          jobs = await readdir(output);
         } catch {
           continue;
         }
-        let left = logs.length;
-        for (const name of logs) {
-          const match = RUN_FILE_RE.exec(name);
-          const file = join(output, job, name);
-          if (match === null || `${match[1]}-${match[2]}-${match[3]}` >= cutoff || inUse.has(file)) continue;
-          await rm(file, { force: true });
-          left--;
+        for (const job of jobs) {
+          let logs: string[];
+          try {
+            logs = await readdir(join(output, job));
+          } catch {
+            continue;
+          }
+          let left = logs.length;
+          for (const name of logs) {
+            const match = RUN_FILE_RE.exec(name);
+            const file = join(output, job, name);
+            if (match === null || `${match[1]}-${match[2]}-${match[3]}` >= cutoff || inUse.has(file)) continue;
+            await rm(file, { force: true });
+            left--;
+          }
+          if (left === 0) await rmdir(join(output, job)).catch(() => undefined);
         }
-        if (left === 0) await rmdir(join(output, job)).catch(() => undefined);
       }
     },
   };
 }
 
-/** The end of a log, at most `maxBytes` of it; an empty output when the file cannot be read. */
+/** The end of a log, at most `maxBytes` of it; an empty, missing output when the file cannot be
+ *  read. */
 export async function readOutput(file: string, maxBytes = OUTPUT_MAX_BYTES): Promise<RunOutput> {
   let handle;
   try {
     handle = await open(file, "r");
   } catch {
-    return { text: "", truncated: false };
+    return { text: "", truncated: false, missing: true };
   }
   try {
     const { size } = await handle.stat();
@@ -211,7 +278,7 @@ export async function readOutput(file: string, maxBytes = OUTPUT_MAX_BYTES): Pro
     let text = buffer.toString("utf8");
     // A cut in the middle of a character or a line: start at the next whole line.
     if (length < size) text = text.slice(text.indexOf("\n") + 1);
-    return { text, truncated: length < size };
+    return { text, truncated: length < size, missing: false };
   } finally {
     await handle.close();
   }

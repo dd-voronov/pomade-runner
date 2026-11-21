@@ -4,11 +4,12 @@
 
 import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createHistory, lastLines, readOutput, type History } from "./history";
+import { keptOutputLogPath, liveOutputLogPath, recordsFolderOf, stateFolderOf, type RecordsFolder, type StateFolder } from "../locations";
+import { createHistory, keepOutputLog, lastLines, readOutput, type History } from "./history";
 import { plainLines, type RunRecord } from "./model";
 
 const DAY = 86_400_000;
@@ -41,26 +42,30 @@ function record(job: string, run: string, endedAt: number, extra: Partial<RunRec
 }
 
 describe("history", () => {
-  let state: string;
+  let dir: string;
+  let records: RecordsFolder;
+  let state: StateFolder;
   let lines: string[];
   let history: History;
 
   beforeEach(async () => {
-    state = await mkdtemp(join(tmpdir(), "prh-"));
+    dir = await mkdtemp(join(tmpdir(), "prh-"));
+    records = recordsFolderOf(join(dir, "ws"));
+    state = stateFolderOf(join(dir, "ud"));
     lines = [];
-    history = createHistory(state, (line) => lines.push(line));
+    history = createHistory(records, state, (line) => lines.push(line));
   });
 
   afterEach(async () => {
-    await rm(state, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true });
   });
 
   it("appends one line per record to the file of the day the run ended (UTC)", async () => {
     await history.append(record("a", "r1", T0));
     await history.append(record("b", "r2", T0 + 1000));
     await history.append(record("a", "r3", T0 + DAY));
-    expect((await readdir(join(state, "history"))).sort()).toEqual(["2026-11-17.jsonl", "2026-11-18.jsonl"]);
-    const first = (await readFile(join(state, "history/2026-11-17.jsonl"), "utf8")).split("\n");
+    expect((await readdir(join(records, "history"))).sort()).toEqual(["2026-11-17.jsonl", "2026-11-18.jsonl"]);
+    const first = (await readFile(join(records, "history/2026-11-17.jsonl"), "utf8")).split("\n");
     expect(first).toHaveLength(3);
     expect(first[2]).toBe("");
     expect(JSON.parse(first[0] ?? "")).toEqual(record("a", "r1", T0));
@@ -92,12 +97,42 @@ describe("history", () => {
 
   it("skips a half line a crash left, and starts the next record on a line of its own", async () => {
     await history.append(record("a", "r1", T0));
-    await appendFile(join(state, "history/2026-11-17.jsonl"), '{"job":"a","run":"half');
-    const reopened = createHistory(state, () => undefined);
+    await appendFile(join(records, "history/2026-11-17.jsonl"), '{"job":"a","run":"half');
+    const reopened = createHistory(records, state, () => undefined);
     await reopened.append(record("a", "r2", T0 + 1000));
     expect((await reopened.page({ job: null, before: null, limit: 10 })).records.map((r) => r.run)).toEqual(["r2", "r1"]);
-    await writeFile(join(state, "history/2026-11-17.jsonl"), "not json\n{}\n", { flag: "a" });
+    await writeFile(join(records, "history/2026-11-17.jsonl"), "not json\n{}\n", { flag: "a" });
     expect((await reopened.page({ job: null, before: null, limit: 10 })).records.map((r) => r.run)).toEqual(["r2", "r1"]);
+  });
+
+  it("keeps a record's output log by name, and reads it back where it is: kept, else still in the state folder", async () => {
+    await history.append(record("coda/web", "r1", T0, { log: "/Users/other/Library/Application Support/pomade/app-state/pomade-runner/output/coda.web/r1.log" }));
+    await history.append(record("a", "r2", T0 + 1000));
+    const names = (await readFile(join(records, "history/2026-11-17.jsonl"), "utf8")).split("\n").map((line) => (line === "" ? null : (JSON.parse(line) as RunRecord).log));
+    expect(names).toEqual(["output/coda.web/r1.log", null, null]);
+    const kept = keptOutputLogPath(records, "coda/web", "r1");
+    const live = liveOutputLogPath(state, "coda/web", "r1");
+    // In neither place: where it would be kept, which reads as missing.
+    expect((await history.page({ job: null, before: null, limit: 10 })).records.map((r) => r.log)).toEqual([null, kept]);
+    await mkdir(dirname(live), { recursive: true });
+    await writeFile(live, "x");
+    expect(await history.find("coda/web", "r1")).toMatchObject({ log: live });
+    await mkdir(dirname(kept), { recursive: true });
+    await writeFile(kept, "x");
+    expect(await history.find("coda/web", "r1")).toMatchObject({ log: kept });
+  });
+
+  it("moves a finished run's log into the records folder once, and finishes a move done again", async () => {
+    const live = liveOutputLogPath(state, "coda/web", "r1");
+    const kept = keptOutputLogPath(records, "coda/web", "r1");
+    expect(await keepOutputLog(records, state, "coda/web", "r1")).toBeNull();
+    await mkdir(dirname(live), { recursive: true });
+    await writeFile(live, "output\n");
+    expect(await keepOutputLog(records, state, "coda/web", "r1")).toBe(kept);
+    expect(await readFile(kept, "utf8")).toBe("output\n");
+    await expect(readFile(live)).rejects.toThrow();
+    expect(await keepOutputLog(records, state, "coda/web", "r1")).toBe(kept);
+    expect(await readFile(kept, "utf8")).toBe("output\n");
   });
 
   it("finds a run's record, newest day first", async () => {
@@ -106,10 +141,10 @@ describe("history", () => {
     expect(await history.find("b", "r1")).toMatchObject({ job: "b", state: "failed" });
     expect(await history.find("a", "r1")).toMatchObject({ job: "a", state: "done" });
     expect(await history.find("a", "r9")).toBeNull();
-    expect(await createHistory(join(state, "none"), () => undefined).find("a", "r1")).toBeNull();
+    expect(await createHistory(recordsFolderOf(join(dir, "none")), state, () => undefined).find("a", "r1")).toBeNull();
   });
 
-  it("prunes the days the setting keeps behind, and their runs' output logs, never a log in use", async () => {
+  it("prunes the days the setting keeps behind, and their runs' output logs — kept or in the state folder — never a log in use", async () => {
     const HISTORY_DAYS = 30;
     const old = T0 - (HISTORY_DAYS + 1) * DAY;
     await history.append(record("a", "old", old));
@@ -123,25 +158,29 @@ describe("history", () => {
     for (const file of [join(output, "a", `${oldRun}.log`), join(output, "a", "20261117-120000-bbbbbb.log"), join(output, "svc", `${oldRun}.log`), join(output, "gone", `${oldRun}.log`), join(output, "a", "notes.txt")]) {
       await writeFile(file, "x");
     }
+    const kept = join(records, "output");
+    await mkdir(join(kept, "a"), { recursive: true });
+    for (const file of [join(kept, "a", `${oldRun}.log`), join(kept, "a", "20261117-120000-cccccc.log")]) await writeFile(file, "x");
     await history.prune(new Date(T0), HISTORY_DAYS, new Set([join(output, "svc", `${oldRun}.log`)]));
-    expect((await readdir(join(state, "history"))).sort()).toEqual(["2026-10-18.jsonl", "2026-11-17.jsonl"]);
+    expect((await readdir(join(records, "history"))).sort()).toEqual(["2026-10-18.jsonl", "2026-11-17.jsonl"]);
     expect((await readdir(join(output, "a"))).sort()).toEqual(["20261117-120000-bbbbbb.log", "notes.txt"]);
     expect(await readdir(join(output, "svc"))).toEqual([`${oldRun}.log`]);
     expect((await readdir(output)).sort()).toEqual(["a", "svc"]);
+    expect(await readdir(join(kept, "a"))).toEqual(["20261117-120000-cccccc.log"]);
     expect(lines).toEqual(["history: removed the runs of 2026-10-17"]);
     expect((await history.page({ job: null, before: null, limit: 10 })).records.map((r) => r.run)).toEqual(["new", "edge"]);
-    await createHistory(join(state, "empty"), () => undefined).prune(new Date(T0), HISTORY_DAYS, new Set());
+    await createHistory(recordsFolderOf(join(dir, "empty")), stateFolderOf(join(dir, "empty")), () => undefined).prune(new Date(T0), HISTORY_DAYS, new Set());
     // Fewer days kept: the edge day goes too.
     await history.prune(new Date(T0), 7, new Set());
-    expect(await readdir(join(state, "history"))).toEqual(["2026-11-17.jsonl"]);
+    expect(await readdir(join(records, "history"))).toEqual(["2026-11-17.jsonl"]);
   });
 
   it("reads a log's end, from a whole line, and says when it cut", async () => {
-    const file = join(state, "run.log");
+    const file = join(dir, "run.log");
     await writeFile(file, "first line\nsecond line\nthird\n");
-    expect(await readOutput(file)).toEqual({ text: "first line\nsecond line\nthird\n", truncated: false });
-    expect(await readOutput(file, 15)).toEqual({ text: "third\n", truncated: true });
-    expect(await readOutput(join(state, "missing.log"))).toEqual({ text: "", truncated: false });
+    expect(await readOutput(file)).toEqual({ text: "first line\nsecond line\nthird\n", truncated: false, missing: false });
+    expect(await readOutput(file, 15)).toEqual({ text: "third\n", truncated: true, missing: false });
+    expect(await readOutput(join(state, "missing.log"))).toEqual({ text: "", truncated: false, missing: true });
   });
 
   it("turns terminal output into plain lines: colours, titles and cursor moves gone, a rewritten line as it ended", () => {
@@ -149,7 +188,7 @@ describe("history", () => {
   });
 
   it("keeps a run's last lines, plain, cut long, without trailing blank lines", async () => {
-    const file = join(state, "run.log");
+    const file = join(dir, "run.log");
     const body = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\r\n");
     await writeFile(file, `${body}\r\n${"x".repeat(500)}\r\n\r\n\r\n`);
     const last = await lastLines(file);

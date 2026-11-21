@@ -27,6 +27,8 @@ export interface RunnerWorld {
   /** The scheduler's control socket. */
   socketPath: string;
   keeperSocket: string;
+  /** The workspace the Pomade home points at. */
+  workspace: string;
   /** The jobs folder of the workspace. */
   jobs: string;
   env: Record<string, string>;
@@ -100,6 +102,7 @@ export async function createRunnerWorld(): Promise<RunnerWorld> {
     userData,
     socketPath,
     keeperSocket,
+    workspace,
     jobs,
     env,
     startScheduler(extra = {}) {

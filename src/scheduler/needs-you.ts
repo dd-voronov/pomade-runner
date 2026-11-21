@@ -15,13 +15,14 @@
 // so a restarted scheduler neither forgets an item nor notices one twice.
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 
 import type { NoticeParams } from "pomade-kit/protocol";
 
 import { runRoute } from "../integrations/runner-api";
 import { entryId, type JobsSnapshot, type Notify } from "../jobs/model";
 import type { ServicesReport, ServiceStatus } from "../keeper/model";
+import { needsYouRecordPath, type RecordsFolder } from "../locations";
 import type { Log } from "./log";
 import { FIRING_LIMIT, FIRING_WINDOW_MS } from "./loop-guard";
 import { ACTION_DONE_WORDS, dayTime, durationWords, failureWords, type ActiveRun, type NeedsYouItem, type RunRecord } from "./model";
@@ -62,9 +63,9 @@ function parseFailure(value: unknown): Failure | null {
   return { name, project, run, at, count, detail };
 }
 
-/** The records in `<state>/needs-you.json`, replaced whole on every save. */
-export function fileNeedsYouStore(state: string, log: Log): NeedsYouStore {
-  const file = join(state, "needs-you.json");
+/** The records in `<records>/needs-you.json`, replaced whole on every save. */
+export function fileNeedsYouStore(records: RecordsFolder, log: Log): NeedsYouStore {
+  const file = needsYouRecordPath(records);
   let writing: Promise<void> = Promise.resolve();
   return {
     async load() {

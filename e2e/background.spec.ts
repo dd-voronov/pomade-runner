@@ -1,7 +1,8 @@
 // The scheduler and the `pomade-runner` command as processes, from a copy of the built app folder
 // in a temp folder — where, as in an installed copy, there is no `node_modules` but what the build
 // ships — with Pomade closed: the environment names a Pomade home and user data that no Pomade runs
-// on. Each scheduler starts its keeper there; teardown stops it.
+// on, and the home points at a temp workspace. Each scheduler starts its keeper there; teardown
+// stops it.
 
 import { cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -28,6 +29,7 @@ test.describe("scheduler and command", () => {
   let build: string;
   let socketPath: string;
   let keeperSocket: string;
+  let workspace: string;
   let env: Record<string, string>;
   const started: SchedulerProcess[] = [];
 
@@ -35,6 +37,12 @@ test.describe("scheduler and command", () => {
     const scheduler = startSchedulerProcess(process.execPath, join(build, manifest.backend.entry), { ...env, POMADE_CLIENT: "backend" });
     started.push(scheduler);
     return scheduler;
+  }
+
+  /** Point the Pomade home at a workspace, as Pomade does on every switch. */
+  async function pointAt(root: string): Promise<void> {
+    await mkdir(join(tmp, "home"), { recursive: true });
+    await writeFile(join(tmp, "home", "workspace"), `${root}\n`);
   }
 
   function command(...args: string[]) {
@@ -61,6 +69,9 @@ test.describe("scheduler and command", () => {
       HOME: join(tmp, "user"),
       SHELL: "/bin/sh",
     });
+    workspace = join(tmp, "ws");
+    await mkdir(join(workspace, "Apps/pomade-runner/jobs"), { recursive: true });
+    await pointAt(workspace);
   });
 
   test.afterEach(async () => {
@@ -71,7 +82,7 @@ test.describe("scheduler and command", () => {
 
   test("the scheduler starts with Pomade closed, logs to stdout and ticks at the overridden tick", async () => {
     const scheduler = startScheduler();
-    await expect.poll(() => scheduler.output()).toMatch(new RegExp(`^\\S+Z scheduler ${VERSION} started \\(pid ${scheduler.child.pid}, tick 20 ms\\)\\n`));
+    await expect.poll(() => scheduler.output()).toMatch(new RegExp(`^\\S+Z scheduler ${VERSION} started \\(pid ${scheduler.child.pid}, tick 20 ms\\)\\n`, "m"));
 
     const first = await callScheduler(socketPath, "status", null);
     expect(first).toMatchObject({ status: "ok", value: { version: VERSION, pid: scheduler.child.pid, pomade: "disconnected" } });
@@ -126,6 +137,21 @@ test.describe("scheduler and command", () => {
     expect(await callScheduler(socketPath, "status", null)).toMatchObject({ status: "ok", value: { pid: second.child.pid } });
   });
 
+  test("with no workspace recorded the scheduler waits, serves nothing and writes nothing, then starts once Pomade records one", async () => {
+    await rm(join(tmp, "home"), { recursive: true });
+    const scheduler = startScheduler();
+    await expect.poll(() => scheduler.output()).toContain("waiting for a workspace: Pomade has not recorded one — the scheduler starts once it does\n");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(scheduler.output().match(/waiting for a workspace/g)).toHaveLength(1);
+    expect((await command("--version")).stdout).toBe(`pomade-runner ${VERSION}\nscheduler: not running\n`);
+    await expect(stat(join(tmp, "ud", "app-state"))).rejects.toThrow();
+    await expect(stat(join(workspace, "Apps/pomade-runner/records"))).rejects.toThrow();
+
+    await pointAt(workspace);
+    await expect.poll(() => scheduler.output()).toContain(`jobs: workspace ${workspace}\n`);
+    await expect.poll(async () => (await callScheduler(socketPath, "status", null)).status).toBe("ok");
+  });
+
   test("the scheduler refuses to start outside Pomade", async () => {
     const { POMADE_APP_KEY_FILE: _keyFile, ...outside } = env;
     const scheduler = startSchedulerProcess(process.execPath, join(build, manifest.backend.entry), outside);
@@ -165,20 +191,10 @@ test.describe("scheduler and command", () => {
     const VALID = "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\nschedule:\n  daily: { at: 13:00 }\n---\n";
     const BROKEN = VALID.replace("13:00", "25:00");
     const ERROR = 'schedule.daily.at — "25:00" is not a time. Fix: write a time like 7:00 or 13:30 (H:MM, 24-hour).';
-    let workspace: string;
     let jobs: string;
 
-    /** Point the Pomade home at a workspace, as Pomade does on every switch. */
-    async function pointAt(root: string): Promise<void> {
-      await mkdir(join(tmp, "home"), { recursive: true });
-      await writeFile(join(tmp, "home", "workspace"), `${root}\n`);
-    }
-
-    test.beforeEach(async () => {
-      workspace = join(tmp, "ws");
+    test.beforeEach(() => {
       jobs = join(workspace, "Apps/pomade-runner/jobs");
-      await mkdir(jobs, { recursive: true });
-      await pointAt(workspace);
     });
 
     test("the scheduler loads the jobs folder with Pomade closed and applies a change within a second", async () => {
@@ -193,14 +209,19 @@ test.describe("scheduler and command", () => {
       await expect.poll(() => scheduler.output(), { timeout: 1000 }).toContain("jobs: 0 job files, 0 invalid\n");
     });
 
-    test("the scheduler follows a workspace switch", async () => {
+    test("the scheduler follows a workspace switch: it starts again on the other workspace, with its records", async () => {
       const scheduler = startScheduler();
       await expect.poll(() => scheduler.output()).toContain(`jobs: workspace ${workspace}\n`);
+      expect((await command("pause")).code).toBe(0);
+      await expect.poll(() => stat(join(workspace, "Apps/pomade-runner/records/switch.json")).then(() => true, () => false)).toBe(true);
       const other = join(tmp, "other");
       await mkdir(join(other, "Apps/pomade-runner/jobs"), { recursive: true });
       await writeFile(join(other, "Apps/pomade-runner/jobs/backup.md"), VALID);
       await pointAt(other);
+      await expect.poll(() => scheduler.output()).toContain(`workspace: ${other} — the scheduler starts again on it\n`);
       await expect.poll(() => scheduler.output()).toContain(`jobs: workspace ${other}\n`);
+      // The other workspace's switch is its own: Running.
+      await expect.poll(async () => (await command("runs")).stdout).toMatch(/^switch: .* — scheduled runs run\n/);
       await expect.poll(() => scheduler.output().split(`jobs: workspace ${other}\n`)[1]).toMatch(/Z jobs: 1 job file, 0 invalid\n/);
     });
 

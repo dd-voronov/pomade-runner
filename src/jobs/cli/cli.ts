@@ -24,6 +24,9 @@ export const EXIT_OK = 0;
 export const EXIT_PROBLEMS = 1;
 export const EXIT_USAGE = 2;
 
+/** A run whose output log is not on this Mac, as `history` says it. */
+const OUTPUT_NOT_HERE = "output not on this Mac";
+
 export interface CliDeps {
   out(text: string): void;
   err(text: string): void;
@@ -42,6 +45,9 @@ export interface CliDeps {
   readSettings(workspace: string): Promise<string | null>;
   /** Pomade's projects; `null` when Pomade is not running (or this is not run through its shim). */
   projects(): Promise<ProjectRecord[] | null>;
+  /** Whether a file is on this Mac: a run's output log is not when its record came with the
+   *  workspace from another. */
+  exists(path: string): boolean;
 }
 
 export const USAGE = `${COMMAND} ${APP_VERSION} — Runner from the command line
@@ -291,7 +297,8 @@ async function history(job: string | null, deps: CliDeps): Promise<number> {
   const { records } = answer.value;
   if (records.length === 0) deps.out(job === null ? "No runs yet.\n" : `No runs of ${job} yet.\n`);
   for (const record of records) {
-    deps.out(`${record.job}  ${record.name}  ${runTriggerWords(record)}  ${runLine(record)}${record.log === null ? "" : `  output ${record.log}`}\n`);
+    const output = record.log === null ? "" : deps.exists(record.log) ? `  output ${record.log}` : `  ${OUTPUT_NOT_HERE}`;
+    deps.out(`${record.job}  ${record.name}  ${runTriggerWords(record)}  ${runLine(record)}${output}\n`);
     for (const result of record.git?.results ?? []) deps.out(`    ${gitRepoLine(result)}\n`);
   }
   return EXIT_OK;

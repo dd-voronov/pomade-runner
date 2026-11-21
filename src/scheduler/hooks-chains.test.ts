@@ -15,6 +15,7 @@ import type { ExitReason, NoticeParams } from "pomade-kit/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { checkJobs } from "../jobs/check";
+import { recordsFolderOf, stateFolderOf } from "../locations";
 import type { JobsSnapshot, ServiceAction } from "../jobs/model";
 import type { ChainActionOutcome } from "../keeper/model";
 import { createHistory, type History } from "./history";
@@ -71,6 +72,7 @@ describe("hooks and chains", () => {
       projectPath: () => null,
       pomadeGit: "/nowhere/bin/pomade-git",
       gitResult: (job, run) => `/nowhere/output/${job}/${run}.json`,
+      keepLog: () => Promise.resolve(null),
       post: (notice) => notices.push(notice),
       serviceAction: (job, action, why) => {
         actions.push({ job, action, why });
@@ -139,7 +141,7 @@ describe("hooks and chains", () => {
     sessions = new FakeSessions(() => now.getTime(), dir);
     store = memoryStore();
     switchStore = memorySwitch();
-    history = createHistory(join(dir, "state"), () => undefined);
+    history = createHistory(recordsFolderOf(dir), stateFolderOf(dir), () => undefined);
     settings = { ...DEFAULT_SETTINGS };
     settled = true;
     lines = [];

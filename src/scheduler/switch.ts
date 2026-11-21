@@ -1,10 +1,12 @@
-// The global switch's position — Running · Pause low-priority · Pause all — kept machine-local in
-// Runner's state folder (`switch.json`), so it survives a restart of the scheduler and of the Mac.
+// The global switch's position — Running · Pause low-priority · Pause all — kept in Runner's
+// records folder in the workspace (`switch.json`), so it survives a restart of the scheduler and of
+// the Mac, and goes with a copy of the workspace.
 // What it holds is the queue's rule (`queue.ts`, `holds`).
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 
+import { switchRecordPath, type RecordsFolder } from "../locations";
 import type { Log } from "./log";
 import { isSwitchState, type SwitchState } from "./model";
 
@@ -17,9 +19,9 @@ export interface SwitchStore {
   flush(): Promise<void>;
 }
 
-/** The position in `<state>/switch.json`; a missing or unreadable file is Running. */
-export function fileSwitchStore(state: string, log: Log): SwitchStore {
-  const file = join(state, "switch.json");
+/** The position in `<records>/switch.json`; a missing or unreadable file is Running. */
+export function fileSwitchStore(records: RecordsFolder, log: Log): SwitchStore {
+  const file = switchRecordPath(records);
   let writing: Promise<void> = Promise.resolve();
   return {
     async load() {

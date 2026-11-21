@@ -1,12 +1,26 @@
 import { describe, expect, it } from "vitest";
 
-import { keeperOutPath, keeperSocketPath, outputLogPath, schedulerSocketPath, sessionsRecordPath, stateDir } from "./locations";
+import {
+  gitResultPath,
+  keeperOutPath,
+  keeperSocketPath,
+  keptOutputLogPath,
+  liveOutputLogPath,
+  outputLogName,
+  recordsFolderOf,
+  schedulerSocketPath,
+  serviceHoldsPath,
+  sessionsRecordPath,
+  stateFolder,
+  stateFolderOf,
+  supervisionRecordPath,
+} from "./locations";
 
 describe("locations", () => {
   const env = { POMADE_APP_KEY_FILE: "/Users/me/Library/Application Support/pomade-dev/app-keys/pomade-runner" };
 
   it("finds the state folder in the user data of the Pomade that issued the key", () => {
-    expect(stateDir(env)).toBe("/Users/me/Library/Application Support/pomade-dev/app-state/pomade-runner");
+    expect(stateFolder(env)).toBe("/Users/me/Library/Application Support/pomade-dev/app-state/pomade-runner");
   });
 
   it("puts the scheduler socket in the state folder", () => {
@@ -14,7 +28,7 @@ describe("locations", () => {
   });
 
   it("has no location outside a Pomade", () => {
-    expect(stateDir({})).toBeNull();
+    expect(stateFolder({})).toBeNull();
     expect(schedulerSocketPath({ POMADE_APP_KEY_FILE: "" })).toBeNull();
   });
 
@@ -24,13 +38,21 @@ describe("locations", () => {
     expect(keeperSocketPath({})).toBeNull();
   });
 
-  it("keeps the session records, the keeper's output and each run's output log in the state folder", () => {
-    const state = "/ud/app-state/pomade-runner";
+  it("keeps the session records, the keeper's output, the output being written and this Mac's supervision in the state folder", () => {
+    const state = stateFolderOf("/ud");
     expect(sessionsRecordPath(state)).toBe("/ud/app-state/pomade-runner/sessions.json");
     expect(keeperOutPath(state)).toBe("/ud/app-state/pomade-runner/keeper/keeper.out");
-    expect(outputLogPath(state, "coda-helper/coda-web", "20261117-080000-a1b2c3")).toBe(
-      "/ud/app-state/pomade-runner/output/coda-helper.coda-web/20261117-080000-a1b2c3.log",
-    );
-    expect(outputLogPath(state, "My Project/web", "20261117-080000-a1b2c3")).toBe("/ud/app-state/pomade-runner/output/My_20Project.web/20261117-080000-a1b2c3.log");
+    expect(supervisionRecordPath(state)).toBe("/ud/app-state/pomade-runner/services.json");
+    expect(liveOutputLogPath(state, "coda-helper/coda-web", "20261117-080000-a1b2c3")).toBe("/ud/app-state/pomade-runner/output/coda-helper.coda-web/20261117-080000-a1b2c3.log");
+    expect(liveOutputLogPath(state, "My Project/web", "20261117-080000-a1b2c3")).toBe("/ud/app-state/pomade-runner/output/My_20Project.web/20261117-080000-a1b2c3.log");
+    expect(outputLogName("My Project/web", "20261117-080000-a1b2c3")).toBe("output/My_20Project.web/20261117-080000-a1b2c3.log");
+    expect(gitResultPath(state, "pull", "20261117-080000-a1b2c3")).toBe("/ud/app-state/pomade-runner/output/pull/20261117-080000-a1b2c3.json");
+  });
+
+  it("keeps the records and the finished runs' output logs in the workspace, beside the jobs folder", () => {
+    const records = recordsFolderOf("/ws");
+    expect(records).toBe("/ws/Apps/pomade-runner/records");
+    expect(keptOutputLogPath(records, "My Project/web", "20261117-080000-a1b2c3")).toBe("/ws/Apps/pomade-runner/records/output/My_20Project.web/20261117-080000-a1b2c3.log");
+    expect(serviceHoldsPath(records)).toBe("/ws/Apps/pomade-runner/records/services.json");
   });
 });

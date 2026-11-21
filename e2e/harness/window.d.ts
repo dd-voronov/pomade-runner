@@ -13,8 +13,9 @@ declare global {
     mounted: MountedApp;
     /** Set what the stand-in scheduler says of a service (`harness/scheduler.ts`). */
     setServiceStatus(job: string, status: Partial<ServiceStatus>): void;
-    /** Set what the stand-in scheduler says of the runs: the report, the history, any run's output. */
-    setRuns(runs: Partial<{ report: RunsReport; history: RunRecord[]; output: string }>): void;
+    /** Set what the stand-in scheduler says of the runs: the report, the history, any run's output,
+     *  and whether that output is not on this Mac. */
+    setRuns(runs: Partial<{ report: RunsReport; history: RunRecord[]; output: string; outputMissing: boolean }>): void;
     /** Set what the stand-in scheduler says of the settings: the settings file's text, `null` for none. */
     setSettings(text: string | null): void;
     /** The settings file's text as the stand-in scheduler holds it: what a setting the UI wrote left in it. */

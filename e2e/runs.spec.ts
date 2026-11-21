@@ -2,14 +2,17 @@
 // of a temp workspace as sessions of a real keeper, with Pomade closed (`support/runner.ts`), on a
 // clock set through POMADE_RUNNER_CLOCK in Madrid's time zone — so a day's schedule plays out in
 // seconds. Every rule's edge is in the unit tests (`src/scheduler/*.test.ts`); these show E-002's
-// acceptance on real processes: the runs, their history and output, overlap, the command, and the
-// notices that wait in Pomade's queue while it is closed.
+// acceptance on real processes: the runs, their history and output, overlap, the command, the
+// notices that wait in Pomade's queue while it is closed, and the records the workspace carries to
+// another Mac.
 
-import { readFile } from "node:fs/promises";
+import { access, cp, readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 import { followSession } from "pomade-kit/node";
 
+import manifest from "../app/manifest.json" with { type: "json" };
 import { callScheduler } from "../src/scheduler/control/client";
 import type { RunRecord } from "../src/scheduler/model";
 import { createRunnerWorld, type RunnerWorld } from "./support/runner";
@@ -18,6 +21,11 @@ const ZONE = { TZ: "Europe/Madrid" };
 
 /** A scheduler clock that starts at `local` (Madrid) and runs `rate` times as fast. */
 const clock = (local: string, rate = 1): Record<string, string> => ({ ...ZONE, POMADE_RUNNER_CLOCK: `${local}+01:00`, POMADE_RUNNER_CLOCK_RATE: String(rate) });
+
+const exists = (path: string): Promise<boolean> => access(path).then(
+  () => true,
+  () => false,
+);
 
 /** A script job file. */
 const scriptFile = (name: string, command: string, extra: string): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ${JSON.stringify(command)}\n${extra}---\n`;
@@ -57,7 +65,8 @@ test.describe("scheduled scripts", () => {
 
   test("2 · every 30 min, 9–19, weekdays only: runs on a Wednesday at 9:00 and 9:30", async () => {
     await world.writeJob("check.md", scriptFile("Check", "true", "schedule:\n  every: { minutes: 30, from: 9:00, to: 19:00 }\n  only: weekdays\n"));
-    const scheduler = world.startScheduler(clock("2026-11-18T08:59:56", 180));
+    // Two scheduler minutes ahead of 9:00 — under a second here — so a slow start never misses it.
+    const scheduler = world.startScheduler(clock("2026-11-18T08:58:00", 180));
     await world.ready(scheduler);
     await expect.poll(async () => (await world.history()).map((record) => record.dueAt), { timeout: 20_000 }).toEqual([Date.parse("2026-11-18T09:30:00+01:00"), Date.parse("2026-11-18T09:00:00+01:00")]);
     expect((await world.history()).map((record) => record.state)).toEqual(["done", "done"]);
@@ -160,5 +169,75 @@ test.describe("scheduled scripts", () => {
     expect(await world.history()).toEqual([]);
     expect((await world.command("run", "backup")).stderr).toBe('pomade-runner run: cannot run "backup": "Backup" is disabled in its file; enable it first.\n');
     expect(await world.command("enable", "backup")).toMatchObject({ code: 0, stdout: "backup  Backup  enabled\n" });
+  });
+
+  test("the records live in the workspace: a live run's output grows in the state folder only; at its end the log moves beside its record, and the state folder holds only this Mac's own", async () => {
+    await world.writeJob("fail.md", scriptFile("Fail", "echo boom; sleep 1; echo bust; exit 3", "schedule:\n  daily: { at: 13:00 }\n"));
+    const scheduler = world.startScheduler(clock("2026-11-18T12:59:58"));
+    await world.ready(scheduler);
+    const state = join(world.userData, "app-state", manifest.id);
+    const records = join(world.workspace, "Apps/pomade-runner/records");
+    const started = (): string => /run fail (\S+): started/.exec(scheduler.output())?.[1] ?? "";
+    await expect.poll(started).not.toBe("");
+    const run = started();
+    const running = await world.running(`run:fail:${run}`);
+    const live = join(state, "output", "fail", `${run}.log`);
+    const kept = join(records, "output", "fail", `${run}.log`);
+    // While it runs: its output grows in the state folder, and nothing of it is in the workspace.
+    expect(running.log).toBe(live);
+    await expect.poll(() => readFile(live, "utf8").catch(() => "")).toContain("boom");
+    expect(await exists(kept)).toBe(false);
+    expect(await exists(join(records, "output"))).toBe(false);
+
+    await expect.poll(() => world.history(), { timeout: 10_000 }).toHaveLength(1);
+    const [record] = await world.history();
+    expect(record?.log).toBe(kept);
+    expect(await readFile(kept, "utf8")).toContain("bust");
+    expect(await exists(live)).toBe(false);
+    expect((await world.command("pause", "low")).code).toBe(0);
+
+    await expect.poll(async () => (await readdir(records)).sort()).toEqual(expect.arrayContaining(["history", "needs-you.json", "output", "runs.json", "switch.json"]));
+    const day = await readFile(join(records, "history", "2026-11-18.jsonl"), "utf8");
+    expect(day).toContain(`"run":"${run}"`);
+    expect(day).toContain(`"log":"output/fail/${run}.log"`);
+    expect(day).not.toContain(world.tmp);
+    expect(await readFile(join(records, "runs.json"), "utf8")).not.toContain(world.tmp);
+    // The state folder: the control socket, the keeper, the session records, the output being
+    // written, the projects heard and this Mac's service supervision — nothing of the records.
+    expect((await readdir(state)).filter((name) => !["keeper", "output", "projects.json", "scheduler.sock", "services.json", "sessions.json"].includes(name))).toEqual([]);
+  });
+
+  test("a workspace copied to a fresh user-data folder shows the same History with its output, switch and Needs you; what it missed since its last alive time goes to each job's policy", async () => {
+    await world.writeJob("fail.md", scriptFile("Fail", "echo boom; exit 3", "schedule:\n  daily: { at: 13:00 }\nlow-priority: false\n"));
+    await world.writeJob("inbox.md", scriptFile("Inbox", "echo triaged", "schedule:\n  daily: { at: 14:00 }\nlow-priority: false\nmissed: wait-for-me\n"));
+    const first = world.startScheduler(clock("2026-11-18T12:59:58"));
+    await world.ready(first);
+    await expect.poll(() => world.history(), { timeout: 10_000 }).toHaveLength(1);
+    const run = (await world.history())[0]?.run ?? "";
+    expect((await world.command("pause", "low")).code).toBe(0);
+    const before = (await world.command("runs")).stdout;
+    first.child.kill("SIGTERM");
+    expect(await first.exited).toBe(0);
+
+    const copy = await createRunnerWorld();
+    try {
+      await cp(join(world.workspace, "Apps"), join(copy.workspace, "Apps"), { recursive: true });
+      // Two hours on: the 14:00 run of Inbox was missed while no scheduler ran.
+      const second = copy.startScheduler(clock("2026-11-18T15:00:00"));
+      await copy.ready(second);
+      const [failed] = await copy.history();
+      expect(failed).toMatchObject({ job: "fail", run, state: "failed", exitCode: 3, lastLines: ["boom"] });
+      expect(failed?.log).toBe(join(copy.workspace, "Apps/pomade-runner/records/output/fail", `${run}.log`));
+      expect(await readFile(failed?.log ?? "", "utf8")).toContain("boom");
+      expect((await copy.command("history", "fail")).stdout).toMatch(new RegExp(`^fail {2}Fail {2}scheduled {2}failed · exit 3, \\S+, took [\\d.]+ m?s {2}output ${failed?.log ?? ""}\\n$`));
+      await expect.poll(async () => (await copy.command("runs")).stdout).toContain("needs you: Inbox — ");
+      const after = (await copy.command("runs")).stdout;
+      expect(after.split("\n")[0]).toBe(before.split("\n")[0]);
+      expect(after.split("\n")[0]).toContain("runs of low-priority jobs are held");
+      expect(after).toContain("needs you: Fail — failed: exit 3, ");
+      expect(after).toMatch(/needs you: Inbox — [^\n]+; it waits for you: Run now, Run at… or Skip in Runner\n/);
+    } finally {
+      await copy.dispose();
+    }
   });
 });

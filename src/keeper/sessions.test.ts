@@ -9,6 +9,7 @@ import { runKeeper, type Keeper } from "pomade-kit/keeper";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { APP_ID } from "../app";
+import { liveOutputLogPath, stateFolderOf, type StateFolder } from "../locations";
 import type { RunnerSession } from "./model";
 import { createSessions, type SessionCommand, type Sessions } from "./sessions";
 
@@ -24,7 +25,7 @@ describe("sessions", () => {
   let dir: string;
   let keeper: Keeper;
   let socketPath: string;
-  let state: string;
+  let state: StateFolder;
   let lines: string[];
   const opened: Sessions[] = [];
 
@@ -71,7 +72,7 @@ describe("sessions", () => {
   beforeEach(async () => {
     dir = await mkdtemp("/tmp/prs-");
     socketPath = join(dir, "k.sock");
-    state = join(dir, "state");
+    state = stateFolderOf(join(dir, "ud"));
     lines = [];
     keeper = await runKeeper({
       app: APP_ID,
@@ -101,7 +102,7 @@ describe("sessions", () => {
       run: expect.stringMatching(/^20261117-080000-[0-9a-f]{6}$/) as string,
       info: { title: "Web", cwd: dir, state: "running", actions: [{ id: "restart", title: "Restart" }] },
     });
-    expect(web.log).toBe(join(state, "output", "coda.web", `${web.run ?? ""}.log`));
+    expect(web.log).toBe(join(dir, "ud/app-state/pomade-runner/output/coda.web", `${web.run ?? ""}.log`));
     await vi.waitFor(async () => expect(await readFile(web.log ?? "", "utf8")).toContain("hello from web"));
     await vi.waitFor(async () =>
       expect(JSON.parse(await readFile(join(state, "sessions.json"), "utf8"))).toEqual({
@@ -111,7 +112,7 @@ describe("sessions", () => {
     await expect(sessions.spawn({ kind: "service", job: "coda/web" }, command("true"))).rejects.toThrow("session svc:coda.web is running");
     const owner = runOf("coda/web");
     const run = await sessions.spawn(owner, command("exit 0"));
-    expect(run).toMatchObject({ id: `run:coda.web:${owner.run}`, run: owner.run, log: join(state, "output", "coda.web", `${owner.run}.log`) });
+    expect(run).toMatchObject({ id: `run:coda.web:${owner.run}`, run: owner.run, log: liveOutputLogPath(state, "coda/web", owner.run) });
     expect(lines).toContain(`session svc:coda.web: started — pid ${web.info.pid ?? ""}, in ${dir}`);
   });
 

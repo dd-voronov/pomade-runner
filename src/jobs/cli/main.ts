@@ -1,7 +1,7 @@
 // The `pomade-runner` command's entry: Pomade's shim in its command folder runs it with Pomade's
 // runtime, with Pomade open or closed.
 
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 import { connectSocket, resolveWorkspace } from "pomade-kit/node";
@@ -62,4 +62,5 @@ process.exitCode = await runCli(process.argv.slice(2), {
   readJobFiles,
   readSettings: readSettingsText,
   projects,
+  exists: existsSync,
 });

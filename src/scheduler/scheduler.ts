@@ -4,7 +4,9 @@
 // frames through Pomade's broker — owns the keeper's sessions, following them on every tick, and
 // after each supervises the services, runs what is due — through the missed-run policies, the
 // switch, the warm-up and the queue — and records what ended, keeps Needs you, notices and the
-// badge, and publishes Runner's events.
+// badge, and publishes Runner's events. It runs on one workspace: its records are in that
+// workspace's records folder, moved there from the state folder on the first start
+// (`records-move.ts`); `main.ts` starts it again when the workspace changes.
 
 import { join } from "node:path";
 
@@ -26,7 +28,7 @@ import {
   type RunStartedPayload,
 } from "../integrations/runner-api";
 import { formatJobError } from "../jobs/format";
-import { gitResultPath } from "../locations";
+import { findOutputLog, gitResultPath, recordsFolderOf, type StateFolder } from "../locations";
 import { removeJobFile, writeEnabled } from "../jobs/folder";
 import { createJobsLoader } from "../jobs/loader";
 import { entryId, entryPath, type JobsSnapshot } from "../jobs/model";
@@ -40,15 +42,17 @@ import type { Sessions } from "../keeper/sessions";
 import { createSupervisor, type SupervisionStore } from "../keeper/supervisor";
 import type { Clock } from "./clock";
 import type { JobEnabled, PomadeLinkState, RunStarted, SchedulerStatus } from "./control/protocol";
+import { callScheduler } from "./control/client";
 import { ControlRefused, serveControl } from "./control/server";
 import { deleteJob } from "./delete";
-import { createHistory, readOutput } from "./history";
+import { createHistory, keepOutputLog, readOutput } from "./history";
 import type { Log } from "./log";
 import type { ActiveRun, DeleteResult, EnableResult, JobListing, RunActionResult, RunRecord, RunsReport } from "./model";
 import { createNeedsYou, fileNeedsYouStore } from "./needs-you";
 import { projectsMemory } from "./projects";
 import { readEnvironment } from "./read-environment";
 import { repoJobs } from "./git-runs";
+import { moveRecords } from "./records-move";
 import { createRuns, fileRunsStore } from "./runs";
 import { settingsFile } from "./settings-file";
 import { fileSwitchStore } from "./switch";
@@ -59,17 +63,18 @@ const PRUNE_EVERY_MS = 60 * 60_000;
 export interface SchedulerOptions {
   /** Where the control protocol is served. */
   socketPath: string;
-  /** Runner's state folder: runs, history, Needs you, the switch, the projects heard. */
-  state: string;
+  /** Runner's state folder: the output logs, the projects heard; the records once there, moved out
+   *  at start. */
+  state: StateFolder;
   clock: Clock;
   tickMs: number;
   log: Log;
   linkPomade: LinkPomade;
-  /** The workspace root now (absolute), or `null`; asked on every tick, so a switch is followed. */
-  workspace(): string | null;
+  /** The workspace root (absolute): its jobs, settings and records are the scheduler's. */
+  workspace: string;
   /** The keeper's sessions; the scheduler refreshes them on every tick and closes them on stop. */
   sessions: Sessions;
-  /** Where service supervision keeps its records. */
+  /** Where service supervision keeps its records (`fileStore` on the state and records folders). */
   supervision: SupervisionStore;
   /** A service's port or URL readiness check. */
   probe(ready: NetworkReadiness): Promise<boolean>;
@@ -106,6 +111,11 @@ const startedPayload = (run: ActiveRun | RunRecord): RunStartedPayload => ({
 
 export async function startScheduler(options: SchedulerOptions): Promise<StartResult> {
   const { clock, log, state } = options;
+  const records = recordsFolderOf(options.workspace);
+  const workspace = (): string => options.workspace;
+  // Another scheduler serving the socket owns the records: nothing is moved under it.
+  if ((await callScheduler(options.socketPath, "status", null)).status === "ok") return { status: "already-running" };
+  await moveRecords(state, records, log);
   const startedAt = clock.now().toISOString();
   let lastTickAt: string | null = null;
   let pomade: PomadeLinkState = "disconnected";
@@ -116,8 +126,8 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
   const publish = (event: string, payload?: unknown): void => {
     if (host !== null) announce(host, event, log, payload);
   };
-  const jobs = createJobsLoader({ workspace: options.workspace, log, onChange: () => publish(JOBS_CHANGED_EVENT) });
-  const settings = settingsFile({ workspace: options.workspace, log, onChange: () => publish(SETTINGS_CHANGED_EVENT) });
+  const jobs = createJobsLoader({ workspace, log, onChange: () => publish(JOBS_CHANGED_EVENT) });
+  const settings = settingsFile({ workspace, log, onChange: () => publish(SETTINGS_CHANGED_EVENT) });
   const supervisor = createSupervisor({
     sessions,
     jobs: jobs.snapshot,
@@ -128,7 +138,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     onChange: () => publish(SERVICES_CHANGED_EVENT),
   });
   const projects = projectsMemory(state, log);
-  const history = createHistory(state, log);
+  const history = createHistory(records, state, log);
 
   const post = (notice: Parameters<PostNotice>[0]): void => {
     options.postNotice(notice, host).then(
@@ -166,7 +176,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     });
   };
 
-  const needsYou = createNeedsYou({ store: fileNeedsYouStore(state, log), log, post, onChange: publishRuns });
+  const needsYou = createNeedsYou({ store: fileNeedsYouStore(records, log), log, post, onChange: publishRuns });
   const runs = createRuns({
     sessions,
     jobs: jobs.snapshot,
@@ -175,12 +185,13 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     clock,
     log,
     history,
-    store: fileRunsStore(state, log),
-    switchStore: fileSwitchStore(state, log),
+    store: fileRunsStore(records, state, log),
+    switchStore: fileSwitchStore(records, log),
     post,
     serviceAction: supervisor.chainAction,
     pomadeGit: options.pomadeGit,
     gitResult: (job, run) => gitResultPath(state, job, run),
+    keepLog: (job, run) => keepOutputLog(records, state, job, run),
     projectPath: (project) => {
       const workspace = jobs.snapshot().workspace;
       const root = projects.root(project);
@@ -346,7 +357,10 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         run: (job, run) => runs.find(job, run),
         output: async (job, run) => {
           const view = await runs.find(job, run);
-          return view?.log == null ? { text: "", truncated: false } : readOutput(view.log);
+          if (view?.log == null) return { text: "", truncated: false, missing: false };
+          // A run going writes its log in the state folder; a finished one's is found where it is.
+          const going = runs.active().some((candidate) => candidate.job === job && candidate.run === run);
+          return readOutput(going ? view.log : await findOutputLog(records, state, job, run));
         },
         runNow,
         setEnabled,
@@ -356,7 +370,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         setSwitch: runs.setSwitch,
         resume: runs.resume,
         settings: settings.report,
-        environment: () => readEnvironment(options.workspace()),
+        environment: () => readEnvironment(options.workspace),
         setSetting: settings.write,
         deleteJob: removeJob,
         ready: () => showBadge(needsYou.items().length),
