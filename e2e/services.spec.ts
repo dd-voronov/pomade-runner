@@ -142,6 +142,21 @@ test.describe("service supervision", () => {
     expect(second.output()).toContain("service flaky: Start\n");
   });
 
+  test("a service whose folder does not exist never gets a session: it gives up with the reason, and its Needs-you item has no session to open", async () => {
+    test.setTimeout(90_000);
+    await world.writeJob("ghost.md", `---\nkind: service\nname: Ghost\nfolder: nowhere\ncommand: ${JSON.stringify(SLEEPER)}\n---\n`);
+    const scheduler = world.startScheduler();
+    await world.ready(scheduler);
+
+    await expect.poll(async () => (await world.service("ghost"))?.state, { timeout: 40_000 }).toBe("failed");
+    const ghost = await world.service("ghost");
+    expect(ghost?.session).toBeNull();
+    expect(ghost?.problem).toContain("nowhere");
+    const runs = (await world.command("runs")).stdout;
+    expect(runs).toContain(`needs you: Ghost — gave up: ${ghost?.problem ?? ""}\n`);
+    expect(await world.queuedNotices()).toMatchObject([{ title: "Ghost gave up", body: `It could not start: ${ghost?.problem ?? ""}, so Runner stopped restarting it. Start runs it again.` }]);
+  });
+
   test("Ctrl+C in an attached tab → stopped by you, and it stays stopped; pomade-runner run brings it back", async () => {
     await world.writeJob("ticker.md", serviceFile("Ticker", 'i=0; while :; do i=$((i+1)); echo "tick $i"; sleep 1; done'));
     const scheduler = world.startScheduler();

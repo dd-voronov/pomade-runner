@@ -145,7 +145,7 @@ describe("isRunsReport", () => {
       jobs: [{ job: "a", next: null, finished: true, last: record }],
       needsYou: [
         { id: "run-failed:a", kind: "run-failed", job: "a", name: "A", project: null, run: "r", at: 1, count: 1, detail: "exit 1" },
-        { id: "service-failed:w", kind: "service-failed", job: "w", name: "W", project: null, at: 1, detail: "x" },
+        { id: "service-failed:w", kind: "service-failed", job: "w", name: "W", project: null, at: 1, detail: "x", problem: null, session: true },
         { id: "missed:a", kind: "missed", job: "a", name: "A", project: null, run: "r", at: 1, detail: "x" },
         { id: "long-run:a:r", kind: "long-run", job: "a", name: "A", project: null, run: "r", at: 2, startedAt: 1, detail: "x" },
         { id: "waiting:a:r", kind: "waiting", job: "a", name: "A", project: null, run: "r", prompt: "permission", at: 2, detail: "x" },
@@ -160,6 +160,8 @@ describe("isRunsReport", () => {
       { ...report, jobs: [{ job: "a", next: "soon", finished: true, last: null }] },
       { ...report, needsYou: [{ ...report.needsYou[0], count: "1" }] },
       { ...report, needsYou: [{ ...report.needsYou[1], kind: "other" }] },
+      { ...report, needsYou: [{ ...report.needsYou[1], session: "yes" }] },
+      { ...report, needsYou: [{ ...report.needsYou[1], problem: 3 }] },
       { ...report, needsYou: [{ ...report.needsYou[3], startedAt: null }] },
       { ...report, needsYou: [{ ...report.needsYou[4], prompt: "other" }] },
       { ...report, active: [{ ...active, agent: { ...AGENT, waiting: { prompt: "permission" } } }] },

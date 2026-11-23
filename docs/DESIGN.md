@@ -863,8 +863,12 @@ history-days: 30           # run history and output logs kept
     card or dismisses it (`needsYou.dismiss`), when a run of the job is done, or when the job's file
     is gone. Actions: Open (its result card) · Run now · Dismiss.
   - **A service that gave up** after a crash loop is an item while it stays `failed`; Start, a
-    fixed or disabled file, or its removal end it. It is noticed once per giving-up. Actions: Start ·
-    View output (the service's attached tab with its last output).
+    fixed or disabled file, or its removal end it. It is noticed once per giving-up. It carries why
+    its last start failed (`problem`: the keeper refused it — a folder that does not exist) and
+    whether the service has a session (`session`). Actions: Start · View output (the service's
+    attached tab with its last output) — View output only with a session; a service that never got
+    one (its command could not start) has Start alone, its name opens the job in Jobs, and the card
+    and the notice say why it could not start.
   - **A missed run that waits for you** (`missed:<job>`, one per job) is an item while it waits;
     noticed when it comes ("Inbox triage · missed Sun 03:00"), its click opening the run's card.
     Actions: Run now · Run at… · Skip (`runs.missed`).
@@ -911,7 +915,7 @@ to it, light theme only.
    | Item | Time | Text | Actions |
    |---|---|---|---|
    | failed run | when it failed | "Failed: exit 1 · 2×" (the count when more than one) | Open · Run now · Dismiss |
-   | service gave up | its last crash | "Crashed 5× in 1 min — gave up." | Start · View output |
+   | service gave up | its last crash | "Crashed 5× in 1 min — gave up."; when its last start failed, "Gave up — could not start: <why>" | Start · View output (only when the service has a terminal session) |
    | missed run waits | when it was missed | "Missed — it waits for you to pick a time." | Run now · Run at… · Skip |
    | agent run waits for you | how long it has waited ("17m") | "Waiting for approval at a permission prompt." / "Waiting for you to trust its folder." | Open at the prompt |
    | long run | how long it has gone ("3h 02m") | "Running 3h — still expected?" | Open (its terminal) · Stop · Dismiss |
@@ -919,7 +923,7 @@ to it, light theme only.
 
    The time reads "11:20" today, "yesterday", "Sun 3:00" within the week, else "13 Nov". The
    job's name is a link to what the card is about: the run's result card (a failed run, a missed
-   run, a run waiting for you, a long run), the service's terminal tab, the job in the Jobs view (a paused job). **Run
+   run, a run waiting for you, a long run), the service's terminal tab (the job in the Jobs view when the service never got a session), the job in the Jobs view (a paused job). **Run
    at…** opens a field below the buttons, filled with "tonight 23:00" and focused; under it what the
    text comes to ("→ today 23:00") or "Try: tonight 23:00 · tomorrow 7:00 · +2h"; Set (or Enter)
    sends it as typed, Esc closes it. Every outcome is a toast ("<job> started", "<job> will run

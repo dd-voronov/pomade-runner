@@ -86,16 +86,19 @@ function NeedCard({ host, item }: { host: HostClient; item: NeedsYouItem }): Rea
       );
       break;
     case "service-failed": {
+      // A service whose command never started has no session: its name opens the job instead.
       const output = (): void => openSession(sessionIdOf({ kind: "service", job: item.job }) ?? "");
-      title = output;
+      title = item.session ? output : () => openRoute(jobsRoute(item.job));
       actions = (
         <>
           <Button size="sm" variant="primary" onClick={() => call("start", SERVICE_METHODS.start, { job: item.job }, started, SERVICE_ACTION_TIMEOUT_MS)}>
             Start
           </Button>
-          <Button size="sm" onClick={output}>
-            View output
-          </Button>
+          {item.session && (
+            <Button size="sm" onClick={output}>
+              View output
+            </Button>
+          )}
         </>
       );
       break;

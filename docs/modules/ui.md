@@ -43,7 +43,7 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
 | `main.tsx`, `App.tsx`, `index.html` | the entry, the frame choice, the page |
 | `Panel.tsx`, `shell/PanelShell.tsx` | the side panel and its frame: the switch pinned on top, sections, Open Runner at the foot |
 | `SwitchControl.tsx` | the three-position switch |
-| `NeedsYou.tsx` | Needs you's cards and their actions |
+| `NeedsYou.tsx` | Needs you's cards and their actions (a gave-up service without a session has no View output; its name opens the job in Jobs) |
 | `RunningNow.tsx`, `ActiveRunsList.tsx` | Running now: services and runs going; a row opens its tab, terminal or card |
 | `NextUp.tsx`, `runWords.ts` | Next up and "in 40 min" |
 | `panelWords.ts` | the panel's words: a Needs-you card's look, a moment ahead or past, a run's age |

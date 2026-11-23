@@ -57,12 +57,13 @@ describe("a Needs-you card's look", () => {
     const failed: NeedsYouItem = { ...base, id: "run-failed:job", kind: "run-failed", run: "r", at: at(18, 11, 20), count: 2, detail: "exit 1" };
     expect(look(failed)).toEqual({ tone: "danger", help: "need.failed", when: "11:20", text: "Failed: exit 1 · 2×" });
     expect(look({ ...failed, count: 1 }).text).toBe("Failed: exit 1");
-    expect(look({ ...base, id: "service-failed:job", kind: "service-failed", at: at(18, 11, 20), detail: "x" })).toEqual({
+    expect(look({ ...base, id: "service-failed:job", kind: "service-failed", at: at(18, 11, 20), detail: "x", problem: null, session: true })).toEqual({
       tone: "danger",
       help: "need.crashloop",
       when: "11:20",
       text: "Crashed 5× in 1 min — gave up.",
     });
+    expect(look({ ...base, id: "service-failed:job", kind: "service-failed", at: at(18, 11, 20), detail: "x", problem: "no folder Projects/x", session: false }).text).toBe("Gave up — could not start: no folder Projects/x");
     expect(look({ ...base, id: "missed:job", kind: "missed", run: "r", at: at(15, 3), detail: "x" })).toEqual({
       tone: "warning",
       help: "need.waitforme",

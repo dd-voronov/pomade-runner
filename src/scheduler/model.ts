@@ -246,7 +246,12 @@ export type NeedsYouItem =
       project: string | null;
       /** When it gave up: its last crash (epoch ms). */
       at: number;
+      /** Why it gave up in words: the reason its last start failed, else "crashed 5 times within a minute". */
       detail: string;
+      /** Why its last start failed (the keeper refused it: a folder that does not exist…), or `null`. */
+      problem: string | null;
+      /** Whether it has a terminal session to open: `false` when its command never started. */
+      session: boolean;
     }
   | {
       /** `missed:<job>`: one per job. */
@@ -547,7 +552,7 @@ function isNeedsYouItem(value: unknown): value is NeedsYouItem {
     case "run-failed":
       return typeof value.run === "string" && typeof value.count === "number";
     case "service-failed":
-      return true;
+      return nullableString(value.problem) && typeof value.session === "boolean";
     case "missed":
       return typeof value.run === "string";
     case "waiting":

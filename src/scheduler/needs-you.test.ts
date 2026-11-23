@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { checkJobs } from "../jobs/check";
 import { needsYouRecordPath, recordsFolderOf } from "../locations";
 import type { Notify } from "../jobs/model";
-import type { ServicesReport, ServiceStatus } from "../keeper/model";
+import type { RunnerSession, ServicesReport, ServiceStatus } from "../keeper/model";
 import type { RunRecord } from "./model";
 import { createNeedsYou, fileNeedsYouStore, gaveUpNotice, loopNotice, runNotice, type NeedsYou, type NeedsYouStore } from "./needs-you";
 
@@ -58,6 +58,16 @@ const service = (job: string, extra: Partial<ServiceStatus> = {}): ServiceStatus
   problem: null,
   ...extra,
 });
+
+/** The session of a service that ran and crashed. */
+const ended: RunnerSession = {
+  id: "svc:web",
+  job: "web",
+  kind: "service",
+  run: null,
+  log: null,
+  info: { id: "svc:web", title: "WEB", command: "./web.sh", cwd: "/ws", pid: null, cols: 80, rows: 24, clients: 0, actions: [], startedAt: T0 - 1000, state: "exited", exit: { code: 1, signal: null, reason: "crashed", at: T0 } },
+};
 
 const report = (...services: ServiceStatus[]): ServicesReport => ({ keeper: { state: "connected", version: "v", pid: 1 }, services, openedProjects: [] });
 
@@ -174,8 +184,8 @@ describe("needs you", () => {
   });
 
   it("a service that gave up is an item while it stays failed, noticed once — after a restart too — and again on a later give-up", async () => {
-    needsYou.services(report(service("web"), service("api", { state: "running" })));
-    expect(needsYou.items()).toEqual([{ id: "service-failed:web", kind: "service-failed", job: "web", name: "WEB", project: null, at: T0, detail: "crashed 5 times within a minute" }]);
+    needsYou.services(report(service("web", { session: ended }), service("api", { state: "running" })));
+    expect(needsYou.items()).toEqual([{ id: "service-failed:web", kind: "service-failed", job: "web", name: "WEB", project: null, at: T0, detail: "crashed 5 times within a minute", problem: null, session: true }]);
     needsYou.services(report(service("web")));
     expect(posted.map((notice) => notice.title)).toEqual(["WEB gave up"]);
     await open();
@@ -185,6 +195,12 @@ describe("needs you", () => {
     expect(needsYou.items()).toEqual([]);
     needsYou.services(report(service("web", { lastCrashAt: T0 + 60_000 })));
     expect(posted).toHaveLength(2);
+  });
+
+  it("a service that never got a session says why its start failed, and has no session to open", () => {
+    needsYou.services(report(service("web", { problem: "no folder /ws/missing" })));
+    expect(needsYou.items()).toEqual([{ id: "service-failed:web", kind: "service-failed", job: "web", name: "WEB", project: null, at: T0, detail: "no folder /ws/missing", problem: "no folder /ws/missing", session: false }]);
+    expect(posted[0]?.body).toBe("It could not start: no folder /ws/missing, so Runner stopped restarting it. Start runs it again.");
   });
 
   it("lists items newest first", () => {

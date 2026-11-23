@@ -330,7 +330,7 @@ test.describe("runs", () => {
     active: [],
     nextUp: [{ job: "backup", name: "Backup", project: null, at: now + 40 * 60_000 + 30_000, held: false }],
     jobs: [{ job: "backup", next: now + 40 * 60_000, finished: false, last: failed }],
-    needsYou: [item, { id: "service-failed:web", kind: "service-failed", job: "web", name: "Web", project: null, at: at(12, 0), detail: "crashed 5 times within a minute" }],
+    needsYou: [item, { id: "service-failed:web", kind: "service-failed", job: "web", name: "Web", project: null, at: at(12, 0), detail: "crashed 5 times within a minute", problem: null, session: true }],
     switch: { position: "running", since: null },
   });
 
@@ -2560,7 +2560,7 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
   /** One item of each kind, with times relative to `now`. */
   const items = (now: number): NeedsYouItem[] => [
     { id: "run-failed:backup", kind: "run-failed", job: "backup", name: "Backup", project: null, run: "20261117-130000-aaaaaa", at: now - minutes(20), count: 2, detail: "exit 2" },
-    { id: "service-failed:web", kind: "service-failed", job: "web", name: "Web", project: null, at: now - minutes(30), detail: "crashed 5 times within a minute" },
+    { id: "service-failed:web", kind: "service-failed", job: "web", name: "Web", project: null, at: now - minutes(30), detail: "crashed 5 times within a minute", problem: null, session: true },
     { id: "missed:weekly", kind: "missed", job: "weekly", name: "Weekly", project: null, run: "20261117-030000-bbbbbb", at: now - 2 * 86_400_000, detail: "missed" },
     { id: "long-run:lint:20261117-100000-cccccc", kind: "long-run", job: "lint", name: "Lint", project: null, run: "20261117-100000-cccccc", at: now, startedAt: now - minutes(3 * 60 + 2), detail: "running 3 h" },
     { id: "loop-paused:echo", kind: "loop-paused", job: "echo", name: "Echo", project: null, at: now - 86_400_000, detail: "triggered 10× in 10 min — looks like a loop" },
@@ -2647,6 +2647,23 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
     expect(await calls(page)).toEqual([
       { method: "services.start", params: { job: "web" } },
       { method: "jobs.resume", params: { job: "echo" } },
+    ]);
+  });
+
+  test("a service that gave up before it got a terminal has no View output, says why it could not start, and its name opens the job in Jobs", async ({ page }) => {
+    const docs = (now: number): NeedsYouItem => ({ id: "service-failed:docs", kind: "service-failed", job: "docs", name: "Docs", project: null, at: now - minutes(10), detail: "no folder nowhere", problem: "no folder nowhere", session: false });
+    await panel(page, (now) => ({ ...quiet(now), needsYou: [docs(now), ...items(now).filter((item) => item.kind === "service-failed")] }));
+    const [without, withSession] = [card(page, "service-failed").first(), card(page, "service-failed").last()];
+    await expect(without.getByTestId("needs-you-words")).toHaveText("Gave up — could not start: no folder nowhere");
+    await expect(without.getByRole("button")).toHaveText(["Docs", "", "Start"]);
+    await expect(withSession.getByTestId("needs-you-words")).toHaveText("Crashed 5× in 1 min — gave up.");
+    await expect(withSession.getByRole("button")).toHaveText(["Web", "", "Start", "View output"]);
+    await shoot(page, "panel-service-gave-up");
+    await without.getByRole("button", { name: "Docs" }).click();
+    await withSession.getByRole("button", { name: "Web" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([
+      { kind: "app", projectId: "alpha", route: "jobs/docs" },
+      { kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:web" }, title: "Web" },
     ]);
   });
 

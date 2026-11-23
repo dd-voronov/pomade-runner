@@ -82,7 +82,7 @@ to what the card is about — the time, one line of text and the actions. Every 
 | Item | Text | Actions |
 |---|---|---|
 | failed run | "Failed: exit 1 · 2×" (the count when more than one since the item came) | `Open` · `Run now` · `Dismiss` |
-| service gave up | "Crashed 5× in 1 min — gave up." | `Start` · `View output` |
+| service gave up | "Crashed 5× in 1 min — gave up."; "Gave up — could not start: <why>" when it never got a terminal | `Start` · `View output` (not without a terminal) |
 | missed run waits | "Missed — it waits for you to pick a time." | `Run now` · `Run at…` · `Skip` |
 | agent run waits | "Waiting for approval at a permission prompt." / "Waiting for you to trust its folder." | `Open at the prompt` |
 | long run | "Running 3h — still expected?" | `Open` · `Stop` · `Dismiss` |

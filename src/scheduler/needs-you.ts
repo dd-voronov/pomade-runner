@@ -8,6 +8,7 @@
 //   the run's result or dismisses it, when a run of the job is done, or when the job's file is gone.
 // - **A service that gave up** after a crash loop is an item while it stays `failed` (Start, a fixed
 //   or disabled file, or its removal end it), and is noticed once — Needs-you items always notify.
+//   It carries the reason its last start failed and whether it has a session to open.
 // - Missed runs that wait for the person, agent runs waiting at a prompt, long-run warnings and the
 //   jobs the loop guard paused are runs' items (`runs.ts`), noticed with `missedNotice`,
 //   `waitingNotice`, `longRunNotice` and `loopNotice`.
@@ -178,7 +179,7 @@ export function loopNotice(name: string): NoticeParams {
 export function gaveUpNotice(service: ServiceStatus): NoticeParams {
   return {
     title: `${service.name} gave up`,
-    body: "It crashed 5 times within a minute, so Runner stopped restarting it. Start runs it again.",
+    body: `${service.problem === null ? "It crashed 5 times within a minute" : `It could not start: ${service.problem}`}, so Runner stopped restarting it. Start runs it again.`,
     action: { kind: "openApp", route: "" },
   };
 }
@@ -295,7 +296,9 @@ export function createNeedsYou(options: NeedsYouOptions): NeedsYou {
             name: service.name,
             project: service.project,
             at: service.lastCrashAt ?? 0,
-            detail: "crashed 5 times within a minute",
+            detail: service.problem ?? "crashed 5 times within a minute",
+            problem: service.problem,
+            session: service.session !== null,
           }),
         ),
       ];

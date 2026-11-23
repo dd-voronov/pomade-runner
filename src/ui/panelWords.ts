@@ -66,7 +66,7 @@ export function needLook(item: NeedsYouItem, now: number): NeedLook {
     case "run-failed":
       return { tone: "danger", help: "need.failed", when: pastWhen(item.at, now), text: `Failed: ${item.detail}${item.count > 1 ? ` · ${item.count}×` : ""}` };
     case "service-failed":
-      return { tone: "danger", help: "need.crashloop", when: pastWhen(item.at, now), text: "Crashed 5× in 1 min — gave up." };
+      return { tone: "danger", help: "need.crashloop", when: pastWhen(item.at, now), text: item.problem === null ? "Crashed 5× in 1 min — gave up." : `Gave up — could not start: ${item.problem}` };
     case "missed":
       return { tone: "warning", help: "need.waitforme", when: pastWhen(item.at, now), text: "Missed — it waits for you to pick a time." };
     case "waiting":

@@ -42,8 +42,8 @@ keep true.
 - **Records** — history (`history.ts`, JSON Lines per day, output log moved in at the run's end),
   `runs.json`, `switch.json`, `needs-you.json`, `services.json`, `renamed.json` in the workspace's records
   folder; sessions, projects, crash counts and the Pomade start in the machine-local state folder.
-- **Needs you and notices** (`needs-you.ts`) — one item per failed job; items for a service that gave up,
-  a missed run that waits, an agent run waiting for you, a long run, a loop-guard pause.
+- **Needs you and notices** (`needs-you.ts`) — one item per failed job; items for a service that gave up
+  (with why its last start failed, and whether it has a session), a missed run that waits, an agent run waiting for you, a long run, a loop-guard pause.
 - **Settings** (`settings.ts` pure, `settings-file.ts` read each tick and written field-only).
 - **Workspace** (`workspace-follow.ts`) — one workspace at a time; another recorded one restarts the
   scheduler on it, the keeper and its sessions untouched.

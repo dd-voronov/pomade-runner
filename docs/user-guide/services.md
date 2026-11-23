@@ -112,4 +112,8 @@ form](jobs.md) describes Delete.
 Needs you shows the service with "Crashed 5× in 1 min — gave up." and **Start** · **View output**, and
 you get a notice. Fix the cause (a port clash, a start command that exits at once), then press Start.
 
+A service whose command could not start at all — its folder does not exist — never gets a terminal.
+Its card says why ("Gave up — could not start: no such folder: …") and has **Start** only; its name
+opens the job in the Jobs view.
+
 Tickets: T-006, T-013.
