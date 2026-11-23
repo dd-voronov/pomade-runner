@@ -1,7 +1,8 @@
 // The one tooltip of a Runner surface, as the prototype's: any element with `data-tip` (a plain
 // line) or `data-help` (a key of `help.ts`: the text and its example) shows it on hover, and on
 // keyboard focus. It sits above the element, centred, kept inside the frame, below when there is no
-// room above; scrolling, Esc, leaving or blurring hides it. `TooltipLayer` is mounted once per surface.
+// room above; scrolling, Esc, leaving or blurring hides it. `data-tip-code` sets a `data-tip` line in
+// the mono type and wraps it, for a command shown whole. `TooltipLayer` is mounted once per surface.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
@@ -15,6 +16,7 @@ const EDGE = 6;
 interface Shown {
   target: HTMLElement;
   lines: readonly [string] | readonly [string, string];
+  code: boolean;
 }
 
 /** What `el`'s tooltip says; `null` when nothing (an unknown help key says nothing). */
@@ -36,7 +38,7 @@ export function TooltipLayer(): React.JSX.Element | null {
   useEffect(() => {
     const show = (target: HTMLElement | null): void => {
       const lines = target === null ? null : linesOf(target);
-      setShown(target === null || lines === null ? null : { target, lines });
+      setShown(target === null || lines === null ? null : { target, lines, code: target.dataset.tipCode !== undefined });
     };
     const hide = (): void => setShown(null);
     const over = (event: MouseEvent): void => show(targetOf(event.target));
@@ -94,7 +96,7 @@ export function TooltipLayer(): React.JSX.Element | null {
   if (shown === null) return null;
   const [text, example] = shown.lines;
   return (
-    <div ref={tip} id={TIP_ID} role="tooltip" className={example === undefined ? `${styles.tip} ${styles.plain}` : styles.tip} data-testid="tooltip">
+    <div ref={tip} id={TIP_ID} role="tooltip" className={[styles.tip, example === undefined && styles.plain, shown.code && styles.code].filter(Boolean).join(" ")} data-testid="tooltip">
       <span>{text}</span>
       {example !== undefined && <span className={styles.example}>{example}</span>}
     </div>

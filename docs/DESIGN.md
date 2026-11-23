@@ -1001,9 +1001,9 @@ to it, light theme only.
   result card. With no runs at all, the view says "Nothing here yet" with **New job**.
 - **Services** (`src/ui/ServicesView.tsx`): the "This project" chip (the tab's, as in Jobs) with
   the open project's name, and the summary "Services on Mac startup outlive Pomade · the switch
-  never pauses them"; the table head **Service · project · folder · command** and **Status**; then
-  every service file in start order — a valid one's row: the kind icon, the name, project · folder
-  · command; the status (`serviceLook`, `src/ui/serviceWords.ts`) — "running · up 3d 4h" over "no
+  never pauses them"; the table head **Service · project · folder**, **Command** and **Status**; then
+  every service file in start order — a valid one's row: the kind icon, the name over project ·
+  folder, the command, the status (`serviceLook`, `src/ui/serviceWords.ts`) — "running · up 3d 4h" over "no
   crashes" or "restarted 3× · last crash 14:02" (and "restart to apply its file" after an edit of
   its command or folder), "starting" over what it waits for ("waiting for port 4000", "up once it
   has run 5 s"), "failed · gave up" over "crashed 5× in 1 min · today 11:20", "stopped by you" over
@@ -1020,6 +1020,19 @@ to it, light theme only.
   line N: …" and **Open file**. The chip keeps the open project's services ("No services in this
   project." when none); with no service files, the view says what a service is and offers **New
   job**, as History does with no runs.
+  - **The Command column** (`CommandColumn.tsx`, `commandWidth.ts`): the command in the mono type,
+    one line cut with "…", on the name's line. The column's width is changed by dragging its right
+    edge in the head — a grip shows on hover, with the `col-resize` cursor — or by Left and Right on
+    the focused grip (16 px; Shift 64 px); between 120 and 720 px, 260 by default, and never more
+    than the row leaves once the kind icon, Service (120 px at least), Status (176 px) and the
+    actions have theirs, so Status and the actions never leave the tab; Service takes the rest. The
+    width is kept on this Mac per viewer (`localStorage`); without storage the view renders at the
+    default. A command that is cut is focusable and shows whole, wrapped in the mono type, in the
+    tooltip on hover and on keyboard focus; one that fits has no tooltip — measured, and again on
+    every resize of the column or the tab. In a tab narrower than 800 px the column gives way: the
+    head drops Command, the command goes under the name across the Service and Status columns (same
+    cut and tooltip), and Service and Status share what the actions leave. An invalid file's row
+    spans the middle columns in both.
 - **Settings** (`src/ui/SettingsView.tsx`): cards of rows — a name with its (i), a line under it, the
   control at the end.
   - **Load** and **History:** the four settings ("Settings"), each a stepper (− number +, its unit

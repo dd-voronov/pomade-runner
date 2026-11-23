@@ -1,0 +1,83 @@
+/* The head's Command label: the grip sits in the gap on the column's right edge. */
+.head.head {
+  position: relative;
+  min-width: 0;
+}
+
+.grip {
+  position: absolute;
+  top: 0;
+  right: calc(-1 * var(--space-3));
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: var(--space-3);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.grip::after {
+  content: "";
+  width: 2px;
+  height: 14px;
+  border-radius: 1px;
+  background: transparent;
+}
+
+.head:hover .grip::after,
+.grip:hover::after,
+.grip:focus-visible::after,
+.grip.dragging::after {
+  background: var(--border-strong);
+}
+
+.grip:hover::after,
+.grip.dragging::after {
+  background: var(--accent);
+}
+
+.grip:focus-visible {
+  outline: none;
+}
+
+.grip:focus-visible::after {
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* The cell is as tall as the name and its line below; the command is on the first of the two, level
+   with the name and the status words. */
+.cell {
+  min-width: 0;
+  height: calc(2 * 17px);
+}
+
+/* One mono line, cut with "…". */
+.command {
+  display: block;
+  height: 17px;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command:focus-visible {
+  border-radius: var(--radius-sm);
+}
+
+/* A tab too narrow for the column: the command goes under the name, across the service and status columns. */
+@container (max-width: 799px) {
+  .head.head {
+    display: none;
+  }
+
+  .cell {
+    grid-row: 2;
+    grid-column: 2 / 4;
+    height: 17px;
+  }
+}

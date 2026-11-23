@@ -124,7 +124,7 @@ test.describe("the Runner tab", () => {
     await expect(app(page).getByTestId("nav-services")).toHaveAttribute("aria-current", "page");
     await writeJob(page, "alpha/coda-web.md", VALID);
     const row = app(page).getByTestId("service-row");
-    await expect(row).toHaveText(/Coda web\s*Alpha · Projects\/alpha · \.\/start\.sh\s*running · up 0s\s*no crashes/);
+    await expect(row).toHaveText(/Coda web\s*Alpha · Projects\/alpha\s*\.\/start\.sh\s*running · up 0s\s*no crashes/);
     await shoot(page, "tab-services");
   });
 
@@ -1639,7 +1639,7 @@ test.describe("services: Running now and the Services view", () => {
       // Start order: workspace jobs first, then each project's, each by id.
       await expect(rows.locator('[data-testid="service-status"]')).toHaveText(["stopped by you", "running · up 3d 4h", "starting"]);
       await expect(rows.getByTestId("service-sub")).toHaveText([`yesterday ${shortClock(at(18, 10))}`, `restarted 3× · last crash ${shortClock(at(14, 2))}`, "waiting for port 4000"]);
-      await expect(rows.nth(1)).toContainText("Coda webAlpha · Projects/alpha · ./start.sh");
+      await expect(rows.nth(1)).toContainText("Coda webAlpha · Projects/alpha./start.sh");
       for (const [i, help] of ["st.stopped", "st.up", "st.starting"].entries()) await expect(rows.nth(i).getByTestId("service-status")).toHaveAttribute("data-help", help);
       await expect(rows.nth(1).getByTestId("service-sub")).toHaveAttribute("data-help", "st.restarted");
       await expect(rows.nth(0).getByRole("button")).toHaveText(["Start", "", "", ""]);
@@ -3426,5 +3426,211 @@ test.describe("agent jobs", () => {
     await expect(dialog.getByTestId("run-agent-note")).toHaveText("The agent left no message in this session.");
     await expect(dialog.getByRole("button", { name: "Run again" })).toBeVisible();
     await shoot(page, "agent-card-failed");
+  });
+});
+
+test.describe("T-022 · the Services view's Command column", () => {
+  test.use({ viewport: { width: 1040, height: 700 } });
+
+  const LONG = "npm run dev -- --host 0.0.0.0 --port 5173 --strictPort --logLevel info --config vite.config.ts --mode staging";
+  const MID = "npm run dev -- --host 0.0.0.0 --port 5173";
+  const job = (name: string, command: string, extra = ""): string => `---\nkind: service\nname: ${name}\nfolder: .\ncommand: ${command}\n${extra}---\n`;
+  const KEPT = "pomade-runner.services.command-width";
+
+  /** The Services view with a short command, a medium one, a long one, a disabled one, one waiting for Pomade and an invalid file. */
+  async function open(page: Page, reload = false): Promise<void> {
+    if (reload) await page.reload();
+    else await page.goto(harness({ route: "services" }));
+    await page.waitForFunction(() => typeof window.setServiceStatus === "function");
+    await writeJob(page, "short.md", job("Short", "./start.sh"));
+    await writeJob(page, "long.md", job("Long", LONG));
+    await writeJob(page, "mid.md", job("Mid", MID));
+    await writeJob(page, "off.md", job("Off", "./off.sh --quiet", "enabled: false\n"));
+    await writeJob(page, "watch.md", job("Watch", "./watch.sh --poll", "start: pomade-started\n"));
+    await writeJob(page, "bad.md", "---\nkind: service\nname: Bad\nfolder: .\ncommand: ./bad.sh\nready: { port: abc }\n---\n");
+    await page.evaluate(() => {
+      window.setServiceStatus("off", { state: "disabled", session: null });
+      window.setServiceStatus("watch", { state: "waiting-for-pomade", session: null });
+    });
+    await expect(app(page).getByTestId("service-row")).toHaveCount(5);
+  }
+
+  const cell = (page: Page, jobId: string) => app(page).locator(`[data-testid="service-row"][data-job="${jobId}"]`).getByTestId("service-command");
+  const width = async (page: Page, jobId: string): Promise<number> => (await cell(page, jobId).boundingBox())?.width ?? 0;
+
+  test("the command has a column of its own: the head names it, the line under the name is project · folder, a long one is cut with … and shows whole in a tooltip", async ({ page }) => {
+    await open(page);
+    const head = app(page).getByTestId("services").locator("> div").nth(1);
+    await expect(head).toHaveText("Service · project · folderCommandStatus");
+    const row = app(page).locator('[data-testid="service-row"][data-job="long"]');
+    await expect(row.getByRole("button", { name: "Restart" })).toBeVisible();
+    await expect(row).toContainText(/Long\s*Workspace · \./);
+    await expect(row.locator("[class*=sub]").first()).not.toContainText("npm run dev");
+
+    // The head's labels sit over their columns.
+    const left = async (locator: Locator): Promise<number> => (await locator.boundingBox())?.x ?? 0;
+    expect(await left(head.getByText("Command", { exact: true }))).toBeCloseTo(await left(cell(page, "long")), 0);
+    expect(await left(head.getByText("Status", { exact: true }))).toBeCloseTo(await left(row.getByTestId("service-status")), 0);
+
+    // Short fits: no tooltip, not a tab stop. Long is cut: focusable, with the whole command as its tip.
+    await expect(cell(page, "short")).toHaveAttribute("data-cut", "false");
+    await expect(cell(page, "short")).not.toHaveAttribute("data-tip", /.*/);
+    await expect(cell(page, "short")).not.toHaveAttribute("tabindex", /.*/);
+    await expect(cell(page, "long")).toHaveAttribute("data-cut", "true");
+    await expect(cell(page, "long")).toHaveAttribute("data-tip", LONG);
+    expect(await cell(page, "long").evaluate((el) => getComputedStyle(el).textOverflow)).toBe("ellipsis");
+
+    await cell(page, "long").hover();
+    await expect(app(page).getByTestId("tooltip")).toHaveText(LONG);
+    await cell(page, "short").hover();
+    await expect(app(page).getByTestId("tooltip")).toHaveCount(0);
+    await page.mouse.move(0, 0);
+    await expect(app(page).getByTestId("tooltip")).toHaveCount(0);
+    await page.keyboard.press("Tab");
+    await cell(page, "long").focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    await expect(cell(page, "long")).toBeFocused();
+    await expect(app(page).getByTestId("tooltip")).toHaveText(LONG);
+    await shoot(page, "t022-services-cut-tooltip");
+
+    // Level lines: the command's text sits on the name's line in every row; the columns hold in the tab.
+    const rows = app(page).getByTestId("service-row");
+    for (let i = 0; i < 5; i++) {
+      const name = await rows.nth(i).locator("[class*=name]").boundingBox();
+      const command = await rows.nth(i).getByTestId("service-command").boundingBox();
+      expect(command!.y + command!.height / 2).toBeCloseTo(name!.y + name!.height / 2, 0);
+      const actions = await rows.nth(i).locator("[class*=actions]").boundingBox();
+      expect(actions!.x + actions!.width).toBeLessThanOrEqual(1040 - 24);
+    }
+    await expect(app(page).getByTestId("service-invalid")).toContainText("Invalid:");
+    await page.mouse.move(0, 0);
+    await cell(page, "long").blur();
+    await expect(app(page).getByTestId("tooltip")).toHaveCount(0);
+    await shoot(page, "t022-services-default");
+  });
+
+  test("dragging the column's edge widens it until the command fits — then no tooltip — and the width is kept for the next time the tab opens", async ({ page }) => {
+    await open(page);
+    const row = app(page).locator('[data-testid="service-row"][data-job="mid"]');
+    const status = async (): Promise<number> => (await row.getByTestId("service-status").boundingBox())!.x;
+    await expect(cell(page, "mid")).toHaveAttribute("data-cut", "true");
+    const before = await width(page, "mid");
+    const statusAt = await status();
+    const drag = async (dx: number, name: string): Promise<void> => {
+      const box = (await app(page).getByTestId("command-grip").boundingBox())!;
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2, { steps: 8 });
+      await shoot(page, name);
+      await page.mouse.up();
+    };
+    await drag(80, "t022-services-dragging");
+    expect(await width(page, "mid")).toBeCloseTo(before + 80, 0);
+    expect(await status()).toBeCloseTo(statusAt, 0);
+    await expect(cell(page, "mid")).toHaveAttribute("data-cut", "false");
+    await expect(cell(page, "mid")).not.toHaveAttribute("data-tip", /.*/);
+    await page.mouse.move(0, 0);
+    await cell(page, "mid").hover();
+    await expect(app(page).getByTestId("tooltip")).toHaveCount(0);
+    await page.mouse.move(0, 0);
+    await shoot(page, "t022-services-widened");
+
+    // Closed and opened again: the same width.
+    const widened = await width(page, "mid");
+    await open(page, true);
+    expect(await width(page, "mid")).toBeCloseTo(widened, 0);
+
+    // The edge never pushes Status or the actions out of the tab, and stops at the minimum.
+    await drag(900, "t022-services-widest");
+    expect(await status()).toBeCloseTo(statusAt, 0);
+    expect(await width(page, "mid")).toBeGreaterThan(widened);
+    await drag(-1500, "t022-services-narrowest");
+    expect(await width(page, "mid")).toBeCloseTo(120, 0);
+    expect(await status()).toBeCloseTo(statusAt, 0);
+  });
+
+  test("the grip is a separator with a keyboard: Left and Right change the width in steps, Shift in larger ones", async ({ page }) => {
+    await open(page);
+    const grip = app(page).getByTestId("command-grip");
+    await expect(grip).toHaveAttribute("role", "separator");
+    expect(await grip.evaluate((el) => getComputedStyle(el).cursor)).toBe("col-resize");
+    const start = await width(page, "mid");
+    await grip.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(() => width(page, "mid")).toBeCloseTo(start + 16, 0);
+    await page.keyboard.press("Shift+ArrowRight");
+    await expect.poll(() => width(page, "mid")).toBeCloseTo(start + 80, 0);
+    await page.keyboard.press("ArrowLeft");
+    await expect.poll(() => width(page, "mid")).toBeCloseTo(start + 64, 0);
+    await expect(grip).toHaveAttribute("aria-valuenow", String(Math.round(start + 64)));
+    expect(await app(page).locator("html").evaluate((_, key) => window.localStorage.getItem(key), KEPT)).toBe(String(Math.round(start + 64)));
+    await shoot(page, "t022-services-grip-focus");
+  });
+
+  test("with a store that refuses, the view renders at the default width and still resizes", async ({ page }) => {
+    await page.addInitScript(() => {
+      if (window.parent === window) return;
+      Object.defineProperty(window, "localStorage", {
+        configurable: true,
+        get() {
+          throw new DOMException("blocked", "SecurityError");
+        },
+      });
+    });
+    await open(page);
+    expect(await width(page, "mid")).toBeCloseTo(260, 0);
+    await app(page).getByTestId("command-grip").focus();
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(() => width(page, "mid")).toBeCloseTo(276, 0);
+  });
+
+  for (const tab of [640, 560]) {
+    test(`a ${tab} px tab puts the command under the name — still cut, still with its tooltip — and nothing overlaps or leaves the tab`, async ({ page }) => {
+      await page.setViewportSize({ width: tab, height: 700 });
+      await open(page);
+      await expect(app(page).getByTestId("command-grip")).toBeHidden();
+      const rows = app(page).getByTestId("service-row");
+      for (let i = 0; i < 5; i++) {
+        const row = (await rows.nth(i).boundingBox())!;
+        const boxes = [
+          await rows.nth(i).locator("[class*=main]").boundingBox(),
+          await rows.nth(i).getByTestId("service-command").boundingBox(),
+          await rows.nth(i).getByTestId("service-status").boundingBox(),
+          await rows.nth(i).locator("[class*=actions]").boundingBox(),
+        ];
+        for (const [a, b] of [[0, 1], [0, 3], [1, 3], [2, 3], [0, 2]] as const) {
+          const [p, q] = [boxes[a]!, boxes[b]!];
+          const apart = p.x + p.width <= q.x + 0.5 || q.x + q.width <= p.x + 0.5 || p.y + p.height <= q.y + 0.5 || q.y + q.height <= p.y + 0.5;
+          expect(apart, `row ${i}: ${a} and ${b} overlap`).toBe(true);
+        }
+        for (const box of boxes) expect(box!.x + box!.width).toBeLessThanOrEqual(row.x + row.width + 0.5);
+      }
+      const command = cell(page, "long");
+      await expect(command).toHaveAttribute("data-cut", "true");
+      const name = (await app(page).locator('[data-testid="service-row"][data-job="long"] [class*=main]').boundingBox())!;
+      expect((await command.boundingBox())!.y).toBeGreaterThanOrEqual(name.y + name.height - 1);
+      await command.hover();
+      await expect(app(page).getByTestId("tooltip")).toHaveText(LONG);
+      await expect(app(page).getByTestId("service-invalid")).toContainText("Invalid:");
+      const invalid = (await app(page).getByTestId("service-invalid").boundingBox())!;
+      const invalidActions = (await app(page).getByTestId("service-invalid").getByRole("button", { name: "Open file" }).boundingBox())!;
+      expect(invalidActions.x + invalidActions.width).toBeLessThanOrEqual(invalid.x + invalid.width);
+      await page.mouse.move(0, 0);
+      await shoot(page, `t022-services-narrow-${tab}`);
+      expect(await app(page).locator("html").evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    });
+  }
+
+  test("a tab resized while open re-measures: a command cut at one width fits at a wider one and is cut again at a narrower", async ({ page }) => {
+    await page.setViewportSize({ width: 1500, height: 700 });
+    await open(page);
+    await expect(cell(page, "mid")).toHaveAttribute("data-cut", "true");
+    await app(page).getByTestId("command-grip").focus();
+    for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
+    await expect(cell(page, "mid")).toHaveAttribute("data-cut", "false");
+    await page.setViewportSize({ width: 860, height: 700 });
+    await expect(cell(page, "mid")).toHaveAttribute("data-cut", "true");
+    await expect(cell(page, "mid")).toHaveAttribute("data-tip", MID);
   });
 });

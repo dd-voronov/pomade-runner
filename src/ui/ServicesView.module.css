@@ -1,5 +1,31 @@
+/* The view is the container the columns answer to. */
+.view {
+  container-type: inline-size;
+}
+
+/* kind · service · command · status · actions. The Command column is as wide as the viewer set it
+   (`--cmd-w`) and never more than the row has left over once the others take theirs
+   (`--cmd-reserved`, with the Service column's least): Service takes the rest, and Status and the
+   actions keep their width. */
 .cols {
-  grid-template-columns: 16px minmax(0, 1.2fr) minmax(0, 1fr) 262px;
+  grid-template-columns: 16px minmax(0, 1fr) minmax(0, min(var(--cmd-w), calc(100% - var(--cmd-reserved)))) 192px 262px;
+}
+
+/* A view narrower than 800 px has no room for the Command column: the head drops it, the command
+   goes under the name (the cell's own rule), and the columns are as before. */
+@container (max-width: 799px) {
+  .cols {
+    grid-template-columns: 16px minmax(0, 1fr) minmax(0, 1fr) 262px;
+  }
+}
+
+/* The Service head is the one that may be cut: the column is the one that gives room. */
+.headText.headText {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .row {
@@ -39,7 +65,7 @@
 }
 
 .invalidText {
-  grid-column: 2 / 4;
+  grid-column: 2 / 5;
   min-width: 0;
 }
 
@@ -71,4 +97,10 @@
   padding: var(--space-4) var(--space-2);
   color: var(--text-faint);
   font-size: var(--fs-sm);
+}
+
+@container (max-width: 799px) {
+  .invalidText {
+    grid-column: 2 / 4;
+  }
 }

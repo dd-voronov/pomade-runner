@@ -5,6 +5,7 @@ import { editRoute } from "../integrations/runner-api";
 import { describeJobError } from "../jobs/format";
 import { JOBS_FOLDER, type InvalidJob, type JobEntry, type ServiceJob } from "../jobs/model";
 import type { ServiceStatus } from "../keeper/model";
+import { CommandCell, CommandHead, commandVars, useCommandWidth } from "./CommandColumn";
 import { Button, Chip, EmptyBlock, Help, Icon, IconButton, KindCell, RowCell, RowMain, Status, TableHead, TableRow, useToast } from "./kit";
 import { fallbackService } from "./jobWords";
 import { useOpenServiceTab } from "./RunningNow";
@@ -29,7 +30,8 @@ function serviceEntries(jobs: readonly JobEntry[]): ServiceEntry[] {
     .sort((a, b) => startOrder(idOf(a), idOf(b)));
 }
 
-/** The Services view: every service with its project, folder and command, where it stands, Start or
+/** The Services view: every service with its project and folder, its command in a column of its own
+ *  (as wide as the viewer dragged it to), where it stands, Start or
  *  Restart · Stop, and its terminal (once it has a session), form and file; an invalid service file with its error. The
  *  "This project" chip keeps the services of the project Pomade has open. */
 export function ServicesView({
@@ -58,6 +60,7 @@ export function ServicesView({
   const toast = useToast();
   const openTab = useOpenServiceTab(host);
   const act = useServiceAction(host);
+  const command = useCommandWidth();
   const all = serviceEntries(jobs);
 
   if (all.length === 0) {
@@ -74,7 +77,7 @@ export function ServicesView({
     host.tabs.openFile({ path }).catch((err: unknown) => toast(`Could not open ${path}: ${err instanceof Error ? err.message : String(err)}`));
   };
   return (
-    <section data-testid="services">
+    <section className={styles.view} style={commandVars(command.width)} data-testid="services">
       <ViewFilters summary="Services on Mac startup outlive Pomade · the switch never pauses them">
         <Chip on={thisProject} count={active?.name ?? "…"} onClick={() => onThisProject(!thisProject)} data-testid="this-project">
           This project
@@ -82,7 +85,8 @@ export function ServicesView({
       </ViewFilters>
       <TableHead columns={styles.cols}>
         <span />
-        <span>Service · project · folder · command</span>
+        <span className={styles.headText}>Service · project · folder</span>
+        <CommandHead width={command.width} onChange={command.set} onCommit={command.commit} />
         <span>Status</span>
         <span />
       </TableHead>
@@ -130,10 +134,11 @@ export function ServicesView({
                 name={job.name}
                 sub={
                   <>
-                    {projectName(job.project)} · <span className={styles.mono}>{job.folder === "" ? "." : job.folder}</span> · <span className={styles.mono}>{job.command}</span>
+                    {projectName(job.project)} · <span className={styles.mono}>{job.folder === "" ? "." : job.folder}</span>
                   </>
                 }
               />
+              <CommandCell command={job.command} />
               <RowCell
                 sub={
                   <span data-help={look.subHelp ?? undefined} className={look.subHelp === null ? undefined : styles.helped} data-testid="service-sub">

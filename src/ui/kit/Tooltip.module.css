@@ -28,3 +28,11 @@
 .example {
   color: var(--text-muted);
 }
+
+/* A command shown whole: mono, wrapped anywhere, wider than a sentence's tip. */
+.code {
+  max-width: min(480px, calc(100vw - 12px));
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
