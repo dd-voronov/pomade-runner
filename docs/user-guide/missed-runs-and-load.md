@@ -35,12 +35,17 @@ Runner counts the runs a job missed, and the run or record of its decision says 
 runs span days. A single missed run reads as `caught up`, `missed · skipped`, `missed · waiting for
 you`. History, the result card, Needs you, the notice and `pomade-runner history` say the same.
 
+No policy runs every missed run by itself; **Run all** does, when you ask (below).
+
 ### Wait for me
 
 The missed run is a Needs-you item, "Inbox triage · missed Sun 3:00", and a notice; one per job (a later
 miss moves it to the later time and adds to its count: "missed 4 runs, …"). Its card offers:
 
-- **Run now** — runs it now as a run of yours (trigger `manual`).
+- **Run now** — runs it now as a run of yours (trigger `manual`). When it stands for more than one
+  missed run the button reads **Run once**: one run, and the card is gone.
+- **Run all N** — only when it stands for more than one: runs the job N times, one after another.
+  See **Run all** below.
 - **Run at…** — waits, queued, until the time you type, and shows in Next up. Type a time (`23:00`: the
   next one), a day and a time (`tomorrow 9:00`, `2026-11-20 23:00`), or elapsed time (`+2h`). A time that
   has passed, or a day without a time, is refused with the reason. It survives a restart of Runner.
@@ -48,6 +53,27 @@ miss moves it to the later time and adds to its count: "missed 4 runs, …"). It
 
 A job disabled, invalid or deleted while its run waits settles as `missed · skipped · its job is
 disabled` (or why else).
+
+### Run all
+
+**Run all N** on a missed run that waits for you, or **Run the other N** on the result card of a
+caught-up run that stood for more than one (`missed 4 runs, … · caught up once`: the other 3), runs every
+missed run:
+
+- The runs go **one after another**, never two at once, whatever the job's overlap. Only the next one is
+  in the queue at a time, and it waits like any run — for the switch, the warm-up after login or wake, a
+  low-priority slot.
+- Each is a History row, trigger `caught up 2 of 4`; its card's line says which missed runs it is part of
+  ("Missed 4 runs, 17:40–17:46 — caught up 2 of 4").
+- A run that fails does not stop the rest. **Stopping one by hand drops the rest**, with one skipped row
+  that says so: `skipped · 2 dropped: you stopped run 2 of 4`. So does a run that cannot start — its job
+  disabled, invalid or deleted meanwhile (`2 dropped: run 2 of 4 did not start`).
+- More than 20 runs ask once more, naming the number; **Cancel** runs nothing.
+- The switch holds the next run like any other; back to **Running**, the rest go on. Runner restarted —
+  or the Mac off — in the middle, the rest go on when it is back.
+- **Run the other N** shows while that caught-up run is the job's latest run and no Run all of the job is
+  going.
+- From the command line: `pomade-runner missed <job> run-all`.
 
 ## If still running
 

@@ -6,9 +6,12 @@ function focusables(root: HTMLElement): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => !el.closest("[hidden]"));
 }
 
+/** The traps mounted, the latest last: only the latest — a confirm over a result card — takes the keys. */
+const traps: object[] = [];
+
 /** While mounted, keeps keyboard focus inside `root`: focuses `initial` (the root itself when none)
  *  on mount, wraps Tab and Shift+Tab, calls `onEscape` on Esc, and gives focus back
- *  to what had it on unmount. */
+ *  to what had it on unmount. A trap mounted over another takes the keys until it goes. */
 export function useFocusTrap(root: RefObject<HTMLElement | null>, onEscape: () => void, initial?: RefObject<HTMLElement | null>): void {
   const escape = useRef(onEscape);
   useEffect(() => {
@@ -18,8 +21,11 @@ export function useFocusTrap(root: RefObject<HTMLElement | null>, onEscape: () =
     const el = root.current;
     if (el === null) return;
     const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const self = {};
+    traps.push(self);
     (initial?.current ?? el).focus();
     const key = (event: KeyboardEvent): void => {
+      if (traps.at(-1) !== self) return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -46,6 +52,7 @@ export function useFocusTrap(root: RefObject<HTMLElement | null>, onEscape: () =
     document.addEventListener("keydown", key, true);
     return () => {
       document.removeEventListener("keydown", key, true);
+      traps.splice(traps.indexOf(self), 1);
       if (before?.isConnected === true) before.focus();
     };
   }, [root, initial]);

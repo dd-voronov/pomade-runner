@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { APP_VERSION } from "../../app";
 import type { RunnerSession, ServicesReport, ServiceStatus, SessionsReport } from "../../keeper/model";
 import type { ControlCallResult } from "../../scheduler/control/client";
-import type { ControlMethod, ControlMethods, JobEnabled, JobResumed, RunStarted, SchedulerStatus } from "../../scheduler/control/protocol";
-import type { ActiveRun, HistoryPage, JobListing, RunsReport, SwitchState } from "../../scheduler/model";
+import type { ControlMethod, ControlMethods, JobEnabled, JobResumed, MissedSettled, RunStarted, SchedulerStatus } from "../../scheduler/control/protocol";
+import { dayTime, type ActiveRun, type HistoryPage, type JobListing, type RunsReport, type SwitchState } from "../../scheduler/model";
 import type { ProjectRecord } from "../model";
 import { runCli, USAGE } from "./cli";
 
@@ -30,6 +30,8 @@ interface World {
   switch?: ControlCallResult<SwitchState> | null;
   /** The answer to resumeJob. */
   resumed?: ControlCallResult<JobResumed> | null;
+  /** The answer to missed. */
+  missed?: ControlCallResult<MissedSettled> | null;
   /** The settings file's text; `null` (the default) = none. */
   settings?: string | null;
   /** The params of every call. */
@@ -78,6 +80,8 @@ async function run(args: string[], status: StatusResult = { status: "not-running
           case "resumeJob":
             world.actions?.push({ verb: method, job: (params as { job: string }).job });
             return world.resumed;
+          case "missed":
+            return world.missed;
         }
       };
       const given = answer();
@@ -349,7 +353,7 @@ describe("pomade-runner", () => {
 
   describe("runs", () => {
     const at = (time: string): number => Date.parse(`2026-11-17T${time}.000Z`);
-    const base = { job: "backup", name: "Backup", kind: "script" as const, project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled" as const, cause: null, dueAt: at("12:00:00"), agent: null, missed: null };
+    const base = { job: "backup", name: "Backup", kind: "script" as const, project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled" as const, cause: null, dueAt: at("12:00:00"), agent: null, missed: null, series: null };
     const failed = { ...base, state: "failed" as const, action: null, reason: null, startedAt: at("12:00:00"), endedAt: at("12:00:03"), durationMs: 3000, exitCode: 1, signal: null, log: "/ud/output/backup/r.log", lastLines: [], git: null, limitHit: null };
     const listing: JobListing = { job: "backup", name: "Backup", kind: "script", enabled: true, trigger: "daily at 13:00", problem: null, next: at("13:00:00"), finished: false, last: failed, service: null };
     const fresh = { lowPriority: true, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false };
@@ -379,7 +383,7 @@ describe("pomade-runner", () => {
           "backup  Backup  run 20261117-120000-abcdef  running, since 2026-11-17T12:00:00.000Z\n" +
           "c  C  run r2  queued · 1 ahead\n" +
           "w  Weekly  run r3  missed · waiting for you, due 2026-11-17T02:00:00.000Z\n" +
-          "needs you: Weekly — missed Tue 03:00; it waits for you: Run now, Run at… or Skip in Runner\n" +
+          "needs you: Weekly — missed Tue 03:00; it waits for you: pomade-runner missed w run-once|run-at <time>|skip, or in Runner\n" +
           "needs you: Backup — running 3 h — still expected?\n" +
           "needs you: Lint — paused: triggered 10× in 10 min — looks like a loop; pomade-runner resume-job lint lets hooks and chains fire it again\n",
       });
@@ -493,6 +497,33 @@ describe("pomade-runner", () => {
       });
       expect(await run(["resume-job"])).toMatchObject({ code: 2, err: "pomade-runner resume-job: names no job. Usage: pomade-runner resume-job <job> — its id or its name.\n" });
       expect(await run(["resume-job", "lint"])).toMatchObject({ code: 1, err: expect.stringContaining("it runs the jobs") as string });
+    });
+
+    it("T-026 · missed settles a job's missed runs: run-all queues every one, run-once, run-at <time> and skip as in Runner", async () => {
+      const calls: { method: ControlMethod; params: unknown }[] = [];
+      const settled = (at: number | null, runs: number): ControlCallResult<MissedSettled> => ({ status: "ok", value: { job: "weekly", at, runs } });
+      expect(await run(["missed", "Weekly", "run-all"], undefined, { missed: settled(1, 3), calls })).toMatchObject({ code: 0, out: "weekly  3 runs queued, one after another\n" });
+      expect(await run(["missed", "weekly", "run-once"], undefined, { missed: settled(1, 1), calls })).toMatchObject({ code: 0, out: "weekly  runs once now\n" });
+      expect(await run(["missed", "weekly", "run-at", "tomorrow 9:00"], undefined, { missed: settled(at("23:00:00"), 1), calls })).toMatchObject({ code: 0, out: `weekly  runs at ${dayTime(at("23:00:00"))}\n` });
+      expect(await run(["missed", "weekly", "skip"], undefined, { missed: settled(null, 0), calls })).toMatchObject({ code: 0, out: "weekly  skipped: recorded as missed · skipped by you\n" });
+      expect(calls).toEqual([
+        { method: "missed", params: { job: "Weekly", choice: { kind: "run-all" } } },
+        { method: "missed", params: { job: "weekly", choice: { kind: "run-now" } } },
+        { method: "missed", params: { job: "weekly", choice: { kind: "run-at", at: "tomorrow 9:00" } } },
+        { method: "missed", params: { job: "weekly", choice: { kind: "skip" } } },
+      ]);
+      expect(await run(["missed", "weekly", "run-all"], undefined, { missed: { status: "failed", code: "refused", message: 'cannot settle the missed runs of "weekly": no missed run of "weekly" waits for you' } })).toMatchObject({
+        code: 1,
+        err: 'pomade-runner missed: cannot settle the missed runs of "weekly": no missed run of "weekly" waits for you.\n',
+      });
+      const usage = "Usage: pomade-runner missed <job> run-once|run-all|run-at <time>|skip.\n";
+      expect(await run(["missed"])).toMatchObject({ code: 2, err: `pomade-runner missed: names no job. ${usage}` });
+      expect(await run(["missed", "weekly"])).toMatchObject({ code: 2, err: `pomade-runner missed: names no choice. ${usage}` });
+      expect(await run(["missed", "weekly", "all"])).toMatchObject({ code: 2, err: `pomade-runner missed: unknown choice "all". ${usage}` });
+      expect(await run(["missed", "weekly", "run-at"])).toMatchObject({ code: 2, err: `pomade-runner missed: run-at names no time. ${usage}` });
+      expect(await run(["missed", "weekly", "skip", "now"])).toMatchObject({ code: 2, err: `pomade-runner missed: unexpected "now". ${usage}` });
+      expect(await run(["missed", "weekly", "run-all"])).toMatchObject({ code: 1, err: expect.stringContaining("it runs the jobs") as string });
+      expect((await run(["--help"])).out).toContain("pomade-runner missed <job> <choice>");
     });
 
     it("enable and disable write the job's file and print it", async () => {

@@ -20,6 +20,7 @@ function run(job: string, state: "queued" | "running", extra: Partial<ActiveRun>
     dueAt: 0,
     agent: null,
     missed: null,
+    series: null,
     state,
     lowPriority: true,
     runAt: null,
@@ -126,6 +127,12 @@ describe("the queue", () => {
     // Two queued runs of one parallel job both start, slots allowing.
     expect(fates([run("p", "queued"), run("p", "queued")], state({ overlaps: { p: "parallel" } }))).toEqual({ p: "start" });
     expect(planQueue([run("p", "queued"), run("p", "queued")], state({ overlaps: { p: "queue" } })).start).toHaveLength(1);
+  });
+
+  it("a run of a Run all waits for its job's previous run whatever the overlap: its runs go one after another", () => {
+    const series = { n: 2, of: 3 };
+    expect(fates([run("p", "running"), run("p", "queued", { trigger: "caught-up", series })], state({ overlaps: { p: "parallel" } }))).toEqual({ p: { kind: "previous-run" } });
+    expect(fates([run("p", "queued", { trigger: "caught-up", series })], state({ overlaps: { p: "parallel" } }))).toEqual({ p: "start" });
   });
 
   it("a missed run waiting for the person neither starts nor takes a slot", () => {

@@ -310,7 +310,7 @@ describe("missed runs and load", () => {
 
     it("Run at… 23:00 runs it at 23:00, through the queue; it shows in Next up", async () => {
       const run = await missedSunday();
-      expect(await runs.missed("weekly", { kind: "run-at", at: "23:00" })).toEqual({ ok: true, at: ms("2026-11-23T23:00:00") });
+      expect(await runs.missed("weekly", { kind: "run-at", at: "23:00" })).toEqual({ ok: true, at: ms("2026-11-23T23:00:00"), runs: 1 });
       expect(runs.needsYou()).toEqual([]);
       expect(going("weekly")).toEqual([expect.objectContaining({ run: run.run, state: "queued", trigger: "caught-up", runAt: ms("2026-11-23T23:00:00"), waits: { kind: "time", at: ms("2026-11-23T23:00:00") } })]);
       expect(runs.nextUp()[0]).toEqual({ job: "weekly", name: "Weekly", project: null, at: ms("2026-11-23T23:00:00"), held: false });
@@ -323,7 +323,7 @@ describe("missed runs and load", () => {
 
     it("Skip records missed · skipped by you and clears the item", async () => {
       const run = await missedSunday();
-      expect(await runs.missed("Weekly", { kind: "skip" })).toEqual({ ok: true, at: null });
+      expect(await runs.missed("Weekly", { kind: "skip" })).toEqual({ ok: true, at: null, runs: 0 });
       expect(runs.needsYou()).toEqual([]);
       expect(runs.active()).toEqual([]);
       expect(finished).toEqual([expect.objectContaining({ run: run.run, state: "missed", reason: "skipped by you" })]);
@@ -337,7 +337,7 @@ describe("missed runs and load", () => {
       expect(runs.needsYou()).toHaveLength(1);
       sessions.end(sessions.latest("weekly"), "exited", 0);
       await runs.tick();
-      expect(await runs.missed("weekly", { kind: "run-now" })).toEqual({ ok: true, at: now.getTime() });
+      expect(await runs.missed("weekly", { kind: "run-now" })).toEqual({ ok: true, at: now.getTime(), runs: 1 });
       expect(spawned()).toEqual(["weekly manual", "weekly manual"]);
       expect(runs.needsYou()).toEqual([]);
     });
@@ -356,6 +356,178 @@ describe("missed runs and load", () => {
       expect(await runs.missed("weekly", { kind: "run-at", at: "soonish" })).toEqual({ ok: false, reason: '"soonish" is not a time — write e.g. 23:00, tomorrow 9:00 or +2h' });
       expect(await runs.missed("weekly", { kind: "run-at", at: "2026-11-23 08:00" })).toEqual({ ok: false, reason: "2026-11-23 08:00 has passed — pick a later time" });
       expect(runs.needsYou()).toHaveLength(1);
+    });
+  });
+
+  describe("run all (T-026)", () => {
+    const DAILY = "schedule:\n  daily: { at: 7:00 }\n";
+
+    beforeEach(() => {
+      // A restart with the keeper alive: no login, no warm-up — the runs go as the queue lets them.
+      sessions.loggedIn = false;
+    });
+
+    /** A job off across the 7:00 of Nov 18, 19 and 20: three missed runs, decided by its policy. */
+    async function missedThree(extra = "missed: wait-for-me\n"): Promise<void> {
+      files = { "daily.md": script("Daily", `${DAILY}${extra}`) };
+      load();
+      await restart("2026-11-20T09:00:00");
+    }
+
+    /** End the running run of `daily` as the keeper says, and tick. */
+    async function end(reason: "exited" | "crashed" | "stopped-by-you" = "exited", code: number | null = 0): Promise<void> {
+      sessions.end(sessions.latest("daily"), reason, code);
+      now = new Date(now.getTime() + 5_000);
+      await runs.tick();
+    }
+
+    const dailyRecords = async (): Promise<RunRecord[]> => (await records()).filter((record) => record.job === "daily").reverse();
+    const three = { count: 3, first: ms("2026-11-18T07:00:00"), last: ms("2026-11-20T07:00:00") };
+
+    it("Run all 3 runs the job three times, one after another — whatever its overlap — each a History row, caught up n of 3; a failed one goes on to the next", async () => {
+      await missedThree("missed: wait-for-me\noverlap: parallel\n");
+      expect(runs.needsYou()).toEqual([expect.objectContaining({ kind: "missed", missed: three })]);
+      expect(notices).toEqual([expect.objectContaining({ title: "Daily · missed 3 runs, Wed 07:00–Fri 07:00", body: "It waits for you: Run once, Run all 3, Run at… or Skip." })]);
+      expect(await runs.missed("Daily", { kind: "run-all" })).toEqual({ ok: true, at: now.getTime(), runs: 3 });
+      expect(runs.needsYou()).toEqual([]);
+      for (const n of [1, 2, 3]) {
+        // One run of the series at a time: the one running, nothing queued beside it.
+        expect(going("daily")).toEqual([expect.objectContaining({ state: "running", trigger: "caught-up", missed: three, series: { n, of: 3 } })]);
+        expect(spawned()).toHaveLength(n);
+        await end(n === 2 ? "crashed" : "exited", n === 2 ? 1 : 0);
+      }
+      expect(going("daily")).toEqual([]);
+      expect(spawned()).toEqual(["daily caught-up", "daily caught-up", "daily caught-up"]);
+      const rows = await dailyRecords();
+      expect(rows.map((record) => [record.state, record.trigger, record.series])).toEqual([
+        ["done", "caught-up", { n: 1, of: 3 }],
+        ["failed", "caught-up", { n: 2, of: 3 }],
+        ["done", "caught-up", { n: 3, of: 3 }],
+      ]);
+      // One after another: each started once the one before it ended.
+      for (const [index, after] of rows.entries()) if (index > 0) expect(after.startedAt ?? 0).toBeGreaterThanOrEqual(rows[index - 1]?.endedAt ?? Infinity);
+      expect(rows.map((record) => runTriggerWords(record))).toEqual(["caught up 1 of 3", "caught up 2 of 3", "caught up 3 of 3"]);
+    });
+
+    it("Run once runs one, as a run of yours, and clears the card; the other missed runs are not run", async () => {
+      await missedThree();
+      expect(await runs.missed("daily", { kind: "run-now" })).toEqual({ ok: true, at: now.getTime(), runs: 1 });
+      expect(runs.needsYou()).toEqual([]);
+      await end();
+      expect(spawned()).toEqual(["daily manual"]);
+      expect(going("daily")).toEqual([]);
+    });
+
+    it("stopping one of them by hand drops the rest, with a record that says so", async () => {
+      files = { "daily.md": script("Daily", `${DAILY}missed: wait-for-me\n`) };
+      load();
+      await restart("2026-11-21T09:00:00");
+      expect(await runs.missed("daily", { kind: "run-all" })).toMatchObject({ ok: true, runs: 4 });
+      await end();
+      await end("stopped-by-you", null);
+      await awake(new Date(now.getTime() + 60_000).toISOString(), 10_000);
+      expect(spawned()).toHaveLength(2);
+      expect(going("daily")).toEqual([]);
+      const rows = await dailyRecords();
+      expect(rows.map((record) => runWords(record))).toEqual(["done", "stopped by you", "skipped · 2 dropped: you stopped run 2 of 4"]);
+      expect(rows[2]).toMatchObject({ trigger: "caught-up", series: null, missed: null, startedAt: null });
+    });
+
+    it("a job disabled meanwhile: the next run is skipped, and drops the rest", async () => {
+      await missedThree();
+      await runs.missed("daily", { kind: "run-all" });
+      files = { "daily.md": script("Daily", `${DAILY}missed: wait-for-me\nenabled: false\n`) };
+      load();
+      await end();
+      expect((await dailyRecords()).map((record) => runWords(record))).toEqual(["done", "skipped · its job is disabled", "skipped · 1 dropped: run 2 of 3 did not start"]);
+      expect(going("daily")).toEqual([]);
+    });
+
+    it("a job deleted meanwhile: the rest are dropped once the running one ends", async () => {
+      await missedThree();
+      await runs.missed("daily", { kind: "run-all" });
+      files = {};
+      load();
+      await end();
+      expect((await dailyRecords()).map((record) => runWords(record))).toEqual(["done", "skipped · 2 dropped: its job file is gone or invalid"]);
+      expect(going("daily")).toEqual([]);
+    });
+
+    it("the series lives in runs.json: a scheduler restarted mid-series records the run that ended while it was down, once, and goes on", async () => {
+      await missedThree();
+      await runs.missed("daily", { kind: "run-all" });
+      await runs.close();
+      sessions.end(sessions.latest("daily"), "exited", 0);
+      await restart("2026-11-20T09:05:00");
+      expect(going("daily")).toEqual([expect.objectContaining({ state: "running", series: { n: 2, of: 3 } })]);
+      await end();
+      await end();
+      expect((await dailyRecords()).map((record) => record.series)).toEqual([{ n: 1, of: 3 }, { n: 2, of: 3 }, { n: 3, of: 3 }]);
+      expect(spawned()).toHaveLength(3);
+    });
+
+    it("a scheduler that dies after writing a stopped run's record and the drop's, before runs.json, writes neither again", async () => {
+      await missedThree();
+      await runs.missed("daily", { kind: "run-all" });
+      const before = structuredClone(store.saved);
+      sessions.end(sessions.latest("daily"), "stopped-by-you", null);
+      // It dies before it forgets the ended session, too.
+      const ended = new Map(sessions.sessions);
+      now = new Date(now.getTime() + 5_000);
+      await runs.tick();
+      expect((await dailyRecords()).map((record) => record.state)).toEqual(["stopped-by-you", "skipped"]);
+      await runs.close();
+      store.saved = before;
+      for (const [id, session] of ended) sessions.sessions.set(id, session);
+      now = new Date("2026-11-20T09:05:00");
+      await open();
+      await runs.tick();
+      expect((await dailyRecords()).map((record) => runWords(record))).toEqual(["stopped by you", "skipped · 2 dropped: you stopped run 1 of 3"]);
+      expect(going("daily")).toEqual([]);
+    });
+
+    it("the switch holds the next run of a series; back to Running it goes on, still the person's Run all", async () => {
+      await missedThree();
+      await runs.missed("daily", { kind: "run-all" });
+      await runs.setSwitch("pause-low");
+      await end();
+      expect(going("daily")).toEqual([expect.objectContaining({ state: "queued", series: { n: 2, of: 3 }, waits: { kind: "switch", position: "pause-low" } })]);
+      await awake(new Date(now.getTime() + 10 * 60_000).toISOString(), 30_000);
+      expect(going("daily")).toEqual([expect.objectContaining({ state: "queued", series: { n: 2, of: 3 } })]);
+      await runs.setSwitch("running");
+      expect(going("daily")).toEqual([expect.objectContaining({ state: "running", series: { n: 2, of: 3 } })]);
+      expect(runs.needsYou()).toEqual([]);
+    });
+
+    it("an on-time run does not cover a run of the series", async () => {
+      await missedThree("missed: wait-for-me\noverlap: parallel\n");
+      await runs.missed("daily", { kind: "run-all" });
+      await awake("2026-11-21T07:00:30", 3_600_000);
+      expect(going("daily")).toEqual([expect.objectContaining({ trigger: "caught-up", series: { n: 1, of: 3 } }), expect.objectContaining({ trigger: "scheduled" })]);
+    });
+
+    it("no policy makes a series on its own: run on wake catches up once; Run the other 2 runs the rest, one after another, once", async () => {
+      await missedThree("");
+      expect(spawned()).toEqual(["daily caught-up"]);
+      await end();
+      const [caught] = await dailyRecords();
+      expect(caught).toMatchObject({ trigger: "caught-up", missed: three, series: null });
+      expect(await runs.missed("daily", { kind: "run-others", run: caught?.run ?? "" })).toEqual({ ok: true, at: now.getTime(), runs: 2 });
+      expect(going("daily")).toEqual([expect.objectContaining({ state: "running", series: { n: 2, of: 3 }, missed: three })]);
+      expect(await runs.missed("daily", { kind: "run-others", run: caught?.run ?? "" })).toMatchObject({ ok: false });
+      await end();
+      await end();
+      expect((await dailyRecords()).map((record) => runTriggerWords(record))).toEqual(["missed 3 runs, Wed 07:00–Fri 07:00 · caught up once", "caught up 2 of 3", "caught up 3 of 3"]);
+      // The caught-up run is no longer the job's latest: nothing more to run.
+      expect(await runs.missed("daily", { kind: "run-others", run: caught?.run ?? "" })).toMatchObject({ ok: false });
+      expect(await runs.missed("daily", { kind: "run-all" })).toEqual({ ok: false, reason: 'no missed run of "daily" waits for you' });
+    });
+
+    it("Run all with no missed run waiting runs the other runs of the job's latest caught-up run — what pomade-runner missed <job> run-all does", async () => {
+      await missedThree("");
+      await end();
+      expect(await runs.missed("daily", { kind: "run-all" })).toMatchObject({ ok: true, runs: 2 });
+      expect(going("daily")).toEqual([expect.objectContaining({ series: { n: 2, of: 3 } })]);
     });
   });
 

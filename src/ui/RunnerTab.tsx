@@ -128,7 +128,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
         `tab-${view.view === "prompt" ? "run" : view.view}`,
         <>
           {history}
-          {view.view !== "history" && <RunDialog key={`${view.job}/${view.run}`} host={host} job={view.job} run={view.run} needsYou={report?.needsYou ?? []} active={report?.active ?? []} open={open} />}
+          {view.view !== "history" && <RunDialog key={`${view.job}/${view.run}`} host={host} job={view.job} run={view.run} needsYou={report?.needsYou ?? []} active={report?.active ?? []} jobs={report?.jobs ?? []} open={open} />}
           {view.view === "prompt" && <PromptOpener key={`${view.job}/${view.run}`} host={host} job={view.job} run={view.run} open={open} />}
         </>,
       );

@@ -34,7 +34,8 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
 - **Tooltips** are one layer per surface: `data-tip` (a line) or `data-help` (a help key) on any element.
 - **A view extends a kit primitive** (`kit/`) rather than forking it.
 - **The scheduler's words, once.** A run's state and trigger in words (`runWords`, `runTriggerWords`,
-  `missedRunsWords`, `heldRunsWords` in `src/scheduler/model.ts`) are the scheduler's; History, the
+  `missedRunsWords`, `heldRunsWords` in `src/scheduler/model.ts`) are the scheduler's, and so is whether
+  a caught-up run's card offers Run the other N (`otherMissedRuns`); History, the
   cards, Needs you, the Jobs cells and `pomade-runner` read the same functions. Whether a job is held
   comes from the report (`NextRun.held`, `JobRuns.held`), never from the UI's own reading of the switch.
 - **Output tab** (`OutputPage.tsx`): a keyed Pomade tab per run, "<job> · output", with Copy; it closes
@@ -47,7 +48,8 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
 | `main.tsx`, `App.tsx`, `index.html` | the entry, the frame choice, the page |
 | `Panel.tsx`, `shell/PanelShell.tsx` | the side panel and its frame: the switch pinned on top, sections, Open Runner at the foot |
 | `SwitchControl.tsx` | the three-position switch and its note, with the runs held so far |
-| `NeedsYou.tsx` | Needs you's cards and their actions (a gave-up service without a session has no View output; its name opens the job in Jobs) |
+| `NeedsYou.tsx` | Needs you's cards and their actions (a gave-up service without a session has no View output; its name opens the job in Jobs; a missed run that stands for more than one: Run once · Run all N · Run at… · Skip) |
+| `RunAllConfirm.tsx` | the confirm before Run all or Run the other N runs more than 20, naming the number; shared by Needs you and the result card |
 | `RunningNow.tsx`, `ActiveRunsList.tsx` | Running now: services and runs going; a row opens its tab, terminal or card |
 | `NextUp.tsx`, `runWords.ts` | Next up and "in 40 min" |
 | `panelWords.ts` | the panel's words: a Needs-you card's look, a moment ahead or past, a run's age |
@@ -74,7 +76,7 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
 | `help.ts` | every help text |
 | `EmptyState.tsx` | a centred message for a surface with nothing to list |
 | `tokens.css`, `base.css`, `*.module.css` | the design tokens (light only), base styles, each component's styles |
-| `kit/` | the primitives: `Button`, `Check`, `Chip`, `DayButton`, `Dialog` (with the confirm), `EmptyBlock`, `Field`, `Help`, `Icon` and `icons.ts`, `IconButton`, `Menu`, `PanelCard`, `PanelRow`, `Section`, `Segmented` (the switch included), `Status`, `Stepper`, `Table`, `Tag`, `Toast`, `Toggle`, `Tooltip`, `useFocusTrap`; `index.ts` exports them |
+| `kit/` | the primitives: `Button`, `Check`, `Chip`, `DayButton`, `Dialog` (with the confirm), `EmptyBlock`, `Field`, `Help`, `Icon` and `icons.ts`, `IconButton`, `Menu`, `PanelCard`, `PanelRow`, `Section`, `Segmented` (the switch included), `Status`, `Stepper`, `Table`, `Tag`, `Toast`, `Toggle`, `Tooltip`, `useFocusTrap` (a dialog over another — a confirm over a result card — takes the keys alone); `index.ts` exports them |
 
 ## Keys
 

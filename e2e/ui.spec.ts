@@ -313,6 +313,7 @@ test.describe("runs", () => {
     dueAt: at(13, 0),
     agent: null,
     missed: null,
+    series: null,
     state: "failed",
     action: null,
     reason: null,
@@ -629,6 +630,7 @@ test.describe("missed runs and load", () => {
     dueAt: at(7, 0),
     agent: null,
     missed: null,
+    series: null,
     state: "running",
     lowPriority: true,
     runAt: null,
@@ -726,6 +728,60 @@ test.describe("missed runs and load", () => {
     ]);
   });
 
+  test("T-026 · a missed run that stands for more than one: Run once · Run all N · Run at… · Skip, wrapped cleanly in the 240 px panel; above 20, Run all asks once more, naming the number", async ({ page }) => {
+    await open(page, { surface: "panel" });
+    const item = app(page).locator('[data-testid="needs-you-item"][data-kind="missed"]');
+    const set = (count: number) => {
+      const counted = { count, first: new Date(2026, 10, 22, 2, 56).getTime(), last: weekly.dueAt };
+      return page.evaluate((r) => window.setRuns({ report: r, history: [] }), { ...report, active: [{ ...weekly, missed: counted }], needsYou: [{ ...missed, missed: counted, detail: `missed ${count} runs, 02:56–03:00` }] });
+    };
+    // One missed run: as it always was.
+    await expect(item.getByRole("button", { name: "Run now" })).toHaveCount(1);
+    await expect(item.getByRole("button", { name: /^Run all/ })).toHaveCount(0);
+
+    await set(3);
+    const actions = item.getByRole("button").filter({ hasText: /^(Run once|Run all 3|Run at…|Skip)$/ });
+    await expect(actions).toHaveText(["Run once", "Run all 3", "Run at…", "Skip"]);
+    // The four buttons wrap to a second row inside the card: none cut, none past its edge, each row starting at the same left.
+    // Each button's left, right and top against the card's inner edges (its padding box).
+    const placed = await actions.evaluateAll((all) =>
+      all.map((button) => {
+        const box = button.getBoundingClientRect();
+        const card = button.closest('[data-testid="needs-you-item"] > div')?.getBoundingClientRect() ?? new DOMRect();
+        return { inside: box.left >= card.left && box.right <= card.right - 8, left: Math.round(box.left), top: Math.round(box.top) };
+      }),
+    );
+    expect(placed.map((box) => box.inside)).toEqual([true, true, true, true]);
+    // Two rows — Run once and Run all 3 on the first, Run at… and Skip on the second — each starting at the same left.
+    expect(placed.map((box) => box.top === placed[0]?.top)).toEqual([true, true, false, false]);
+    expect(placed[2]?.left).toBe(placed[0]?.left);
+    await shoot(page, "panel-missed-run-all");
+
+    await item.getByRole("button", { name: "Run all 3" }).click();
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerWeekly 3 runs queued, one after another");
+    await expect(app(page).getByTestId("run-all-confirm")).toHaveCount(0);
+    await item.getByRole("button", { name: "Run once" }).click();
+
+    await set(25);
+    await item.getByRole("button", { name: "Run all 25" }).click();
+    const confirm = app(page).getByTestId("run-all-confirm");
+    await expect(confirm.getByRole("heading")).toHaveText("Run 25 runs?");
+    await expect(confirm).toContainText("Runner runs Weekly 25 times, one after another, each when the queue lets it. Stopping one of them drops the rest.");
+    await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await shoot(page, "panel-run-all-confirm");
+    await confirm.getByRole("button", { name: "Cancel" }).click();
+    await expect(confirm).toHaveCount(0);
+    await item.getByRole("button", { name: "Run all 25" }).click();
+    await confirm.getByRole("button", { name: "Run all 25" }).click();
+    await expect(confirm).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toEqual([
+      { method: "runs.missed", params: { job: "weekly", choice: "run-all" } },
+      { method: "runs.missed", params: { job: "weekly", choice: "run-now" } },
+      // Cancel ran nothing; the confirmed one ran all 25.
+      { method: "runs.missed", params: { job: "weekly", choice: "run-all" } },
+    ]);
+  });
+
   test("a long run asks whether it is still expected: Open · Stop · Dismiss", async ({ page }) => {
     await open(page, { surface: "panel" });
     const started = await page.evaluate(() => Date.now() - (3 * 60 + 2) * 60_000);
@@ -807,6 +863,79 @@ test.describe("missed runs and load", () => {
     await shoot(page, "tab-run-time-limit");
   });
 
+  test("T-026 · a waiting missed run's card offers Run once · Run all N · Run at… · Skip; a caught-up run that stood for more than one, while its job's latest, Run the other N — above 20 after a confirm; History says caught up n of N", async ({ page }) => {
+    await page.setViewportSize({ width: 1040, height: 700 });
+    const counted = (count: number) => ({ count, first: new Date(2026, 10, 18, 7, 0).getTime(), last: new Date(2026, 10, 20, 7, 0).getTime() });
+    const waiting: ActiveRun = { ...weekly, missed: counted(3) };
+    await open(page, { route: `run/weekly/${weekly.run}` });
+    await page.evaluate((r) => window.setRuns({ report: r, history: [] }), { ...report, active: [waiting], needsYou: [{ ...missed, missed: counted(3), detail: "missed 3 runs" }] });
+    const dialog = app(page).getByTestId("run-dialog");
+    await expect(app(page).getByTestId("run-card").getByTestId("run-missed-runs")).toHaveText("This job missed 3 runs, Wed 07:00–Fri 07:00.");
+    await expect(dialog.getByTestId("dialog-foot").getByRole("button")).toHaveText(["Run once", "Run all 3", "Run at…", "Skip", "Edit job"]);
+    await shoot(page, "tab-run-missed-run-all");
+    await dialog.getByRole("button", { name: "Run all 3" }).click();
+    await expect(dialog).toHaveCount(0);
+
+    // A caught-up run that stood for 3, ended, its job's latest: Run the other 2.
+    const caught: RunRecord = { ...base, job: "weekly", name: "Weekly", run: "20261120-090000-cccccc", trigger: "caught-up", missed: counted(3), state: "done", action: null, reason: null, startedAt: at(9, 0), endedAt: at(9, 1), durationMs: 60_000, exitCode: 0, signal: null, lastLines: ["weekly done"], git: null, limitHit: null };
+    const latest = (record: RunRecord | null) => ({ job: "weekly", next: null, finished: false, last: record, held: false });
+    const show = (records: RunRecord[], last: RunRecord | null, active: ActiveRun[] = []) =>
+      page.evaluate((r) => window.setRuns(r), { report: { ...report, active, needsYou: [], jobs: [latest(last)] }, history: records });
+    await show([caught], caught);
+    await page.evaluate((route) => window.mounted.navigate(route), `run/weekly/${caught.run}`);
+    await expect(app(page).getByTestId("run-trigger")).toHaveText("caught up");
+    await expect(dialog.getByTestId("run-dialog").or(dialog).getByText("Missed 3 runs, Wed 07:00–Fri 07:00 — caught up once")).toHaveCount(1);
+    await expect(dialog.getByTestId("dialog-foot").getByRole("button")).toHaveText(["View output", "Run the other 2", "Run again", "Edit job"]);
+    await shoot(page, "tab-run-caught-up-others");
+    await dialog.getByRole("button", { name: "Run the other 2" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerWeekly 2 runs queued, one after another");
+
+    // No longer its job's latest, or a Run all of the job going: no Run the other.
+    const later: RunRecord = { ...caught, run: "20261120-100000-dddddd", trigger: "scheduled", missed: null };
+    await show([later, caught], later);
+    await page.evaluate((route) => window.mounted.navigate(route), `run/weekly/${caught.run}`);
+    await expect(dialog.getByTestId("dialog-foot").getByRole("button")).toHaveText(["View output", "Run again", "Edit job"]);
+    const second: ActiveRun = { ...weekly, run: "20261120-091000-eeeeee", state: "queued", trigger: "caught-up", missed: counted(3), series: { n: 2, of: 3 }, waits: { kind: "slot", ahead: 1 } };
+    await show([caught], caught, [second]);
+    await expect(dialog.getByTestId("dialog-foot").getByRole("button")).toHaveText(["View output", "Run again", "Edit job"]);
+
+    // Above 20: a confirm that names the number; Cancel runs nothing.
+    const many: RunRecord = { ...caught, missed: counted(26) };
+    await show([many], many);
+    await dialog.getByRole("button", { name: "Run the other 25" }).click();
+    const confirm = app(page).getByTestId("run-all-confirm");
+    await expect(confirm.getByRole("heading")).toHaveText("Run 25 runs?");
+    await expect(confirm.getByRole("button", { name: "Run the other 25" })).toHaveCount(1);
+    await shoot(page, "tab-run-all-confirm");
+    await page.keyboard.press("Escape");
+    await expect(confirm).toHaveCount(0);
+    // Esc closed the confirm alone: the card stays.
+    await expect(dialog).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toEqual([
+      { method: "runs.missed", params: { job: "weekly", choice: "run-all" } },
+      { method: "runs.missed", params: { job: "weekly", choice: "run-others", run: caught.run } },
+    ]);
+
+    // History: each run of the series a row, caught up n of 3; the rest dropped when one was stopped.
+    const ofThree = (n: number, extra: Partial<RunRecord> = {}): RunRecord => ({ ...caught, run: `20261120-09${n}000-ffffff`, series: { n, of: 3 }, startedAt: at(9, n * 2), endedAt: at(9, n * 2 + 1), ...extra });
+    const dropped: RunRecord = { ...caught, job: "daily", name: "Daily", run: "20261120-100500-aaaaaa", missed: null, state: "skipped", reason: "2 dropped: you stopped run 2 of 4", dueAt: at(10, 5), startedAt: null, endedAt: at(10, 5), durationMs: null, exitCode: null, lastLines: [] };
+    const stopped: RunRecord = { ...caught, job: "daily", name: "Daily", run: "20261120-100400-bbbbbb", missed: counted(4), series: { n: 2, of: 4 }, state: "stopped-by-you", dueAt: at(10, 4), startedAt: at(10, 4), endedAt: at(10, 5), exitCode: null, signal: "SIGINT" };
+    const third: ActiveRun = { ...second, run: "20261120-103000-ffffff", dueAt: at(10, 30), series: { n: 3, of: 3 } };
+    await show([dropped, stopped, ofThree(2), ofThree(1)], ofThree(2), [third]);
+    await page.evaluate((route) => window.mounted.navigate(route), "history");
+    const rows = app(page).getByTestId("history-row");
+    await expect(rows.getByTestId("history-trigger")).toHaveText([
+      "caught up 3 of 3",
+      "caught up",
+      "caught up 2 of 4",
+      "caught up 2 of 3",
+      "caught up 1 of 3",
+    ]);
+    await expect(rows.getByTestId("history-result")).toHaveText(["queued · 1 ahead", "skipped · 2 dropped: you stopped run 2 of 4", "stopped by you", "done", "done"]);
+    await shoot(page, "tab-history-run-all");
+  });
+
   test("help: the (i) shows its text and example on hover and on keyboard focus; a status's help on hover", async ({ page }) => {
     await page.setViewportSize({ width: 1040, height: 700 });
     await open(page, { route: "settings" });
@@ -857,6 +986,7 @@ test.describe("hooks and chains", () => {
     dueAt: at(13, 0),
     agent: null,
     missed: null,
+    series: null,
     state: "done",
     action: null,
     reason: null,
@@ -1258,6 +1388,7 @@ test.describe("the Jobs view", () => {
     dueAt: endedAt - 3000,
     agent: null,
     missed: null,
+    series: null,
     state,
     action: null,
     reason: null,
@@ -1309,6 +1440,7 @@ test.describe("the Jobs view", () => {
       dueAt: now - 200_000,
       agent: null,
       missed: null,
+      series: null,
       state: "running",
       lowPriority: true,
       runAt: null,
@@ -1798,6 +1930,7 @@ test.describe("History and result cards", () => {
     dueAt: at(0, 0, 10),
     agent: null,
     missed: null,
+    series: null,
     state: "done",
     action: null,
     reason: null,
@@ -1826,6 +1959,7 @@ test.describe("History and result cards", () => {
     dueAt: Date.now() - 180_000,
     agent: null,
     missed: null,
+    series: null,
     state: "running",
     lowPriority: true,
     runAt: null,
@@ -2692,6 +2826,7 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
     dueAt: now,
     agent: null,
     missed: null,
+    series: null,
     state: "running",
     lowPriority: true,
     runAt: null,
@@ -3446,6 +3581,7 @@ test.describe("agent jobs", () => {
     dueAt: at(7, 0),
     agent: { agent: "claude", name: "claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: SESSION, cwd: "/fake/workspace", startedAt: new Date(at(7, 0)).toISOString(), exit: "/exit", exitSentAt: at(7, 4), waiting: null, waitedMs: 0 },
     missed: null,
+    series: null,
     state: "done",
     action: null,
     reason: null,

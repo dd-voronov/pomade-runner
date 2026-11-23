@@ -11,12 +11,15 @@ import {
   LAST_LINES,
   limitWords,
   missedRunsWords,
+  otherMissedRuns,
   plainLines,
+  RUN_ALL_CONFIRM_ABOVE,
   runWords,
   TRIGGER_WORDS,
   waitingAt,
   type ActiveRun,
   type AgentWait,
+  type JobRuns,
   type NeedsYouItem,
   type RunRecord,
   type RunView,
@@ -27,6 +30,7 @@ import styles from "./RunCard.module.css";
 import { dayWords, isRecord, KIND_WORDS, promptLines, runDuration, runLook, runTime, shortDuration, slotHolders, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
 import { shortClock, upWords } from "./serviceWords";
 import { aheadMoment } from "./panelWords";
+import { RunAllConfirm } from "./RunAllConfirm";
 import { RunAtField } from "./RunAtField";
 import { useLastMessage } from "./useAgents";
 import { useNow } from "./useNow";
@@ -45,6 +49,7 @@ export function RunDialog({
   run,
   needsYou,
   active,
+  jobs,
   open,
 }: {
   host: HostClient;
@@ -53,6 +58,8 @@ export function RunDialog({
   needsYou: readonly NeedsYouItem[];
   /** The runs going: a queued run's card names the low-priority ones holding the slots. */
   active: readonly ActiveRun[];
+  /** Each job's runs: a caught-up run's card offers Run the other N while it is its job's latest. */
+  jobs: readonly JobRuns[];
   open: (route: string) => void;
 }): React.JSX.Element {
   const close = (): void => open("history");
@@ -84,17 +91,34 @@ export function RunDialog({
   }
   return (
     <Dialog onClose={close} testId="run-dialog" tone={runLook(value).cardTone}>
-      <RunCard host={host} view={value} going={slotHolders(active)} open={open} close={close} />
+      <RunCard host={host} view={value} going={slotHolders(active)} others={otherMissedRuns(value, jobs.find((info) => info.job === value.job)?.last ?? null, active)} open={open} close={close} />
     </Dialog>
   );
 }
 
 const capital = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
 
-function RunCard({ host, view, going, open, close }: { host: HostClient; view: RunView; going: readonly string[]; open: (route: string) => void; close: () => void }): React.JSX.Element {
+function RunCard({
+  host,
+  view,
+  going,
+  others,
+  open,
+  close,
+}: {
+  host: HostClient;
+  view: RunView;
+  going: readonly string[];
+  /** A caught-up run's other missed runs it can still run (Run the other N); 0 for none. */
+  others: number;
+  open: (route: string) => void;
+  close: () => void;
+}): React.JSX.Element {
   const now = useNow(10_000);
   const toast = useToast();
   const [runAt, setRunAt] = useState<string | null>(null);
+  /** The Run all waiting for the confirm above `RUN_ALL_CONFIRM_ABOVE` runs: how many it runs. */
+  const [confirming, setConfirming] = useState<{ choice: "run-all" | "run-others"; count: number } | null>(null);
   const look = runLook(view);
   const duration = runDuration(view, now);
   const parent = view.cause?.kind === "chain" ? view.cause : null;
@@ -150,17 +174,20 @@ function RunCard({ host, view, going, open, close }: { host: HostClient; view: R
       failed(`run ${view.name}`),
     );
   };
-  const choose = (params: { choice: "run-now" | "skip" } | { choice: "run-at"; at: string }): void => {
+  const choose = (params: { choice: "run-now" | "skip" | "run-all" } | { choice: "run-at"; at: string } | { choice: "run-others"; run: string }): void => {
     host.apps.call(APP_ID, MISSED_METHOD, { job: view.job, ...params }).then(
       (answer: unknown) => {
         if (isMissedChoiceResult(answer) && !answer.ok) return toast(`Could not ${params.choice === "skip" ? "skip" : "run"} ${view.name}: ${answer.reason}`);
-        const at = isMissedChoiceResult(answer) && answer.ok ? answer.at : null;
+        const settled = isMissedChoiceResult(answer) && answer.ok ? answer : null;
+        const at = settled?.at ?? null;
+        const many = params.choice === "run-all" || params.choice === "run-others";
         toast(
           params.choice === "skip" ? (
             "Recorded as “missed · skipped”"
           ) : (
             <>
-              <b>{view.name}</b> {params.choice === "run-at" && at !== null ? `will run ${aheadMoment(at, Date.now())}` : "started"}
+              <b>{view.name}</b>{" "}
+              {many ? `${settled?.runs ?? "the"} runs queued, one after another` : params.choice === "run-at" && at !== null ? `will run ${aheadMoment(at, Date.now())}` : "started"}
             </>
           ),
         );
@@ -169,6 +196,12 @@ function RunCard({ host, view, going, open, close }: { host: HostClient; view: R
       failed(`settle ${view.name}`),
     );
   };
+  /** Run all, or Run the other N: `count` runs, asked once more above `RUN_ALL_CONFIRM_ABOVE`. */
+  const runMany = (choice: "run-all" | "run-others", count: number): void => {
+    if (count > RUN_ALL_CONFIRM_ABOVE) return setConfirming({ choice, count });
+    choose(choice === "run-all" ? { choice } : { choice, run: view.run });
+  };
+  const missedCount = view.missed?.count ?? 1;
   const openOutput = (): void => {
     host.tabs.openApp(outputTab(view.job, view.run, view.name)).catch(failed(`open ${view.name}'s output`));
   };
@@ -190,8 +223,9 @@ function RunCard({ host, view, going, open, close }: { host: HostClient; view: R
     foot = (
       <>
         <Button variant="primary" onClick={() => choose({ choice: "run-now" })}>
-          Run now
+          {missedCount > 1 ? "Run once" : "Run now"}
         </Button>
+        {missedCount > 1 && <Button onClick={() => runMany("run-all", missedCount)}>Run all {missedCount}</Button>}
         <Button aria-expanded={runAt !== null} onClick={() => setRunAt(runAt === null ? "tonight 23:00" : null)}>
           Run at…
         </Button>
@@ -226,6 +260,7 @@ function RunCard({ host, view, going, open, close }: { host: HostClient; view: R
             View output
           </Button>
         )}
+        {others > 0 && <Button onClick={() => runMany("run-others", others)}>Run the other {others}</Button>}
         {view.kind !== "service" && <Button onClick={runNow}>{started ? "Run again" : "Run now"}</Button>}
       </>
     );
@@ -276,6 +311,19 @@ function RunCard({ host, view, going, open, close }: { host: HostClient; view: R
       >
         {foot}
       </DialogFoot>
+      {confirming !== null && (
+        <RunAllConfirm
+          name={view.name}
+          count={confirming.count}
+          action={confirming.choice === "run-all" ? `Run all ${confirming.count}` : `Run the other ${confirming.count}`}
+          onConfirm={() => {
+            const { choice } = confirming;
+            setConfirming(null);
+            choose(choice === "run-all" ? { choice } : { choice, run: view.run });
+          }}
+          onCancel={() => setConfirming(null)}
+        />
+      )}
     </>
   );
 }

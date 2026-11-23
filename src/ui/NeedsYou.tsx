@@ -4,9 +4,10 @@ import type { HostClient } from "pomade-kit/sdk";
 import { APP_ID } from "../app";
 import { DISMISS_METHOD, editRoute, jobsRoute, MISSED_METHOD, RESUME_METHOD, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute, SERVICE_ACTION_TIMEOUT_MS, SERVICE_METHODS } from "../integrations/runner-api";
 import { sessionIdOf } from "../keeper/ids";
-import { isMissedChoiceResult, isRunActionResult, type NeedsYouItem } from "../scheduler/model";
+import { isMissedChoiceResult, isRunActionResult, RUN_ALL_CONFIRM_ABOVE, type NeedsYouItem } from "../scheduler/model";
 import { Button, PanelCard, PanelEmpty, useToast } from "./kit";
 import styles from "./NeedsYou.module.css";
+import { RunAllConfirm } from "./RunAllConfirm";
 import { RunAtField } from "./RunAtField";
 import { aheadMoment, needLook } from "./panelWords";
 import { useNow } from "./useNow";
@@ -30,6 +31,7 @@ function NeedCard({ host, item }: { host: HostClient; item: NeedsYouItem }): Rea
   const now = useNow();
   const look = needLook(item, now);
   const [at, setAt] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
   const openRoute = (route: string): void => {
@@ -54,17 +56,22 @@ function NeedCard({ host, item }: { host: HostClient; item: NeedsYouItem }): Rea
   };
   const started = (answer: unknown): ReactNode => bold(item.name, isRunActionResult(answer) && answer.ok && "run" in answer && answer.run.state === "queued" ? "queued" : "started");
   const dismiss = (said: ReactNode | null): void => call("dismiss", DISMISS_METHOD, { id: item.id }, () => said);
-  const choose = (choice: "run-now" | "run-at" | "skip", extra: Record<string, string> = {}): void =>
+  const choose = (choice: "run-now" | "run-at" | "skip" | "run-all", extra: Record<string, string> = {}): void =>
     call(
       "run",
       MISSED_METHOD,
       { job: item.job, choice, ...extra },
       (answer) => {
         if (choice === "skip") return "Recorded as “missed · skipped”";
+        if (choice === "run-all") return bold(item.name, `${isMissedChoiceResult(answer) && answer.ok ? answer.runs : count} runs queued, one after another`);
         if (choice === "run-now" || !isMissedChoiceResult(answer) || !answer.ok || answer.at === null) return started(answer);
         return bold(item.name, `will run ${aheadMoment(answer.at, Date.now())}`);
       },
     );
+
+  /** The runs a missed run stands for; Run all asks once more above `RUN_ALL_CONFIRM_ABOVE`. */
+  const count = item.kind === "missed" ? (item.missed?.count ?? 1) : 1;
+  const runAll = (): void => (count > RUN_ALL_CONFIRM_ABOVE ? setConfirming(true) : choose("run-all"));
 
   let title: () => void;
   let actions: ReactNode;
@@ -108,8 +115,13 @@ function NeedCard({ host, item }: { host: HostClient; item: NeedsYouItem }): Rea
       actions = (
         <>
           <Button size="sm" variant="primary" onClick={() => choose("run-now")}>
-            Run now
+            {count > 1 ? "Run once" : "Run now"}
           </Button>
+          {count > 1 && (
+            <Button size="sm" onClick={runAll}>
+              Run all {count}
+            </Button>
+          )}
           <Button size="sm" aria-expanded={at !== null} onClick={() => setAt(at === null ? "tonight 23:00" : null)}>
             Run at…
           </Button>
@@ -175,6 +187,18 @@ function NeedCard({ host, item }: { host: HostClient; item: NeedsYouItem }): Rea
     >
         <span data-testid="needs-you-words">{look.text}</span>
       </PanelCard>
+      {confirming && (
+        <RunAllConfirm
+          name={item.name}
+          count={count}
+          action={`Run all ${count}`}
+          onConfirm={() => {
+            setConfirming(false);
+            choose("run-all");
+          }}
+          onCancel={() => setConfirming(false)}
+        />
+      )}
     </div>
   );
 }

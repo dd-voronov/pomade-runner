@@ -209,6 +209,34 @@ test.describe("missed runs and load", () => {
     expect(after.heldRuns).toBe(0);
   });
 
+  test("T-026 · Run all 3: a wait-for-me job that missed three runs, settled with pomade-runner missed <job> run-all, runs three caught-up runs in History, one after another", async () => {
+    // Overlap parallel: the runs of a Run all go one after another all the same.
+    await world.writeJob("wait.md", scriptFile("Wait", "echo wait $POMADE_TRIGGER; sleep 1", "schedule:\n  every: { minutes: 2 }\nmissed: wait-for-me\noverlap: parallel\n"));
+    const scheduler = world.startScheduler(clock("2026-11-18T17:38:30", 20));
+    await world.ready(scheduler);
+    expect((await world.command("pause", "low")).code).toBe(0);
+    await until(world, "2026-11-18T17:44:10");
+    expect((await world.command("resume")).code).toBe(0);
+    const three = { count: 3, first: madrid("2026-11-18T17:40:00"), last: madrid("2026-11-18T17:44:00") };
+    await expect.poll(async () => (await runsReport(world)).needsYou).toEqual([expect.objectContaining({ id: "missed:wait", missed: three })]);
+    expect((await world.command("runs")).stdout).toContain("needs you: Wait — missed 3 runs, 17:40–17:44; it waits for you: pomade-runner missed wait run-once|run-all|run-at <time>|skip, or in Runner\n");
+
+    const settled = await world.command("missed", "wait", "run-all");
+    expect(settled).toMatchObject({ code: 0, stdout: "wait  3 runs queued, one after another\n" });
+    expect((await runsReport(world)).needsYou).toEqual([]);
+    const series = async (): Promise<RunRecord[]> => (await world.history("wait")).filter((record) => record.series !== null).reverse();
+    await expect.poll(async () => (await series()).length, { timeout: 30_000 }).toBe(3);
+    const rows = await series();
+    expect(rows.map((record) => [record.trigger, record.state, record.series, record.missed, record.lastLines])).toEqual(
+      [1, 2, 3].map((n) => ["caught-up", "done", { n, of: 3 }, three, ["wait caught-up"]]),
+    );
+    // One after another: each started once the one before it ended.
+    expect(rows.slice(1).map((row, index) => (row.startedAt ?? 0) >= (rows[index]?.endedAt ?? Infinity))).toEqual([true, true]);
+    expect((await world.command("history", "wait")).stdout).toMatch(/^wait {2}Wait {2}caught up 3 of 3 {2}done, /m);
+    // Nothing more to run: the command says so.
+    expect(await world.command("missed", "wait", "run-all")).toMatchObject({ code: 1, stderr: 'pomade-runner missed: cannot settle the missed runs of "wait": no missed run of "wait" waits for you.\n' });
+  });
+
   test("6 · a 1-minute time limit stops a long script: failed, stopped: time limit, 1 min, in its record, a notice and pomade-runner history", async () => {
     await world.writeJob("long.md", scriptFile("Long", "echo working; sleep 600", "hook: { event: project-created }\ntime-limit: 1m\n"));
     const scheduler = world.startScheduler(clock("2026-11-18T10:00:00"));

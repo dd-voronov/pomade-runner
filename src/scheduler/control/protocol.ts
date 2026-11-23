@@ -7,7 +7,21 @@
 // `unknown-method` by an older scheduler.
 
 import { isServicesReport, isServiceStatus, isSessionsReport, type ServicesReport, type ServiceStatus, type SessionsReport } from "../../keeper/model";
-import { isActiveRun, isHistoryPage, isJobListings, isRunsReport, isSwitchState, SWITCH_POSITIONS, type ActiveRun, type HistoryPage, type JobListing, type RunsReport, type SwitchPosition, type SwitchState } from "../model";
+import {
+  isActiveRun,
+  isHistoryPage,
+  isJobListings,
+  isRunsReport,
+  isSwitchState,
+  SWITCH_POSITIONS,
+  type ActiveRun,
+  type HistoryPage,
+  type JobListing,
+  type MissedChoice,
+  type RunsReport,
+  type SwitchPosition,
+  type SwitchState,
+} from "../model";
 
 export const CONTROL_PROTOCOL = 1;
 
@@ -52,6 +66,16 @@ export interface ControlMethods {
   switch: SwitchState;
   /** Lift the loop guard's pause of a job. */
   resumeJob: JobResumed;
+  /** The person's choice for a job's missed runs: Run now · Run at… · Skip · Run all. */
+  missed: MissedSettled;
+}
+
+/** A job's missed runs, settled: when its run goes (`at`, epoch ms; `null` for Skip) and how many
+ *  runs the choice made. */
+export interface MissedSettled {
+  job: string;
+  at: number | null;
+  runs: number;
 }
 
 /** What Run now started: a script's run, or a service. */
@@ -90,6 +114,8 @@ export interface ControlParams {
   switch: { position: SwitchPosition | null };
   /** `job`: a job's id or name. */
   resumeJob: { job: string };
+  /** `job`: a job's id or name; `choice`: what to do with its missed runs. */
+  missed: { job: string; choice: MissedChoice };
 }
 
 export type ControlMethod = keyof ControlMethods;
@@ -169,6 +195,10 @@ function isJobResumed(value: unknown): value is JobResumed {
   return isRecord(value) && typeof value.job === "string" && typeof value.name === "string";
 }
 
+function isMissedSettled(value: unknown): value is MissedSettled {
+  return isRecord(value) && typeof value.job === "string" && (value.at === null || typeof value.at === "number") && typeof value.runs === "number";
+}
+
 function isJobEnabled(value: unknown): value is JobEnabled {
   return isRecord(value) && typeof value.job === "string" && typeof value.name === "string" && typeof value.enabled === "boolean";
 }
@@ -187,6 +217,7 @@ export const RESULT_GUARDS: { [M in ControlMethod]: (value: unknown) => value is
   runs: isRunsReport,
   switch: isSwitchState,
   resumeJob: isJobResumed,
+  missed: isMissedSettled,
 };
 
 const noParams = (params: unknown): null | undefined => (params === null ? null : undefined);
@@ -196,6 +227,16 @@ const historyParams = (params: unknown): { job: string | null; limit: number } |
   const { job, limit } = params;
   if ((job !== null && (typeof job !== "string" || job === "")) || typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1) return undefined;
   return { job, limit };
+};
+
+const missedParams = (params: unknown): ControlParams["missed"] | undefined => {
+  const given = jobParams(params);
+  if (given === undefined || !isRecord(params) || !isRecord(params.choice)) return undefined;
+  const { kind, at, run } = params.choice;
+  if (kind === "run-now" || kind === "skip" || kind === "run-all") return { job: given.job, choice: { kind } };
+  if (kind === "run-at" && typeof at === "string" && at !== "") return { job: given.job, choice: { kind, at } };
+  if (kind === "run-others" && typeof run === "string" && run !== "") return { job: given.job, choice: { kind, run } };
+  return undefined;
 };
 
 /** Each method's params check: the params, or `undefined` when they are not the method's. */
@@ -218,6 +259,7 @@ export const PARAMS_PARSERS: { [M in ControlMethod]: (params: unknown) => Contro
     return typeof position === "string" && (SWITCH_POSITIONS as readonly string[]).includes(position) ? { position: position as SwitchPosition } : undefined;
   },
   resumeJob: jobParams,
+  missed: missedParams,
 };
 
 /** What each method's params look like, for the error that refuses others. */
@@ -235,6 +277,7 @@ export const PARAMS_SHAPES: { [M in ControlMethod]: string } = {
   runs: "none",
   switch: '{ position: "running" | "pause-low" | "pause-all" | null }',
   resumeJob: "{ job: <a job's id or name> }",
+  missed: '{ job: <a job\'s id or name>, choice: { kind: "run-now" | "run-all" | "skip" } | { kind: "run-at", at: <a time> } | { kind: "run-others", run: <a run id> } }',
 };
 
 export function isControlMethod(method: string): method is ControlMethod {

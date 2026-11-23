@@ -135,11 +135,13 @@ export function runNotice(record: RunRecord, notify: Notify): NoticeParams | nul
 }
 
 /** The notice for a missed run of a `wait-for-me` job, which waits for the person. Its click opens
- *  the run's card, with Run now · Run at… · Skip. */
+ *  the run's card, with Run now · Run at… · Skip — Run once · Run all N · Run at… · Skip for more
+ *  than one. */
 export function missedNotice(run: ActiveRun): NoticeParams {
+  const count = run.missed?.count ?? 1;
   return {
     title: `${run.name} · ${missedRunsWords(run.missed) ?? `missed ${dayTime(run.dueAt)}`}`,
-    body: "It waits for you: Run now, Run at… or Skip.",
+    body: count > 1 ? `It waits for you: Run once, Run all ${count}, Run at… or Skip.` : "It waits for you: Run now, Run at… or Skip.",
     action: { kind: "openApp", route: runRoute(run.job, run.run) },
   };
 }

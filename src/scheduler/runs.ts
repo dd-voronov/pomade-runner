@@ -21,6 +21,13 @@
 // - **Counted.** However many occurrences a job missed, it gets one decision; the run or record the
 //   decision makes keeps how many and the first and last missed time (`missed`), and a later miss
 //   adds to a caught-up run still queued or a missed run still waiting.
+// - **Run all.** The person can run every run a job missed: Run all N on the missed run that waits
+//   for them, Run the other N on a caught-up run that stood for more than one. One run of the
+//   series (`series`: the n-th of N) is in the queue at a time, waiting for the job's previous run
+//   whatever its overlap; when it ends `done` or `failed` the next joins the queue, so the series
+//   lives in `runs.json` and survives a restart. A run stopped by you, or one that never started
+//   (its job disabled, invalid or gone, a start refused), drops the rest with one skipped record
+//   that says why. No policy makes a series on its own.
 // - **The queue** (`queue.ts`) starts what it can, oldest first; the rest wait — for Run at…'s time,
 //   the switch, the warm-up, the job's previous run, Pomade (an agent run), or a low-priority slot.
 //   An agent run that waits for Pomade has Runner open it (`pomade-open.ts`), one opening for every
@@ -86,6 +93,7 @@ import {
   limitWords,
   missedRunsWords,
   NEXT_UP_RUNS,
+  otherMissedRuns,
   parseRunRecord,
   runTriggerWords,
   SWITCH_WORDS,
@@ -158,7 +166,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function parseActiveRun(value: unknown): ActiveRun | null {
   if (!isRecord(value)) return null;
   const kind = typeof value.kind === "string" && Object.hasOwn(KIND_DEFAULTS, value.kind) ? (value.kind as keyof typeof KIND_DEFAULTS) : "script";
-  const run = { lowPriority: KIND_DEFAULTS[kind].lowPriority, cause: null, missed: null, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false, ...value, agent: withAgentDefaults(value.agent) };
+  const run = { lowPriority: KIND_DEFAULTS[kind].lowPriority, cause: null, missed: null, series: null, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false, ...value, agent: withAgentDefaults(value.agent) };
   return isActiveRun(run) ? run : null;
 }
 
@@ -458,10 +466,39 @@ export function createRuns(options: RunsOptions): Runs {
     if (!written) await history.append(entry);
     active = active.filter((run) => run.job !== entry.job || run.run !== entry.run);
     last.set(movedTo.get(entry.job) ?? entry.job, entry);
+    // The next run of a Run all joins the queue in the same save that ends this one.
+    const dropped = carryOn(entry);
     save();
     options.onChange();
     options.onFinished(entry);
     if (!written) await chain(entry);
+    // A restarted scheduler that finds this run's record written may find the drop's too.
+    if (dropped !== null && !(written && (await history.find(dropped.job, dropped.run)) !== null)) await record(dropped);
+  }
+
+  /** A run of a Run all ended: when it ran and ended done or failed, the next run of the series
+   *  joins the queue; when you stopped it or it never started, the rest are dropped — the record
+   *  that says so, to write. */
+  function carryOn(entry: RunRecord): RunRecord | null {
+    const { series } = entry;
+    if (series === null || series.n >= series.of) return null;
+    const job = movedTo.get(entry.job) ?? entry.job;
+    const left = series.of - series.n;
+    const ran = entry.startedAt !== null && (entry.state === "done" || entry.state === "failed");
+    // A job disabled or changed meanwhile: the next run is skipped at its start, and drops the rest.
+    const found = runJobOf(job);
+    if (ran && found !== null) {
+      const next: ActiveRun = { ...newRun(found, "caught-up", now()), missed: entry.missed, series: { n: series.n + 1, of: series.of } };
+      active.push(next);
+      log(`run ${job} ${next.run}: Run all — run ${series.n + 1} of ${series.of} queued`);
+      return null;
+    }
+    const why = entry.state === "stopped-by-you" ? `you stopped run ${series.n} of ${series.of}` : ran ? "its job file is gone or invalid" : `run ${series.n} of ${series.of} did not start`;
+    const reason = `${left} dropped: ${why}`;
+    log(`run ${job} ${entry.run}: Run all — ${reason}`);
+    // Its id comes from the run it follows, so a restart that writes it again finds it written.
+    const run = newRunId(new Date(entry.endedAt), () => flipHex(entry.run.slice(-6)));
+    return { ...entry, job, run, trigger: "caught-up", cause: null, dueAt: entry.endedAt, agent: null, missed: null, series: null, state: "skipped", reason, startedAt: null, durationMs: null, exitCode: null, signal: null, log: null, lastLines: [], git: null, limitHit: null };
   }
 
   /** A finished run fires the jobs that follow it. */
@@ -525,6 +562,7 @@ export function createRuns(options: RunsOptions): Runs {
             dueAt: at.getTime(),
             agent: null,
             missed: null,
+            series: null,
             state: outcome.result,
             action,
             reason: outcome.result === "done" ? null : outcome.reason,
@@ -568,6 +606,7 @@ export function createRuns(options: RunsOptions): Runs {
       warningDismissed: false,
       agent: null,
       missed: null,
+      series: null,
     };
   }
 
@@ -584,6 +623,7 @@ export function createRuns(options: RunsOptions): Runs {
     dueAt: run.dueAt,
     agent: run.agent,
     missed: run.missed,
+    series: run.series,
     action: null,
     ...end,
   });
@@ -730,7 +770,7 @@ export function createRuns(options: RunsOptions): Runs {
     run.deadline = deadline;
     run.missed = missed;
     if (trigger === "scheduled") {
-      for (const late of active.filter((candidate) => candidate.job === job.id && candidate.state === "queued" && candidate.trigger === "caught-up" && candidate.runAt === null)) {
+      for (const late of active.filter((candidate) => candidate.job === job.id && candidate.state === "queued" && candidate.trigger === "caught-up" && candidate.runAt === null && candidate.series === null)) {
         await miss(late, `skipped · the ${clockTime(dueAt.getTime())} run covers it`);
       }
     }
@@ -863,7 +903,7 @@ export function createRuns(options: RunsOptions): Runs {
           Object.assign(run, { trigger: "caught-up", runAt: null, deadline: decision.deadline, missed });
           return;
         }
-        const queued = active.find((candidate) => candidate.job === job.id && candidate.state === "queued" && candidate.trigger === "caught-up");
+        const queued = active.find((candidate) => candidate.job === job.id && candidate.state === "queued" && candidate.trigger === "caught-up" && candidate.series === null);
         if (queued !== undefined) {
           queued.missed = addMissed(missedOf(queued), missed);
           log(`job ${job.id}: a caught-up run is queued already; it stands for ${queued.missed.count} missed runs`);
@@ -1186,6 +1226,25 @@ export function createRuns(options: RunsOptions): Runs {
     return { ok: false, reason: ended?.run === run.run && ended.reason !== null ? ended.reason : "the run did not start" };
   }
 
+  /** Run the other N: the runs a caught-up run of job `id` stood for but itself, as a Run all whose
+   *  first run is the second. */
+  async function runOthers(id: string, ref: string, ranRun: string): Promise<MissedChoiceResult> {
+    const latest = last.get(id) ?? null;
+    const ran = latest?.run === ranRun ? latest : await history.find(id, ranRun);
+    if (ran === null) return { ok: false, reason: `no run ${ranRun} of "${ref}"` };
+    const others = otherMissedRuns(ran, latest, active);
+    if (others === 0 || ran.missed === null) return { ok: false, reason: `run ${ranRun} of "${ref}" has no other missed runs to run — only the job's latest caught-up run that stood for more than one has` };
+    const found = runnable(id, ran.kind);
+    if (typeof found === "string") return { ok: false, reason: found };
+    const run: ActiveRun = { ...newRun(found.job, "caught-up", now()), missed: ran.missed, series: { n: 2, of: ran.missed.count } };
+    active.push(run);
+    log(`run ${id} ${run.run}: Run the other ${others}`);
+    save();
+    options.onChange();
+    await advance();
+    return { ok: true, at: now().getTime(), runs: others };
+  }
+
   const minutesOf = (ms: number): number => Math.floor(ms / MINUTE_MS) * MINUTE_MS;
 
   return {
@@ -1258,12 +1317,29 @@ export function createRuns(options: RunsOptions): Runs {
       inLane(async (): Promise<MissedChoiceResult> => {
         const id = jobIdOf(options.jobs(), ref) ?? ref;
         const waiting = active.find((run) => run.job === id && run.state === "missed-waiting");
-        if (waiting === undefined) return { ok: false, reason: `no missed run of "${ref}" waits for you` };
+        if (choice.kind === "run-others") return runOthers(id, ref, choice.run);
+        if (waiting === undefined) {
+          // Run all with no missed run waiting: the other runs of the job's latest, caught-up run.
+          const latest = last.get(id);
+          if (choice.kind === "run-all" && latest !== undefined && otherMissedRuns(latest, latest, active) > 0) return runOthers(id, ref, latest.run);
+          return { ok: false, reason: `no missed run of "${ref}" waits for you` };
+        }
         switch (choice.kind) {
           case "skip":
             log(`run ${waiting.job} ${waiting.run}: Skip`);
             await miss(waiting, "skipped by you");
-            return { ok: true, at: null };
+            return { ok: true, at: null, runs: 0 };
+          case "run-all": {
+            const found = runnable(waiting.job, waiting.kind);
+            if (typeof found === "string") return { ok: false, reason: found };
+            const count = missedOf(waiting).count;
+            Object.assign(waiting, { state: "queued", trigger: "caught-up", runAt: null, deadline: null, series: count > 1 ? { n: 1, of: count } : null });
+            log(`run ${waiting.job} ${waiting.run}: Run all ${count}`);
+            save();
+            options.onChange();
+            await advance();
+            return { ok: true, at: now().getTime(), runs: count };
+          }
           case "run-at": {
             const parsed = parseRunAt(choice.at, now());
             if (!parsed.ok) return parsed;
@@ -1272,13 +1348,13 @@ export function createRuns(options: RunsOptions): Runs {
             save();
             options.onChange();
             await advance();
-            return { ok: true, at: parsed.at };
+            return { ok: true, at: parsed.at, runs: 1 };
           }
           case "run-now": {
             log(`run ${waiting.job} ${waiting.run}: Run now`);
             active = active.filter((run) => run !== waiting);
             const result = await runNowIn(waiting.job);
-            if (result.ok) return { ok: true, at: now().getTime() };
+            if (result.ok) return { ok: true, at: now().getTime(), runs: 1 };
             active.push(waiting);
             save();
             options.onChange();
@@ -1324,7 +1400,8 @@ export function createRuns(options: RunsOptions): Runs {
         await options.switchStore.flush();
         log(`switch: ${SWITCH_WORDS[position]}`);
         for (const run of active.filter((candidate) => candidate.state === "queued" && (candidate.runAt === null || candidate.runAt <= at))) {
-          if (!holds(previous, run) || holds(position, run)) continue;
+          // A run of a Run all is the person's decision already: it waits on, and goes on.
+          if (!holds(previous, run) || holds(position, run) || run.series !== null) continue;
           if (run.trigger !== "caught-up" && at - (run.runAt ?? run.dueAt) <= ON_TIME_MS) continue;
           const job = runJobOf(run.job);
           if (job === null || job.trigger.kind !== "schedule") continue;
@@ -1409,6 +1486,10 @@ export function createRuns(options: RunsOptions): Runs {
     },
   };
 }
+
+/** Six hex digits turned into six others: the id of the record that drops the rest of a Run all,
+ *  made from the id of the run it follows. */
+const flipHex = (hex: string): string => [...hex].map((digit) => (15 - Number.parseInt(digit, 16)).toString(16)).join("");
 
 /** A missed-run decision in words, for the log. */
 function decisionWords(decision: MissedDecision): string {

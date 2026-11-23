@@ -55,9 +55,11 @@ export const SET_ENABLED_METHOD = "jobs.setEnabled";
  *  is opened or it is dismissed; a long-run warning's, dismissed. Runner's own frames only. */
 export const DISMISS_METHOD = "needsYou.dismiss";
 
-/** `{ job, choice: "run-now" | "run-at" | "skip", at? }` → `MissedChoiceResult`
- *  (`isMissedChoiceResult`): the person's choice for a missed run that waits for them; `at` is
- *  Run at…'s time as typed (`23:00`, `tomorrow 9:00`, `2026-11-20T23:00`). Runner's own frames only. */
+/** `{ job, choice: "run-now" | "run-at" | "skip" | "run-all" | "run-others", at?, run? }` →
+ *  `MissedChoiceResult` (`isMissedChoiceResult`): the person's choice for a job's missed runs — for
+ *  the missed run that waits for them, Run now (Run once), Run at…, Skip or Run all; `at` is Run
+ *  at…'s time as typed (`23:00`, `tomorrow 9:00`, `2026-11-20T23:00`); `run-others` runs the other
+ *  runs the caught-up run `run` stood for (Run the other N). Runner's own frames only. */
 export const MISSED_METHOD = "runs.missed";
 
 /** `{ job, run }` → `RunStopResult` (`isRunStopResult`): stop a running run as stopped by you.

@@ -29,6 +29,14 @@ keep true.
   a job's one decision keeps the count and the first and last missed time (`MissedRuns`), and the run
   or record it makes carries them (`missed`), the Needs-you item of a run waiting for you too. A
   later miss adds to a caught-up run still queued or a missed run still waiting (`addMissed`).
+- **Run all** — the person's choice, never a policy's: Run all N on a missed run waiting (`missed`,
+  choice `run-all`), Run the other N on the job's latest caught-up run that stood for more than one
+  (`run-others`; `otherMissedRuns` says when). One run of the series (`series`: n of N) is active at a
+  time, waiting for the job's previous run whatever its overlap (`queue.ts`); `record()` queues the
+  next in the same save that ends a run that ran and ended done or failed (`carryOn`), so the series
+  lives in `runs.json`. A run stopped by you, one that never started, or a job gone drops the rest with
+  one skipped record, its id made from the run it follows so a restart never writes it twice. The
+  switch's release leaves a series run queued; an on-time run never covers it.
 - **The switch** — a job it holds keeps its look in `held`; nothing is decided for it while held — no
   record, no Needs-you item — and the report counts its occurrences (`heldRuns`) and marks it
   (`JobRuns.held`). On release every occurrence it held is missed, however recent, and goes, counted,
@@ -64,7 +72,7 @@ keep true.
 | `scheduler.ts` | the wiring: the control socket, the Pomade connection and its events, the tick, the loaded jobs and settings, notices and the badge, the broker API |
 | `runs.ts` | the run lifecycle: the look, wake, overlap, the staged start, the login hook, firing hooks and chains, starting and ending sessions, time limits, long-run warnings, agent launch, waiting for you |
 | `triggers.ts` | which of a schedule's occurrences fell since the previous look, every one counted (pure; `pomade-kit`'s engine) |
-| `missed.ts` | what a missed-run policy makes of missed occurrences, their count kept with the decision; adding two counts; Run at…'s time |
+| `missed.ts` | what a missed-run policy makes of missed occurrences, their count kept with the decision; adding two counts; Run at…'s time (Run all is in `runs.ts`: it is the person's choice, no policy's) |
 | `queue.ts` | which queued runs start now, what each other waits for (time, switch, warm-up, previous run, Pomade, slot) |
 | `switch.ts` | the switch's position, kept in `switch.json` |
 | `hooks.ts` | which jobs an event fires, the filters, the environment of a hook's runs (`projectFiring`, `sessionFiring`, `POMADE_STARTED`) |
@@ -103,6 +111,8 @@ keep true.
 - A service is never held by the switch or the warm-up and never followed by a chain's run.
 - A job the switch holds gets no record, Needs-you item or notice until the switch lets it go; then
   one decision, whose run or record counts every occurrence it held.
+- A job has at most one run of a Run all active; its runs never run at once, and each ended run either
+  queues the next or is followed by the one record that drops the rest.
 - The state folder and the records folder are two types (`src/locations.ts`); a path in one is never
   taken for the other, and nothing under the workspace grows with a live run's output.
 - An invalid or half-written job file never stops or starts a running service.

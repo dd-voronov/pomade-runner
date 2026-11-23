@@ -52,6 +52,13 @@ describe("control protocol", () => {
     expect(PARAMS_PARSERS.runs(null)).toBeNull();
     for (const position of ["running", "pause-low", "pause-all", null]) expect(PARAMS_PARSERS.switch({ position, extra: 1 })).toEqual({ position });
     for (const bad of [null, {}, { position: "paused" }, { position: 1 }]) expect(PARAMS_PARSERS.switch(bad)).toBeUndefined();
+    for (const kind of ["run-now", "run-all", "skip"] as const) expect(PARAMS_PARSERS.missed({ job: "w", choice: { kind, extra: 1 } })).toEqual({ job: "w", choice: { kind } });
+    expect(PARAMS_PARSERS.missed({ job: "w", choice: { kind: "run-at", at: "23:00" } })).toEqual({ job: "w", choice: { kind: "run-at", at: "23:00" } });
+    expect(PARAMS_PARSERS.missed({ job: "w", choice: { kind: "run-others", run: "r1" } })).toEqual({ job: "w", choice: { kind: "run-others", run: "r1" } });
+    for (const bad of [null, { job: "w" }, { job: "", choice: { kind: "skip" } }, { job: "w", choice: "skip" }, { job: "w", choice: { kind: "run-at" } }, { job: "w", choice: { kind: "run-others", run: "" } }, { job: "w", choice: { kind: "later" } }])
+      expect(PARAMS_PARSERS.missed(bad)).toBeUndefined();
+    expect(RESULT_GUARDS.missed({ job: "w", at: null, runs: 0 })).toBe(true);
+    expect(RESULT_GUARDS.missed({ job: "w", at: 1 })).toBe(false);
   });
 
   it("checks the switch's and the runs report's answers", () => {
@@ -63,7 +70,7 @@ describe("control protocol", () => {
   });
 
   it("checks the runs' answers' shapes", () => {
-    const base = { job: "backup", name: "Backup", kind: "script", project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled", cause: null, dueAt: 1, agent: null, missed: null };
+    const base = { job: "backup", name: "Backup", kind: "script", project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled", cause: null, dueAt: 1, agent: null, missed: null, series: null };
     const going = { lowPriority: true, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false };
     const active = { ...base, ...going, state: "running", startedAt: 2, session: "run:backup:20261117-120000-abcdef", log: "/s/o.log" };
     const record = { ...base, state: "failed", action: null, reason: null, startedAt: 2, endedAt: 3, durationMs: 1, exitCode: 1, signal: null, log: "/s/o.log", lastLines: ["boom"], git: null, limitHit: null };

@@ -70,6 +70,11 @@ Usage:
                                  Run now still runs, services keep running
   ${COMMAND} resume               let held runs go: the late ones follow their missed-run policy
   ${COMMAND} resume-job <job>     let hooks and chains fire a job the loop guard paused again
+  ${COMMAND} missed <job> <choice>
+                                 settle a job's missed runs: run-once, run-all (every run it
+                                 missed, one after another; after a caught-up run that stood
+                                 for more than one, the others), run-at <time> (23:00,
+                                 tomorrow 9:00, +2h) or skip
   ${COMMAND} enable <job>         write enabled: true into a job's file
   ${COMMAND} disable <job>        write enabled: false into a job's file; a running service stops
   ${COMMAND} services             every service: its state, restarts and last crash
@@ -320,7 +325,7 @@ function needsYouLine(item: NeedsYouItem): string {
     case "service-failed":
       return `needs you: ${item.name} — gave up: ${item.detail}`;
     case "missed":
-      return `needs you: ${item.name} — ${item.detail}; it waits for you: Run now, Run at… or Skip in Runner`;
+      return `needs you: ${item.name} — ${item.detail}; it waits for you: ${COMMAND} missed ${item.job} ${(item.missed?.count ?? 1) > 1 ? "run-once|run-all" : "run-once"}|run-at <time>|skip, or in Runner`;
     case "waiting":
       return `needs you: ${item.name} — ${item.detail}, since ${dayTime(item.at)}; answer it in the run's terminal tab in Pomade`;
     case "long-run":
@@ -401,6 +406,36 @@ async function jobCommand(name: JobCommand, job: string, deps: CliDeps): Promise
   return EXIT_OK;
 }
 
+/** The choices `missed` takes, as typed. */
+const MISSED_CHOICES = ["run-once", "run-all", "run-at", "skip"] as const;
+const MISSED_USAGE = `${COMMAND} missed <job> run-once|run-all|run-at <time>|skip`;
+
+/** `missed <job> <choice> [time]`: the person's choice for a job's missed runs. */
+async function missedCommand(args: readonly string[], deps: CliDeps): Promise<number> {
+  const [job, choice, ...more] = args;
+  const known = MISSED_CHOICES.find((one) => one === choice);
+  const takes = known === "run-at" ? 1 : 0;
+  if (job === undefined || job === "" || job.startsWith("-") || known === undefined || more.length !== takes || more.some((arg) => arg === "")) {
+    const problem = job === undefined || job === "" ? "names no job" : known === undefined ? (choice === undefined ? "names no choice" : `unknown choice "${choice}"`) : known === "run-at" && more.length === 0 ? "run-at names no time" : `unexpected "${more[takes] ?? job}"`;
+    deps.err(`${COMMAND} missed: ${problem}. Usage: ${MISSED_USAGE}.\n`);
+    return EXIT_USAGE;
+  }
+  const kind = known === "run-once" ? "run-now" : known;
+  const answer = answerOf(await deps.ask("missed", { job, choice: kind === "run-at" ? { kind, at: more[0] ?? "" } : { kind } }), "runs the jobs");
+  if (!answer.ok) return refused("missed", answer.why, deps);
+  const { job: id, at, runs } = answer.value;
+  const what =
+    kind === "skip"
+      ? "skipped: recorded as missed · skipped by you"
+      : kind === "run-all"
+        ? `${plural(runs, "run")} queued, one after another`
+        : kind === "run-at" && at !== null
+          ? `runs at ${dayTime(at)}`
+          : "runs once now";
+  deps.out(`${id}  ${what}\n`);
+  return EXIT_OK;
+}
+
 function refused(name: string, why: string, deps: CliDeps): number {
   deps.err(`${COMMAND} ${name}: ${why}.\n`);
   return EXIT_PROBLEMS;
@@ -450,6 +485,7 @@ export async function runCli(args: readonly string[], deps: CliDeps): Promise<nu
         return runsCommand(deps);
     }
   }
+  if (first === "missed") return missedCommand(rest, deps);
   if (Object.hasOwn(JOB_COMMANDS, first)) {
     const name = first as JobCommand;
     const { target } = JOB_COMMANDS[name];

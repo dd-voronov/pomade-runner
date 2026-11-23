@@ -107,7 +107,7 @@ operation kept ready to run by hand.
 
 | Field | Value | Default |
 |---|---|---|
-| `missed` | scheduled jobs only (a hook, chain or manual job refuses it) — a run the Mac slept through, was off for, or Runner's switch held: `run-on-wake` (one catch-up run after wake, however many were missed) · `wait-for-me` (the user picks Run now, Run at… or Skip) · `skip` (recorded missed) | `run-on-wake` for script and agent, `skip` for git |
+| `missed` | scheduled jobs only (a hook, chain or manual job refuses it) — a run the Mac slept through, was off for, or Runner's switch held: `run-on-wake` (one catch-up run after wake, however many were missed) · `wait-for-me` (the user picks Run now, Run at… or Skip — or Run all, every missed run one after another; `pomade-runner missed <job> run-once|run-all|run-at <time>|skip` from the command line) · `skip` (recorded missed) | `run-on-wake` for script and agent, `skip` for git |
 | `worth-until` | scheduled jobs with `run-on-wake`: a time (`12:00`) after which a catch-up is skipped, or `next-run` (skipped once the next run is due) | `next-run` |
 | `overlap` | the previous run is still going: `skip` · `parallel` · `queue` | `skip` |
 | `time-limit` | `45m`, `2h`, `1h30m`; a run past it is stopped and fails; empty = no limit | none |

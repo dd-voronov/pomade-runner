@@ -172,6 +172,7 @@ describe("runs", () => {
           dueAt: now.getTime(),
           agent: null,
           missed: null,
+          series: null,
           state: "running",
           lowPriority: true,
           runAt: null,
@@ -203,6 +204,7 @@ describe("runs", () => {
         dueAt: Date.parse("2026-11-18T12:00:00.000Z"),
         agent: null,
         missed: null,
+        series: null,
         state: "done",
         action: null,
         reason: null,
@@ -577,7 +579,7 @@ describe("runs", () => {
       await writeFile(runsRecordPath(recordsFolderOf(dir)), JSON.stringify({ active: [{ job: 1 }], last: { a: { nope: true } }, lookedAt: "soon", held: { a: "x" } }));
       expect(await file.load()).toEqual({ active: [], last: {}, lookedAt: null, held: {}, guard: { fired: {}, paused: {} } });
       // A run going as an older build kept it: what it lacks gets its default.
-      const { lowPriority: _priority, cause: _cause, runAt: _at, deadline: _deadline, waits: _waits, limitHit: _limit, warnedAt: _warned, warningDismissed: _dismissed, ...older } = store.saved.active[0] ?? ({} as ActiveRun);
+      const { lowPriority: _priority, cause: _cause, runAt: _at, deadline: _deadline, waits: _waits, limitHit: _limit, warnedAt: _warned, warningDismissed: _dismissed, missed: _missed, series: _series, ...older } = store.saved.active[0] ?? ({} as ActiveRun);
       await writeFile(runsRecordPath(recordsFolderOf(dir)), JSON.stringify({ active: [older], last: {} }));
       expect((await file.load()).active).toEqual(store.saved.active);
     });

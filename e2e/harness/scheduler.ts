@@ -134,6 +134,7 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     dueAt: Date.now(),
     agent: null,
     missed: null,
+    series: null,
     state: "running",
     lowPriority: false,
     runAt: null,
@@ -169,10 +170,16 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     [SERVICE_METHODS.stop]: action(SERVICE_METHODS.stop, serviceAnswer),
     [SERVICE_METHODS.restart]: action(SERVICE_METHODS.restart, () => ({ ok: false, reason: "the keeper is not connected" })),
     [MISSED_METHOD]: action(MISSED_METHOD, (params) => {
-      const { choice, at } = params as { choice: string; at?: string };
-      if (choice !== "run-at") return { ok: true, at: null };
+      const { job, choice, at } = params as { job: string; choice: string; at?: string };
+      if (choice === "skip") return { ok: true, at: null, runs: 0 };
+      if (choice === "run-all" || choice === "run-others") {
+        // As many as the waiting run, or the caught-up run, stands for: the other ones for run-others.
+        const counted = [...runs.report.active, ...runs.history].find((view) => view.job === job && view.missed !== null)?.missed?.count ?? 1;
+        return { ok: true, at: Date.now(), runs: choice === "run-all" ? counted : counted - 1 };
+      }
+      if (choice !== "run-at") return { ok: true, at: null, runs: 1 };
       const when = parseRunAt(at ?? "", new Date());
-      return when.ok ? { ok: true, at: when.at } : { ok: false, reason: when.reason };
+      return when.ok ? { ok: true, at: when.at, runs: 1 } : { ok: false, reason: when.reason };
     }),
     [RUN_STOP_METHOD]: action(RUN_STOP_METHOD),
     [RESUME_METHOD]: action(RESUME_METHOD, (params) => {

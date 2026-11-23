@@ -382,6 +382,11 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
       if (!result.ok) throw new ControlRefused(`cannot resume "${job}": ${result.reason}`);
       return { job: result.job, name: result.name };
     },
+    missed: async ({ job, choice }) => {
+      const result = await runs.missed(job, choice);
+      if (!result.ok) throw new ControlRefused(`cannot settle the missed runs of "${job}": ${result.reason}`);
+      return { job: jobIdOf(jobs.snapshot(), job) ?? job, at: result.at, runs: result.runs };
+    },
   });
   async function enabledAnswer(job: string, enabled: boolean): Promise<JobEnabled> {
     const result = await setEnabled(job, enabled);

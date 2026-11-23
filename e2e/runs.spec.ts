@@ -255,7 +255,7 @@ test.describe("scheduled scripts", () => {
       expect(after.split("\n")[0]).toBe(before.split("\n")[0]);
       expect(after.split("\n")[0]).toContain("runs of low-priority jobs are held");
       expect(after).toContain("needs you: Fail — failed: exit 3, ");
-      expect(after).toMatch(/needs you: Inbox — [^\n]+; it waits for you: Run now, Run at… or Skip in Runner\n/);
+      expect(after).toMatch(/needs you: Inbox — [^\n]+; it waits for you: pomade-runner missed inbox run-once\|run-at <time>\|skip, or in Runner\n/);
     } finally {
       await copy.dispose();
     }

@@ -4,9 +4,9 @@ import { APP_TAB_KEY_RE } from "pomade-kit/protocol";
 
 import { editRoute, jobsRoute, newRoute, outputRoute, outputTab, outputTabKey, parseRoute, promptRoute, runRoute } from "../integrations/runner-api";
 import { MAX_ENCODED_JOB_ID } from "../keeper/ids";
-import { clockTime, dayTime, durationWords, hookCauseWords, isActiveRun, isRunsReport, runWords, type ActiveRun, type RunRecord } from "./model";
+import { clockTime, dayTime, durationWords, hookCauseWords, isActiveRun, isMissedChoiceResult, isRunsReport, otherMissedRuns, parseRunRecord, runTriggerWords, runWords, type ActiveRun, type RunRecord } from "./model";
 
-const base = { job: "coda/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/coda", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1, agent: null, missed: null };
+const base = { job: "coda/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/coda", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1, agent: null, missed: null, series: null };
 const active: ActiveRun = {
   ...base,
   state: "running",
@@ -49,6 +49,43 @@ describe("runs in words", () => {
     expect(runWords({ ...record, state: "skipped" })).toBe("skipped");
     expect(runWords({ ...record, state: "missed", reason: "skipped" })).toBe("missed · skipped");
     expect(runWords({ ...record, state: "missed", reason: null })).toBe("missed");
+  });
+
+  it("T-026 · says a run of a Run all as caught up n of N: it stands for one of the missed runs", () => {
+    const missed = { count: 4, first: new Date(2026, 10, 18, 17, 40).getTime(), last: new Date(2026, 10, 18, 17, 46).getTime() };
+    expect(runTriggerWords({ ...record, trigger: "caught-up", missed })).toBe("missed 4 runs, 17:40–17:46 · caught up once");
+    expect(runTriggerWords({ ...record, trigger: "caught-up", missed, series: { n: 2, of: 4 } })).toBe("caught up 2 of 4");
+  });
+
+  it("T-026 · a caught-up run that ran for more than one missed run can run the others while it is its job's latest and no Run all of the job goes", () => {
+    const missed = { count: 3, first: 1, last: 2 };
+    const caught: RunRecord = { ...record, trigger: "caught-up", missed };
+    expect(otherMissedRuns(caught, caught, [])).toBe(2);
+    expect(otherMissedRuns(caught, { ...caught, run: "later" }, [])).toBe(0);
+    expect(otherMissedRuns(caught, null, [])).toBe(0);
+    expect(otherMissedRuns(caught, caught, [{ ...queued, job: caught.job, trigger: "caught-up", series: { n: 2, of: 3 } }])).toBe(0);
+    expect(otherMissedRuns(caught, caught, [{ ...queued, job: caught.job }])).toBe(2);
+    expect(otherMissedRuns({ ...caught, missed: { count: 1, first: 1, last: 1 } }, caught, [])).toBe(0);
+    expect(otherMissedRuns({ ...caught, series: { n: 3, of: 3 } }, { ...caught, series: { n: 3, of: 3 } }, [])).toBe(0);
+    expect(otherMissedRuns({ ...caught, trigger: "manual" }, { ...caught, trigger: "manual" }, [])).toBe(0);
+    // One that never ran — missed past its worth-until — stood for them all: none of them ran.
+    const never: RunRecord = { ...caught, state: "missed", startedAt: null };
+    expect(otherMissedRuns(never, never, [])).toBe(0);
+    expect(otherMissedRuns({ ...queued, trigger: "caught-up", missed }, caught, [])).toBe(0);
+  });
+
+  it("T-026 · checks a missed-run choice's answer: how many runs it made", () => {
+    expect(isMissedChoiceResult({ ok: true, at: 5, runs: 3 })).toBe(true);
+    expect(isMissedChoiceResult({ ok: true, at: null, runs: 0 })).toBe(true);
+    expect(isMissedChoiceResult({ ok: false, reason: "no" })).toBe(true);
+    for (const bad of [{ ok: true, at: 5 }, { ok: true, at: 5, runs: -1 }, { ok: true, at: 5, runs: 1.5 }]) expect(isMissedChoiceResult(bad)).toBe(false);
+  });
+
+  it("T-026 · checks a run's series; a record of an older build reads with none", () => {
+    const { series: _series, ...older } = record;
+    expect(parseRunRecord(older)).toEqual(record);
+    expect(isActiveRun({ ...active, series: { n: 1, of: 3 } })).toBe(true);
+    for (const series of [{ n: 0, of: 3 }, { n: 4, of: 3 }, { n: 1 }, "1/3", undefined]) expect(isActiveRun({ ...active, series })).toBe(false);
   });
 
   it("says a moment on this Mac's clock", () => {

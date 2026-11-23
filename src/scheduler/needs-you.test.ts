@@ -30,6 +30,7 @@ function record(state: RunRecord["state"], extra: Partial<RunRecord> = {}): RunR
     dueAt: T0,
     agent: null,
     missed: null,
+    series: null,
     state,
     action: null,
     reason: state === "skipped" ? "previous run still going" : null,

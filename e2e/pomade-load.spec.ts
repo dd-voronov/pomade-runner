@@ -6,7 +6,7 @@
 // they reach Pomade once the switch is set back — after the scheduler connected, so the notices
 // go to the running Pomade.
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
@@ -225,5 +225,40 @@ test.describe("missed runs in Pomade", () => {
     await expect(rows.first().getByTestId("next-up-held")).toHaveText("held");
     expect(await callScheduler(socket(), "switch", { position: "running" })).toMatchObject({ status: "ok" });
     await expect.poll(() => tagged(rows)).toEqual(["High", "Low", "High", "Low", "High"]);
+  });
+
+  test("T-026 · Run all 3 on a Needs-you card runs three caught-up runs, one after another; Run once runs one and clears its card", async () => {
+    const jobs = join(folders.workspace, "Apps/pomade-runner/jobs");
+    for (const name of ["nightly", "tidy", "early", "slow", "low", "high"]) await rm(join(jobs, `${name}.md`), { force: true });
+    const job = (name: string): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: "echo ${name.toLowerCase()} $POMADE_TRIGGER; sleep 1"\nschedule:\n  daily: { at: 22:00 }\nmissed: wait-for-me\n---\n`;
+    await writeFile(join(jobs, "batch.md"), job("Batch"));
+    await writeFile(join(jobs, "once.md"), job("Once"));
+
+    // Alive on Thursday at 21:00, paused; then off until Saturday 22:50: three 22:00s missed.
+    await restartTheScheduler("2026-11-19T21:00:00");
+    expect(await callScheduler(socket(), "switch", { position: "pause-all" })).toMatchObject({ status: "ok" });
+    await expect.poll(() => schedulerTime()).toBeGreaterThan(madrid("2026-11-19T21:01:00"));
+    await restartTheScheduler("2026-11-21T22:50:00");
+    expect(await callScheduler(socket(), "switch", { position: "running" })).toMatchObject({ status: "ok" });
+
+    await clickIfThere(page.getByTestId(`strip-${STRIP_KEY}`), page.getByTestId(`panel-frame-${STRIP_KEY}`));
+    const panel = page.frameLocator(`[data-testid="panel-frame-${STRIP_KEY}"]`);
+    const item = (name: string) => panel.locator('[data-testid="needs-you-item"][data-kind="missed"]', { hasText: name });
+    await expect(item("Batch").getByTestId("needs-you-words")).toHaveText("Missed 3 runs, Thu 22:00–Sat 22:00 — it waits for you to pick a time.");
+    await expect(item("Batch").getByRole("button")).toHaveText(["Batch", "", "Run once", "Run all 3", "Run at…", "Skip"]);
+    await drawn(page);
+    await shoot(page, "pomade-missed-run-all");
+
+    await item("Batch").getByRole("button", { name: "Run all 3" }).click();
+    await expect(item("Batch")).toHaveCount(0);
+    await expect.poll(async () => (await history("batch")).length, { timeout: 30_000 }).toBe(3);
+    const rows = (await history("batch")).reverse();
+    expect(rows.map((record) => [record.trigger, record.state, record.series, record.lastLines])).toEqual([1, 2, 3].map((n) => ["caught-up", "done", { n, of: 3 }, ["batch caught-up"]]));
+    // One after another: each started once the one before it ended.
+    expect(rows.slice(1).map((row, index) => (row.startedAt ?? 0) >= (rows[index]?.endedAt ?? Infinity))).toEqual([true, true]);
+
+    await item("Once").getByRole("button", { name: "Run once" }).click();
+    await expect(item("Once")).toHaveCount(0);
+    await expect.poll(() => history("once"), { timeout: 15_000 }).toEqual([expect.objectContaining({ trigger: "manual", state: "done", lastLines: ["once manual"] }) as RunRecord]);
   });
 });

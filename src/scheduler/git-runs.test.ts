@@ -161,6 +161,7 @@ describe("jobs.forRepo", () => {
     dueAt: new Date("2026-11-18T13:00:00").getTime(),
     agent: null,
     missed: null,
+    series: null,
     state: "done",
     action: null,
     reason: null,

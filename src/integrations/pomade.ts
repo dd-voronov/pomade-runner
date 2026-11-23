@@ -264,12 +264,13 @@ export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise
         return { resolved: offer.dismiss(text(DISMISS_METHOD, paramsOf(DISMISS_METHOD, params, takes), "id", takes)) };
       }),
       [MISSED_METHOD]: own(MISSED_METHOD, (params) => {
-        const takes = '{ job: <a job\'s id>, choice: "run-now" | "run-at" | "skip", at?: <a time> }';
+        const takes = '{ job: <a job\'s id>, choice: "run-now" | "run-at" | "skip" | "run-all" | "run-others", at?: <a time>, run?: <a run id> }';
         const given = paramsOf(MISSED_METHOD, params, takes);
         const job = text(MISSED_METHOD, given, "job", takes);
         const { choice } = given;
-        if (choice === "run-now" || choice === "skip") return offer.missed(job, { kind: choice });
+        if (choice === "run-now" || choice === "skip" || choice === "run-all") return offer.missed(job, { kind: choice });
         if (choice === "run-at") return offer.missed(job, { kind: "run-at", at: text(MISSED_METHOD, given, "at", takes) });
+        if (choice === "run-others") return offer.missed(job, { kind: "run-others", run: text(MISSED_METHOD, given, "run", takes) });
         throw new HostError("invalid-params", `${MISSED_METHOD} takes ${takes}`);
       }),
       [RUN_STOP_METHOD]: own(RUN_STOP_METHOD, (params) => {

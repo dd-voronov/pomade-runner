@@ -15,7 +15,8 @@ Every run that ends — or never starts — is recorded and reaches you in one o
 The **History** view lists the runs going and every record, newest first by when each started — a run
 that has not, by when it was due — under day heads ("Today", "Yesterday", "Sun 15 Nov"). A row shows
 the **Time**, the kind icon, the **Job**, the **Result**, the **Duration** and the **Trigger**
-(`scheduled` · `caught up` · `missed 4 runs, 17:40–17:46 · caught up once` · `manual` · `hook: Mac
+(`scheduled` · `caught up` · `missed 4 runs, 17:40–17:46 · caught up once` · `caught up 2 of 4` (a run of
+a Run all) · `manual` · `hook: Mac
 login` · `chain: after Pull`). Time queued does not
 count toward a duration; time waiting for you does. Click a row, or press Enter or Space on it, to
 open its result card.
@@ -48,16 +49,17 @@ waiting run's amber. **Edit job** ends every card.
 
 | Run | The card shows | Buttons |
 |---|---|---|
-| Script, ended | **Exit code** (red when failed), or the reason — a time limit as "Stopped: Time limit, 45 min — the job’s time limit" — and the **Last lines** | `View output` · `Run again` |
+| Script, ended | **Exit code** (red when failed), or the reason — a time limit as "Stopped: Time limit, 45 min — the job’s time limit" — and the **Last lines** | `View output` · `Run again`; a caught-up run that stood for more than one, while it is its job's latest, adds `Run the other 3` |
 | Git, ended | each repo with its commit hash and steps | `View output` · `Run again` |
 | Agent, ended | a failed run's reason; the agent's **Last message** | `Open session` · `View output` · `Run again` |
 | Running | **Latest output**, followed while it runs | `Open terminal` · `Stop run` |
 | Agent, waiting for you | what it waits at and **Waiting at**: the end of its output | `Open at the prompt` · `Stop run` |
 | Queued | what it waits for, in a sentence | `Run now` |
-| Missed, waiting for you | when it was due and that its policy is "Wait for me" | `Run now` · `Run at…` · `Skip` |
+| Missed, waiting for you | when it was due — "This job missed 4 runs, 17:40–17:46." for more than one — and that its policy is "Wait for me" | `Run now` · `Run at…` · `Skip`; for more than one `Run once` · `Run all 4` · `Run at…` · `Skip` |
 | Skipped or missed; a chain's action on a service | why it never started, or what the chain did | `Run now` |
 
-`Stop run` and a missed run's choices close the card and toast the outcome; `Run again` toasts
+`Run all` and `Run the other N` ask once more above 20 runs, naming the number
+([Missed runs and load](missed-runs-and-load.md) "Run all"). `Stop run` and a missed run's choices close the card and toast the outcome; `Run again` toasts
 "<job> started · trigger “manual”" (or "queued"). A run no longer in History opens a card that says so.
 
 Opening the card of a failed run clears that run's Needs-you item.
@@ -86,7 +88,7 @@ to what the card is about — the time, one line of text and the actions. Every 
 |---|---|---|
 | failed run | "Failed: exit 1 · 2×" (the count when more than one since the item came) | `Open` · `Run now` · `Dismiss` |
 | service gave up | "Crashed 5× in 1 min — gave up."; "Gave up — could not start: <why>" when it never got a terminal | `Start` · `View output` (not without a terminal) |
-| missed run waits | "Missed — it waits for you to pick a time."; "Missed 4 runs, 17:40–17:46 — …" when it stands for more than one | `Run now` · `Run at…` · `Skip` |
+| missed run waits | "Missed — it waits for you to pick a time."; "Missed 4 runs, 17:40–17:46 — …" when it stands for more than one | `Run now` · `Run at…` · `Skip`; for more than one `Run once` · `Run all 4` · `Run at…` · `Skip` (four buttons wrap to a second row) |
 | agent run waits | "Waiting for approval at a permission prompt." / "Waiting for you to trust its folder." | `Open at the prompt` |
 | long run | "Running 3h — still expected?" | `Open` · `Stop` · `Dismiss` |
 | job paused by the loop guard | "Paused: triggered 10× in 10 min." | `Resume` · `Edit job` |

@@ -6,7 +6,8 @@
 //    low-priority jobs but Run now;
 // 3. **the warm-up** — a caught-up run and a hook run wait until the staged start after login or
 //    wake is over;
-// 4. **the job's previous run** — unless the job's overlap is `parallel`;
+// 4. **the job's previous run** — unless the job's overlap is `parallel`; a run of a Run all waits
+//    for it whatever the overlap, so its runs go one after another;
 // 5. **Pomade** — an agent run starts only while Pomade is up for it (connected, ready, and no
 //    launch of it under way); until then it waits while Runner opens Pomade, holding no slot;
 // 6. **a slot** — at most `maxLowPriority` low-priority runs go at once. A low-priority run that finds
@@ -64,7 +65,7 @@ export function planQueue(active: readonly ActiveRun[], state: QueueState): Queu
       waits.set(run, { kind: "switch", position: state.position });
     } else if ((run.trigger === "caught-up" || run.trigger === "hook") && !state.warmUp.over) {
       waits.set(run, { kind: "warm-up", until: state.warmUp.until });
-    } else if (busy.has(run.job) && state.overlap(run.job) !== "parallel" && state.overlap(run.job) !== undefined) {
+    } else if (busy.has(run.job) && (run.series !== null || (state.overlap(run.job) !== "parallel" && state.overlap(run.job) !== undefined))) {
       waits.set(run, { kind: "previous-run" });
     } else if (run.kind === "agent" && !state.pomadeUp) {
       waits.set(run, { kind: "pomade" });

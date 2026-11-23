@@ -23,6 +23,7 @@ socket, so it works with Pomade closed. A job is named by its **id** (`coda-help
 | `pomade-runner pause [low\|all]` | holds scheduled runs: of low-priority jobs, or all (the default). Run now still runs; services keep running |
 | `pomade-runner resume` | lets held runs go: what the switch held is missed and follows each job's missed-run policy, once per job |
 | `pomade-runner resume-job <job>` | lets hooks and chains fire a job the loop guard paused again |
+| `pomade-runner missed <job> run-once\|run-all\|run-at <time>\|skip` | settles a job's missed runs as its card does: `run-once` runs it once now, `run-all` runs every missed run one after another (with no missed run waiting: the other runs of its latest caught-up run), `run-at 23:00` (or `tomorrow 9:00`, `+2h`) runs it at that time, `skip` records it `missed · skipped by you` |
 | `pomade-runner enable <job>` · `disable <job>` | writes `enabled: true` or `enabled: false` into the job's file; disabling stops a running service |
 | `pomade-runner services` | every service: its state, restarts and last crash |
 | `pomade-runner stop <service>` | stops a service; it stays stopped until `run` |

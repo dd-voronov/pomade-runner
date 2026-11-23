@@ -21,6 +21,7 @@ const running = (job: string, state: ActiveRun["state"]): ActiveRun => ({
   dueAt: 1,
   agent: null,
   missed: null,
+  series: null,
   state,
   lowPriority: true,
   runAt: null,

@@ -126,10 +126,22 @@ interface RunBase {
    *  agent run before its start. */
   agent: AgentRun | null;
   /** The runs its job missed that this one stands for — a caught-up run, a missed run waiting for
-   *  the person, a missed record: how many, and the first and last missed time; `null` for any
-   *  other run. */
+   *  the person, a missed record, a run of a Run all: how many, and the first and last missed time;
+   *  `null` for any other run. */
   missed: MissedRuns | null;
+  /** A run of a Run all: the `n`-th of the `of` runs that make up its job's missed runs, run one
+   *  after another; `null` for any other run. */
+  series: RunSeries | null;
 }
+
+/** Where a run of a Run all stands among them: the `n`-th of `of` (1-based). */
+export interface RunSeries {
+  n: number;
+  of: number;
+}
+
+/** Above this many runs, Run all asks once more, naming the number. */
+export const RUN_ALL_CONFIRM_ABOVE = 20;
 
 /** The occurrences a job missed — while the switch held it, the Mac slept or Runner was off — that
  *  one missed-run decision is about: how many, the first and the last (epoch ms). */
@@ -363,12 +375,15 @@ export type RunActionResult = { ok: true; run: ActiveRun } | { ok: true; service
 /** A job enabled or disabled. */
 export type EnableResult = { ok: true; job: string; enabled: boolean } | { ok: false; reason: string };
 
-/** What the person picks for a missed run that waits for them: Run now · Run at… (a time, a day and
- *  a time, or a date phrase: `23:00`, `tomorrow 9:00`, `+2h`) · Skip. */
-export type MissedChoice = { kind: "run-now" } | { kind: "run-at"; at: string } | { kind: "skip" };
+/** What the person picks for a job's missed runs: for the missed run that waits for them, Run now
+ *  (Run once, when it stands for more than one) · Run at… (a time, a day and a time, or a date
+ *  phrase: `23:00`, `tomorrow 9:00`, `+2h`) · Skip · Run all — every run it stands for, one after
+ *  another; for a caught-up run that stood for more than one, `run-others` — the other runs. */
+export type MissedChoice = { kind: "run-now" } | { kind: "run-at"; at: string } | { kind: "skip" } | { kind: "run-all" } | { kind: "run-others"; run: string };
 
-/** The answer to a missed run's choice: when it runs (`at`: epoch ms; `null` for Skip), or why not. */
-export type MissedChoiceResult = { ok: true; at: number | null } | { ok: false; reason: string };
+/** The answer to a missed-run choice: when it runs (`at`: epoch ms; `null` for Skip) and how many
+ *  runs it made (`runs`: 0 for Skip, the whole number for Run all), or why not. */
+export type MissedChoiceResult = { ok: true; at: number | null; runs: number } | { ok: false; reason: string };
 
 /** The answer to Stop on a run. */
 export type RunStopResult = { ok: true } | { ok: false; reason: string };
@@ -385,7 +400,7 @@ export function isResumeResult(value: unknown): value is ResumeResult {
 export function isMissedChoiceResult(value: unknown): value is MissedChoiceResult {
   if (!isRecord(value)) return false;
   if (value.ok === false) return typeof value.reason === "string";
-  return value.ok === true && nullableNumber(value.at);
+  return value.ok === true && nullableNumber(value.at) && typeof value.runs === "number" && Number.isSafeInteger(value.runs) && value.runs >= 0;
 }
 
 export function isRunStopResult(value: unknown): value is RunStopResult {
@@ -470,11 +485,18 @@ export function isMissedRuns(value: unknown): value is MissedRuns {
   return isRecord(value) && typeof value.count === "number" && Number.isSafeInteger(value.count) && value.count >= 1 && finite(value.first) && finite(value.last) && (value.first as number) <= (value.last as number);
 }
 
+export function isRunSeries(value: unknown): value is RunSeries {
+  if (!isRecord(value)) return false;
+  const { n, of } = value;
+  return typeof n === "number" && typeof of === "number" && Number.isSafeInteger(n) && Number.isSafeInteger(of) && n >= 1 && n <= of;
+}
+
 function isRunBase(value: Record<string, unknown>): boolean {
-  const { job, name, kind, project, folder, run, trigger, cause, dueAt, agent, missed } = value;
+  const { job, name, kind, project, folder, run, trigger, cause, dueAt, agent, missed, series } = value;
   return (
     (agent === null || isAgentRun(agent)) &&
     (missed === null || isMissedRuns(missed)) &&
+    (series === null || isRunSeries(series)) &&
     typeof job === "string" &&
     typeof name === "string" &&
     typeof kind === "string" &&
@@ -560,7 +582,7 @@ export function withAgentDefaults(agent: unknown): unknown {
 /** A history record as a file keeps it; a field a record of an older build lacks gets its default. */
 export function parseRunRecord(value: unknown): RunRecord | null {
   if (!isRecord(value)) return null;
-  const record = { cause: null, action: null, git: null, limitHit: null, missed: null, ...value, agent: withAgentDefaults(value.agent) };
+  const record = { cause: null, action: null, git: null, limitHit: null, missed: null, series: null, ...value, agent: withAgentDefaults(value.agent) };
   return isRunRecord(record) ? record : null;
 }
 
@@ -717,14 +739,30 @@ export function heldRunsWords(count: number): string | null {
   return count <= 0 ? null : `${count} ${count === 1 ? "run" : "runs"} so far`;
 }
 
+/** A caught-up run's words after its missed runs: "caught up once" for one that stands for them
+ *  all, "caught up 2 of 4" for a run of a Run all. */
+export function caughtUpWords(series: RunSeries | null): string {
+  return series === null ? "caught up once" : `caught up ${series.n} of ${series.of}`;
+}
+
 /** What started a run, in words, with its cause: "scheduled", "hook: Mac login", "chain: after
  *  Backup", "caught up" — "missed 4 runs, 17:40–17:46 · caught up once" for one that stands for
- *  more than one missed run. */
-export function runTriggerWords(run: { trigger: RunTrigger; cause: RunCause | null; missed?: MissedRuns | null }): string {
+ *  more than one missed run; a run of a Run all stands for one of them: "caught up 2 of 4". */
+export function runTriggerWords(run: { trigger: RunTrigger; cause: RunCause | null; missed?: MissedRuns | null; series?: RunSeries | null }): string {
   if (run.cause?.kind === "chain") return `chain: after ${run.cause.name}`;
   if (run.cause?.kind === "hook") return `hook: ${hookCauseWords(run.cause)}`;
+  if (run.trigger === "caught-up" && run.series != null) return caughtUpWords(run.series);
   const missed = run.trigger === "caught-up" ? missedRunsWords(run.missed ?? null) : null;
-  return missed === null ? TRIGGER_WORDS[run.trigger] : `${missed} · caught up once`;
+  return missed === null ? TRIGGER_WORDS[run.trigger] : `${missed} · ${caughtUpWords(null)}`;
+}
+
+/** How many other runs a caught-up run that ran can still run (Run the other N): the runs it stood
+ *  for but itself, while it is its job's latest run (`latest`) and no Run all of the job is going
+ *  (`active`); 0 for any other run. */
+export function otherMissedRuns(view: RunView, latest: RunRecord | null, active: readonly ActiveRun[]): number {
+  if (!RESULTS.includes(view.state) || view.startedAt === null || view.trigger !== "caught-up" || view.series !== null || view.missed === null || view.missed.count < 2) return 0;
+  if (latest?.run !== view.run || active.some((run) => run.job === view.job && run.series !== null)) return 0;
+  return view.missed.count - 1;
 }
 
 /** A chain's action on a service, done, in words. */
