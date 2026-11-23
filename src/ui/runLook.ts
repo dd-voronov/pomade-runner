@@ -3,7 +3,7 @@
 // duration, and what started it. Pure.
 
 import type { JobKind } from "../jobs/model";
-import { ACTION_DONE_WORDS, hookCauseWords, runWords, SWITCH_WORDS, waitingAt, type RunRecord, type RunTrigger, type RunView, type Waits } from "../scheduler/model";
+import { ACTION_DONE_WORDS, hookCauseWords, missedRunsWords, runWords, SWITCH_WORDS, waitingAt, type RunRecord, type RunTrigger, type RunView, type Waits } from "../scheduler/model";
 import type { HelpKey } from "./help";
 import type { DotTone, PillTone } from "./kit";
 import { shortClock } from "./serviceWords";
@@ -158,12 +158,15 @@ export const TRIGGER_HELP: Record<RunTrigger, HelpKey> = { scheduled: "tr.schedu
 const capital = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
 
 /** The card's why line under its meta: what fired a hook run ("Mac login"), a caught-up run's
- *  missed time; `null` when the trigger says it all. A chain's is the card's own (it links the run
- *  it followed). */
+ *  missed time — how many runs and when, for more than one ("Missed 4 runs, 17:40–17:46 — caught
+ *  up once"); `null` when the trigger says it all. A chain's is the card's own (it links the run it
+ *  followed). */
 export function whyWords(view: RunView, now: number): string | null {
   if (view.cause?.kind === "hook") return capital(hookCauseWords(view.cause));
-  if (view.trigger === "caught-up") return `Missed ${whenWords(view.dueAt, now).replace(/^Today /, "").replace(/^Yesterday/, "yesterday")} — caught up after wake`;
-  return null;
+  if (view.trigger !== "caught-up") return null;
+  const missed = missedRunsWords(view.missed);
+  if (missed !== null) return `${capital(missed)} — caught up once`;
+  return `Missed ${whenWords(view.dueAt, now).replace(/^Today /, "").replace(/^Yesterday/, "yesterday")} — caught up after wake`;
 }
 
 const COUNT_WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"] as const;

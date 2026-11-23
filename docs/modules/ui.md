@@ -33,6 +33,10 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
   `help.ts`, keyed `<area>.<what>`. A new key is added there and nowhere else.
 - **Tooltips** are one layer per surface: `data-tip` (a line) or `data-help` (a help key) on any element.
 - **A view extends a kit primitive** (`kit/`) rather than forking it.
+- **The scheduler's words, once.** A run's state and trigger in words (`runWords`, `runTriggerWords`,
+  `missedRunsWords`, `heldRunsWords` in `src/scheduler/model.ts`) are the scheduler's; History, the
+  cards, Needs you, the Jobs cells and `pomade-runner` read the same functions. Whether a job is held
+  comes from the report (`NextRun.held`, `JobRuns.held`), never from the UI's own reading of the switch.
 - **Output tab** (`OutputPage.tsx`): a keyed Pomade tab per run, "<job> · output", with Copy; it closes
   itself when its run is gone from the history.
 
@@ -42,13 +46,13 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
 |---|---|
 | `main.tsx`, `App.tsx`, `index.html` | the entry, the frame choice, the page |
 | `Panel.tsx`, `shell/PanelShell.tsx` | the side panel and its frame: the switch pinned on top, sections, Open Runner at the foot |
-| `SwitchControl.tsx` | the three-position switch |
+| `SwitchControl.tsx` | the three-position switch and its note, with the runs held so far |
 | `NeedsYou.tsx` | Needs you's cards and their actions (a gave-up service without a session has no View output; its name opens the job in Jobs) |
 | `RunningNow.tsx`, `ActiveRunsList.tsx` | Running now: services and runs going; a row opens its tab, terminal or card |
 | `NextUp.tsx`, `runWords.ts` | Next up and "in 40 min" |
 | `panelWords.ts` | the panel's words: a Needs-you card's look, a moment ahead or past, a run's age |
 | `RunnerTab.tsx`, `shell/TabShell.tsx` | the Runner tab and its frame: the four views, the route, the "This project" chip, New job |
-| `JobsView.tsx`, `jobWords.ts`, `JobsProblem.tsx` | the Jobs view; its Last result and Next run cells; the scheduler-not-running and unreadable-jobs messages |
+| `JobsView.tsx`, `jobWords.ts`, `JobsProblem.tsx` | the Jobs view; its Last result and Next run cells (a held job's with Next up's `held` tag); the scheduler-not-running and unreadable-jobs messages |
 | `DeleteJobDialog.tsx` | the Delete confirm, shared by the row and the form |
 | `ServicesView.tsx`, `serviceWords.ts` | the Services view; a service's state in words |
 | `HistoryView.tsx`, `useHistoryPages.ts`, `runLook.ts` | History: filters, day heads, pages of 100; a run's look (dot, words, pill, filter, duration) |

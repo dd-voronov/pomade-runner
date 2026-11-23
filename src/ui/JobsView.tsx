@@ -221,7 +221,22 @@ function JobRow({
           {last.words}
         </Status>
       </RowCell>
-      <RowCell sub={next.sub ?? undefined} className={next.none ? styles.none : undefined} testId="job-next">
+      <RowCell
+        sub={
+          next.held ? (
+            <>
+              {next.sub}
+              <Tag tone="warn" help="sw.held" className={next.sub === null ? styles.heldTag : `${styles.heldTag} ${styles.after}`} data-testid="job-held">
+                held
+              </Tag>
+            </>
+          ) : (
+            (next.sub ?? undefined)
+          )
+        }
+        className={next.none || next.held ? styles.none : undefined}
+        testId="job-next"
+      >
         {next.words}
       </RowCell>
       <RowActions>

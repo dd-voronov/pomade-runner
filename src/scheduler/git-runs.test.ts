@@ -160,6 +160,7 @@ describe("jobs.forRepo", () => {
     cause: null,
     dueAt: new Date("2026-11-18T13:00:00").getTime(),
     agent: null,
+    missed: null,
     state: "done",
     action: null,
     reason: null,
@@ -174,8 +175,8 @@ describe("jobs.forRepo", () => {
     limitHit: null,
   };
   const runs: JobRuns[] = [
-    { job: "knowledge", next, finished: false, last },
-    { job: "fetch", next: null, finished: false, last: { ...last, job: "fetch", state: "missed", git: null } },
+    { job: "knowledge", next, finished: false, last, held: false },
+    { job: "fetch", next: null, finished: false, last: { ...last, job: "fetch", state: "missed", git: null }, held: false },
   ];
 
   it("every file is valid", () => {
@@ -203,7 +204,7 @@ describe("jobs.forRepo", () => {
   it("the last result is the repo's own in the run when it has one", () => {
     const coda = repoJobs(snapshot, runs, { name: "coda-helper", path: "/ws/Projects/coda-helper" });
     expect(coda.map((job) => [job.id, job.lastResult?.status])).toEqual([["knowledge", "skipped"]]);
-    const stopped = repoJobs(snapshot, [{ job: "knowledge", next: null, finished: false, last: { ...last, state: "stopped-by-you", git: null } }], repo);
+    const stopped = repoJobs(snapshot, [{ job: "knowledge", next: null, finished: false, last: { ...last, state: "stopped-by-you", git: null }, held: false }], repo);
     expect(stopped.find((job) => job.id === "knowledge")?.lastResult?.status).toBe("failed");
   });
 

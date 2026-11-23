@@ -10,7 +10,9 @@ import {
   isRunStopResult,
   LAST_LINES,
   limitWords,
+  missedRunsWords,
   plainLines,
+  runWords,
   TRIGGER_WORDS,
   waitingAt,
   type ActiveRun,
@@ -286,6 +288,8 @@ function neverWords(record: RunRecord): string {
     if (record.state === "done") return `${done} by a chain${parent}.`;
     return `${capital(record.state === "skipped" ? "skipped" : "failed")}: ${record.reason ?? "the chain did not act"}.`;
   }
+  // A record of more than one missed run says how many: "Missed 4 runs, 17:40–17:46 · skipped."
+  if (record.state === "missed" && missedRunsWords(record.missed) !== null) return `${capital(runWords(record))}.`;
   return `${capital(record.reason ?? (record.state === "missed" ? "missed" : "it never started"))}.`;
 }
 
@@ -511,15 +515,22 @@ function MissedBody({
   onSet: (at: string) => void;
   onClose: () => void;
 }): React.JSX.Element {
+  const missed = missedRunsWords(view.missed);
   return (
     <>
-      <p>
-        This run was due{" "}
-        <b>
-          {dayWords(view.dueAt, now).replace(/^Today$/, "today")} at {shortClock(view.dueAt)}
-        </b>{" "}
-        and was missed.
-      </p>
+      {missed === null ? (
+        <p>
+          This run was due{" "}
+          <b>
+            {dayWords(view.dueAt, now).replace(/^Today$/, "today")} at {shortClock(view.dueAt)}
+          </b>{" "}
+          and was missed.
+        </p>
+      ) : (
+        <p data-testid="run-missed-runs">
+          This job <b>{missed}</b>.
+        </p>
+      )}
       <p className={styles.note}>
         Its missed-run policy is “Wait for me”, so it didn’t catch up on its own. <Help k="need.waitforme" />
       </p>

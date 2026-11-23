@@ -6,7 +6,7 @@ import { editRoute, jobsRoute, newRoute, outputRoute, outputTab, outputTabKey, p
 import { MAX_ENCODED_JOB_ID } from "../keeper/ids";
 import { clockTime, dayTime, durationWords, hookCauseWords, isActiveRun, isRunsReport, runWords, type ActiveRun, type RunRecord } from "./model";
 
-const base = { job: "coda/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/coda", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1, agent: null };
+const base = { job: "coda/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/coda", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1, agent: null, missed: null };
 const active: ActiveRun = {
   ...base,
   state: "running",
@@ -142,17 +142,19 @@ describe("isRunsReport", () => {
     const report = {
       active: [active, { ...active, kind: "agent", agent: { ...AGENT, waiting: { prompt: "trust", since: 2 }, waitedMs: 5 } }],
       nextUp: [{ job: "a", name: "A", project: null, at: 5, held: true }],
-      jobs: [{ job: "a", next: null, finished: true, last: record }],
+      jobs: [{ job: "a", next: null, finished: true, last: record, held: false }],
       needsYou: [
         { id: "run-failed:a", kind: "run-failed", job: "a", name: "A", project: null, run: "r", at: 1, count: 1, detail: "exit 1" },
         { id: "service-failed:w", kind: "service-failed", job: "w", name: "W", project: null, at: 1, detail: "x", problem: null, session: true },
-        { id: "missed:a", kind: "missed", job: "a", name: "A", project: null, run: "r", at: 1, detail: "x" },
+        { id: "missed:a", kind: "missed", job: "a", name: "A", project: null, run: "r", at: 1, missed: null, detail: "x" },
         { id: "long-run:a:r", kind: "long-run", job: "a", name: "A", project: null, run: "r", at: 2, startedAt: 1, detail: "x" },
         { id: "waiting:a:r", kind: "waiting", job: "a", name: "A", project: null, run: "r", prompt: "permission", at: 2, detail: "x" },
       ],
       switch: { position: "pause-low", since: 3 },
+      heldRuns: 4,
     };
     expect(isRunsReport(report)).toBe(true);
+    expect(isRunsReport({ ...report, active: [{ ...active, state: "missed-waiting", missed: { count: 4, first: 1, last: 7 } }] })).toBe(true);
     for (const bad of [
       { ...report, active: [{ ...active, state: "done" }] },
       { ...report, nextUp: [{ job: "a" }] },
@@ -168,6 +170,12 @@ describe("isRunsReport", () => {
       { ...report, active: [{ ...active, agent: { ...AGENT, waitedMs: null } }] },
       { ...report, switch: { position: "off", since: null } },
       { ...report, switch: undefined },
+      { ...report, heldRuns: undefined },
+      { ...report, heldRuns: -1 },
+      { ...report, jobs: [{ job: "a", next: null, finished: true, last: record }] },
+      { ...report, active: [{ ...active, missed: { count: 0, first: 1, last: 1 } }] },
+      { ...report, active: [{ ...active, missed: { count: 2, first: 7, last: 1 } }] },
+      { ...report, active: [{ ...active, missed: undefined }] },
       { active: [] },
     ]) {
       expect(isRunsReport(bad)).toBe(false);

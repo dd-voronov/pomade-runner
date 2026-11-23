@@ -25,6 +25,14 @@ keep true.
   read the settings, take each scheduled job's occurrences since its previous look (`triggers.ts`),
   fire the latest when it is at most 5 minutes old, hand every other one to the job's missed-run
   policy (`missed.ts`), start the queued runs the queue lets go (`queue.ts`), supervise services.
+- **Missed runs, counted** — every occurrence missed is counted (`passedOccurrences`, `triggers.ts`);
+  a job's one decision keeps the count and the first and last missed time (`MissedRuns`), and the run
+  or record it makes carries them (`missed`), the Needs-you item of a run waiting for you too. A
+  later miss adds to a caught-up run still queued or a missed run still waiting (`addMissed`).
+- **The switch** — a job it holds keeps its look in `held`; nothing is decided for it while held — no
+  record, no Needs-you item — and the report counts its occurrences (`heldRuns`) and marks it
+  (`JobRuns.held`). On release every occurrence it held is missed, however recent, and goes, counted,
+  to the job's policy.
 - **Hooks** — one firing path, `hook()` in `runs.ts`, for every event; `hooks.ts` says which jobs an event
   fires and what environment its runs get. Events: Mac login (a scheduler start that finds no keeper
   running), Pomade started, first open of a project, project created, agent session finished, session
@@ -55,8 +63,8 @@ keep true.
 | `main.ts` | the entry: reads the app key and keeper socket from the environment, runs the scheduler on the workspace Pomade records |
 | `scheduler.ts` | the wiring: the control socket, the Pomade connection and its events, the tick, the loaded jobs and settings, notices and the badge, the broker API |
 | `runs.ts` | the run lifecycle: the look, wake, overlap, the staged start, the login hook, firing hooks and chains, starting and ending sessions, time limits, long-run warnings, agent launch, waiting for you |
-| `triggers.ts` | which of a schedule's occurrences fell since the previous look (pure; `pomade-kit`'s engine) |
-| `missed.ts` | what a missed-run policy makes of missed occurrences; Run at…'s time |
+| `triggers.ts` | which of a schedule's occurrences fell since the previous look, every one counted (pure; `pomade-kit`'s engine) |
+| `missed.ts` | what a missed-run policy makes of missed occurrences, their count kept with the decision; adding two counts; Run at…'s time |
 | `queue.ts` | which queued runs start now, what each other waits for (time, switch, warm-up, previous run, Pomade, slot) |
 | `switch.ts` | the switch's position, kept in `switch.json` |
 | `hooks.ts` | which jobs an event fires, the filters, the environment of a hook's runs (`projectFiring`, `sessionFiring`, `POMADE_STARTED`) |
@@ -75,7 +83,7 @@ keep true.
 | `environment.ts`, `read-environment.ts` | what Settings shows about the Mac (notification permission, the skill's links): the shared type and check (pure); reading it from the Mac |
 | `workspace-follow.ts` | waiting for a workspace, starting again on another |
 | `run-events.ts` | the payloads of `run.started` and `run.finished`, agent fields included |
-| `model.ts` | the shared model of runs, history records, Needs you, the switch, and their words (`runTriggerWords`, `hookCauseWords`, `waitsWords`) |
+| `model.ts` | the shared model of runs, history records, Needs you, the switch, and their words (`runTriggerWords`, `hookCauseWords`, `waitsWords`, `missedRunsWords`, `heldRunsWords`) |
 | `clock.ts` | the `Clock`, the tick length, the test overrides `POMADE_RUNNER_TICK_MS`, `POMADE_RUNNER_CLOCK`, `POMADE_RUNNER_CLOCK_RATE` |
 | `log.ts` | one timestamped line per event on stdout (`<userData>/app-logs/pomade-runner/backend.log`) |
 | `control/protocol.ts` | the control protocol both sides import: methods, versions, shapes |
@@ -93,6 +101,8 @@ keep true.
 - `runs.json` is written on every change and at least once a minute; the last look in it is why a
   scheduler started after a power-off sees what it missed.
 - A service is never held by the switch or the warm-up and never followed by a chain's run.
+- A job the switch holds gets no record, Needs-you item or notice until the switch lets it go; then
+  one decision, whose run or record counts every occurrence it held.
 - The state folder and the records folder are two types (`src/locations.ts`); a path in one is never
   taken for the other, and nothing under the workspace grows with a live run's output.
 - An invalid or half-written job file never stops or starts a running service.

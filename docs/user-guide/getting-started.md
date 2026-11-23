@@ -34,7 +34,9 @@ The **Runner** icon on Pomade's left strip opens the panel. Top to bottom:
 
 - **The switch** — `Running` · `Pause low-priority` · `Pause all`. In a panel narrower than 268 px the
   middle one reads `Pause low`. A pause says what it holds under the control: "Low-priority jobs are
-  held. Services keep running." / "Every scheduled job is held. Services keep running." See
+  held. Services keep running." / "Every scheduled job is held. Services keep running." — with how
+  many runs it has held so far once it has held one: "Low-priority jobs are held · 4 runs so far.
+  Services keep running." See
   [Missed runs and load](missed-runs-and-load.md).
 - **Needs you** — what waits for you, a card per item with its actions inline. It shows "Nothing needs
   you." when empty and a red count while anything waits. See [Results](results.md).
@@ -71,7 +73,8 @@ reload comes back to it.
 
 The switch is yours: Runner never moves it. `Pause low-priority` holds the runs of low-priority jobs;
 `Pause all` holds every scheduled run, hook and chain. Run now always runs, and services keep running
-in every position. A held run follows its job's missed-run policy when you switch back. The position
+in every position. The Jobs view tags a held job's Next run `held`. A held run follows its job's
+missed-run policy when you switch back — once per job, however many it held. The position
 survives a restart of Runner and of the Mac.
 
 ## Keys

@@ -27,7 +27,7 @@ import type { ServicesReport, ServiceStatus } from "../keeper/model";
 import { needsYouRecordPath, type RecordsFolder } from "../locations";
 import type { Log } from "./log";
 import { FIRING_LIMIT, FIRING_WINDOW_MS } from "./loop-guard";
-import { ACTION_DONE_WORDS, dayTime, durationWords, failureWords, type ActiveRun, type AgentWait, type NeedsYouItem, type RunRecord } from "./model";
+import { ACTION_DONE_WORDS, dayTime, durationWords, failureWords, missedRunsWords, type ActiveRun, type AgentWait, type NeedsYouItem, type RunRecord } from "./model";
 
 /** A failed-run item as it is kept. */
 interface Failure {
@@ -138,7 +138,7 @@ export function runNotice(record: RunRecord, notify: Notify): NoticeParams | nul
  *  the run's card, with Run now · Run at… · Skip. */
 export function missedNotice(run: ActiveRun): NoticeParams {
   return {
-    title: `${run.name} · missed ${dayTime(run.dueAt)}`,
+    title: `${run.name} · ${missedRunsWords(run.missed) ?? `missed ${dayTime(run.dueAt)}`}`,
     body: "It waits for you: Run now, Run at… or Skip.",
     action: { kind: "openApp", route: runRoute(run.job, run.run) },
   };

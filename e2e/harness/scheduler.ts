@@ -78,7 +78,7 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
 
   let snapshot = await read();
   let runs: { report: RunsReport; history: RunRecord[]; output: string; outputMissing: boolean } = {
-    report: { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } },
+    report: { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null }, heldRuns: 0 },
     history: [],
     output: "",
     outputMissing: false,
@@ -133,6 +133,7 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     cause: null,
     dueAt: Date.now(),
     agent: null,
+    missed: null,
     state: "running",
     lowPriority: false,
     runAt: null,

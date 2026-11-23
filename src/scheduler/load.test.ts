@@ -16,7 +16,7 @@ import { checkJobs } from "../jobs/check";
 import { recordsFolderOf, stateFolderOf } from "../locations";
 import type { JobsSnapshot } from "../jobs/model";
 import { createHistory, type History } from "./history";
-import { runWords, type ActiveRun, type RunRecord } from "./model";
+import { runTriggerWords, runWords, type ActiveRun, type RunRecord } from "./model";
 import { ALIVE_EVERY_MS, createRuns, WAKE_GAP_MS, type Runs } from "./runs";
 import { FakeSessions, FakeTurns, memoryStore, memorySwitch, script } from "./runs-fixture";
 import { DEFAULT_SETTINGS, type Settings } from "./settings";
@@ -174,9 +174,17 @@ describe("missed runs and load", () => {
       files = { "check.md": script("Check", "schedule:\n  every: { minutes: 15 }\n") };
       load();
       await at("2026-11-18T14:10:00");
-      expect(lines).toContain("job check: missed 32 runs, the latest Wed 14:00 — one caught-up run, worth it until Wed 14:15");
+      expect(lines).toContain("job check: missed 32 runs, 06:15–14:00 — one caught-up run, worth it until Wed 14:15");
       await awake("2026-11-18T14:12:30");
       expect(spawned()).toEqual(["check caught-up"]);
+      // The caught-up run stands for every run missed while the Mac slept, and its record says so.
+      const missed = { count: 32, first: ms("2026-11-18T06:15:00"), last: ms("2026-11-18T14:00:00") };
+      expect(going("check")[0]).toMatchObject({ trigger: "caught-up", dueAt: missed.last, missed });
+      sessions.end(sessions.latest("check"), "exited", 0);
+      await awake("2026-11-18T14:12:32");
+      const record = (await records()).find((one) => one.job === "check");
+      expect(record).toMatchObject({ state: "done", trigger: "caught-up", missed });
+      expect(record === undefined ? null : runTriggerWords(record)).toBe("missed 32 runs, 06:15–14:00 · caught up once");
     });
 
     it("an on-time run covers a caught-up run still waiting for the warm-up", async () => {
@@ -233,7 +241,7 @@ describe("missed runs and load", () => {
       files = { "twice.md": script("Twice", "schedule:\n  daily: { at: [7:00, 8:00] }\n") };
       load();
       await restart("2026-11-18T09:00:00");
-      expect(lines).toContain("job twice: missed Wed 07:00, Wed 08:00 — one caught-up run, worth it until Thu 07:00");
+      expect(lines).toContain("job twice: missed 2 runs, 07:00–08:00 — one caught-up run, worth it until Thu 07:00");
       await awake("2026-11-18T09:01:59");
       expect(sessions.spawned).toEqual([]);
       await awake("2026-11-18T09:02:00");
@@ -242,7 +250,7 @@ describe("missed runs and load", () => {
       sessions.end(sessions.latest("twice"), "exited", 0);
       // Off for days: still one.
       await restart("2026-11-20T09:00:00");
-      expect(lines).toContain("job twice: missed 4 runs, the latest Fri 08:00 — one caught-up run, worth it until Sat 07:00");
+      expect(lines).toContain("job twice: missed 4 runs, Thu 07:00–Fri 08:00 — one caught-up run, worth it until Sat 07:00");
       await awake("2026-11-20T09:02:00");
       expect(spawned()).toEqual(["twice caught-up", "twice caught-up"]);
     });
@@ -290,7 +298,7 @@ describe("missed runs and load", () => {
     it("a missed run waits for you: a Needs-you item and a notice, once; never starts on its own", async () => {
       const run = await missedSunday();
       expect(run).toMatchObject({ state: "missed-waiting", trigger: "scheduled", dueAt: ms("2026-11-22T03:00:00") });
-      expect(runs.needsYou()).toEqual([{ id: "missed:weekly", kind: "missed", job: "weekly", name: "Weekly", project: null, run: run.run, at: ms("2026-11-22T03:00:00"), detail: "missed Sun 03:00" }]);
+      expect(runs.needsYou()).toEqual([{ id: "missed:weekly", kind: "missed", job: "weekly", name: "Weekly", project: null, run: run.run, at: ms("2026-11-22T03:00:00"), missed: { count: 1, first: ms("2026-11-22T03:00:00"), last: ms("2026-11-22T03:00:00") }, detail: "missed Sun 03:00" }]);
       expect(notices).toEqual([{ title: "Weekly · missed Sun 03:00", body: "It waits for you: Run now, Run at… or Skip.", action: { kind: "openApp", route: `run/weekly/${run.run}` } }]);
       await awake("2026-11-23T09:30:00", 10_000);
       expect(sessions.spawned).toEqual([]);
@@ -394,7 +402,7 @@ describe("missed runs and load", () => {
       await restart("2026-11-18T12:00:00");
     });
 
-    it("Pause low-priority holds the low-priority job; another runs; resume within 5 minutes runs the held one on time", async () => {
+    it("Pause low-priority holds the low-priority job; another runs; resume within 5 minutes catches the held one up — a run the switch held is missed", async () => {
       expect(await runs.setSwitch("pause-low")).toEqual({ position: "pause-low", since: now.getTime() });
       expect(switchStore.saved.position).toBe("pause-low");
       // Next up holds the low-priority job's runs only.
@@ -406,7 +414,108 @@ describe("missed runs and load", () => {
       expect(spawned()).toEqual(["git scheduled"]);
       await runs.setSwitch("running");
       await awake("2026-11-18T13:02:01");
-      expect(spawned()).toEqual(["git scheduled", "summary scheduled"]);
+      expect(spawned()).toEqual(["git scheduled", "summary caught-up"]);
+      // One run missed reads as it always has.
+      expect(going("summary")[0]).toMatchObject({ trigger: "caught-up", missed: { count: 1, first: ms("2026-11-18T13:00:00"), last: ms("2026-11-18T13:00:00") } });
+      expect(runTriggerWords(going("summary")[0] ?? { trigger: "manual", cause: null })).toBe("caught up");
+    });
+
+    describe("counted", () => {
+      beforeEach(async () => {
+        files = {
+          "low.md": script("Low", "schedule:\n  every: { minutes: 2 }\n"),
+          "high.md": script("High", "schedule:\n  every: { minutes: 2 }\nlow-priority: false\n"),
+          "wait.md": script("Wait", "schedule:\n  every: { minutes: 2 }\nmissed: wait-for-me\n"),
+          "skip.md": script("Skip", "schedule:\n  every: { minutes: 2 }\nmissed: skip\n"),
+          "byhand.md": script("By hand", ""),
+        };
+        load();
+        // A first start at 17:39: nothing before it is due.
+        await runs.close();
+        store = memoryStore();
+        now = new Date("2026-11-18T17:39:00");
+        await open();
+        await runs.tick();
+        sessions.spawned.length = 0;
+      });
+
+      const held = (): Record<string, boolean> => Object.fromEntries(runs.jobRuns().map((info) => [info.job, info.held]));
+
+      it("Pause low-priority: Jobs says which jobs are held, the held runs count up, no Needs-you item comes", async () => {
+        expect(held()).toEqual({ byhand: false, high: false, low: false, skip: false, wait: false });
+        await runs.setSwitch("pause-low");
+        expect(held()).toEqual({ byhand: false, high: false, low: true, skip: true, wait: true });
+        expect(runs.heldRuns()).toBe(0);
+        await awake("2026-11-18T17:40:30");
+        // Three low-priority jobs each held their 17:40 run; High ran it.
+        expect(runs.heldRuns()).toBe(3);
+        expect(spawned()).toEqual(["high scheduled"]);
+        await awake("2026-11-18T17:44:30");
+        expect(runs.heldRuns()).toBe(9);
+        // A sleep while held changes nothing but the count.
+        await at("2026-11-18T17:50:30");
+        expect(runs.heldRuns()).toBe(18);
+        expect(runs.needsYou()).toEqual([]);
+        expect(notices).toEqual([]);
+        expect((await records()).filter((record) => record.job !== "high")).toEqual([]);
+        await runs.setSwitch("pause-all");
+        expect(held()).toEqual({ byhand: false, high: true, low: true, skip: true, wait: true });
+        await runs.setSwitch("running");
+        expect(held()).toEqual({ byhand: false, high: false, low: false, skip: false, wait: false });
+        expect(runs.heldRuns()).toBe(0);
+      });
+
+      it("back to Running after three marks: one caught-up run whose record says \"missed 3 runs\"; skip and wait for me count too", async () => {
+        await runs.setSwitch("pause-low");
+        await awake("2026-11-18T17:45:00", 10_000);
+        expect(runs.heldRuns()).toBe(9);
+        await runs.setSwitch("running");
+        await awake("2026-11-18T17:45:01");
+        const three = { count: 3, first: ms("2026-11-18T17:40:00"), last: ms("2026-11-18T17:44:00") };
+        expect(spawned().filter((one) => !one.startsWith("high"))).toEqual(["low caught-up"]);
+        sessions.end(sessions.latest("low"), "exited", 0);
+        await awake("2026-11-18T17:45:03");
+        const all = await records();
+        const low = all.find((record) => record.job === "low");
+        expect(low).toMatchObject({ state: "done", trigger: "caught-up", dueAt: three.last, missed: three });
+        expect(low === undefined ? null : runTriggerWords(low)).toBe("missed 3 runs, 17:40–17:44 · caught up once");
+        const skip = all.find((record) => record.job === "skip");
+        expect(skip).toMatchObject({ state: "missed", reason: "skipped", missed: three });
+        expect(skip === undefined ? null : runWords(skip)).toBe("missed 3 runs, 17:40–17:44 · skipped");
+        // The wait-for-me job waits for you once the switch lets it go, counting all three.
+        const wait = going("wait")[0];
+        expect(wait).toMatchObject({ state: "missed-waiting", dueAt: three.last, missed: three });
+        expect(wait === undefined ? null : runWords(wait)).toBe("missed 3 runs, 17:40–17:44 · waiting for you");
+        expect(runs.needsYou()).toEqual([expect.objectContaining({ id: "missed:wait", detail: "missed 3 runs, 17:40–17:44" })]);
+        expect(notices.map((notice) => notice.title)).toEqual(["Wait · missed 3 runs, 17:40–17:44"]);
+        // A later miss adds to the run that waits.
+        await at("2026-11-18T17:56:00");
+        expect(going("wait")[0]?.missed).toEqual({ count: 8, first: three.first, last: ms("2026-11-18T17:54:00") });
+        // Skip: the record keeps the count.
+        expect((await runs.missed("wait", { kind: "skip" })).ok).toBe(true);
+        expect((await records()).find((record) => record.job === "wait")).toMatchObject({ state: "missed", reason: "skipped by you", missed: { count: 8 } });
+      });
+
+      it("a caught-up run still queued takes in what the switch holds after it", async () => {
+        settings = { ...settings, maxLowPriorityRuns: 1 };
+        files = { ...files, "low.md": script("Low", "schedule:\n  every: { minutes: 2 }\nworth-until: 23:00\n"), "busy.md": script("Busy", "hook: { event: login }\n") };
+        load();
+        // Busy holds the one slot.
+        expect((await runs.runNow("busy")).ok).toBe(true);
+        await awake("2026-11-18T17:39:01");
+        await runs.setSwitch("pause-low");
+        await awake("2026-11-18T17:44:30", 10_000);
+        await runs.setSwitch("running");
+        await awake("2026-11-18T17:44:31");
+        expect(going("low")).toEqual([expect.objectContaining({ state: "queued", trigger: "caught-up", waits: { kind: "slot", ahead: 1 }, missed: { count: 3, first: ms("2026-11-18T17:40:00"), last: ms("2026-11-18T17:44:00") } })]);
+        // Held again while it waits, then let go: what was held adds to it.
+        await runs.setSwitch("pause-low");
+        await awake("2026-11-18T17:48:30", 10_000);
+        await runs.setSwitch("running");
+        await awake("2026-11-18T17:48:31");
+        expect(going("low")).toEqual([expect.objectContaining({ trigger: "caught-up", missed: { count: 5, first: ms("2026-11-18T17:40:00"), last: ms("2026-11-18T17:48:00") } })]);
+        expect(lines).toContain("job low: a caught-up run is queued already; it stands for 5 missed runs");
+      });
     });
 
     it("Pause all holds everything scheduled, but not Run now; on resume the held runs follow their missed-run policy", async () => {

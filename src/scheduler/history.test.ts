@@ -27,6 +27,7 @@ function record(job: string, run: string, endedAt: number, extra: Partial<RunRec
     cause: null,
     dueAt: endedAt - 1000,
     agent: null,
+    missed: null,
     state: "done",
     action: null,
     reason: null,

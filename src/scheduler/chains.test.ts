@@ -19,6 +19,7 @@ const record = (state: RunRecord["state"], extra: Partial<RunRecord> = {}): RunR
   cause: null,
   dueAt: 1,
   agent: null,
+  missed: null,
   state,
   action: null,
   reason: null,

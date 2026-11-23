@@ -1,5 +1,7 @@
 // What a job's missed-run policy makes of its missed occurrences (docs/DESIGN.md "Missed runs and
-// load"). However many were missed, a job gets one decision, about the latest:
+// load"). However many were missed, a job gets one decision, about the latest — and the decision
+// keeps how many were missed and the first and last missed time (`MissedRuns`), which the run or
+// record it makes carries:
 //
 // - **`run-on-wake`** — one caught-up run, while it is still worth it: until the job's next
 //   occurrence after the missed one (`worth-until: next-run`, the default), or until a time of day
@@ -14,15 +16,25 @@ import { parseDatePhrase } from "pomade-kit/dates";
 import { addDays, localDateOf, nextOccurrence, parseTime, toInstant, type Schedule } from "pomade-kit/schedule";
 
 import type { MissedPolicy } from "../jobs/model";
-import { clockTime } from "./model";
+import { clockTime, type MissedRuns } from "./model";
 
+/** What becomes of a job's missed runs (`missed`; its latest, `missed.last`, is the one run or
+ *  recorded). */
 export type MissedDecision =
   /** Run it once, as `caught-up`, no later than `deadline` (epoch ms; `null`: no such moment). */
-  | { action: "catch-up"; dueAt: Date; deadline: number | null }
+  | { action: "catch-up"; missed: MissedRuns; deadline: number | null }
   /** Record it missed, with this reason. */
-  | { action: "record"; dueAt: Date; reason: string }
+  | { action: "record"; missed: MissedRuns; reason: string }
   /** Wait for the person. */
-  | { action: "wait"; dueAt: Date };
+  | { action: "wait"; missed: MissedRuns };
+
+/** A single missed run at `at` (epoch ms). */
+export const missedOnce = (at: number): MissedRuns => ({ count: 1, first: at, last: at });
+
+/** Two counts of one job's missed runs taken together. */
+export function addMissed(a: MissedRuns, b: MissedRuns): MissedRuns {
+  return { count: a.count + b.count, first: Math.min(a.first, b.first), last: Math.max(a.last, b.last) };
+}
 
 /** What decides: the job's policy and its schedule. A job without a missed-run policy (a hook or a
  *  chain) runs what was held, late. */
@@ -47,24 +59,22 @@ export function worthDeadline(job: MissedJob, latest: Date): number | null {
 }
 
 /**
- * Decide on `missed` — the occurrences missed, earliest first, never empty — at `now`. `firesNow`
- * is an on-time occurrence of the job in the same look, when there is one.
+ * Decide on `missed` — the occurrences missed — at `now`. `firesNow` is an on-time occurrence of
+ * the job in the same look, when there is one.
  */
-export function decideMissed(job: MissedJob, missed: readonly Date[], now: Date, firesNow: Date | null = null): MissedDecision {
-  const dueAt = missed.at(-1);
-  if (dueAt === undefined) throw new Error("decideMissed: nothing was missed");
+export function decideMissed(job: MissedJob, missed: MissedRuns, now: Date, firesNow: Date | null = null): MissedDecision {
   switch (job.missed) {
     case null:
-      return { action: "catch-up", dueAt, deadline: null };
+      return { action: "catch-up", missed, deadline: null };
     case "skip":
-      return { action: "record", dueAt, reason: "skipped" };
+      return { action: "record", missed, reason: "skipped" };
     case "wait-for-me":
-      return { action: "wait", dueAt };
+      return { action: "wait", missed };
     case "run-on-wake": {
-      if (firesNow !== null) return { action: "record", dueAt, reason: `skipped · the ${clockTime(firesNow.getTime())} run covers it` };
-      const deadline = worthDeadline(job, dueAt);
-      if (deadline !== null && now.getTime() >= deadline) return { action: "record", dueAt, reason: pastWords(job) };
-      return { action: "catch-up", dueAt, deadline };
+      if (firesNow !== null) return { action: "record", missed, reason: `skipped · the ${clockTime(firesNow.getTime())} run covers it` };
+      const deadline = worthDeadline(job, new Date(missed.last));
+      if (deadline !== null && now.getTime() >= deadline) return { action: "record", missed, reason: pastWords(job) };
+      return { action: "catch-up", missed, deadline };
     }
   }
 }

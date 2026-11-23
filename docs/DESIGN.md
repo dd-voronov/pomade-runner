@@ -339,7 +339,8 @@ disk.
 
 **States:** `missed · waiting for you` (a `wait-for-me` job's missed run) → `queued` → `running` ⇄
 `waiting for you` → `done` · `failed` (a time limit too: "stopped: time limit, 45 min") · `stopped by
-you`. A run that never started is `skipped` or `missed`, with a reason ("missed · skipped").
+you`. A run that never started is `skipped` or `missed`, with a reason ("missed · skipped"). A run
+that stands for more than one missed run says how many ("Missed runs and load", **Counted**).
 
 **Execution:**
 - Every run and every service is a keeper session, in the job's folder — a git run's in the
@@ -658,7 +659,8 @@ the Git panel's failure mark reads. It posts no notice: Runner notifies about a 
 over History. Its head: the kind icon, the job's name, the result as a pill with its help
 ("Done", "Failed", "Stopped: time limit", "Waiting for you", "Missed · waiting for you"), then when it ran (or was due), how long and what
 started it — with its help — an agent run's agent and mode ("claude · Normal"), and a why line: a hook's event ("Mac login"), a caught-up run's
-missed time, a chain's "After Pull: done" whose name opens the run it followed. A failed run's
+missed time ("Missed 7:00 — caught up after wake"; for more than one, "Missed 4 runs, 17:40–17:46 —
+caught up once"), a chain's "After Pull: done" whose name opens the run it followed. A failed run's
 head is red, a run that waits for you amber. Its body, by what the run left:
 
 | Run | Card body | Card foot |
@@ -669,8 +671,8 @@ head is red, a run that waits for you amber. Its body, by what the run left:
 | Running | the latest output, followed while it runs | **Open terminal** · **Stop run** |
 | Agent, waiting for you | what it waits at ("The agent stopped at a permission prompt and waits for your answer."), **Waiting at**: the end of its output from the step that asks (`promptLines`), and that the time limit is paused | **Open at the prompt** (its terminal tab) · **Stop run** |
 | Queued | what it waits for, in a sentence — waiting for a slot, the low-priority runs holding the slots by name ("Two low-priority runs are going (Wiki lint, Photo backup). This one starts when one of them finishes.") | **Run now** |
-| Missed, waiting for you | when it was due, and that its policy waits for you; **Run at…** opens a field that reads the time as it is typed | **Run now** · **Run at…** · **Skip** |
-| Skipped or missed; a chain's action on a service | why it never started, or what the chain did | **Run now** (scripts and git jobs) |
+| Missed, waiting for you | when it was due — for more than one missed run, "This job missed 4 runs, 17:40–17:46." — and that its policy waits for you; **Run at…** opens a field that reads the time as it is typed | **Run now** · **Run at…** · **Skip** |
+| Skipped or missed; a chain's action on a service | why it never started ("Missed 4 runs, 17:40–17:46 · skipped." for more than one), or what the chain did | **Run now** (scripts and git jobs) |
 
 Every card ends with **Edit job**. **View output** opens the run's **output tab** beside the
 Runner tab — a Pomade tab of its own, one per run — with the full captured log (a git run's holds
@@ -738,8 +740,8 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
   starts a warm-up, which holds nothing but missed runs.
 - **Missed runs.** Each look takes every job's occurrences since its previous look; those more than
   5 minutes old are missed — after sleep, after power-off (the look starts at the last alive
-  time), after a clock jump, or held by the switch. However many, a job gets one decision, about the
-  latest missed time, by its `missed` policy:
+  time), after a clock jump — and so is every occurrence the switch held, however recent. However
+  many, a job gets one decision, about the latest missed time, by its `missed` policy:
   - **`run-on-wake`** (agent, script): one **caught-up** run (trigger `caught-up`, due at the latest
     missed time) while it is still worth it — until the job's next occurrence after that time
     (`worth-until: next-run`, the default), or until a time of day (`worth-until: 12:00`: the first
@@ -748,8 +750,8 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
     job in the same look covers it: **missed · skipped · the 09:00 run covers it**. A `once`
     schedule has no next run: its catch-up is always worth it.
   - **`wait-for-me`**: the run waits as **missed · waiting for you**, a Needs-you item *"Inbox triage
-    · missed Sun 3:00"* with a notice; one per job — a later miss moves it to the later time. It
-    never starts on its own:
+    · missed Sun 3:00"* with a notice; one per job — a later miss moves it to the later time and
+    adds to its count. It never starts on its own:
     - **Run now** — a run of yours (trigger `manual`) takes its place, under the job's overlap;
     - **Run at…** — it waits, queued, until that time (trigger `caught-up`) and shows in Next up. The
       time is typed as a time (`23:00`: the next one), a day and a time (`tomorrow 9:00`,
@@ -762,6 +764,18 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
   - **`skip`** (git): **missed · skipped**.
   - Hook and chain jobs have no missed-run policy: a run the switch held runs late.
   - Missed runs are history records (state `missed`), never noticed but a `wait-for-me` one.
+  - **Counted.** The occurrences are counted, every one, however long the absence
+    (`passedOccurrences`, `triggers.ts`). The decision keeps the count and the first and last missed
+    time (`MissedRuns`: `count`, `first`, `last`), and the run or record it makes carries them as
+    `missed` — the caught-up run (in `runs.json` while it goes, then its history record), the missed
+    run waiting for you (and its Needs-you item, `missed`), the missed record. A later miss adds to
+    a caught-up run still queued or a missed run still waiting (`addMissed`). The words
+    (`missedRunsWords`, `model.ts`) are one function: "missed 4 runs, 17:40–17:46" ("missed 2 runs,
+    Sun 23:00–Mon 07:00" across days) — a caught-up run's trigger "missed 4 runs, 17:40–17:46 ·
+    caught up once", a record "missed 4 runs, 17:40–17:46 · skipped", a run waiting "missed 4 runs,
+    17:40–17:46 · waiting for you"; one missed run reads "caught up", "missed · skipped", "missed ·
+    waiting for you". History, the result card, the missed-run card, Needs you, the notice and
+    `pomade-runner history` and `runs` say them.
 - **The queue** (`queue.ts`). Every run joins it, oldest first, and starts when nothing holds it;
   each queued run waits for the first of:
   1. its **time** — Run at…;
@@ -796,11 +810,14 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
 - **The switch**, three positions: **Running · Pause low-priority · Pause all**.
   - Pause all holds every run but Run now; Pause low-priority holds the runs of low-priority jobs.
     Running runs go on; services keep running in every position.
-  - A held job's look stays where the switch caught it: on release its occurrences come due — the
-    latest on time when within 5 minutes, the others missed and to the job's policy. A queued run
-    the switch held goes to its job's policy on release when it is more than 5 minutes late, or a
-    caught-up one: a `run-on-wake` job keeps it while it is worth it, a `wait-for-me` one waits for
-    you, a `skip` one records it missed. A release is no wake: no warm-up.
+  - A held job's look stays where the switch caught it (`held` in `runs.json`). While it holds a
+    job, nothing is decided for it — no record, no Needs-you item, no notice — and the report counts
+    its occurrences since then (`RunsReport.heldRuns`: the note under the switch, `pomade-runner
+    runs`) and marks it held (`JobRuns.held`: the Jobs view). On release every occurrence it held is
+    missed, the latest too however recent, and goes, counted, to the job's policy: one decision. A
+    queued run the switch held goes to its job's policy on release when it is more than 5 minutes
+    late, or a caught-up one: a `run-on-wake` job keeps it while it is worth it, a `wait-for-me` one
+    waits for you, a `skip` one records it missed. A release is no wake: no warm-up.
   - Kept in `switch.json` in Runner's records folder, written before the switch answers; it
     survives restarts and goes with the workspace.
   - Set from the panel (`switch.set`, Runner's frames only), by `pomade-runner pause [low|all]`
@@ -912,7 +929,8 @@ to it, light theme only.
    low-priority · Pause all, the chosen one with its dot (green, amber) and, in a panel narrower
    than 268 px, the middle one reading "Pause low". A pause says what it holds under the control —
    "Low-priority jobs are held. Services keep running." / "Every scheduled job is held. Services
-   keep running." — with the (i) of what becomes of a held run;
+   keep running." — and, once it has held a run, how many so far ("Low-priority jobs are held · 4
+   runs so far. Services keep running.", `heldRunsWords`), with the (i) of what becomes of a held run;
 2. **Needs you** (`src/ui/NeedsYou.tsx`): a card per item (`PanelCard`) — the status dot (red: a failed
    run, a service that gave up · amber: a missed run, a run waiting for you, a paused job · accent: a long run), the
    job's name, the (i) help of that kind, the time at the card's end, one line of text, and the
@@ -922,7 +940,7 @@ to it, light theme only.
    |---|---|---|---|
    | failed run | when it failed | "Failed: exit 1 · 2×" (the count when more than one) | Open · Run now · Dismiss |
    | service gave up | its last crash | "Crashed 5× in 1 min — gave up."; when its last start failed, "Gave up — could not start: <why>" | Start · View output (only when the service has a terminal session) |
-   | missed run waits | when it was missed | "Missed — it waits for you to pick a time." | Run now · Run at… · Skip |
+   | missed run waits | when it was missed | "Missed — it waits for you to pick a time." ("Missed 4 runs, 17:40–17:46 — …" for more than one) | Run now · Run at… · Skip |
    | agent run waits for you | how long it has waited ("17m") | "Waiting for approval at a permission prompt." / "Waiting for you to trust its folder." | Open at the prompt |
    | long run | how long it has gone ("3h 02m") | "Running 3h — still expected?" | Open (its terminal) · Stop · Dismiss |
    | job paused by the loop guard | when it paused | "Paused: triggered 10× in 10 min." | Resume · Edit job |
@@ -982,7 +1000,8 @@ to it, light theme only.
   - **Next run** (`nextLook`): "disabled", "paused" (the loop guard's), "always on" (a service on Mac startup), "with Pomade" (a Pomade-bound one), "on
     event" (a hook or a chain), "on Run now" (a manual job), "finished" (a schedule with nothing ahead), else the next time —
     "Today 13:00", "Tomorrow 7:00", "Wed 7:00", "Wed 25 Nov 7:00" — with the countdown under it
-    within the hour.
+    within the hour. A job the switch holds (`JobRuns.held`) shows its time faint and Next up's
+    amber **held** tag, with the switch's help, under it after the countdown.
   - **The countdown** (`soonWords`, `src/ui/runWords.ts`): one function, read by Next run and by the
     panel's Next up, so the two always say the same. Minutes are counted as a clock reader does —
     at 17:49:10 a run at 17:51:00 is "in 2 min" until 17:50:00 — under a minute it counts whole
@@ -1010,7 +1029,8 @@ to it, light theme only.
   — "failed · exit 1", "done · restarted", "queued · 1 ahead", "running · 3h — still expected?",
   "waiting for you" —
   explaining itself on hover), the duration (a running run's so far) and what started it
-  (scheduled · caught up · manual · hook: Mac login · chain: after Pull), with its help. The
+  (scheduled · caught up · "missed 4 runs, 17:40–17:46 · caught up once" · manual · hook: Mac
+  login · chain: after Pull), with its help. The
   result chips — All · Active · Failed · Skipped & missed, each but All with its count — and
   "This project" filter the list; the summary says how many days History keeps. History loads a
   page of 100 records, the newest page again on every `runs.changed`, and the next older page
@@ -1358,7 +1378,9 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
   - **`runs.list`** → `RunsReport` (`isRunsReport`): the runs going (missed runs waiting for you,
     queued ones with what each waits for, running ones), Next up (`NextRun`: the next
     `NEXT_UP_RUNS` runs of the enabled scheduled jobs and the Run at… ones, soonest first, each
-    `held` when the switch's position holds it), each run job's next and latest run, Needs you, and the switch;
+    `held` when the switch's position holds it), each run job's next and latest run and whether
+    the switch holds it (`JobRuns.held`), Needs you, the switch, and how many scheduled runs it has
+    held so far (`heldRuns`); every run and record carries the missed runs it stands for (`missed`);
     **`runs.changed`** tells Runner's frames to ask again — on every change, and when the scheduler
     connects.
   - **`history.list`** `{ job?, before?, limit? }` → `HistoryPage`; **`runs.get`** `{ job, run }` →

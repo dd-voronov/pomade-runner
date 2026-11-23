@@ -72,7 +72,8 @@ reads "N jobs", plus "· N invalid" when a file has errors. Columns:
   state as the Services view does.
 - **Next run** — "disabled", "paused" (the loop guard's), "always on" (a service), "on event" (a hook or
   a chain), "on Run now" (a manual job), "finished" (a schedule with nothing ahead), else the next time ("Today 13:00", "Wed 7:00"),
-  with "in N min" under it within the hour.
+  with "in N min" under it within the hour. While the switch holds the job, the time is faint and an
+  amber `held` tag sits under it ([Missed runs and load](missed-runs-and-load.md)).
 - **Row actions** — `Run now`, `Edit`, `Delete`, and the `Enabled` toggle. A service has, in Run
   now's place, `Stop service` while it runs or starts and `Start service` while it does not (none
   while it is disabled — the toggle enables it); before it, `Open terminal` once the service has run

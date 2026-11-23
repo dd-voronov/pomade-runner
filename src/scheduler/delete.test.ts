@@ -20,6 +20,7 @@ const running = (job: string, state: ActiveRun["state"]): ActiveRun => ({
   cause: null,
   dueAt: 1,
   agent: null,
+  missed: null,
   state,
   lowPriority: true,
   runAt: null,

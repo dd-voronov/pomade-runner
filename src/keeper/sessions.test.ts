@@ -16,9 +16,10 @@ import { createSessions, type SessionCommand, type Sessions } from "./sessions";
 const VERSION = "v1";
 const KEY = "owner-key";
 
-/** The program a session's shim runs: the login shell, or what it `exec`ed. */
-function childOf(pid: number | null): number {
-  return Number(execFileSync("pgrep", ["-P", String(pid)], { encoding: "utf8" }).trim().split("\n")[0]);
+/** The program a session's shim runs: the login shell, or what it `exec`ed — once the shim has
+ *  started it (a spawn answers before the shim's fork is always done). */
+function childOf(pid: number | null): Promise<number> {
+  return vi.waitFor(() => Number(execFileSync("pgrep", ["-P", String(pid)], { encoding: "utf8" }).trim().split("\n")[0]));
 }
 
 describe("sessions", () => {
@@ -130,7 +131,7 @@ describe("sessions", () => {
     const limit = await sessions.spawn({ kind: "service", job: "limit" }, command("trap '' TERM; while :; do sleep 0.05; done"));
     const you = await sessions.spawn({ kind: "service", job: "you" }, command("exec sleep 30"));
 
-    process.kill(childOf(crash.info.pid), "SIGKILL");
+    process.kill(await childOf(crash.info.pid), "SIGKILL");
     await sessions.stop(stop.id, "stopped");
     await sessions.stop(limit.id, "time-limit", 200);
     await sessions.stop(you.id, "stopped-by-you");
@@ -155,7 +156,7 @@ describe("sessions", () => {
     await first.sessions.close();
 
     // While no scheduler runs: a session ends, and one Runner did not start appears.
-    process.kill(childOf(web.info.pid), "SIGKILL");
+    process.kill(await childOf(web.info.pid), "SIGKILL");
     await vi.waitFor(() => expect(keeper.sessions().find((info) => info.id === web.id)?.state).toBe("exited"));
     expect(keeper.sessions().find((info) => info.id === gone.id)?.exit?.reason).toBe("crashed");
 

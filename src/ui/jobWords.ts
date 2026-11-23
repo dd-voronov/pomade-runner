@@ -41,6 +41,8 @@ export interface NextLook {
   sub: string | null;
   /** Nothing is scheduled: shown faint. */
   none: boolean;
+  /** The switch holds the job's scheduled runs: the amber **held** tag, as Next up has it. */
+  held: boolean;
 }
 
 /** What started a run, said on the row only when it is not the job's own trigger: "caught up", "manual". */
@@ -148,16 +150,18 @@ const capitalized = (text: string): string => text.charAt(0).toUpperCase() + tex
 
 /** A job's Next run: disabled, paused by the loop guard, a service's "always on" — "with Pomade"
  *  for one bound to Pomade — a hook's or chain's
- *  "on event", a manual job's "on Run now", else its schedule's next time — "in N min" under it within the hour — or "finished". */
+ *  "on event", a manual job's "on Run now", else its schedule's next time — "in N min" under it
+ *  within the hour, and held while the switch holds the job — or "finished". */
 export function nextLook(job: Job, runs: JobRuns | undefined, paused: boolean, now: number): NextLook {
-  if (!job.enabled) return { words: "disabled", sub: null, none: true };
-  if (paused) return { words: "paused", sub: null, none: true };
-  if (job.kind === "service") return { words: pomadeBound(job.start) ? "with Pomade" : "always on", sub: null, none: true };
-  if (job.trigger.kind === "manual") return { words: "on Run now", sub: null, none: true };
-  if (job.trigger.kind !== "schedule") return { words: "on event", sub: null, none: true };
-  if (runs === undefined) return { words: "—", sub: null, none: true };
-  if (runs.next === null) return { words: runs.finished ? "finished" : "—", sub: null, none: true };
-  return { words: capitalized(aheadWhen(runs.next, now)), sub: soonWords(runs.next, now), none: false };
+  const none = (words: string): NextLook => ({ words, sub: null, none: true, held: false });
+  if (!job.enabled) return none("disabled");
+  if (paused) return none("paused");
+  if (job.kind === "service") return none(pomadeBound(job.start) ? "with Pomade" : "always on");
+  if (job.trigger.kind === "manual") return none("on Run now");
+  if (job.trigger.kind !== "schedule") return none("on event");
+  if (runs === undefined) return none("—");
+  if (runs.next === null) return none(runs.finished ? "finished" : "—");
+  return { words: capitalized(aheadWhen(runs.next, now)), sub: soonWords(runs.next, now), none: false, held: runs.held };
 }
 
 /** A git job's operation and repos: "Commit & push · Knowledge, coda-helper"; a repo the workspace

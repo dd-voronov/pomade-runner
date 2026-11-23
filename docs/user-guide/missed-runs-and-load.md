@@ -13,8 +13,9 @@ nothing could start it.
 ## A missed run
 
 A scheduled run is **missed** when it did not start on time: the Mac slept or was off, the clock jumped,
-or the switch held it. A run at most 5 minutes late still runs, at once. However many runs a job
-missed, it gets **one** decision, about the latest missed time, by its **If a run is missed** policy:
+or the switch held it. A run at most 5 minutes late still runs, at once — unless the switch held it.
+However many runs a job missed, it gets **one** decision, about the latest missed time, by its **If a
+run is missed** policy:
 
 | Policy | What happens |
 |---|---|
@@ -28,10 +29,16 @@ With `Run on wake`, **Still worth it until** is `the next scheduled run` (defaul
 skipped · the 09:00 run covers it`. A `Once` schedule has no next run, so its catch-up is always worth
 it. Hook and chain jobs have no missed-run policy: a run the switch held runs late.
 
+Runner counts the runs a job missed, and the run or record of its decision says how many and when:
+`missed 4 runs, 17:40–17:46 · caught up once` (the caught-up run's trigger), `missed 4 runs,
+17:40–17:46 · skipped`, `missed 4 runs, 17:40–17:46 · waiting for you` — `Sun 23:00–Mon 07:00` when the
+runs span days. A single missed run reads as `caught up`, `missed · skipped`, `missed · waiting for
+you`. History, the result card, Needs you, the notice and `pomade-runner history` say the same.
+
 ### Wait for me
 
 The missed run is a Needs-you item, "Inbox triage · missed Sun 3:00", and a notice; one per job (a later
-miss moves it to the later time). Its card offers:
+miss moves it to the later time and adds to its count: "missed 4 runs, …"). Its card offers:
 
 - **Run now** — runs it now as a run of yours (trigger `manual`).
 - **Run at…** — waits, queued, until the time you type, and shows in Next up. Type a time (`23:00`: the
@@ -72,9 +79,12 @@ warm-up. A wake is any gap of more than a minute between two ticks of the schedu
 ## The switch
 
 `Running` · `Pause low-priority` · `Pause all` ([Getting started](getting-started.md)). While held, a
-job's schedule stays where the switch caught it; on release, the latest occurrence within 5 minutes
-runs on time and the others are missed and follow the job's policy. A queued run the switch held that
-is more than 5 minutes late, or a caught-up one, follows the policy too. A release is no wake: no
+job's schedule stays where the switch caught it, and nothing is decided for it: no record, no Needs-you
+item. Its **Next run** in Jobs carries the amber `held` tag, as Next up does, and the note under the
+switch counts the runs held so far: "Low-priority jobs are held · 4 runs so far". On release every
+run the switch held is missed — the latest too, however recent — and the job gets one decision by its
+policy, counted: "missed 3 runs, 17:40–17:44 · caught up once". A queued run the switch held that is
+more than 5 minutes late, or a caught-up one, follows the policy too. A release is no wake: no
 warm-up. Set it from the panel or with `pomade-runner pause [low|all]` and `resume`.
 
 ## Time limits

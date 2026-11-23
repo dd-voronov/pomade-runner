@@ -125,6 +125,18 @@ interface RunBase {
   /** An agent run's agent, mode and session once it started; `null` for any other run, and for an
    *  agent run before its start. */
   agent: AgentRun | null;
+  /** The runs its job missed that this one stands for — a caught-up run, a missed run waiting for
+   *  the person, a missed record: how many, and the first and last missed time; `null` for any
+   *  other run. */
+  missed: MissedRuns | null;
+}
+
+/** The occurrences a job missed — while the switch held it, the Mac slept or Runner was off — that
+ *  one missed-run decision is about: how many, the first and the last (epoch ms). */
+export interface MissedRuns {
+  count: number;
+  first: number;
+  last: number;
 }
 
 /** A run that has not ended. */
@@ -215,6 +227,8 @@ export interface JobRuns {
   finished: boolean;
   /** Its latest finished run. */
   last: RunRecord | null;
+  /** The switch's position now holds its scheduled runs. */
+  held: boolean;
 }
 
 /** Something Runner cannot settle alone: a run that failed, a service that gave up, a missed run of
@@ -264,6 +278,8 @@ export type NeedsYouItem =
       run: string;
       /** Its latest missed time (epoch ms). */
       at: number;
+      /** The runs the job missed that it stands for; `null` for one. */
+      missed: MissedRuns | null;
       detail: string;
     }
   | {
@@ -318,6 +334,9 @@ export interface RunsReport {
   /** Newest first. */
   needsYou: NeedsYouItem[];
   switch: SwitchState;
+  /** The scheduled runs the switch has held so far: the occurrences of the jobs it holds since it
+   *  caught each. Each becomes a missed run when the switch lets its job go. */
+  heldRuns: number;
 }
 
 /** A page of history, newest first. */
@@ -447,10 +466,15 @@ function isAgentRun(value: unknown): value is AgentRun {
   );
 }
 
+export function isMissedRuns(value: unknown): value is MissedRuns {
+  return isRecord(value) && typeof value.count === "number" && Number.isSafeInteger(value.count) && value.count >= 1 && finite(value.first) && finite(value.last) && (value.first as number) <= (value.last as number);
+}
+
 function isRunBase(value: Record<string, unknown>): boolean {
-  const { job, name, kind, project, folder, run, trigger, cause, dueAt, agent } = value;
+  const { job, name, kind, project, folder, run, trigger, cause, dueAt, agent, missed } = value;
   return (
     (agent === null || isAgentRun(agent)) &&
+    (missed === null || isMissedRuns(missed)) &&
     typeof job === "string" &&
     typeof name === "string" &&
     typeof kind === "string" &&
@@ -536,7 +560,7 @@ export function withAgentDefaults(agent: unknown): unknown {
 /** A history record as a file keeps it; a field a record of an older build lacks gets its default. */
 export function parseRunRecord(value: unknown): RunRecord | null {
   if (!isRecord(value)) return null;
-  const record = { cause: null, action: null, git: null, limitHit: null, ...value, agent: withAgentDefaults(value.agent) };
+  const record = { cause: null, action: null, git: null, limitHit: null, missed: null, ...value, agent: withAgentDefaults(value.agent) };
   return isRunRecord(record) ? record : null;
 }
 
@@ -554,7 +578,7 @@ function isNeedsYouItem(value: unknown): value is NeedsYouItem {
     case "service-failed":
       return nullableString(value.problem) && typeof value.session === "boolean";
     case "missed":
-      return typeof value.run === "string";
+      return typeof value.run === "string" && (value.missed === null || isMissedRuns(value.missed));
     case "waiting":
       return typeof value.run === "string" && (value.prompt === "permission" || value.prompt === "trust");
     case "long-run":
@@ -568,8 +592,8 @@ function isNeedsYouItem(value: unknown): value is NeedsYouItem {
 
 function isJobRuns(value: unknown): value is JobRuns {
   if (!isRecord(value)) return false;
-  const { job, next, finished, last } = value;
-  return typeof job === "string" && nullableNumber(next) && typeof finished === "boolean" && (last === null || isRunRecord(last));
+  const { job, next, finished, last, held } = value;
+  return typeof job === "string" && nullableNumber(next) && typeof finished === "boolean" && (last === null || isRunRecord(last)) && typeof held === "boolean";
 }
 
 function isNextRun(value: unknown): value is NextRun {
@@ -588,7 +612,10 @@ export function isRunsReport(value: unknown): value is RunsReport {
     jobs.every(isJobRuns) &&
     Array.isArray(needsYou) &&
     needsYou.every(isNeedsYouItem) &&
-    isSwitchState(value.switch)
+    isSwitchState(value.switch) &&
+    typeof value.heldRuns === "number" &&
+    Number.isSafeInteger(value.heldRuns) &&
+    value.heldRuns >= 0
   );
 }
 
@@ -673,12 +700,31 @@ export function hookCauseWords(cause: Extract<RunCause, { kind: "hook" }>): stri
   }
 }
 
+/** How many runs a job missed, and when, in words — "missed 4 runs, 17:40–17:46", "missed 2 runs,
+ *  Sun 23:00–Mon 07:00" across days; `null` for a single missed run, which reads as it always has.
+ *  History, the result card, the missed-run card, Needs you, the notice and `pomade-runner` all say
+ *  it with these words. */
+export function missedRunsWords(missed: MissedRuns | null): string | null {
+  if (missed === null || missed.count <= 1) return null;
+  const sameDay = new Date(missed.first).toDateString() === new Date(missed.last).toDateString();
+  const span = sameDay ? `${clockTime(missed.first)}–${clockTime(missed.last)}` : `${dayTime(missed.first)}–${dayTime(missed.last)}`;
+  return `missed ${missed.count} runs, ${span}`;
+}
+
+/** How many scheduled runs the switch has held, in words: "4 runs so far", "1 run so far"; `null`
+ *  for none. The note under the switch and `pomade-runner runs` say it. */
+export function heldRunsWords(count: number): string | null {
+  return count <= 0 ? null : `${count} ${count === 1 ? "run" : "runs"} so far`;
+}
+
 /** What started a run, in words, with its cause: "scheduled", "hook: Mac login", "chain: after
- *  Backup". */
-export function runTriggerWords(run: { trigger: RunTrigger; cause: RunCause | null }): string {
+ *  Backup", "caught up" — "missed 4 runs, 17:40–17:46 · caught up once" for one that stands for
+ *  more than one missed run. */
+export function runTriggerWords(run: { trigger: RunTrigger; cause: RunCause | null; missed?: MissedRuns | null }): string {
   if (run.cause?.kind === "chain") return `chain: after ${run.cause.name}`;
   if (run.cause?.kind === "hook") return `hook: ${hookCauseWords(run.cause)}`;
-  return TRIGGER_WORDS[run.trigger];
+  const missed = run.trigger === "caught-up" ? missedRunsWords(run.missed ?? null) : null;
+  return missed === null ? TRIGGER_WORDS[run.trigger] : `${missed} · caught up once`;
 }
 
 /** A chain's action on a service, done, in words. */
@@ -706,11 +752,13 @@ export function waitsWords(waits: Waits | null): string {
   }
 }
 
-/** A run's state in words: "failed · exit 1", "queued · 1 ahead", "missed · skipped". */
+/** A run's state in words: "failed · exit 1", "queued · 1 ahead", "missed · skipped", "missed 4
+ *  runs, 17:40–17:46 · skipped". */
 export function runWords(view: RunView): string {
+  const missed = missedRunsWords(view.missed) ?? "missed";
   switch (view.state) {
     case "missed-waiting":
-      return "missed · waiting for you";
+      return `${missed} · waiting for you`;
     case "queued":
       return `queued · ${waitsWords(view.waits)}`;
     case "running":
@@ -722,7 +770,7 @@ export function runWords(view: RunView): string {
     case "skipped":
       return view.reason === null ? "skipped" : `skipped · ${view.reason}`;
     case "missed":
-      return view.reason === null ? "missed" : `missed · ${view.reason}`;
+      return view.reason === null ? missed : `${missed} · ${view.reason}`;
     case "failed":
       return view.limitHit === null ? `failed · ${failureWords(view)}` : limitWords(view.limitHit);
   }

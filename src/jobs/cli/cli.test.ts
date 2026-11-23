@@ -349,7 +349,7 @@ describe("pomade-runner", () => {
 
   describe("runs", () => {
     const at = (time: string): number => Date.parse(`2026-11-17T${time}.000Z`);
-    const base = { job: "backup", name: "Backup", kind: "script" as const, project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled" as const, cause: null, dueAt: at("12:00:00"), agent: null };
+    const base = { job: "backup", name: "Backup", kind: "script" as const, project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled" as const, cause: null, dueAt: at("12:00:00"), agent: null, missed: null };
     const failed = { ...base, state: "failed" as const, action: null, reason: null, startedAt: at("12:00:00"), endedAt: at("12:00:03"), durationMs: 3000, exitCode: 1, signal: null, log: "/ud/output/backup/r.log", lastLines: [], git: null, limitHit: null };
     const listing: JobListing = { job: "backup", name: "Backup", kind: "script", enabled: true, trigger: "daily at 13:00", problem: null, next: at("13:00:00"), finished: false, last: failed, service: null };
     const fresh = { lowPriority: true, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false };
@@ -365,16 +365,17 @@ describe("pomade-runner", () => {
         nextUp: [],
         jobs: [],
         needsYou: [
-          { id: "missed:w", kind: "missed", job: "w", name: "Weekly", project: null, run: "r3", at: at("02:00:00"), detail: "missed Tue 03:00" },
+          { id: "missed:w", kind: "missed", job: "w", name: "Weekly", project: null, run: "r3", at: at("02:00:00"), missed: null, detail: "missed Tue 03:00" },
           { id: "long-run:backup:r", kind: "long-run", job: "backup", name: "Backup", project: null, run: "r", at: at("15:00:00"), startedAt: at("12:00:00"), detail: "running 3 h — still expected?" },
           { id: "loop-paused:lint", kind: "loop-paused", job: "lint", name: "Lint", project: null, at: at("15:00:00"), detail: "triggered 10× in 10 min — looks like a loop" },
         ],
         switch: { position: "pause-low", since: at("11:00:00") },
+        heldRuns: 4,
       };
       expect(await run(["runs"], undefined, { runs: { status: "ok", value: report } })).toMatchObject({
         code: 0,
         out:
-          "switch: Pause low-priority — runs of low-priority jobs are held; Run now still runs, services keep running (since 2026-11-17T11:00:00.000Z)\n" +
+          "switch: Pause low-priority — runs of low-priority jobs are held, 4 runs so far; Run now still runs, services keep running (since 2026-11-17T11:00:00.000Z)\n" +
           "backup  Backup  run 20261117-120000-abcdef  running, since 2026-11-17T12:00:00.000Z\n" +
           "c  C  run r2  queued · 1 ahead\n" +
           "w  Weekly  run r3  missed · waiting for you, due 2026-11-17T02:00:00.000Z\n" +
@@ -382,7 +383,7 @@ describe("pomade-runner", () => {
           "needs you: Backup — running 3 h — still expected?\n" +
           "needs you: Lint — paused: triggered 10× in 10 min — looks like a loop; pomade-runner resume-job lint lets hooks and chains fire it again\n",
       });
-      const quiet = { ...report, active: [], needsYou: [], switch: { position: "running" as const, since: null } };
+      const quiet = { ...report, active: [], needsYou: [], switch: { position: "running" as const, since: null }, heldRuns: 0 };
       expect((await run(["runs"], undefined, { runs: { status: "ok", value: quiet } })).out).toBe("switch: Running — scheduled runs run\nNo runs going.\n");
       expect(await run(["runs"])).toMatchObject({ code: 1, err: expect.stringContaining("it runs the jobs") as string });
       expect(await run(["runs", "x"])).toMatchObject({ code: 2 });

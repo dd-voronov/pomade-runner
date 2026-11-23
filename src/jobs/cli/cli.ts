@@ -7,7 +7,7 @@ import { exitWords, type KeeperLink, type RunnerSession, type ServiceStatus } fr
 import type { ControlCallResult } from "../../scheduler/control/client";
 import type { ControlMethod, ControlMethods, ControlParams } from "../../scheduler/control/protocol";
 import { gitRepoLine } from "../../scheduler/git-runs";
-import { dayTime, durationWords, runTriggerWords, runWords, SWITCH_WORDS, type ActiveRun, type JobListing, type NeedsYouItem, type RunRecord, type SwitchPosition, type SwitchState } from "../../scheduler/model";
+import { dayTime, durationWords, heldRunsWords, runTriggerWords, runWords, SWITCH_WORDS, type ActiveRun, type JobListing, type NeedsYouItem, type RunRecord, type SwitchPosition, type SwitchState } from "../../scheduler/model";
 import { checkSettings, SETTINGS_PATH } from "../../scheduler/settings";
 import { checkJobs, projectJobsFolder } from "../check";
 import { formatJobError } from "../format";
@@ -330,8 +330,10 @@ function needsYouLine(item: NeedsYouItem): string {
   }
 }
 
-function switchLine({ position, since }: SwitchState): string {
-  const what = position === "running" ? "scheduled runs run" : position === "pause-low" ? "runs of low-priority jobs are held" : "every scheduled run is held";
+/** The switch in a line; with `heldRuns`, how many scheduled runs it has held so far. */
+function switchLine({ position, since }: SwitchState, heldRuns = 0): string {
+  const held = position === "running" ? null : heldRunsWords(heldRuns);
+  const what = `${position === "running" ? "scheduled runs run" : position === "pause-low" ? "runs of low-priority jobs are held" : "every scheduled run is held"}${held === null ? "" : `, ${held}`}`;
   return `switch: ${SWITCH_WORDS[position]} — ${what}${position === "running" ? "" : "; Run now still runs, services keep running"}${since === null ? "" : ` (since ${iso(since)})`}`;
 }
 
@@ -341,8 +343,8 @@ async function runsCommand(deps: CliDeps): Promise<number> {
     deps.err(`${COMMAND} runs: ${answer.why}.\n`);
     return EXIT_PROBLEMS;
   }
-  const { active, needsYou, switch: position } = answer.value;
-  deps.out(`${switchLine(position)}\n`);
+  const { active, needsYou, switch: position, heldRuns } = answer.value;
+  deps.out(`${switchLine(position, heldRuns)}\n`);
   if (active.length === 0) deps.out("No runs going.\n");
   for (const run of active) deps.out(`${activeLine(run)}\n`);
   for (const item of needsYou) deps.out(`${needsYouLine(item)}\n`);

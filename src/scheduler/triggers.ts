@@ -4,19 +4,41 @@
 
 import { occurrencesBetween, previousOccurrence, type Schedule } from "pomade-kit/schedule";
 
+import type { MissedRuns } from "./model";
+
 /** An occurrence the scheduler sees at most this late still runs on time; an older one is missed —
- *  the Mac slept through it, was off, the clock jumped past it, or the switch held it — and goes to
- *  its job's missed-run policy (`missed.ts`). */
+ *  the Mac slept through it, was off, or the clock jumped past it — and goes to its job's missed-run
+ *  policy (`missed.ts`). Every occurrence the switch held is missed, however late. */
 export const ON_TIME_MS = 5 * 60_000;
 
-/** The most occurrences one look lists; a longer absence keeps the earliest and the latest. */
-export const MISSED_LIST_MAX = 1000;
+/** How many occurrences the engine lists at a time while they are counted. */
+const PAGE = 1000;
 
 export interface Due {
   /** The occurrence to run now; `null` when none is due on time. */
   fire: Date | null;
-  /** Occurrences passed without a run, earliest first; the last one is always the latest missed. */
-  missed: Date[];
+  /** The occurrences passed without a run: how many, the first and the latest; `null` for none. */
+  missed: MissedRuns | null;
+}
+
+/** Every occurrence of a schedule in `(since, now]`, counted — however long the absence — with the
+ *  first and the latest; `null` when there is none. */
+export function passedOccurrences(schedule: Schedule, since: Date, now: Date): MissedRuns | null {
+  let count = 0;
+  let first: Date | null = null;
+  let last: Date | null = null;
+  let from = since;
+  while (from.getTime() < now.getTime()) {
+    const page = occurrencesBetween(schedule, from, now, { limit: PAGE });
+    const end = page.at(-1);
+    if (end === undefined) break;
+    first ??= page[0] ?? end;
+    last = end;
+    count += page.length;
+    if (page.length < PAGE) break;
+    from = end;
+  }
+  return first === null || last === null ? null : { count, first: first.getTime(), last: last.getTime() };
 }
 
 /**
@@ -25,19 +47,11 @@ export interface Due {
  * missed. A clock set back (`now` before `since`) is a fresh start: nothing is due.
  */
 export function dueOccurrences(schedule: Schedule, since: Date, now: Date): Due {
-  if (now.getTime() <= since.getTime()) return { fire: null, missed: [] };
-  let passed = occurrencesBetween(schedule, since, now, { limit: MISSED_LIST_MAX });
-  if (passed.length === MISSED_LIST_MAX) {
-    // More than the list holds: the earliest ones, then the latest two — what is on time, and the
-    // latest missed.
-    const latest = previousOccurrence(schedule, new Date(now.getTime() + 1));
-    const before = latest === null ? null : previousOccurrence(schedule, latest);
-    const kept = passed.slice(0, MISSED_LIST_MAX - 2);
-    const floor = kept.at(-1)?.getTime() ?? since.getTime();
-    passed = [...kept, ...[before, latest].filter((date): date is Date => date !== null && date.getTime() > floor)];
-  }
-  const latest = passed.at(-1);
-  if (latest === undefined) return { fire: null, missed: [] };
-  if (now.getTime() - latest.getTime() > ON_TIME_MS) return { fire: null, missed: passed };
-  return { fire: latest, missed: passed.slice(0, -1) };
+  const passed = passedOccurrences(schedule, since, now);
+  if (passed === null) return { fire: null, missed: null };
+  if (now.getTime() - passed.last > ON_TIME_MS) return { fire: null, missed: passed };
+  const fire = new Date(passed.last);
+  if (passed.count === 1) return { fire, missed: null };
+  const before = previousOccurrence(schedule, fire);
+  return { fire, missed: { count: passed.count - 1, first: passed.first, last: before?.getTime() ?? passed.first } };
 }

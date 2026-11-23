@@ -2,7 +2,7 @@
 // tone, help, time, text) and Next up's "in 40 min". Pure.
 
 import { FIRING_LIMIT, FIRING_WINDOW_MS } from "../scheduler/loop-guard";
-import type { NeedsYouItem } from "../scheduler/model";
+import { missedRunsWords, type NeedsYouItem } from "../scheduler/model";
 import type { HelpKey } from "./help";
 import type { DotTone } from "./kit";
 import { soonWords } from "./runWords";
@@ -61,6 +61,8 @@ export interface NeedLook {
   text: string;
 }
 
+const capital = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
 export function needLook(item: NeedsYouItem, now: number): NeedLook {
   switch (item.kind) {
     case "run-failed":
@@ -68,7 +70,8 @@ export function needLook(item: NeedsYouItem, now: number): NeedLook {
     case "service-failed":
       return { tone: "danger", help: "need.crashloop", when: pastWhen(item.at, now), text: item.problem === null ? "Crashed 5× in 1 min — gave up." : `Gave up — could not start: ${item.problem}` };
     case "missed":
-      return { tone: "warning", help: "need.waitforme", when: pastWhen(item.at, now), text: "Missed — it waits for you to pick a time." };
+      // One run: "Missed — …"; more: "Missed 4 runs, 17:40–17:46 — …".
+      return { tone: "warning", help: "need.waitforme", when: pastWhen(item.at, now), text: `${capital(missedRunsWords(item.missed) ?? "missed")} — it waits for you to pick a time.` };
     case "waiting":
       return { tone: "warning", help: "need.approval", when: upWords(now - item.at), text: item.prompt === "permission" ? "Waiting for approval at a permission prompt." : "Waiting for you to trust its folder." };
     case "long-run": {

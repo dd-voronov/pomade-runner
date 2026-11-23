@@ -212,6 +212,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     jobs: runs.jobRuns(),
     needsYou: [...needsYou.items(), ...runs.needsYou()].sort((a, b) => b.at - a.at || a.id.localeCompare(b.id)),
     switch: runs.switch(),
+    heldRuns: runs.heldRuns(),
   });
   /** Tell the frames when the runs report changed, and keep the badge on the Needs-you count. */
   const publishRuns = (): void => {

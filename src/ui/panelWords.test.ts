@@ -64,12 +64,14 @@ describe("a Needs-you card's look", () => {
       text: "Crashed 5× in 1 min — gave up.",
     });
     expect(look({ ...base, id: "service-failed:job", kind: "service-failed", at: at(18, 11, 20), detail: "x", problem: "no folder Projects/x", session: false }).text).toBe("Gave up — could not start: no folder Projects/x");
-    expect(look({ ...base, id: "missed:job", kind: "missed", run: "r", at: at(15, 3), detail: "x" })).toEqual({
+    expect(look({ ...base, id: "missed:job", kind: "missed", run: "r", at: at(15, 3), missed: null, detail: "x" })).toEqual({
       tone: "warning",
       help: "need.waitforme",
       when: "Sun 3:00",
       text: "Missed — it waits for you to pick a time.",
     });
+    expect(look({ ...base, id: "missed:job", kind: "missed", run: "r", at: at(15, 3), missed: { count: 1, first: at(15, 3), last: at(15, 3) }, detail: "x" }).text).toBe("Missed — it waits for you to pick a time.");
+    expect(look({ ...base, id: "missed:job", kind: "missed", run: "r", at: at(15, 3), missed: { count: 4, first: at(15, 2, 54), last: at(15, 3) }, detail: "x" }).text).toBe("Missed 4 runs, 02:54–03:00 — it waits for you to pick a time.");
     expect(look({ ...base, id: "loop-paused:job", kind: "loop-paused", at: at(17, 18), detail: "x" })).toEqual({
       tone: "warning",
       help: "need.loopguard",

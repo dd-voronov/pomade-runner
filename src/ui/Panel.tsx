@@ -46,7 +46,7 @@ export function Panel({ host }: { host: HostClient }): React.JSX.Element {
   if (jobs.status === "loading") return <PanelShell testId="panel-loading" foot={open} />;
   if (jobs.status !== "ready") return <JobsProblem state={jobs} testId="panel-problem" action={open} />;
   const report = runs.status === "ready" ? runs.value : null;
-  const top = report === null ? undefined : <SwitchControl host={host} state={report.switch} />;
+  const top = report === null ? undefined : <SwitchControl host={host} state={report.switch} heldRuns={report.heldRuns} />;
   const serviceStates = services.status === "ready" ? services.value.services : [];
   const active = report?.active ?? [];
   const running = <RunningNow host={host} services={serviceStates} jobs={jobs.value.jobs} workspace={jobs.value.workspace} runs={active} />;

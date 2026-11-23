@@ -171,6 +171,7 @@ describe("runs", () => {
           trigger: "scheduled",
           dueAt: now.getTime(),
           agent: null,
+          missed: null,
           state: "running",
           lowPriority: true,
           runAt: null,
@@ -201,6 +202,7 @@ describe("runs", () => {
         cause: null,
         dueAt: Date.parse("2026-11-18T12:00:00.000Z"),
         agent: null,
+        missed: null,
         state: "done",
         action: null,
         reason: null,
@@ -243,7 +245,7 @@ describe("runs", () => {
     it("once at runs once, then shows as finished", async () => {
       files = { "tonight.md": script("Tonight", "schedule:\n  once: 2026-11-18 23:00\n") };
       load();
-      expect(runs.jobRuns()).toEqual([{ job: "tonight", next: Date.parse("2026-11-18T22:00:00.000Z"), finished: false, last: null }]);
+      expect(runs.jobRuns()).toEqual([{ job: "tonight", next: Date.parse("2026-11-18T22:00:00.000Z"), finished: false, last: null, held: false }]);
       expect(runs.nextUp()).toEqual([{ job: "tonight", name: "Tonight", project: null, at: Date.parse("2026-11-18T22:00:00.000Z"), held: false }]);
       await at("2026-11-18T22:59:00");
       await minutes("2026-11-18T23:05:00");
@@ -251,7 +253,7 @@ describe("runs", () => {
       sessions.end(sessions.latest("tonight"), "exited", 0);
       await minutes("2026-11-19T23:05:00");
       expect(sessions.spawned).toHaveLength(1);
-      expect(runs.jobRuns()).toEqual([{ job: "tonight", next: null, finished: true, last: expect.objectContaining({ state: "done" }) as RunRecord }]);
+      expect(runs.jobRuns()).toEqual([{ job: "tonight", next: null, finished: true, last: expect.objectContaining({ state: "done" }) as RunRecord, held: false }]);
       expect(runs.nextUp()).toEqual([]);
     });
 
@@ -265,8 +267,9 @@ describe("runs", () => {
       now = new Date(Date.parse("2026-11-18T14:00:00") + ON_TIME_MS + 1000);
       await runs.tick();
       expect(sessions.spawned).toEqual([]);
-      expect(lines).toContain("job backup: missed Wed 13:30, Wed 14:00 — missed · skipped");
-      expect(await page()).toEqual([expect.objectContaining({ job: "backup", state: "missed", reason: "skipped", trigger: "scheduled", dueAt: Date.parse("2026-11-18T13:00:00.000Z"), startedAt: null })]);
+      expect(lines).toContain("job backup: missed 2 runs, 13:30–14:00 — missed · skipped");
+      const missed = { count: 2, first: Date.parse("2026-11-18T12:30:00.000Z"), last: Date.parse("2026-11-18T13:00:00.000Z") };
+      expect(await page()).toEqual([expect.objectContaining({ job: "backup", state: "missed", reason: "skipped", trigger: "scheduled", dueAt: Date.parse("2026-11-18T13:00:00.000Z"), startedAt: null, missed })]);
     });
 
     it("waits for the keeper: nothing is due while it is not followed, and a short outage only delays the run", async () => {

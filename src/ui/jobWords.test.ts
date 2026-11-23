@@ -43,6 +43,7 @@ const record = (state: RunRecord["state"], extra: Partial<RunRecord> = {}): RunR
   cause: null,
   dueAt: at(17, 11, 17),
   agent: null,
+  missed: null,
   state,
   action: null,
   reason: null,
@@ -69,6 +70,7 @@ const active = (state: ActiveRun["state"], extra: Partial<ActiveRun> = {}): Acti
   cause: null,
   dueAt: at(17, 12, 31),
   agent: null,
+  missed: null,
   state,
   lowPriority: true,
   runAt: null,
@@ -83,7 +85,7 @@ const active = (state: ActiveRun["state"], extra: Partial<ActiveRun> = {}): Acti
   ...extra,
 });
 
-const runs = (extra: Partial<JobRuns> = {}): JobRuns => ({ job: "backup", next: null, finished: false, last: null, ...extra });
+const runs = (extra: Partial<JobRuns> = {}): JobRuns => ({ job: "backup", next: null, finished: false, last: null, held: false, ...extra });
 
 describe("a job's last result", () => {
   const look = (last: RunRecord | null, going: ActiveRun[] = []) => lastLook(script, { runs: runs({ last }), active: going, service: undefined }, now);
@@ -149,30 +151,38 @@ describe("a job's last result", () => {
 
 describe("a job's next run", () => {
   it("says a disabled job, ahead of any other state", () => {
-    expect(nextLook({ ...script, enabled: false }, runs({ next: at(17, 13, 0) }), true, now)).toEqual({ words: "disabled", sub: null, none: true });
+    expect(nextLook({ ...script, enabled: false }, runs({ next: at(17, 13, 0) }), true, now)).toEqual({ words: "disabled", sub: null, none: true, held: false });
     expect(nextLook({ ...service, enabled: false }, undefined, false, now).words).toBe("disabled");
   });
 
   it("says a job the loop guard paused", () => {
-    expect(nextLook(script, runs({ next: at(17, 13, 0) }), true, now)).toEqual({ words: "paused", sub: null, none: true });
+    expect(nextLook(script, runs({ next: at(17, 13, 0) }), true, now)).toEqual({ words: "paused", sub: null, none: true, held: false });
   });
 
   it("says a service always on, and a hook or a chain on event", () => {
-    expect(nextLook(service, undefined, false, now)).toEqual({ words: "always on", sub: null, none: true });
-    for (const start of ["pomade-started", "project-first-open"] as const) expect(nextLook({ ...service, start }, undefined, false, now)).toEqual({ words: "with Pomade", sub: null, none: true });
-    expect(nextLook(hook, runs(), false, now)).toEqual({ words: "on event", sub: null, none: true });
+    expect(nextLook(service, undefined, false, now)).toEqual({ words: "always on", sub: null, none: true, held: false });
+    for (const start of ["pomade-started", "project-first-open"] as const) expect(nextLook({ ...service, start }, undefined, false, now)).toEqual({ words: "with Pomade", sub: null, none: true, held: false });
+    expect(nextLook(hook, runs(), false, now)).toEqual({ words: "on event", sub: null, none: true, held: false });
     expect(nextLook({ ...hook, trigger: { kind: "chain", chain: { job: "pull", result: "any" } } }, runs(), false, now).words).toBe("on event");
   });
 
   it("says a manual job's Next run on Run now", () => {
-    expect(nextLook({ ...hook, trigger: { kind: "manual" } }, runs(), false, now)).toEqual({ words: "on Run now", sub: null, none: true });
+    expect(nextLook({ ...hook, trigger: { kind: "manual" } }, runs(), false, now)).toEqual({ words: "on Run now", sub: null, none: true, held: false });
+    // The switch never holds a job that runs only by hand.
+    expect(nextLook({ ...hook, trigger: { kind: "manual" } }, runs({ held: true }), false, now).held).toBe(false);
   });
 
   it("gives a schedule's next time, and how soon under an hour", () => {
-    expect(nextLook(script, runs({ next: at(17, 13, 0) }), false, now)).toEqual({ words: "Today 13:00", sub: "in 12 min", none: false });
-    expect(nextLook(script, runs({ next: at(17, 15, 0) }), false, now)).toEqual({ words: "Today 15:00", sub: null, none: false });
-    expect(nextLook(script, runs({ next: at(18, 7, 0) }), false, now)).toEqual({ words: "Tomorrow 7:00", sub: null, none: false });
+    expect(nextLook(script, runs({ next: at(17, 13, 0) }), false, now)).toEqual({ words: "Today 13:00", sub: "in 12 min", none: false, held: false });
+    expect(nextLook(script, runs({ next: at(17, 15, 0) }), false, now)).toEqual({ words: "Today 15:00", sub: null, none: false, held: false });
+    expect(nextLook(script, runs({ next: at(18, 7, 0) }), false, now)).toEqual({ words: "Tomorrow 7:00", sub: null, none: false, held: false });
     expect(nextLook(script, runs({ next: at(17, 12, 48) }), false, now).sub).toBe("now");
+  });
+
+  it("says a job the switch holds held, with its next time and countdown; never on a disabled or paused job", () => {
+    expect(nextLook(script, runs({ next: at(17, 13, 0), held: true }), false, now)).toEqual({ words: "Today 13:00", sub: "in 12 min", none: false, held: true });
+    expect(nextLook({ ...script, enabled: false }, runs({ next: at(17, 13, 0), held: true }), false, now).held).toBe(false);
+    expect(nextLook(script, runs({ next: at(17, 13, 0), held: true }), true, now).held).toBe(false);
   });
 
   it("says the same countdown as the panel's Next up, to the second", () => {
@@ -194,7 +204,7 @@ describe("a job's next run", () => {
   });
 
   it("says a schedule with nothing ahead finished, and one not yet reported a dash", () => {
-    expect(nextLook(script, runs({ finished: true }), false, now)).toEqual({ words: "finished", sub: null, none: true });
+    expect(nextLook(script, runs({ finished: true }), false, now)).toEqual({ words: "finished", sub: null, none: true, held: false });
     expect(nextLook(script, undefined, false, now).words).toBe("—");
   });
 });

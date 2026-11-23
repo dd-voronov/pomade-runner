@@ -58,12 +58,12 @@ describe("control protocol", () => {
     expect(RESULT_GUARDS.switch({ position: "pause-all", since: 5 })).toBe(true);
     expect(RESULT_GUARDS.switch({ position: "running", since: null })).toBe(true);
     for (const bad of [{}, { position: "off", since: null }, { position: "running" }]) expect(RESULT_GUARDS.switch(bad)).toBe(false);
-    expect(RESULT_GUARDS.runs({ active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null } })).toBe(true);
+    expect(RESULT_GUARDS.runs({ active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null }, heldRuns: 0 })).toBe(true);
     expect(RESULT_GUARDS.runs({ active: [], nextUp: [], jobs: [], needsYou: [] })).toBe(false);
   });
 
   it("checks the runs' answers' shapes", () => {
-    const base = { job: "backup", name: "Backup", kind: "script", project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled", cause: null, dueAt: 1, agent: null };
+    const base = { job: "backup", name: "Backup", kind: "script", project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled", cause: null, dueAt: 1, agent: null, missed: null };
     const going = { lowPriority: true, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false };
     const active = { ...base, ...going, state: "running", startedAt: 2, session: "run:backup:20261117-120000-abcdef", log: "/s/o.log" };
     const record = { ...base, state: "failed", action: null, reason: null, startedAt: 2, endedAt: 3, durationMs: 1, exitCode: 1, signal: null, log: "/s/o.log", lastLines: ["boom"], git: null, limitHit: null };

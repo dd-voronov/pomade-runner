@@ -3,9 +3,22 @@
   grid-template-columns: 16px minmax(0, 1.5fr) minmax(0, 1.1fr) 104px 102px 28px;
 }
 
-/* Under a row's Next run: nothing is scheduled. */
+/* A row's Next run: nothing is scheduled, or the switch holds the job. */
 .none {
   color: var(--text-faint);
+}
+
+/* Next up's "held" tag (the prototype's `.next-held`) under a held job's Next run, after its
+   countdown. */
+.heldTag {
+  height: 15px;
+  font-weight: inherit;
+  line-height: 15px;
+  vertical-align: top;
+}
+
+.after {
+  margin-left: 6px;
 }
 
 .helped {

@@ -15,8 +15,12 @@
 //   once the services are up (`servicesSettled`), a warm-up (a setting) before caught-up runs start.
 //   On-time runs never wait for it.
 // - **The switch** holds a job's schedule while it holds the job: its look stays where it was, so
-//   on release its occurrences come due — on time, or missed and to its policy. A queued run it
-//   held goes to its job's policy on release when it is late by then.
+//   on release every occurrence that passed while it held the job is missed and goes, counted, to
+//   its policy. A queued run it held goes to its job's policy on release when it is late by then.
+//   While it holds a job nothing is decided for it: no record, no Needs-you item.
+// - **Counted.** However many occurrences a job missed, it gets one decision; the run or record the
+//   decision makes keeps how many and the first and last missed time (`missed`), and a later miss
+//   adds to a caught-up run still queued or a missed run still waiting.
 // - **The queue** (`queue.ts`) starts what it can, oldest first; the rest wait — for Run at…'s time,
 //   the switch, the warm-up, the job's previous run, Pomade (an agent run), or a low-priority slot.
 //   An agent run that waits for Pomade has Runner open it (`pomade-open.ts`), one opening for every
@@ -73,13 +77,14 @@ import { foundRecord, keptRecord, lastLines, type History } from "./history";
 import { hooked, LOGIN, type HookFiring } from "./hooks";
 import type { Log } from "./log";
 import { createLoopGuard, FIRING_LIMIT, FIRING_WINDOW_MS, parseLoopGuard, type LoopGuardRecords } from "./loop-guard";
-import { decideMissed, parseRunAt, pastWords, type MissedDecision } from "./missed";
+import { addMissed, decideMissed, missedOnce, parseRunAt, pastWords, type MissedDecision } from "./missed";
 import {
   clockTime,
   dayTime,
   durationWords,
   isActiveRun,
   limitWords,
+  missedRunsWords,
   NEXT_UP_RUNS,
   parseRunRecord,
   runTriggerWords,
@@ -92,6 +97,7 @@ import {
   type JobRuns,
   type MissedChoice,
   type MissedChoiceResult,
+  type MissedRuns,
   type NeedsYouItem,
   type NextRun,
   type ResumeResult,
@@ -108,7 +114,7 @@ import { longRunNotice, loopNotice, missedNotice, waitingNotice, WAIT_WORDS } fr
 import { holds, planQueue } from "./queue";
 import type { Settings } from "./settings";
 import type { SwitchStore } from "./switch";
-import { dueOccurrences, ON_TIME_MS } from "./triggers";
+import { dueOccurrences, ON_TIME_MS, passedOccurrences, type Due } from "./triggers";
 
 /** A gap between two ticks longer than this on the scheduler's clock is a wake: the Mac slept, or
  *  the clock jumped ahead. A tick is a second; a busy moment stalls it far less. */
@@ -152,7 +158,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function parseActiveRun(value: unknown): ActiveRun | null {
   if (!isRecord(value)) return null;
   const kind = typeof value.kind === "string" && Object.hasOwn(KIND_DEFAULTS, value.kind) ? (value.kind as keyof typeof KIND_DEFAULTS) : "script";
-  const run = { lowPriority: KIND_DEFAULTS[kind].lowPriority, cause: null, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false, ...value, agent: withAgentDefaults(value.agent) };
+  const run = { lowPriority: KIND_DEFAULTS[kind].lowPriority, cause: null, missed: null, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false, ...value, agent: withAgentDefaults(value.agent) };
   return isActiveRun(run) ? run : null;
 }
 
@@ -232,6 +238,9 @@ export function ranFor(run: ActiveRun, now: number): number {
   const waited = (run.agent?.waitedMs ?? 0) + (wait === null ? 0 : Math.max(0, now - wait.since));
   return Math.max(0, now - run.startedAt - waited);
 }
+
+/** The missed runs a run stands for: those it carries, else the one it is. */
+const missedOf = (run: ActiveRun): MissedRuns => run.missed ?? missedOnce(run.dueAt);
 
 /** The jobs that run once per trigger: scripts, git jobs and agent jobs. */
 export type RunJob = ScriptJob | GitJob | AgentJob;
@@ -321,6 +330,9 @@ export interface Runs {
   /** Dismiss a run's long-run warning; whether there was one. */
   dismissWarning(job: string, run: string): boolean;
   switch(): SwitchState;
+  /** The scheduled runs the switch has held so far: every occurrence of the jobs it holds since it
+   *  caught each. */
+  heldRuns(): number;
   /** Set the switch, once it is written: held runs wait; on release, held runs that are late go to
    *  their policy. */
   setSwitch(position: SwitchPosition): Promise<SwitchState>;
@@ -512,6 +524,7 @@ export function createRuns(options: RunsOptions): Runs {
             cause,
             dueAt: at.getTime(),
             agent: null,
+            missed: null,
             state: outcome.result,
             action,
             reason: outcome.result === "done" ? null : outcome.reason,
@@ -554,6 +567,7 @@ export function createRuns(options: RunsOptions): Runs {
       warnedAt: null,
       warningDismissed: false,
       agent: null,
+      missed: null,
     };
   }
 
@@ -569,6 +583,7 @@ export function createRuns(options: RunsOptions): Runs {
     cause: run.cause,
     dueAt: run.dueAt,
     agent: run.agent,
+    missed: run.missed,
     action: null,
     ...end,
   });
@@ -708,10 +723,12 @@ export function createRuns(options: RunsOptions): Runs {
   }
 
   /** A run is due: queue it, or apply the job's overlap policy. The run, whatever became of it. An
-   *  on-time run covers a caught-up run of its job still queued. */
-  async function fire(job: RunJob, trigger: RunTrigger, dueAt: Date, deadline: number | null = null, cause: RunCause | null = null): Promise<ActiveRun> {
+   *  on-time run covers a caught-up run of its job still queued. A caught-up run carries the missed
+   *  runs it stands for. */
+  async function fire(job: RunJob, trigger: RunTrigger, dueAt: Date, deadline: number | null = null, cause: RunCause | null = null, missed: MissedRuns | null = null): Promise<ActiveRun> {
     const run = newRun(job, trigger, dueAt, cause);
     run.deadline = deadline;
+    run.missed = missed;
     if (trigger === "scheduled") {
       for (const late of active.filter((candidate) => candidate.job === job.id && candidate.state === "queued" && candidate.trigger === "caught-up" && candidate.runAt === null)) {
         await miss(late, `skipped · the ${clockTime(dueAt.getTime())} run covers it`);
@@ -815,21 +832,23 @@ export function createRuns(options: RunsOptions): Runs {
     );
   }
 
-  /** A missed run of a `wait-for-me` job waits for the person: one per job, at its latest missed time. */
-  function waitForMe(job: RunJob, dueAt: Date, run: ActiveRun | null = null): void {
+  /** A missed run of a `wait-for-me` job waits for the person: one per job, at its latest missed
+   *  time, counting every run missed since it began to wait. */
+  function waitForMe(job: RunJob, missed: MissedRuns, run: ActiveRun | null = null): void {
     const waiting = active.find((candidate) => candidate.job === job.id && candidate.state === "missed-waiting");
     if (waiting !== undefined) {
-      waiting.dueAt = Math.max(waiting.dueAt, dueAt.getTime());
+      waiting.missed = addMissed(missedOf(waiting), missed);
+      waiting.dueAt = waiting.missed.last;
       if (run !== null) active = active.filter((candidate) => candidate !== run);
-      log(`run ${waiting.job} ${waiting.run}: missed ${dayTime(waiting.dueAt)}; waits for you`);
+      log(`run ${waiting.job} ${waiting.run}: ${missedRunsWords(waiting.missed) ?? `missed ${dayTime(waiting.dueAt)}`}; waits for you`);
       save();
       options.onChange();
       return;
     }
-    const next = run ?? newRun(job, "scheduled", dueAt);
-    Object.assign(next, { state: "missed-waiting", trigger: "scheduled", dueAt: dueAt.getTime(), runAt: null, deadline: null, waits: null });
+    const next = run ?? newRun(job, "scheduled", new Date(missed.last));
+    Object.assign(next, { state: "missed-waiting", trigger: "scheduled", dueAt: missed.last, missed, runAt: null, deadline: null, waits: null });
     if (!active.includes(next)) active.push(next);
-    log(`run ${next.job} ${next.run}: missed ${dayTime(next.dueAt)}; waits for you`);
+    log(`run ${next.job} ${next.run}: ${missedRunsWords(missed) ?? `missed ${dayTime(next.dueAt)}`}; waits for you`);
     save();
     options.onChange();
     options.post(missedNotice(next));
@@ -837,33 +856,44 @@ export function createRuns(options: RunsOptions): Runs {
 
   /** Apply a job's missed-run decision; `run` is a held queued run it is about, when there is one. */
   async function applyMissed(job: RunJob, decision: MissedDecision, run: ActiveRun | null): Promise<void> {
+    const { missed } = decision;
     switch (decision.action) {
-      case "catch-up":
+      case "catch-up": {
         if (run !== null) {
-          Object.assign(run, { trigger: "caught-up", runAt: null, deadline: decision.deadline });
+          Object.assign(run, { trigger: "caught-up", runAt: null, deadline: decision.deadline, missed });
           return;
         }
-        if (active.some((candidate) => candidate.job === job.id && candidate.state === "queued" && candidate.trigger === "caught-up")) {
-          log(`job ${job.id}: a caught-up run is queued already`);
+        const queued = active.find((candidate) => candidate.job === job.id && candidate.state === "queued" && candidate.trigger === "caught-up");
+        if (queued !== undefined) {
+          queued.missed = addMissed(missedOf(queued), missed);
+          log(`job ${job.id}: a caught-up run is queued already; it stands for ${queued.missed.count} missed runs`);
+          save();
+          options.onChange();
           return;
         }
-        await fire(job, "caught-up", decision.dueAt, decision.deadline);
+        await fire(job, "caught-up", new Date(missed.last), decision.deadline, null, missed);
         return;
-      case "record":
-        await miss(run ?? newRun(job, "scheduled", decision.dueAt), decision.reason);
+      }
+      case "record": {
+        const missedRun = run ?? newRun(job, "scheduled", new Date(missed.last));
+        missedRun.missed = missed;
+        await miss(missedRun, decision.reason);
         return;
+      }
       case "wait":
-        waitForMe(job, decision.dueAt, run);
+        waitForMe(job, missed, run);
         return;
     }
   }
 
   /** Fire every scheduled job whose occurrence came since its look; hand the missed ones to their
-   *  policy. A job the switch holds keeps its look where it was. */
+   *  policy. A job the switch holds keeps its look where it was; when the switch lets it go, every
+   *  occurrence it held is missed. */
   async function look(at: Date): Promise<void> {
     const since = lookedAt;
     lookedAt = at.getTime();
     let handled = false;
+    let heldMore = false;
     const jobs = scheduledRuns(options.jobs());
     for (const job of jobs) {
       if (job.trigger.kind !== "schedule") continue;
@@ -872,16 +902,18 @@ export function createRuns(options: RunsOptions): Runs {
           held.set(job.id, since);
           handled = true;
         }
+        // An occurrence it holds now: the count of held runs went up.
+        if (passedOccurrences(job.trigger.schedule, new Date(since), at) !== null) heldMore = true;
         continue;
       }
-      const from = held.get(job.id) ?? since;
+      const heldSince = held.get(job.id);
       if (held.delete(job.id)) handled = true;
-      const due = dueOccurrences(job.trigger.schedule, new Date(from), at);
-      if (due.missed.length > 0) {
+      const due: Due =
+        heldSince === undefined ? dueOccurrences(job.trigger.schedule, new Date(since), at) : { fire: null, missed: passedOccurrences(job.trigger.schedule, new Date(heldSince), at) };
+      if (due.missed !== null) {
         handled = true;
         const decision = decideMissed({ missed: job.missed, worthUntil: job.worthUntil, schedule: job.trigger.schedule }, due.missed, at, due.fire);
-        const times = due.missed.length > 3 ? `${due.missed.length} runs, the latest ${dayTime(decision.dueAt.getTime())}` : due.missed.map((time) => dayTime(time.getTime())).join(", ");
-        log(`job ${job.id}: missed ${times} — ${decisionWords(decision)}`);
+        log(`job ${job.id}: ${missedRunsWords(due.missed) ?? `missed ${dayTime(due.missed.last)}`}${heldSince === undefined ? "" : " (held by the switch)"} — ${decisionWords(decision)}`);
         await applyMissed(job, decision, null);
       }
       if (due.fire !== null) {
@@ -896,6 +928,20 @@ export function createRuns(options: RunsOptions): Runs {
       handled = true;
     }
     if (handled || lookedAt - savedAt >= ALIVE_EVERY_MS) save();
+    if (heldMore) options.onChange();
+  }
+
+  /** The scheduled runs the switch has held so far: every occurrence of a held job since the switch
+   *  caught it. */
+  function heldRuns(): number {
+    const at = now();
+    let count = 0;
+    for (const job of scheduledRuns(options.jobs())) {
+      const since = held.get(job.id);
+      if (since === undefined || job.trigger.kind !== "schedule" || !holds(switchState.position, { trigger: "scheduled", lowPriority: job.lowPriority })) continue;
+      count += passedOccurrences(job.trigger.schedule, new Date(since), at)?.count ?? 0;
+    }
+    return count;
   }
 
   /** Stop a run past its job's time limit; warn of a run going longer than the long-run warning. */
@@ -1266,6 +1312,8 @@ export function createRuns(options: RunsOptions): Runs {
 
     switch: () => switchState,
 
+    heldRuns,
+
     setSwitch: (position) =>
       inLane(async () => {
         const previous = switchState.position;
@@ -1280,7 +1328,7 @@ export function createRuns(options: RunsOptions): Runs {
           if (run.trigger !== "caught-up" && at - (run.runAt ?? run.dueAt) <= ON_TIME_MS) continue;
           const job = runJobOf(run.job);
           if (job === null || job.trigger.kind !== "schedule") continue;
-          const decision = decideMissed({ missed: job.missed, worthUntil: job.worthUntil, schedule: job.trigger.schedule }, [new Date(run.dueAt)], new Date(at));
+          const decision = decideMissed({ missed: job.missed, worthUntil: job.worthUntil, schedule: job.trigger.schedule }, missedOf(run), new Date(at));
           log(`run ${run.job} ${run.run}: held by the switch — ${decisionWords(decision)}`);
           await applyMissed(job, decision, run);
         }
@@ -1295,7 +1343,7 @@ export function createRuns(options: RunsOptions): Runs {
     needsYou() {
       const runs = active.flatMap((run): NeedsYouItem[] => {
         const base = { job: run.job, name: run.name, project: run.project, run: run.run };
-        if (run.state === "missed-waiting") return [{ id: `missed:${run.job}`, kind: "missed", ...base, at: run.dueAt, detail: `missed ${dayTime(run.dueAt)}` }];
+        if (run.state === "missed-waiting") return [{ id: `missed:${run.job}`, kind: "missed", ...base, at: run.dueAt, missed: run.missed, detail: missedRunsWords(run.missed) ?? `missed ${dayTime(run.dueAt)}` }];
         const wait = run.state === "running" ? (run.agent?.waiting ?? null) : null;
         const waiting: NeedsYouItem[] = wait === null ? [] : [{ id: `waiting:${run.job}:${run.run}`, kind: "waiting", ...base, prompt: wait.prompt, at: wait.since, detail: WAIT_WORDS[wait.prompt] }];
         if (run.state !== "running" || run.warnedAt === null || run.warningDismissed || run.startedAt === null) return waiting;
@@ -1334,7 +1382,8 @@ export function createRuns(options: RunsOptions): Runs {
         const { job } = entry;
         const ahead = job.trigger.kind === "schedule" ? nextOccurrence(job.trigger.schedule, at) : null;
         const next = job.enabled ? ahead : null;
-        return [{ job: job.id, next: next?.getTime() ?? null, finished: job.trigger.kind === "schedule" && ahead === null, last: last.get(job.id) ?? null }];
+        const isHeld = job.enabled && job.trigger.kind === "schedule" && holds(switchState.position, { trigger: "scheduled", lowPriority: job.lowPriority });
+        return [{ job: job.id, next: next?.getTime() ?? null, finished: job.trigger.kind === "schedule" && ahead === null, last: last.get(job.id) ?? null, held: isHeld }];
       });
     },
 

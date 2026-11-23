@@ -115,7 +115,7 @@ test.describe("missed runs and load", () => {
     const second = world.startScheduler(clock("2026-11-18T09:00:00"));
     await world.ready(second);
     await expect.poll(() => second.output()).toMatch(/runs: last alive 2026-11-18T05:3\d:\S+; what was missed since goes to its policy\n/);
-    await expect.poll(() => second.output()).toContain("job twice: missed Wed 07:00, Wed 08:00 — one caught-up run, worth it until Thu 07:00\n");
+    await expect.poll(() => second.output()).toContain("job twice: missed 2 runs, 07:00–08:00 — one caught-up run, worth it until Thu 07:00\n");
     await expect.poll(() => world.history("twice"), { timeout: 15_000 }).toEqual([expect.objectContaining({ trigger: "caught-up", state: "done", dueAt: madrid("2026-11-18T08:00:00") }) as RunRecord]);
     await until(world, "2026-11-18T09:10:00");
     expect(await world.history("twice")).toHaveLength(1);
@@ -174,6 +174,39 @@ test.describe("missed runs and load", () => {
     const again = world.startScheduler(clock("2026-11-18T14:00:00"));
     await world.ready(again);
     expect((await runsReport(world)).switch.position).toBe("pause-low");
+  });
+
+  test("5b · the switch counts what it holds: an every-2-minutes low-priority job held three marks is held in the report, counted in pomade-runner runs, and makes no Needs-you item; back to Running, one caught-up run says missed 3 runs", async () => {
+    await world.writeJob("low.md", scriptFile("Low", "echo low", "schedule:\n  every: { minutes: 2 }\n"));
+    await world.writeJob("wait.md", scriptFile("Wait", "echo wait", "schedule:\n  every: { minutes: 2 }\nmissed: wait-for-me\n"));
+    await world.writeJob("high.md", scriptFile("High", "echo high", "schedule:\n  every: { minutes: 2 }\nlow-priority: false\n"));
+    // A clock 20 times as fast: a two-minute mark every six real seconds, room for the commands
+    // between 17:44 and 17:46.
+    const scheduler = world.startScheduler(clock("2026-11-18T17:38:30", 20));
+    await world.ready(scheduler);
+    expect((await world.command("pause", "low")).code).toBe(0);
+    const report = await runsReport(world);
+    expect(Object.fromEntries(report.jobs.map((info) => [info.job, info.held]))).toEqual({ high: false, low: true, wait: true });
+
+    await until(world, "2026-11-18T17:44:10");
+    const held = await runsReport(world);
+    // Low and Wait each held 17:40, 17:42 and 17:44 — and until the next mark, nothing more.
+    expect(held.heldRuns).toBe(6);
+    expect(held.needsYou).toEqual([]);
+    expect((await world.command("runs")).stdout).toMatch(/^switch: Pause low-priority — runs of low-priority jobs are held, 6 runs so far; /);
+    expect(await world.history("low")).toEqual([]);
+    expect(await world.history("wait")).toEqual([]);
+    expect(await world.history("high")).not.toEqual([]);
+
+    expect((await world.command("resume")).code).toBe(0);
+    const three = { count: 3, first: madrid("2026-11-18T17:40:00"), last: madrid("2026-11-18T17:44:00") };
+    await expect.poll(() => world.history("low"), { timeout: 15_000 }).toEqual([expect.objectContaining({ trigger: "caught-up", state: "done", dueAt: three.last, missed: three }) as RunRecord]);
+    expect((await world.command("history", "low")).stdout).toMatch(/^low {2}Low {2}missed 3 runs, \d\d:40–\d\d:44 · caught up once {2}done, /);
+    // The wait-for-me job waits for you only now, for all three.
+    const after = await runsReport(world);
+    expect(after.needsYou).toEqual([expect.objectContaining({ id: "missed:wait", missed: three })]);
+    expect(after.active.find((run) => run.job === "wait")).toMatchObject({ state: "missed-waiting", missed: three });
+    expect(after.heldRuns).toBe(0);
   });
 
   test("6 · a 1-minute time limit stops a long script: failed, stopped: time limit, 1 min, in its record, a notice and pomade-runner history", async () => {

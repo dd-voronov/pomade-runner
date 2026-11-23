@@ -15,7 +15,8 @@ Every run that ends — or never starts — is recorded and reaches you in one o
 The **History** view lists the runs going and every record, newest first by when each started — a run
 that has not, by when it was due — under day heads ("Today", "Yesterday", "Sun 15 Nov"). A row shows
 the **Time**, the kind icon, the **Job**, the **Result**, the **Duration** and the **Trigger**
-(`scheduled` · `caught up` · `manual` · `hook: Mac login` · `chain: after Pull`). Time queued does not
+(`scheduled` · `caught up` · `missed 4 runs, 17:40–17:46 · caught up once` · `manual` · `hook: Mac
+login` · `chain: after Pull`). Time queued does not
 count toward a duration; time waiting for you does. Click a row, or press Enter or Space on it, to
 open its result card.
 
@@ -29,8 +30,9 @@ page when you scroll to the end; while older pages remain a count is of the runs
 ("3+").
 
 Result wording: `done` · `failed · exit 1` · `stopped: time limit, 45 min` · `stopped by you` ·
-`skipped · previous run still going` · `missed · skipped · past 12:00` · `queued · 1 ahead` · `running ·
-3h — still expected?` · `waiting for you`. Each explains itself on hover. A chain's action on a
+`skipped · previous run still going` · `missed · skipped · past 12:00` · `missed 4 runs, 17:40–17:46 ·
+skipped` · `queued · 1 ahead` · `running · 3h — still expected?` · `waiting for you`. A run that
+stands for more than one missed run says how many ([Missed runs and load](missed-runs-and-load.md)). Each explains itself on hover. A chain's action on a
 service is a record too: `done · restarted`.
 
 ## The result card
@@ -40,7 +42,8 @@ The head has the kind icon, the job's name, the result as a pill (`Done` · `Fai
 limit` · `Waiting for you` · `Queued` · `Missed · waiting for you` · `Skipped` · `Missed · skipped` ·
 `Stopped by you`), then when it ran or was due, how long, what started it (with its help), an agent
 run's agent and mode ("claude · Normal"), and a why line: a hook's event, a caught-up run's missed
-time, or a chain's "After Pull: done" whose name opens the parent run. A failed run's head is red, a
+time ("Missed 4 runs, 17:40–17:46 — caught up once" when it stands for more than one), or a chain's
+"After Pull: done" whose name opens the parent run. A failed run's head is red, a
 waiting run's amber. **Edit job** ends every card.
 
 | Run | The card shows | Buttons |
@@ -83,7 +86,7 @@ to what the card is about — the time, one line of text and the actions. Every 
 |---|---|---|
 | failed run | "Failed: exit 1 · 2×" (the count when more than one since the item came) | `Open` · `Run now` · `Dismiss` |
 | service gave up | "Crashed 5× in 1 min — gave up."; "Gave up — could not start: <why>" when it never got a terminal | `Start` · `View output` (not without a terminal) |
-| missed run waits | "Missed — it waits for you to pick a time." | `Run now` · `Run at…` · `Skip` |
+| missed run waits | "Missed — it waits for you to pick a time."; "Missed 4 runs, 17:40–17:46 — …" when it stands for more than one | `Run now` · `Run at…` · `Skip` |
 | agent run waits | "Waiting for approval at a permission prompt." / "Waiting for you to trust its folder." | `Open at the prompt` |
 | long run | "Running 3h — still expected?" | `Open` · `Stop` · `Dismiss` |
 | job paused by the loop guard | "Paused: triggered 10× in 10 min." | `Resume` · `Edit job` |
