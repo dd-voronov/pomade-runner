@@ -68,7 +68,7 @@ test.describe("the side panel", () => {
     await page.goto(harness({ surface: "panel" }));
     const panel = app(page).getByTestId("panel-empty");
     await expect(panel.getByRole("heading", { name: "No jobs yet" })).toBeVisible();
-    await expect(panel).toContainText("A service is a command Runner keeps running: it starts at login, restarts on a crash and outlives Pomade");
+    await expect(panel).toContainText("A service is a command Runner keeps running and restarts on a crash — from Mac startup, or only while Pomade is running — like a project's web server.");
     await expect(panel.getByTestId("active-runs")).toHaveText("Nothing is running.");
     await expect(app(page).locator("html")).toHaveAttribute("data-surface", "panel");
     await shoot(page, "panel");
@@ -895,7 +895,7 @@ test.describe("hooks and chains", () => {
     await writeJob(page, "mount.md", "---\nkind: script\nname: Mount\nfolder: .\ncommand: ./mount.sh\nhook: { event: login }\n---\n");
     await writeJob(page, "web.md", "---\nkind: service\nname: Web\nfolder: .\ncommand: ./web.sh\nafter: { job: pull }\n---\n");
     // By path: Mount, Pull, Tests, Web.
-    await expect(app(page).getByTestId("job-trigger")).toHaveText(["at Mac login", "daily at 13:00", "after Pull finishes", "always on · starts at login · restarts after Pull is done"]);
+    await expect(app(page).getByTestId("job-trigger")).toHaveText(["at Mac login", "daily at 13:00", "after Pull finishes", "always on · starts on Mac startup · restarts after Pull is done"]);
     await expect(app(page).getByTestId("job-next")).toHaveText(["on event", "—", "on event", "always on"]);
     await shoot(page, "tab-jobs-chains");
   });
@@ -1180,7 +1180,7 @@ test.describe("the job form", () => {
       await expect(tip).toHaveText(HELP[key].join(""));
     }
     await form.getByTestId("kind-service").hover();
-    await expect(tip).toHaveText("Keeps a command running: starts it at login, restarts it on a crash, outlives Pomade.Example: Coda web — ./start.sh.");
+    await expect(tip).toHaveText(HELP["kind.service"].join(""));
   });
 
   test("an unknown job's route says so; a job whose file the form cannot read offers Open file", async ({ page }) => {
@@ -1254,7 +1254,7 @@ test.describe("the Jobs view", () => {
     const kinds = await app(page).getByTestId("job-row").evaluateAll((rows) => rows.map((row) => row.querySelector("[data-tip]")?.getAttribute("data-tip")));
     expect(kinds).toEqual(["Script", "Script", "Script", "Service", "Git"]);
     for (const key of ["jobs.workspace", "jobs.this", "jobs.last", "jobs.next", "jobs.invalid"]) await expect(app(page).getByTestId(`help-${key}`)).toBeVisible();
-    await expect(app(page).getByTestId("job-trigger")).toHaveText(["daily at 13:00", "at Mac login", "daily at 9:00", "always on · starts at login", "daily at 9:00"]);
+    await expect(app(page).getByTestId("job-trigger")).toHaveText(["daily at 13:00", "at Mac login", "daily at 9:00", "always on · starts on Mac startup", "daily at 9:00"]);
     await expect(app(page).getByTestId("job-trigger").first()).toHaveAttribute("data-tip", "Daily at 13:00");
     // A running service's row stops it where the others run now, its terminal before; every row has Edit and Delete.
     await page.evaluate((session) => window.setServiceStatus("alpha/coda-web", { state: "running", session }), serviceSession("alpha/coda-web", 60_000));
@@ -1594,6 +1594,42 @@ test.describe("services: Running now and the Services view", () => {
       await expect(rows.nth(0).getByTestId("service-status")).toHaveText("disabled");
       await expect(rows.nth(0).getByRole("button")).toHaveText(["", ""]);
       await shoot(page, "tab-services-no-session");
+    });
+
+    test("T-021 · a disabled service has no Start in Jobs or Services, even one that never ran with a report a tick behind; a service waiting for Pomade says so and has no Start either", async ({ page }) => {
+      await services(page, { route: "services" });
+      await writeJob(page, "off.md", "---\nkind: service\nname: Off\nfolder: .\nenabled: false\ncommand: ./off.sh\n---\n");
+      await writeJob(page, "watch.md", "---\nkind: service\nname: Watch\nfolder: .\ncommand: ./watch.sh\nstart: pomade-started\n---\n");
+      // The report still says Off would start (it was just turned off) and never ran.
+      await page.evaluate(() => {
+        window.setServiceStatus("off", { state: "queued", session: null });
+        window.setServiceStatus("watch", { state: "waiting-for-pomade", session: null });
+      });
+      const row = (job: string) => app(page).locator(`[data-testid="service-row"][data-job="${job}"]`);
+      await expect(row("off")).toBeVisible();
+      await expect(row("off").getByRole("button", { name: "Start", exact: true })).toHaveCount(0);
+      await expect(row("watch").getByTestId("service-status")).toHaveText("waiting for Pomade");
+      await expect(row("watch").getByTestId("service-sub")).toHaveText("starts when Pomade starts");
+      await expect(row("watch").getByTestId("service-status")).toHaveAttribute("data-help", "st.svcwaitpomade");
+      // Start would be refused while Pomade is not running: there is none.
+      await expect(row("watch").getByRole("button", { name: "Start", exact: true })).toHaveCount(0);
+      await page.mouse.move(0, 0);
+      await shoot(page, "tab-services-t021");
+      await page.evaluate(() => window.setServiceStatus("off", { state: "disabled", session: null }));
+      await expect(row("off").getByTestId("service-status")).toHaveText("disabled");
+      await expect(row("off").getByRole("button", { name: "Start", exact: true })).toHaveCount(0);
+
+      await page.evaluate(() => window.setServiceStatus("off", { state: "queued", session: null }));
+      await page.evaluate(() => window.mounted.navigate(""));
+      const job = (id: string) => app(page).locator(`[data-testid="job-row"][data-job="${id}"]`);
+      await expect(job("off")).toBeVisible();
+      await expect(job("off").getByRole("button", { name: "Start service" })).toHaveCount(0);
+      await expect(job("off").getByRole("button", { name: "Run now" })).toHaveCount(0);
+      await expect(job("watch").getByTestId("job-trigger")).toHaveText("while Pomade is running");
+      await expect(job("watch").getByRole("button", { name: "Start service" })).toHaveCount(0);
+      await expect(job("watch").getByRole("button", { name: "Run now" })).toHaveCount(0);
+      await page.mouse.move(0, 0);
+      await shoot(page, "tab-jobs-t021");
     });
 
     test("the Services view: each service where it stands, its actions by state, an invalid file with its error; Start, Stop and Restart call Runner and toast", async ({ page }) => {
@@ -2172,7 +2208,7 @@ test.describe("the Script form and the schedule picker", () => {
     await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
     const event = frame.getByTestId("hook-event");
     // The hooks the engine fires, then the chain, last.
-    await expect(event.locator("option")).toHaveText(["Mac login", "Pomade started", "First open of a project since Pomade started", "Project created", "Agent session finished", "Session status changed to…", "Another job finished"]);
+    await expect(event.locator("option")).toHaveText(["Mac login", "Pomade started", "First open of a project since Pomade started", "Project opened (every time)", "Project created", "Agent session finished", "Session status changed to…", "Another job finished"]);
     await expect(event).toHaveValue("login");
     await expect(frame.getByTestId("hook-words")).toHaveText("Runs at Mac loginOnce per login, after the 2-minute warm-up.");
     await frame.getByTestId("form-policies").getByRole("button", { name: "Change" }).click();
@@ -2241,6 +2277,19 @@ test.describe("the Script form and the schedule picker", () => {
     await shoot(page, "tab-form-hook-project-created");
     expect(await create(page, "init")).toBe(`${header("Init")}hook: { event: project-created }\n---\n`);
     await expect(app(page).getByTestId("job-trigger")).toContainText(["when a project is created", "on first open of Alpha", "when Pomade starts"]);
+
+    frame = await newScript(page, "Dashboard");
+    await frame.getByTestId("trigger-choice").getByRole("button", { name: "When something happens" }).click();
+    await frame.getByTestId("hook-event").selectOption({ label: "Project opened (every time)" });
+    await expect(frame.getByTestId("hook-project").locator("option")).toHaveText(["Any project", "Alpha"]);
+    await expect(frame.getByTestId("hook-words")).toHaveText(`Runs whenever a project is opened${pomade}`);
+    await frame.getByTestId("help-hk.project-opened").hover();
+    await expect(frame.getByRole("tooltip")).toHaveText(HELP["hk.project-opened"].join(""));
+    await frame.getByTestId("hook-project").selectOption({ label: "Alpha" });
+    await expect(frame.getByTestId("hook-words")).toHaveText(`Runs whenever Alpha is opened${pomade}`);
+    await shoot(page, "tab-form-hook-project-opened");
+    expect(await create(page, "dashboard")).toBe(`${header("Dashboard")}hook: { event: project-opened, project: alpha }\n---\n`);
+    await expect(app(page).getByTestId("job-trigger")).toContainText(["whenever Alpha is opened"]);
 
     // Edited: the form shows the file's hook and its project.
     await page.evaluate(() => window.mounted.navigate("edit/scraper"));
@@ -2337,7 +2386,38 @@ test.describe("the Script form and the schedule picker", () => {
     await app(page).getByTestId("form-save").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
     expect(await fileText(page, `${JOBS}/docs.md`)).toBe("---\nkind: service\nname: Docs\nfolder: .\nenabled: true\ncommand: npm run docs\nstart: project-first-open\nstart-project: alpha\n---\n");
-    await expect(app(page).locator('[data-testid="job-row"][data-job="docs"]').getByTestId("job-trigger")).toHaveText("always on · starts on first open of Alpha");
+    await expect(app(page).locator('[data-testid="job-row"][data-job="docs"]').getByTestId("job-trigger")).toHaveText("from first open of Alpha while Pomade is running");
+  });
+
+  test("T-021 · a service's Starts: On Mac startup, While Pomade is running, On first open of a project — each with its hint, the create button and the file", async ({ page }) => {
+    await start(page, "");
+    await page.evaluate(() => {
+      window.mounted.navigate("");
+      window.mounted.navigate("new");
+    });
+    await app(page).getByTestId("kind-service").click();
+    const form = app(page).getByTestId("form-service");
+    await form.getByRole("textbox", { name: "Name", exact: true }).fill("Watch");
+    await form.getByRole("textbox", { name: "Command", exact: true }).fill("npm run watch");
+    await form.getByRole("textbox", { name: "Folder", exact: true }).fill(".");
+    const starts = form.locator('[data-field="start"]');
+    await expect(starts.getByRole("button")).toHaveText(["On Mac startupdefault", "While Pomade is running", "On first open of a project"]);
+    await expect(form.getByText("Up before you open Pomade, and it outlives Pomade.", { exact: false })).toBeVisible();
+    await expect(app(page).getByTestId("form-save")).toHaveText("Create and start");
+    await form.getByRole("button", { name: "While Pomade is running" }).click();
+    await expect(form.getByText("Starts when Pomade starts and stops when Pomade quits.", { exact: false })).toBeVisible();
+    await expect(form.getByTestId("start-project")).toHaveCount(0);
+    await expect(app(page).getByTestId("form-save")).toHaveText("Create and start");
+    await page.mouse.move(0, 0);
+    await shoot(page, "tab-form-service-starts-pomade");
+    await form.getByRole("button", { name: "On first open of a project" }).click();
+    await expect(form.getByText("and stops when Pomade quits. Stopped by you", { exact: false })).toBeVisible();
+    await expect(app(page).getByTestId("form-save")).toHaveText("Create job");
+    await form.getByRole("button", { name: "While Pomade is running" }).click();
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, `${JOBS}/watch.md`)).toBe("---\nkind: service\nname: Watch\nfolder: .\nenabled: true\ncommand: npm run watch\nstart: pomade-started\n---\n");
+    await expect(app(page).locator('[data-testid="job-row"][data-job="watch"]').getByTestId("job-trigger")).toHaveText("while Pomade is running");
   });
 
   test("T-010 · a chain that leads back to itself is refused on Save, both jobs named in the checker's words, with the (i) on why", async ({ page }) => {
@@ -2389,7 +2469,7 @@ test.describe("the Script form and the schedule picker", () => {
     await expect(frame.getByTestId("tab-jobs")).toBeVisible();
     const chained = WEB.replace("---\nNotes", "after: { job: backup, result: failed, action: stop }\n---\nNotes");
     expect(await fileText(page, `${JOBS}/web.md`)).toBe(chained);
-    await expect(app(page).locator('[data-testid="job-row"][data-job="web"]').getByTestId("job-trigger")).toHaveText("always on · starts at login · stops after Backup fails");
+    await expect(app(page).locator('[data-testid="job-row"][data-job="web"]').getByTestId("job-trigger")).toHaveText("always on · starts on Mac startup · stops after Backup fails");
 
     await page.evaluate(() => {
       window.mounted.navigate("");

@@ -17,7 +17,7 @@ import { probeReadiness } from "../keeper/readiness";
 import { createSessions } from "../keeper/sessions";
 import { fileStore } from "../keeper/supervisor";
 import { keeperSocketPath, pomadeGitPath, recordsFolderOf, schedulerSocketPath, stateFolder, userDataDir } from "../locations";
-import { clockFrom, systemClock, tickMs } from "./clock";
+import { clockFrom, quitGraceMs, systemClock, tickMs } from "./clock";
 import { createLog } from "./log";
 import { startScheduler, type StartResult } from "./scheduler";
 import { followWorkspace } from "./workspace-follow";
@@ -76,6 +76,7 @@ if (state === null || socketPath === null || userData === null) {
       turns: createAgentTurns({ socketPath: keeperSocket, log }),
       shell: loginShell(process.env),
       pomadeStart: () => pomadeStartOf(process.env),
+      quitGraceMs: quitGraceMs(process.env),
     });
   };
   const following = followWorkspace({ workspace: () => resolveWorkspace(), start, pollMs: tick, log });

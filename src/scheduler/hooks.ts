@@ -1,6 +1,6 @@
 // Hooks (docs/DESIGN.md "Hooks"): an event fires every job whose `hook` names it and whose filters
 // it passes — a filter left out takes any value. Runner's own event is `login`; Pomade's —
-// `pomade-started`, `project-first-open`, `project-created` — and `pomade-agents`' —
+// `pomade-started`, `project-first-open`, `project-opened`, `project-created` — and `pomade-agents`' —
 // `session-finished`, `session-status` — come in through the same firing path (`Runs.hook`). Pure.
 
 import { join } from "node:path";
@@ -29,10 +29,10 @@ export const LOGIN: HookFiring = { event: "login", project: null, agent: null, s
 /** Pomade started: Pomade restored its tabs, once per Pomade start. */
 export const POMADE_STARTED: HookFiring = { event: "pomade-started", project: null, agent: null, status: null, context: {} };
 
-/** A project's event — its first open since Pomade started, or its creation: the project filter
+/** A project's event — its first open since Pomade started, any open, or its creation: the project filter
  *  looks at its id; its runs get `POMADE_PROJECT` and, with the workspace known,
  *  `POMADE_PROJECT_PATH` (absolute). */
-export function projectFiring(event: "project-first-open" | "project-created", project: ProjectRecord, workspace: string | null): HookFiring {
+export function projectFiring(event: "project-first-open" | "project-opened" | "project-created", project: ProjectRecord, workspace: string | null): HookFiring {
   const context: Record<string, string> = { POMADE_PROJECT: project.id };
   if (workspace !== null) context.POMADE_PROJECT_PATH = join(workspace, project.root);
   return { event, project: project.id, agent: null, status: null, context, projectName: project.name };

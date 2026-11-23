@@ -15,6 +15,7 @@ const STATE_WORDS: Record<ServiceState, string> = {
   failed: "Failed: crashed 5 times in a minute",
   "stopped-by-you": "Stopped by you",
   waiting: "Waits for its project to open",
+  "waiting-for-pomade": "Waits for Pomade to start",
   disabled: "Disabled",
   invalid: "Not started: its file has errors",
   removed: "Stopping: its file is gone",
@@ -24,10 +25,13 @@ const STATE_WORDS: Record<ServiceState, string> = {
 export const SERVICE_RUNS: readonly ServiceState[] = ["starting", "running", "restarting"];
 
 /** What a service's row offers, so that no action is a no-op: **Stop** while it runs or starts,
- *  **Start** while it does not and Start would start it (not disabled, invalid or gone), and **Open
- *  terminal** once it has a session — the running one, or the last that ended with its output. */
-export function serviceActions(status: ServiceStatus): { toggle: "start" | "stop" | null; terminal: boolean } {
-  const toggle = status.state === "running" || status.state === "starting" ? "stop" : status.state === "disabled" || status.state === "invalid" || status.state === "removed" ? null : "start";
+ *  **Start** while it does not and Start would start it (its job `enabled` — the file's word, which
+ *  a report a tick old may not say yet — and not invalid, gone or waiting for Pomade), and **Open terminal** once it has
+ *  a session — the running one, or the last that ended with its output. */
+export function serviceActions(status: ServiceStatus, enabled: boolean): { toggle: "start" | "stop" | null; terminal: boolean } {
+  const runs = status.state === "running" || status.state === "starting";
+  const startable = enabled && status.state !== "disabled" && status.state !== "invalid" && status.state !== "removed" && status.state !== "waiting-for-pomade";
+  const toggle = runs ? "stop" : startable ? "start" : null;
   return { toggle, terminal: status.session !== null };
 }
 
@@ -141,6 +145,8 @@ export function serviceLook(status: ServiceStatus, ready: Readiness | null, now:
       return look("hollow", "stopped by you", "st.stopped", ended === null ? "" : whenWords(ended, now));
     case "waiting":
       return look("hollow", "waiting for first open", "st.svcwaiting", startsOn === null ? "starts on first open" : `starts on first open of ${startsOn}`);
+    case "waiting-for-pomade":
+      return look("hollow", "waiting for Pomade", "st.svcwaitpomade", startsOn === null ? "starts when Pomade starts" : `starts on first open of ${startsOn}`);
     case "disabled":
       return look("hollow", "disabled", "st.disabled", "");
     case "invalid":

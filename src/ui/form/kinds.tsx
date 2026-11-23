@@ -5,7 +5,7 @@
 import { useState, type ReactNode } from "react";
 
 import { agentModes, FULL_AUTONOMY_MODE, modeWords } from "../../integrations/agents";
-import { GIT_OPERATIONS, type GitOperation, type JobKind, type MissedPolicy, type Notify, type OverlapPolicy } from "../../jobs/model";
+import { GIT_OPERATIONS, type GitOperation, type JobKind, type MissedPolicy, type Notify, type OverlapPolicy, type ServiceStart } from "../../jobs/model";
 import { GIT_OPERATION_WORDS } from "../../jobs/words";
 import type { HelpKey } from "../help";
 import { Check, Checks, Field, FieldError, Help, Icon, LinkButton, Segmented, Select, TextArea, TextInput, Toggle, type IconName, type SelectOption } from "../kit";
@@ -211,6 +211,13 @@ function ScriptSections(props: FormProps): React.JSX.Element {
   );
 }
 
+/** What each start means for the service's life, under Starts. */
+const STARTS_HINT: Record<ServiceStart, string> = {
+  login: "Up before you open Pomade, and it outlives Pomade. It restarts after a crash; stopped by you, it stays stopped until Start.",
+  "pomade-started": "Starts when Pomade starts and stops when Pomade quits. It restarts after a crash; stopped by you, it stays stopped until Start or the next Pomade start.",
+  "project-first-open": "Starts on the project's first open since Pomade started — at once if it is open already — and stops when Pomade quits. Stopped by you, it stays stopped until Start or the next Pomade start.",
+};
+
 /** The Service kind: Trigger (always on — when it starts, when it counts as up, a chain that acts on
  *  it), then Runs. */
 function ServiceSections(props: FormProps): React.JSX.Element {
@@ -222,7 +229,7 @@ function ServiceSections(props: FormProps): React.JSX.Element {
   return (
     <>
       <FormSection title="Trigger" sub="always on">
-        <Field label="Starts" help="f.start" error={error("start")} hint="Then it stays up: restarts after a crash, keeps running when Pomade quits, stays stopped when you stop it.">
+        <Field label="Starts" help="f.start" error={error("start")} hint={STARTS_HINT[values.start]}>
           {() => (
             <div className={styles.inline} data-field="start">
               <Segmented
@@ -230,7 +237,8 @@ function ServiceSections(props: FormProps): React.JSX.Element {
                 value={values.start}
                 onChange={(value) => set("start", value)}
                 options={[
-                  { value: "login", label: "At login", isDefault: true },
+                  { value: "login", label: "On Mac startup", isDefault: true },
+                  { value: "pomade-started", label: "While Pomade is running" },
                   { value: "project-first-open", label: "On first open of a project" },
                 ]}
               />

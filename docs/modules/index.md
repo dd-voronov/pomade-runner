@@ -38,6 +38,7 @@ summary here, the file-by-file map, rules, invariants, tests and limits there.
 | `pomade-git.spec.ts` | a git job made in the form, and Pomade's Git panel showing it |
 | `pomade-load.spec.ts` | a missed run that waits for you, in a real Pomade |
 | `pomade-hooks.spec.ts` | Pomade started, first open of a project, project created, services starting on first open, a project moved |
+| `pomade-lifetimes.spec.ts` | services that run with Pomade over a Pomade quit and restart: the three starts, Stop and Enabled, a scheduler restarted while Pomade runs or is closed, the project-opened hook |
 | `pomade-agents.spec.ts` | agent runs against the fixture Agents app and the scripted fake agent |
 | `pomade-agent-hooks.spec.ts` | session finished and status changed hooks, with the loop guard for Runner's own sessions |
 | `pomade-agents-real.spec.ts` | the same against the real Agents app (opt-in: skipped unless `AGENTS_APP_DIST` names its built `dist/`) |

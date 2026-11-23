@@ -58,6 +58,7 @@ describe("a job's trigger in words", () => {
         "web.md": service("after: { job: pull }\n"),
         "api.md": service("after: { job: pull, result: failed, action: stop }\n"),
         "db.md": service(""),
+        "watch.md": service("start: pomade-started\n"),
         "one/later.md": service("project: p1\nstart: project-first-open\nafter: { job: pull, result: any, action: start }\n"),
       }),
     ).toEqual({
@@ -65,10 +66,11 @@ describe("a job's trigger in words", () => {
       done: "after pull is done",
       failed: "after pull fails",
       any: "after pull finishes",
-      web: "always on · starts at login · restarts after pull is done",
-      api: "always on · starts at login · stops after pull fails",
-      db: "always on · starts at login",
-      "one/later": "always on · starts on first open of p1 · starts after pull finishes",
+      web: "always on · starts on Mac startup · restarts after pull is done",
+      api: "always on · starts on Mac startup · stops after pull fails",
+      db: "always on · starts on Mac startup",
+      watch: "while Pomade is running",
+      "one/later": "from first open of p1 while Pomade is running · starts after pull finishes",
     });
   });
 
@@ -79,15 +81,21 @@ describe("a job's trigger in words", () => {
         { path: "web.md", text: service("after: { job: pull }\n") },
         { path: "tests.md", text: script("after: { job: pull, result: any }") },
         { path: "first.md", text: script("hook: { event: project-first-open, project: p1 }") },
+        { path: "every.md", text: script("hook: { event: project-opened, project: p1 }") },
+        { path: "any.md", text: script("hook: { event: project-opened }") },
+        { path: "later.md", text: service("start: project-first-open\nstart-project: p1\n") },
       ],
       { workspace: "/ws", projects: [{ id: "p1", name: "One", root: "Projects/one" }] },
     );
     const named = { job: (id: string) => (id === "pull" ? "Pull coda-helper" : id), project: (id: string) => (id === "p1" ? "One" : id) };
     const said = Object.fromEntries(snapshot.jobs.map((entry) => (entry.valid ? [entry.job.id, jobTriggerWords(entry.job, named)] : [entry.invalid.id, ""])));
-    const { web, tests, first } = said;
-    expect(web).toBe("always on · starts at login · restarts after Pull coda-helper is done");
+    const { web, tests, first, every, any, later } = said;
+    expect(web).toBe("always on · starts on Mac startup · restarts after Pull coda-helper is done");
     expect(tests).toBe("after Pull coda-helper finishes");
     expect(first).toBe("on first open of One");
+    expect(every).toBe("whenever One is opened");
+    expect(any).toBe("whenever a project is opened");
+    expect(later).toBe("from first open of One while Pomade is running");
   });
 });
 

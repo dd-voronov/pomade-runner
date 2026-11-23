@@ -45,6 +45,7 @@
       "project.created",
       "project.renamed",
       "project.opened",
+      "project.changed",
       "attachedTab.action",
       "pomade-agents:session.closed",
       "pomade-agents:session.statusChanged"

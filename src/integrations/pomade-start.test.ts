@@ -48,6 +48,16 @@ describe("pomade start", () => {
     await close(server);
   });
 
+  it("names no start for a socket nothing listens on: a crashed Pomade's left behind", async () => {
+    const socket = join(dir, "stale.sock");
+    const server = await listen(socket);
+    expect(await pomadeStartOf({ POMADE_SOCKET: socket })).not.toBeNull();
+    // Closing the server keeps no listener; a plain file where the socket was is no Pomade either.
+    await close(server);
+    await writeFile(socket, "");
+    expect(await pomadeStartOf({ POMADE_SOCKET: socket })).toBeNull();
+  });
+
   it("finds the socket in the host record when POMADE_SOCKET is not set", async () => {
     const socket = join(dir, "s.sock");
     const server = await listen(socket);

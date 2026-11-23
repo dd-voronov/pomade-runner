@@ -163,7 +163,7 @@ function HookEditor(props: FormProps): React.JSX.Element {
         )}
       </Field>
       {triggerErrors !== undefined && <FieldError>{triggerErrors}</FieldError>}
-      {!chain && values.hookEvent === "project-first-open" && (
+      {!chain && (values.hookEvent === "project-first-open" || values.hookEvent === "project-opened") && (
         <div className={styles.subBox} data-testid="hook-box">
           <Field label="Project">
             {(id) => (

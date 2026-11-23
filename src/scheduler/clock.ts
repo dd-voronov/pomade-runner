@@ -39,3 +39,19 @@ export function clockFrom(env: Readonly<Record<string, string | undefined>>, ela
   const origin = elapsed();
   return { now: () => new Date(start + (elapsed() - origin) * rate) };
 }
+
+/** How long the link to Pomade is down, with no Pomade start found, before Pomade counts as quit:
+ *  a reconnect within it, or Pomade's socket still there, stops nothing. */
+export const QUIT_GRACE_MS = 15_000;
+
+/** The env var that overrides `QUIT_GRACE_MS` (tests). */
+export const QUIT_GRACE_ENV = "POMADE_RUNNER_QUIT_GRACE_MS";
+
+/** The quit grace: `POMADE_RUNNER_QUIT_GRACE_MS` when it is a non-negative integer of
+ *  milliseconds; unset, empty or invalid means the production value. */
+export function quitGraceMs(env: Readonly<Record<string, string | undefined>>): number {
+  const raw = env[QUIT_GRACE_ENV]?.trim() ?? "";
+  if (!/^\d+$/.test(raw)) return QUIT_GRACE_MS;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : QUIT_GRACE_MS;
+}

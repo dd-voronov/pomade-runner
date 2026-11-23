@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { clockFrom, systemClock, TICK_MS, tickMs } from "./clock";
+import { clockFrom, QUIT_GRACE_MS, quitGraceMs, systemClock, TICK_MS, tickMs } from "./clock";
+
+describe("quitGraceMs", () => {
+  it("is 15 s unless POMADE_RUNNER_QUIT_GRACE_MS gives a whole number of milliseconds", () => {
+    expect(QUIT_GRACE_MS).toBe(15_000);
+    for (const value of [undefined, "", "x", "-5", "1.5"]) expect(quitGraceMs({ POMADE_RUNNER_QUIT_GRACE_MS: value })).toBe(QUIT_GRACE_MS);
+    expect(quitGraceMs({ POMADE_RUNNER_QUIT_GRACE_MS: "0" })).toBe(0);
+    expect(quitGraceMs({ POMADE_RUNNER_QUIT_GRACE_MS: " 500 " })).toBe(500);
+  });
+});
 
 describe("tickMs", () => {
   it("is the production tick when the override is unset, empty or invalid", () => {

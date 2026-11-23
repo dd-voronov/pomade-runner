@@ -1,6 +1,6 @@
 // A job's trigger in words, as `pomade-runner list` and the Jobs view show it: "weekdays at 7:00",
-// "at Mac login", "after backup is done", "always on · starts at login · restarts after git-pull is
-// done".
+// "at Mac login", "after backup is done", "always on · starts on Mac startup · restarts after
+// git-pull is done".
 // Pure.
 
 import { addDays, describeDate, describeSchedule, localDateOf, type Schedule } from "pomade-kit/schedule";
@@ -20,6 +20,7 @@ const HOOK_TRIGGER_WORDS: Record<Hook["event"], (hook: Hook, names: WordNames) =
   login: () => "at Mac login",
   "pomade-started": () => "when Pomade starts",
   "project-first-open": (hook, names) => `on first open of ${projectWords(hook.project, names)}`,
+  "project-opened": (hook, names) => `whenever ${projectWords(hook.project, names)} is opened`,
   "project-created": () => "when a project is created",
   "session-finished": (hook, names) => `after ${sessionWords(hook.agent, "an agent")} session finishes${inProject(hook.project, names)}`,
   "session-status": (hook, names) => `when ${sessionWords(hook.agent, "a")} session is marked ${hook.status === null ? "any status" : SESSION_STATUS_WORDS[hook.status]}${inProject(hook.project, names)}`,
@@ -65,11 +66,24 @@ export function scheduleWords(schedule: Schedule, now: Date = new Date()): strin
   return day === null ? words : words.replace(`once on ${describeDate(rule.date)}`, `once, ${day}`);
 }
 
+/** A service's start in words: "always on · starts on Mac startup", "while Pomade is running",
+ *  "from first open of job-hunt while Pomade is running". */
+function serviceStartWords(job: Extract<Job, { kind: "service" }>, names: WordNames): string {
+  switch (job.start) {
+    case "login":
+      return "always on · starts on Mac startup";
+    case "pomade-started":
+      return "while Pomade is running";
+    case "project-first-open":
+      return `from first open of ${projectWords(job.startProject, names)} while Pomade is running`;
+  }
+}
+
 /** A job's trigger in words; `names` says a job or a project by its name instead of its id, `now`
  *  is the day a once schedule is said against. */
 export function jobTriggerWords(job: Job, names: WordNames = {}, now: Date = new Date()): string {
   if (job.kind === "service") {
-    const start = job.start === "login" ? "always on · starts at login" : `always on · starts on first open of ${projectWords(job.startProject, names)}`;
+    const start = serviceStartWords(job, names);
     return job.after === null ? start : `${start} · ${ACTION_WORDS[job.after.action]} ${chainWords(job.after, names)}`;
   }
   switch (job.trigger.kind) {

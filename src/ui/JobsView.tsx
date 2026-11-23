@@ -176,7 +176,7 @@ function JobRow({
   const trigger = jobTriggerWords(job, names, new Date(now));
   const git = job.kind === "git" ? gitDetail(job, repos) : null;
   const status = job.kind === "service" ? (service ?? fallbackService(job)) : null;
-  const offered = status === null ? null : serviceActions(status);
+  const offered = status === null ? null : serviceActions(status, job.enabled);
   return (
     <TableRow
       ref={row}

@@ -172,7 +172,7 @@ const SERVICE: KindFile = {
     ...commonFields(values),
     command: values.command.trim(),
     start: values.start === "login" ? undefined : values.start,
-    "start-project": values.start === "login" || values.startProject.trim() === "" ? undefined : values.startProject.trim(),
+    "start-project": values.start !== "project-first-open" || values.startProject.trim() === "" ? undefined : values.startProject.trim(),
     ready: values.ready === "alive" ? undefined : values.ready === "port" ? { port: portValue(values.port) } : { url: values.url.trim() === "" ? null : values.url.trim() },
     after: values.serviceChain ? chainInput(values) : undefined,
   }),
@@ -419,12 +419,13 @@ export function bodyChange(state: FormState): string | undefined {
 }
 
 /** A new job's body: the one its kind writes, else none. */
-/** Whether a new job starts as it is created: an enabled service that starts at login, or on the
- *  first open of a project already opened since Pomade started (`opened`, ids) — its start project
- *  the one picked, else the job's own. */
+/** Whether a new job starts as it is created: an enabled service that starts on Mac startup or
+ *  while Pomade is running — the form is in a running Pomade — or on the first open of a project
+ *  already opened since Pomade started (`opened`, ids) — its start project the one picked, else the
+ *  job's own. */
 export function startsOnCreate(values: FormValues, opened: ReadonlySet<string>): boolean {
   if (values.kind !== "service" || !values.enabled) return false;
-  if (values.start === "login") return true;
+  if (values.start !== "project-first-open") return true;
   const project = values.startProject.trim() || values.project;
   return project !== null && project !== "" && opened.has(project);
 }

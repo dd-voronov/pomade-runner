@@ -655,6 +655,8 @@ export function hookCauseWords(cause: Extract<RunCause, { kind: "hook" }>): stri
       return "Pomade started";
     case "project-first-open":
       return `first open of ${project ?? "a project"}`;
+    case "project-opened":
+      return `${project ?? "a project"} opened`;
     case "project-created":
       return project === undefined ? "project created" : `project ${project} created`;
     case "session-finished":

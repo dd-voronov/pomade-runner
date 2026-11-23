@@ -8,7 +8,7 @@ import { APP_PORT, HARNESS_PORT } from "./e2e/support/ports";
 // processes · missed runs and load as processes · chains and login hooks as processes · git jobs as
 // processes · Runner hosted by a real Pomade (`POMADE_REPO`) · a missed run that waits for you, git
 // jobs and agent runs in a real Pomade · Pomade opened for an agent run · Pomade's hooks in a real
-// Pomade · the agents' hooks in a real Pomade · the install script, which
+// Pomade · service lifetimes in a real Pomade · the agents' hooks in a real Pomade · the install script, which
 // rebuilds `dist/` and so runs after the others.
 export default defineConfig({
   testDir: "e2e",
@@ -31,10 +31,11 @@ export default defineConfig({
     { name: "pomade-agents", testMatch: "pomade-agents.spec.ts" },
     { name: "pomade-open", testMatch: "pomade-open.spec.ts" },
     { name: "pomade-hooks", testMatch: "pomade-hooks.spec.ts" },
+    { name: "pomade-lifetimes", testMatch: "pomade-lifetimes.spec.ts" },
     { name: "pomade-agent-hooks", testMatch: "pomade-agent-hooks.spec.ts" },
     // Opt-in: skipped unless AGENTS_APP_DIST names a built pomade-agents dist/.
     { name: "pomade-agents-real", testMatch: "pomade-agents-real.spec.ts" },
-    { name: "install", testMatch: "install.spec.ts", dependencies: ["ui", "background", "keeper", "services", "runs", "load", "chains", "git", "pomade", "pomade-load", "pomade-git", "pomade-agents", "pomade-open", "pomade-hooks", "pomade-agent-hooks"] },
+    { name: "install", testMatch: "install.spec.ts", dependencies: ["ui", "background", "keeper", "services", "runs", "load", "chains", "git", "pomade", "pomade-load", "pomade-git", "pomade-agents", "pomade-open", "pomade-hooks", "pomade-lifetimes", "pomade-agent-hooks"] },
   ],
   webServer: [
     {

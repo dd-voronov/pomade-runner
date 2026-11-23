@@ -4,7 +4,9 @@
 // frames through Pomade's broker — owns the keeper's sessions, following them on every tick, and
 // after each supervises the services, runs what is due — through the missed-run policies, the
 // switch, the warm-up and the queue — and records what ended, keeps Needs you, notices and the
-// badge, and publishes Runner's events. It runs on one workspace: its records are in that
+// badge, and publishes Runner's events. It tells whether Pomade runs — for the services that run
+// with it — from its link and Pomade's socket: Pomade has quit once the link dropped and no Pomade
+// start is found for the quit grace. It runs on one workspace: its records are in that
 // workspace's records folder, moved there from the state folder on the first start
 // (`records-move.ts`); `main.ts` starts it again when the workspace changes.
 
@@ -43,8 +45,8 @@ import { exitWords, type ServiceActionResult, type ServiceStatus } from "../keep
 import type { NetworkReadiness } from "../keeper/readiness";
 import { jobIdOf, RESTART_ACTION, START_ACTION } from "../keeper/services";
 import type { Sessions } from "../keeper/sessions";
-import { createSupervisor, type SupervisionStore } from "../keeper/supervisor";
-import type { Clock } from "./clock";
+import { createSupervisor, type PomadeState, type SupervisionStore } from "../keeper/supervisor";
+import { QUIT_GRACE_MS, type Clock } from "./clock";
 import type { JobEnabled, PomadeLinkState, RunStarted, SchedulerStatus } from "./control/protocol";
 import { callScheduler } from "./control/client";
 import { ControlRefused, serveControl } from "./control/server";
@@ -97,8 +99,12 @@ export interface SchedulerOptions {
   turns: AgentTurns;
   /** The user's login shell: agent runs run their line in it. */
   shell: string;
-  /** The running Pomade's start (`pomadeStartOf`); `null` when it cannot be told. */
+  /** The running Pomade's start (`pomadeStartOf`); `null` when it cannot be told, or Pomade does
+   *  not run. */
   pomadeStart(): Promise<string | null>;
+  /** How long, on the clock, the link to Pomade is down with no Pomade start found before Pomade
+   *  counts as quit; default `QUIT_GRACE_MS`. */
+  quitGraceMs?: number;
 }
 
 export interface Scheduler {
@@ -146,7 +152,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     log,
     store: options.supervision,
     probe: options.probe,
-    openedProjects: () => opened,
+    pomade: () => ({ state: pomadeState, opened }),
     onChange: () => publish(SERVICES_CHANGED_EVENT),
   });
   const projects = projectsMemory(state, log);
@@ -158,6 +164,15 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
    *  be told (what is opened is then this scheduler's alone). Opens heard before are held till then. */
   let thisStart: string | null | undefined;
   let heldOpens: ProjectRecord[] = [];
+  /** Where Pomade stands for the services that run with it. */
+  let pomadeState: PomadeState = "unsure";
+  /** Since when (on the clock) the link to Pomade is down; `null` while connected. A scheduler
+   *  starts with it down. */
+  let droppedAt: number | null = clock.now().getTime();
+  const quitGraceMs = options.quitGraceMs ?? QUIT_GRACE_MS;
+  /** The project in front (id; `null` for the Workspace project), as last heard on this connection;
+   *  `undefined` before Pomade said. */
+  let inFront: string | null | undefined;
   const history = createHistory(records, state, log);
   const renamed = renamedJobs(records, log);
   /** A page of history: a job's takes in the ids it had before its project moved. */
@@ -265,7 +280,8 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     return warning === null ? needsYou.dismiss(id) : runs.dismissWarning(warning[1] ?? "", warning[2] ?? "");
   };
 
-  /** Enable or Disable: `enabled:` written into the job's file, which applies within a tick. */
+  /** Enable or Disable: `enabled:` written into the job's file, which applies within a tick — a
+   *  service turned off at once. */
   const setEnabled = async (ref: string, enabled: boolean): Promise<EnableResult> => {
     const snapshot = jobs.snapshot();
     const id = jobIdOf(snapshot, ref);
@@ -278,6 +294,8 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     }
     log(`job ${entryId(entry)}: ${enabled ? "enabled" : "disabled"}`);
     await jobs.refresh();
+    // Turned off, a service lets go of its hold now: turned on again at once, it follows its trigger.
+    if (!enabled) await supervisor.tick();
     return { ok: true, job: entryId(entry), enabled };
   };
 
@@ -427,14 +445,18 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
       const kept = await starts.opened(workspace(), start);
       if (host !== client) return;
       log("Pomade ready: the Pomade started hooks fired for this Pomade start already");
+      frontChanged(active, false);
       startKnown(start, kept);
       return;
     }
     log("Pomade started");
+    // What ran with an earlier Pomade start — its quit unseen, the scheduler down then — is over.
+    await supervisor.pomadeEnded();
     await runs.hook(POMADE_STARTED);
     if (host !== client) return;
     startKnown(start, []);
     if (active !== null) projectOpened(active);
+    frontChanged(active, true);
   };
 
   /** The connection's Pomade start is known, and what was kept as opened in it (`null`: only what
@@ -443,6 +465,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
   const startKnown = (start: string | null, kept: readonly string[] | null): void => {
     if (kept !== null) opened = thisStart === start ? new Set([...opened, ...kept]) : new Set(kept);
     thisStart = start;
+    pomadeState = "running";
     void supervisor.tick();
     const held = heldOpens;
     heldOpens = [];
@@ -470,6 +493,41 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     void runs.hook(projectFiring("project-first-open", project, workspace()));
   };
 
+  /** The project in front is now `project` (`null`: the Workspace project). When `fires`, a project
+   *  of this workspace fires the "project opened" hooks. */
+  const frontChanged = (project: ProjectRecord | null, fires: boolean): void => {
+    inFront = project?.id ?? null;
+    if (!fires || project === null) return;
+    if (projects.root(project.id) === null) {
+      log(`project ${project.name} (${project.id}) opened: not a project of this workspace`);
+      return;
+    }
+    log(`project ${project.name} (${project.id}) opened`);
+    void runs.hook(projectFiring("project-opened", project, workspace()));
+  };
+
+  /** Pomade's project in front changed (`project.changed`): a project becoming the active one is
+   *  opened. The same project again — renamed or moved — and a change heard before the connection's
+   *  Pomade start is known fire nothing. */
+  const projectChanged = (project: ProjectRecord | null): void => {
+    frontChanged(project, thisStart !== undefined && inFront !== undefined && (project?.id ?? null) !== inFront);
+  };
+
+  /** Whether Pomade quit: the link has been down for the quit grace and no Pomade start is found.
+   *  Then the services that run with it stop, and what was opened is forgotten. */
+  const linked = (): boolean => host !== null;
+  const checkQuit = async (): Promise<void> => {
+    if (host !== null || pomadeState === "closed" || droppedAt === null) return;
+    if (clock.now().getTime() - droppedAt < quitGraceMs) return;
+    const found = await options.pomadeStart();
+    // A connection made while the socket was looked at is Pomade, back.
+    if (found !== null || linked()) return;
+    pomadeState = "closed";
+    opened = new Set();
+    log("Pomade is not running: the services that run with it stop");
+    await supervisor.pomadeEnded();
+  };
+
   /** An agent session finished, or its status changed: its hooks fire. A session Runner started
    *  never fires "agent session finished" — its run's end would fire it, and a hook that runs an
    *  agent would start the next (the loop guard). A status change always fires: it is the Owner's. */
@@ -486,6 +544,9 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
       ready = false;
       thisStart = undefined;
       heldOpens = [];
+      inFront = undefined;
+      droppedAt = null;
+      pomadeState = "unsure";
       pomade = "connected";
       badged = null;
       log("connected to Pomade");
@@ -528,6 +589,9 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         opened: (project) => {
           if (host === client) projectOpened(project);
         },
+        changed: (project) => {
+          if (host === client) projectChanged(project);
+        },
         created: (project) => {
           if (host !== client) return;
           projects.add(project);
@@ -548,6 +612,8 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     disconnected() {
       host = null;
       ready = false;
+      droppedAt = clock.now().getTime();
+      if (pomadeState === "running") pomadeState = "unsure";
       pomade = "disconnected";
       log("Pomade went away; reconnecting");
     },
@@ -573,6 +639,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
   /** Follow the keeper, then supervise, run and record on what it says. */
   const follow = async (): Promise<void> => {
     await sessions.refresh();
+    await checkQuit();
     await supervisor.tick();
     await runs.tick();
     needsYou.services(supervisor.report());

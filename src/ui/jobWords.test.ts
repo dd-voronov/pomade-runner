@@ -158,6 +158,7 @@ describe("a job's next run", () => {
 
   it("says a service always on, and a hook or a chain on event", () => {
     expect(nextLook(service, undefined, false, now)).toEqual({ words: "always on", sub: null, none: true });
+    for (const start of ["pomade-started", "project-first-open"] as const) expect(nextLook({ ...service, start }, undefined, false, now)).toEqual({ words: "with Pomade", sub: null, none: true });
     expect(nextLook(hook, runs(), false, now)).toEqual({ words: "on event", sub: null, none: true });
     expect(nextLook({ ...hook, trigger: { kind: "chain", chain: { job: "pull", result: "any" } } }, runs(), false, now).words).toBe("on event");
   });

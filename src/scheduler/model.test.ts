@@ -4,7 +4,7 @@ import { APP_TAB_KEY_RE } from "pomade-kit/protocol";
 
 import { editRoute, jobsRoute, newRoute, outputRoute, outputTab, outputTabKey, parseRoute, promptRoute, runRoute } from "../integrations/runner-api";
 import { MAX_ENCODED_JOB_ID } from "../keeper/ids";
-import { clockTime, dayTime, durationWords, isActiveRun, isRunsReport, runWords, type ActiveRun, type RunRecord } from "./model";
+import { clockTime, dayTime, durationWords, hookCauseWords, isActiveRun, isRunsReport, runWords, type ActiveRun, type RunRecord } from "./model";
 
 const base = { job: "coda/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/coda", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1, agent: null };
 const active: ActiveRun = {
@@ -78,6 +78,13 @@ describe("runs in words", () => {
     ]) {
       expect(isActiveRun(bad)).toBe(false);
     }
+  });
+
+  it("says a project's hooks as a run's cause", () => {
+    const hook = (event: "project-first-open" | "project-opened", projectName?: string) => ({ kind: "hook" as const, event, context: {}, ...(projectName === undefined ? {} : { projectName }) });
+    expect(hookCauseWords(hook("project-first-open", "job-hunt"))).toBe("first open of job-hunt");
+    expect(hookCauseWords(hook("project-opened", "job-hunt"))).toBe("job-hunt opened");
+    expect(hookCauseWords(hook("project-opened"))).toBe("a project opened");
   });
 
   it("says how long", () => {

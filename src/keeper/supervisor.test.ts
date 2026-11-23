@@ -20,9 +20,11 @@ import {
   BACKOFF_MS,
   createSupervisor,
   fileStore,
+  NOT_WITH_POMADE,
   REMOVED_GRACE_MS,
   RESET_UPTIME_MS,
   START_CAP_MS,
+  type PomadeState,
   type SupervisionRecord,
   type SupervisionStore,
   type Supervisor,
@@ -174,6 +176,8 @@ describe("service supervision", () => {
   let probes: { ready: NetworkReadiness; answer: (ok: boolean) => void }[];
   /** The projects opened since Pomade started, as the scheduler holds them. */
   let opened: Set<string>;
+  /** Where Pomade stands, as the scheduler tells it. */
+  let pomade: PomadeState;
   let supervisor: Supervisor;
 
   function load(): void {
@@ -192,7 +196,7 @@ describe("service supervision", () => {
       log: (line) => lines.push(line),
       store,
       probe: (ready) => new Promise((resolve) => probes.push({ ready, answer: resolve })),
-      openedProjects: () => opened,
+      pomade: () => ({ state: pomade, opened }),
       onChange: (report) => reports.push(report),
     });
     await created.load();
@@ -237,6 +241,7 @@ describe("service supervision", () => {
     reports = [];
     probes = [];
     opened = new Set();
+    pomade = "running";
     load();
     await open();
   });
@@ -476,6 +481,203 @@ describe("service supervision", () => {
       load();
       await at(2000);
       expect(sessions.spawned).toHaveLength(1);
+    });
+  });
+
+  describe("services that run with Pomade", () => {
+    /** Pomade quit, as the scheduler tells it: closed, nothing opened, the start over. */
+    async function quit(): Promise<void> {
+      pomade = "closed";
+      opened = new Set();
+      await supervisor.pomadeEnded();
+    }
+
+    it("a pomade-started service waits for Pomade, starts while it runs, stops when it quits and is not started again; Start is refused while Pomade is closed", async () => {
+      pomade = "unsure";
+      files = { "watch.md": service("Watch", "start: pomade-started\n"), "web.md": service("Web") };
+      load();
+      await at(0);
+      expect(states()).toEqual({ watch: "waiting-for-pomade", web: "starting" });
+      expect(await supervisor.start("watch")).toEqual({ ok: false, reason: `"Watch" ${NOT_WITH_POMADE}` });
+      pomade = "running";
+      await at(ALIVE_MS);
+      await at(2 * ALIVE_MS);
+      expect(states()).toEqual({ watch: "running", web: "running" });
+
+      await quit();
+      expect(sessions.stops).toEqual([{ id: "svc:watch", reason: "stopped" }]);
+      await at(2 * ALIVE_MS + 1000);
+      await at(60_000);
+      expect(states()).toEqual({ watch: "waiting-for-pomade", web: "running" });
+      expect(sessions.starts("watch")).toBe(1);
+      expect(await supervisor.start("Watch")).toEqual({ ok: false, reason: `"Watch" ${NOT_WITH_POMADE}` });
+      expect(await supervisor.chainAction("watch", "start", "after x")).toEqual({ result: "skipped", reason: NOT_WITH_POMADE });
+
+      // The next Pomade start starts it again.
+      pomade = "running";
+      await at(61_000);
+      expect(sessions.starts("watch")).toBe(2);
+    });
+
+    it("a first-open service waits for Pomade while it is closed; with Pomade running, Start before its project's open runs it until Pomade quits", async () => {
+      pomade = "closed";
+      files = { "p/app.md": service("App", "project: p\nstart: project-first-open\n") };
+      load();
+      await at(0);
+      expect(status("p/app").state).toBe("waiting-for-pomade");
+      expect(await supervisor.start("p/app")).toMatchObject({ ok: false });
+      pomade = "running";
+      await at(1000);
+      expect(status("p/app").state).toBe("waiting");
+      expect(await supervisor.start("p/app")).toMatchObject({ ok: true, service: { state: "starting" } });
+      await quit();
+      await at(2000);
+      await at(3000);
+      expect(status("p/app").state).toBe("waiting-for-pomade");
+      expect(sessions.starts("p/app")).toBe(1);
+    });
+
+    it("a Pomade quit clears stopped by you, failed and the crash counts of the bound services; a login service keeps stopped by you and runs on", async () => {
+      files = {
+        "p/app.md": service("App", "project: p\nstart: project-first-open\n"),
+        "watch.md": service("Watch", "start: pomade-started\n"),
+        "db.md": service("Db"),
+        "web.md": service("Web"),
+      };
+      load();
+      await firstOpen("p");
+      for (let t = 0; t <= 4 * ALIVE_MS; t += ALIVE_MS) await at(t);
+      expect(states()).toEqual({ db: "running", "p/app": "running", watch: "running", web: "running" });
+      await supervisor.stop("p/app");
+      await supervisor.stop("db");
+      // Watch crashes into a loop: failed.
+      let t = 4 * ALIVE_MS + 1000;
+      for (let crash = 1; crash <= 5; crash++) {
+        now = T0 + t;
+        sessions.end("watch", "crashed");
+        await at(t);
+        if (crash < 5) {
+          t = (status("watch").retryAt ?? 0) - T0;
+          await at(t);
+        }
+      }
+      expect(states()).toEqual({ db: "stopped-by-you", "p/app": "stopped-by-you", watch: "failed", web: "running" });
+
+      await quit();
+      await at(t + 1000);
+      expect(states()).toEqual({ db: "stopped-by-you", "p/app": "waiting-for-pomade", watch: "waiting-for-pomade", web: "running" });
+      expect(store.saved.get("watch")).toMatchObject({ hold: null, restarts: 0, crashes: [], lastCrashAt: null, retryAt: null });
+      expect(store.saved.get("p/app")?.hold).toBeNull();
+      expect(store.saved.get("db")?.hold).toBe("stopped-by-you");
+
+      // Pomade starts again: each waits for its trigger, then starts; Db stays stopped until Start.
+      pomade = "running";
+      await at(t + 2000);
+      expect(states()).toMatchObject({ "p/app": "waiting", watch: "starting", db: "stopped-by-you" });
+      await firstOpen("p");
+      await at(t + 2000 + ALIVE_MS);
+      expect(states()).toMatchObject({ "p/app": "starting", db: "stopped-by-you" });
+      expect(sessions.starts("db")).toBe(1);
+    });
+
+    it("a scheduler that finds Pomade closed stops a bound service left running; one that is unsure, or finds Pomade running, stops nothing", async () => {
+      files = { "watch.md": service("Watch", "start: pomade-started\n"), "web.md": service("Web") };
+      load();
+      await at(0);
+      await at(ALIVE_MS);
+      await at(2 * ALIVE_MS);
+      await supervisor.close();
+
+      // Restarted while Pomade runs, then while it is not known yet: nothing stops, nothing starts again.
+      await open();
+      await at(2 * ALIVE_MS + 1000);
+      pomade = "unsure";
+      await at(2 * ALIVE_MS + 2000);
+      expect(sessions.stops).toEqual([]);
+      expect(states()).toEqual({ watch: "running", web: "running" });
+      await supervisor.close();
+
+      // Restarted, and Pomade found closed.
+      await open();
+      pomade = "closed";
+      await at(2 * ALIVE_MS + 3000);
+      expect(sessions.stops).toEqual([{ id: "svc:watch", reason: "stopped" }]);
+      await at(2 * ALIVE_MS + 4000);
+      expect(states()).toEqual({ watch: "waiting-for-pomade", web: "running" });
+      expect(lines).toContain("service watch: it runs with Pomade, and Pomade is not running; stopping it");
+    });
+
+    it("a Stop that ends after Pomade quit holds nothing", async () => {
+      files = { "watch.md": service("Watch", "start: pomade-started\n") };
+      load();
+      await at(0);
+      // FakeSessions ends a stopped session on the next refresh: Pomade quits before then.
+      await supervisor.stop("watch");
+      await quit();
+      await at(1000);
+      expect(status("watch").state).toBe("waiting-for-pomade");
+      pomade = "running";
+      await at(2000);
+      expect(sessions.starts("watch")).toBe(2);
+    });
+  });
+
+  describe("Enabled off and on", () => {
+    it("turning a service off clears stopped by you and failed, in every start mode; turned on, it follows its trigger", async () => {
+      files = {
+        "p/app.md": service("App", "project: p\nstart: project-first-open\n"),
+        "q/doc.md": service("Doc", "project: q\nstart: project-first-open\n"),
+        "db.md": service("Db"),
+      };
+      load();
+      await at(0);
+      expect(await supervisor.start("p/app")).toMatchObject({ ok: true });
+      expect(await supervisor.start("q/doc")).toMatchObject({ ok: true });
+      await at(ALIVE_MS);
+      for (const job of ["p/app", "q/doc", "db"]) await supervisor.stop(job);
+      await at(ALIVE_MS + 1000);
+      expect(states()).toEqual({ db: "stopped-by-you", "p/app": "stopped-by-you", "q/doc": "stopped-by-you" });
+      await firstOpen("p");
+      expect(status("p/app").state).toBe("stopped-by-you");
+
+      const off = (file: string): string => file.replace("---\nkind", "---\nenabled: false\nkind");
+      const on = { ...files };
+      files = Object.fromEntries(Object.entries(files).map(([path, text]) => [path, off(text)]));
+      load();
+      await at(ALIVE_MS + 2000);
+      expect(states()).toEqual({ db: "disabled", "p/app": "disabled", "q/doc": "disabled" });
+      expect([...store.saved.values()].map((record) => record.hold)).toEqual([null, null, null]);
+
+      // On again: a login one and one whose project was opened start; one whose project was not waits for it.
+      files = on;
+      load();
+      await at(ALIVE_MS + 3000);
+      expect(states()).toMatchObject({ db: "starting", "p/app": "queued", "q/doc": "waiting" });
+      for (let t = 2 * ALIVE_MS + 3000; t <= 3 * ALIVE_MS + 3000; t += ALIVE_MS) await at(t);
+      expect(sessions.starts("p/app")).toBe(2);
+      await firstOpen("q");
+      await at(4 * ALIVE_MS + 3000);
+      expect(sessions.starts("q/doc")).toBe(2);
+    });
+  });
+
+  describe("Enabled off and on, Stop not yet ended", () => {
+    it("a Stop whose end is heard after the service was turned off holds nothing", async () => {
+      files = { "db.md": service("Db") };
+      load();
+      await at(0);
+      await at(ALIVE_MS);
+      // FakeSessions ends a stopped session on the next refresh: turn it off before then.
+      await supervisor.stop("db");
+      files = { "db.md": service("Db", "enabled: false\n") };
+      load();
+      await supervisor.tick();
+      await at(ALIVE_MS + 1000);
+      expect(status("db").state).toBe("disabled");
+      files = { "db.md": service("Db") };
+      load();
+      await at(ALIVE_MS + 2000);
+      expect(sessions.starts("db")).toBe(2);
     });
   });
 

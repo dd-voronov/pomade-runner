@@ -5,9 +5,9 @@ description: Write, change or remove Pomade Runner jobs — always-on services, 
 
 # Runner jobs
 
-Runner (the Pomade app `pomade-runner`) runs jobs without the user: it keeps **services** up, and runs
-**scripts**, **agents** and **git** operations on schedules, hooks and chains — with Pomade open or
-closed. A job is one Markdown file; Runner picks up a new, changed or deleted file within a second.
+Runner (the Pomade app `pomade-runner`) runs jobs without the user: it keeps **services** up — from
+Mac startup, or only while Pomade runs — and runs **scripts**, **agents** and **git** operations on
+schedules, hooks and chains, with Pomade open or closed. A job is one Markdown file; Runner picks up a new, changed or deleted file within a second.
 You never start, restart or register anything: write the file, then check it.
 
 ## Steps
@@ -46,7 +46,7 @@ By kind:
 |---|---|---|
 | `folder` | service · script · agent (required) | working folder, relative to the workspace root; `.` is the root |
 | `command` | service · script (required) | what the login shell runs, e.g. `./start.sh` |
-| `start` | service | `login` (default) · `project-first-open`: on the first open of a project since Pomade started |
+| `start` | service | when it starts and how long it lives: `login` (default) — on Mac startup, outliving Pomade · `pomade-started` — when Pomade starts, stopped when Pomade quits · `project-first-open` — on the first open of a project since Pomade started, stopped when Pomade quits |
 | `start-project` | service, with `start: project-first-open` | the project whose first open starts it; default: the job's own `project` (a workspace service needs it) |
 | `ready` | service | `{ port: 5173 }` or `{ url: http://localhost:5173/ }`; default: up = alive after 5 s |
 | `agent` | agent (required) | the agent's id, e.g. `claude` |
@@ -57,7 +57,7 @@ An agent job's **body is its prompt** — it must not be empty.
 
 ## Triggers
 
-A service runs all the time (`start`). Every script, agent and git job has **exactly one** of:
+A service runs all the time its `start` says. Every script, agent and git job has **exactly one** of:
 
 - **`schedule`** — when, on the Mac's local clock. One shape, plus `only: weekdays | weekends` with
   `every` and `daily`, and optional `start` / `end` dates (`YYYY-MM-DD`):
@@ -86,7 +86,8 @@ A service runs all the time (`start`). Every script, agent and git job has **exa
   |---|---|---|
   | `login` | once after Mac login, after a warm-up | — |
   | `pomade-started` | when Pomade is ready (tabs restored) | — |
-  | `project-first-open` | the first open of a project since Pomade started | `project` (none = any project) |
+  | `project-first-open` | the first open of a project since Pomade started; a job made or enabled after that open does not run for it — it runs on the next Pomade start's first open | `project` (none = any project) |
+  | `project-opened` | every time a project becomes the active one in Pomade, its first open included | `project` (none = any project) |
   | `project-created` | a project is created in Pomade | — |
   | `session-finished` | an agent session the user ran ends (never one Runner started, so it can't loop) | `project`, `agent` (a roster id) |
   | `session-status` | the user changes a session's status to `status` in the Agents app (Runner's sessions too) | `status` (required: `active` · `on-hold` · `done` · `done-skip`), `project`, `agent` |
@@ -257,7 +258,7 @@ Pomade closed it checks everything but project ids, and says so.
 A script runs in its folder, by the login shell, with `POMADE_JOB` (its id), `POMADE_RUN_ID`,
 `POMADE_TRIGGER` (`scheduled`, `caught-up` for a missed run run late, `manual`, `hook` or `chain`)
 and, for a project job, `POMADE_PROJECT` and `POMADE_PROJECT_PATH` in its environment — on a
-`project-first-open` or `project-created` hook, the event's project's; a `session-finished` or
+`project-first-open`, `project-opened` or `project-created` hook, the event's project's; a `session-finished` or
 `session-status` hook's run also gets `POMADE_SESSION_ID`, `POMADE_AGENT`, `POMADE_SESSION_STATUS`
 and `POMADE_SESSION_TRANSCRIPT` (the session's transcript file, absolute), and the session's
 project, if it has one, as `POMADE_PROJECT` and `POMADE_PROJECT_PATH`; a chain's
@@ -281,8 +282,14 @@ Runner's workspace settings live in `Apps/pomade-runner/settings.yaml` — `max-
 asked, then run `pomade-runner check`.
 
 A valid, enabled `start: login` service starts within seconds of being written (services start one
-at a time); a `start: project-first-open` one waits for that project's first open since Pomade
-started, then stays up like any service. `pomade-runner services` shows every service and where it stands — running,
-restarting, failed after a crash loop, stopped by you; `pomade-runner run|stop|restart <service>`
-(its id or name) starts, stops or restarts one. Disabling a service in its file or deleting the
-file stops it; an edited `command` or `folder` applies on its next restart.
+at a time) and keeps running when Pomade quits. A `start: pomade-started` one starts with Pomade —
+at once when Pomade runs — and a `start: project-first-open` one on that project's first open since
+Pomade started — at once when it was opened already; both stop when Pomade quits, and the next
+Pomade start begins them fresh. Pick `login` for what must be up without Pomade, the others for
+what is only needed while working in Pomade. `pomade-runner services` shows every service and where
+it stands — running, restarting, failed after a crash loop, stopped by you, waiting for first open,
+waiting for Pomade; `pomade-runner run|stop|restart <service>` (its id or name) starts, stops or
+restarts one — a service bound to Pomade cannot start while Pomade is closed. Stopped by you, a
+service stays stopped until `run`; a Pomade-bound one also starts again on the next Pomade start.
+Disabling a service in its file clears that and stops it; deleting the file stops it; an edited
+`command` or `folder` applies on its next restart.

@@ -4,7 +4,9 @@
 // when a starting service is up — and every session's end it hears from the keeper (`onExit`)
 // updates the service's supervision record: a crash schedules a restart after a back-off, and 5
 // crashes within a minute give up (`failed`); Ctrl+C in its tab, or Stop, leaves it stopped until
-// Start. The records are what the keeper does not know — holds, crash counts, a restart due — so a
+// Start; turning it off in its file clears that. A Pomade-bound service (`start: pomade-started`,
+// `project-first-open`) runs only while Pomade runs: where Pomade stands comes from `pomade`, and
+// once it quit (`pomadeEnded`) such a service is stopped and its record starts fresh. The records are what the keeper does not know — holds, crash counts, a restart due — so a
 // restarted scheduler carries on where the last one stopped; it reattaches running services and
 // never restarts them. The services the Owner stopped are kept with the workspace, the rest on this
 // Mac (`fileStore`).
@@ -24,7 +26,7 @@ import { dirname } from "node:path";
 import type { SessionAction } from "pomade-kit/protocol";
 
 import type { JobsSnapshot, ServiceAction, ServiceJob } from "../jobs/model";
-import { entryId } from "../jobs/model";
+import { entryId, pomadeBound } from "../jobs/model";
 import { serviceHoldsPath, supervisionRecordPath, type RecordsFolder, type StateFolder } from "../locations";
 import type { Clock } from "../scheduler/clock";
 import type { Log } from "../scheduler/log";
@@ -67,6 +69,20 @@ export interface SupervisionRecord {
   /** Why its last start failed. */
   problem: string | null;
 }
+
+/** Where Pomade stands, as the scheduler tells it: `running` — ready, its start known · `closed` —
+ *  it quit, or the scheduler found it closed · `unsure` — neither yet: the scheduler just started,
+ *  Pomade is starting, or its link dropped and the quit grace is not over. */
+export type PomadeState = "running" | "closed" | "unsure";
+
+/** Pomade as supervision sees it: its state, and the projects opened since it started (ids). */
+export interface PomadeView {
+  state: PomadeState;
+  opened: ReadonlySet<string>;
+}
+
+/** Why Start is refused for a Pomade-bound service while Pomade does not run. */
+export const NOT_WITH_POMADE = "starts with Pomade; Pomade is not running";
 
 const freshRecord = (): SupervisionRecord => ({ hold: null, restarts: 0, lastCrashAt: null, crashes: [], retryAt: null, problem: null });
 
@@ -181,9 +197,9 @@ export interface SupervisorOptions {
   store: SupervisionStore;
   /** Whether a port or URL check passes now. */
   probe(ready: NetworkReadiness): Promise<boolean>;
-  /** The projects opened since Pomade started (ids): a first-open service whose start project is
-   *  one of them is due to start, as a login service is. */
-  openedProjects(): ReadonlySet<string>;
+  /** Where Pomade stands and the projects opened since it started: a `pomade-started` service is
+   *  due while Pomade runs, a first-open one once its start project is among the opened too. */
+  pomade(): PomadeView;
   /** The report changed. */
   onChange(report: ServicesReport): void;
 }
@@ -192,13 +208,15 @@ export interface Supervisor {
   /** Read the records; before the first tick, so the ends the first refresh reports land on them. */
   load(): Promise<void>;
   /** Compare every service with its session and act. Does nothing while the sessions do not follow
-   *  the keeper or no workspace is known. A tick asked for while one is due is dropped. */
+   *  the keeper or no workspace is known. A tick asked for while one waits to begin joins it:
+   *  either resolves once a tick begun after the ask is done. */
   tick(): Promise<void>;
   report(): ServicesReport;
   /** Whether the staged start is done: as of the latest tick, no service waits for its turn to
    *  start and none is starting within its 30 s. `false` before the first tick. */
   settled(): boolean;
-  /** Start a service now, out of turn: clears its hold and its crash count. */
+  /** Start a service now, out of turn: clears its hold and its crash count. A Pomade-bound one is
+   *  refused while Pomade does not run (`NOT_WITH_POMADE`). */
   start(ref: string): Promise<ServiceActionResult>;
   /** Stop it as stopped by you: it stays stopped until Start. */
   stop(ref: string): Promise<ServiceActionResult>;
@@ -206,6 +224,11 @@ export interface Supervisor {
    *  service that starts on it and is not running joins the staged start — unless the Owner stopped
    *  it or it gave up. */
   firstOpen(project: string): Promise<void>;
+  /** The Pomade start the bound services ran with is over — Pomade quit, or a new start was found
+   *  while one of the last start's still ran: each bound service's record starts fresh (no hold,
+   *  no crash count) and a running one is stopped. Under `pomade()` closed none starts again;
+   *  under a new start each follows its trigger. */
+  pomadeEnded(): Promise<void>;
   /** Its project moved and the jobs' ids change (`ids`, old → new) once `work` moves their files:
    *  each running service of them is stopped and its session forgotten first, then `work` runs;
    *  when it moved them (`true`), each service's record goes to its new id. A service that ran
@@ -254,10 +277,14 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
   const stopping = new Map<string, number>();
   /** When each service's file was first seen gone. */
   const goneSince = new Map<string, number>();
+  /** Sessions whose service let go of its hold — turned off, or its Pomade start over — by the
+   *  session start: their end as stopped by you, heard later, holds nothing. */
+  const released = new Map<string, number>();
   /** Services that ran before their project moved, due to start under their new id until they do. */
   const owed = new Set<string>();
   let lane: Promise<unknown> = Promise.resolve();
-  let tickQueued = false;
+  /** The tick asked for and not begun yet; a tick asked for meanwhile joins it. */
+  let queuedTick: Promise<void> | null = null;
   let published = "";
   let settled = false;
 
@@ -274,10 +301,21 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     return at;
   };
   const save = (): void => store.save(records);
-  /** Whether a service is due to start when it does not run and nothing holds it: at login, on its
-   *  start project's open — at once when that project was opened already — or owed a start. */
-  const startsNow = (job: string, service: ServiceJob): boolean =>
-    service.start === "login" || (service.startProject !== null && options.openedProjects().has(service.startProject)) || owed.has(job);
+  /** Whether Pomade lets a service run: always for a `login` one, while Pomade runs for a bound one. */
+  const pomadeLets = (service: ServiceJob): boolean => !pomadeBound(service.start) || options.pomade().state === "running";
+  /** Whether a service is due to start when it does not run and nothing holds it: at login; while
+   *  Pomade runs; on its start project's open — at once when that project was opened already — or
+   *  owed a start, as far as Pomade lets it run. */
+  const startsNow = (job: string, service: ServiceJob): boolean => {
+    if (!pomadeLets(service)) return false;
+    switch (service.start) {
+      case "login":
+      case "pomade-started":
+        return true;
+      case "project-first-open":
+        return (service.startProject !== null && options.pomade().opened.has(service.startProject)) || owed.has(job);
+    }
+  };
   const recordOf = (job: string): SupervisionRecord => {
     let record = records.get(job);
     if (record === undefined) {
@@ -336,7 +374,8 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     if (record?.hold != null) return record.hold;
     if (live(entry.session) !== null) return isUp(entry) ? "running" : "starting";
     if (record?.retryAt != null && record.retryAt > at) return "restarting";
-    return startsNow(entry.job, entry.service) || record?.retryAt != null ? "queued" : "waiting";
+    if (startsNow(entry.job, entry.service) || record?.retryAt != null) return "queued";
+    return pomadeLets(entry.service) ? "waiting" : "waiting-for-pomade";
   }
 
   function statusOf(entry: Entry, at: number): ServiceStatus {
@@ -362,7 +401,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
 
   function report(): ServicesReport {
     const at = now();
-    return { keeper: sessions.keeper(), services: entries().map((entry) => statusOf(entry, at)), openedProjects: [...options.openedProjects()] };
+    return { keeper: sessions.keeper(), services: entries().map((entry) => statusOf(entry, at)), openedProjects: [...options.pomade().opened] };
   }
 
   function publish(): void {
@@ -406,6 +445,11 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
         break;
       }
       case "stopped-by-you": {
+        // A Stop that ends after the service let go of its hold holds nothing.
+        if (released.get(job) === session.info.startedAt) {
+          released.delete(job);
+          return;
+        }
         const record = recordOf(job);
         record.hold = "stopped-by-you";
         record.retryAt = null;
@@ -533,7 +577,19 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
       goneSince.delete(job);
       if (service === null) continue;
       if (!service.enabled) {
+        // Turned off, a service lets go of Stop and of a crash loop: turned on again, it follows
+        // its trigger.
+        const record = records.get(job);
+        if (record !== undefined && (record.hold !== null || record.retryAt !== null || record.crashes.length > 0 || record.restarts > 0)) {
+          records.set(job, { ...freshRecord(), problem: record.problem });
+          if (session !== null) released.set(job, session.info.startedAt);
+          changed = true;
+        }
         if (runs !== null) await stopSession(entry, runs, "disabled in its file");
+        continue;
+      }
+      if (!pomadeLets(service) && options.pomade().state === "closed") {
+        if (runs !== null) await stopSession(entry, runs, "it runs with Pomade, and Pomade is not running");
         continue;
       }
       if (runs !== null) {
@@ -548,7 +604,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
       const record = records.get(job);
       if (record?.hold != null) continue;
       if (record?.retryAt != null && record.retryAt > at) continue;
-      if (startsNow(job, service) || record?.retryAt != null) due.push({ entry, service });
+      if (startsNow(job, service) || (record?.retryAt != null && pomadeLets(service))) due.push({ entry, service });
     }
     // A record outlives its file for the grace period, so a hold survives a save by delete and write.
     const listed = new Set(list.filter((entry) => entry.file !== "gone").map((entry) => entry.job));
@@ -602,6 +658,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     const entry = entries().find((candidate) => candidate.job === service.id);
     if (entry === undefined) return { ok: false, reason: `no service "${ref}"` };
     if (live(entry.session) !== null) return { ok: false, reason: `"${service.name}" is running` };
+    if (!pomadeLets(service)) return { ok: false, reason: `"${service.name}" ${NOT_WITH_POMADE}` };
     const record = recordOf(service.id);
     const started = await spawn(entry, service, workspace, record);
     if (typeof started !== "string") {
@@ -662,13 +719,12 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     },
 
     tick() {
-      if (tickQueued) return Promise.resolve();
-      tickQueued = true;
-      return inLane(async () => {
-        tickQueued = false;
+      queuedTick ??= inLane(async () => {
+        queuedTick = null;
         await reconcile();
         publish();
       });
+      return queuedTick;
     },
 
     report,
@@ -695,6 +751,24 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
         if (!found.ok) return found;
         log(`service ${found.job.id}: Restart`);
         return restartNow(found.job, found.workspace);
+      }),
+
+    pomadeEnded: () =>
+      inLane(async () => {
+        for (const entry of entries()) {
+          const { service } = entry;
+          if (service === null || !pomadeBound(service.start)) continue;
+          const record = records.get(entry.job);
+          if (record !== undefined) records.set(entry.job, { ...freshRecord(), problem: record.problem });
+          if (entry.session !== null) released.set(entry.job, entry.session.info.startedAt);
+          owed.delete(entry.job);
+          if (current?.job === entry.job) current = null;
+          const runs = live(entry.session);
+          if (runs !== null) await stopSession(entry, runs, "its Pomade start is over");
+        }
+        save();
+        await reconcile();
+        publish();
       }),
 
     firstOpen: (project) =>
@@ -744,7 +818,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
             records.delete(from);
             records.set(to, record);
           }
-          for (const map of [up, starts, stopping, goneSince]) map.delete(from);
+          for (const map of [up, starts, stopping, goneSince, released]) map.delete(from);
           if (owed.delete(from) || ran.has(from)) owed.add(job);
           if (current?.job === from) current = null;
         }
@@ -760,6 +834,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
         if (!found.ok) return { result: "skipped", reason: found.reason };
         const { job: service, workspace } = found;
         if (!service.enabled) return { result: "skipped", reason: "its job is disabled" };
+        if (action !== "stop" && !pomadeLets(service)) return { result: "skipped", reason: NOT_WITH_POMADE };
         const entry = entries().find((candidate) => candidate.job === service.id);
         const running = entry !== undefined && live(entry.session) !== null;
         if (action === "restart" && !running) return { result: "skipped", reason: "it is not running" };

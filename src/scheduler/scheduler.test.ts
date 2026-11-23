@@ -84,6 +84,8 @@ interface StubSessions extends Sessions {
   end(session: RunnerSession): void;
   /** A run's session ends with `code`, as the keeper's list then says. */
   exit(id: string, code: number): void;
+  /** A session asked to stop ends as stopped, and the scheduler hears of it. */
+  stoppedEnds(id: string): void;
 }
 
 function stubSessions(): StubSessions {
@@ -152,6 +154,13 @@ function stubSessions(): StubSessions {
       return Promise.resolve();
     },
     end(ended) {
+      for (const listener of listeners) listener(ended);
+    },
+    stoppedEnds(id) {
+      const known = held.get(id);
+      if (known === undefined) throw new Error(`no session ${id}`);
+      const ended: RunnerSession = { ...known, info: { ...known.info, pid: null, state: "exited", exit: { code: 143, signal: null, reason: "stopped", at: Date.now() } } };
+      held.set(id, ended);
       for (const listener of listeners) listener(ended);
     },
     exit(id, code) {
@@ -489,18 +498,15 @@ describe("scheduler and the job files", () => {
         services: [
           { job: "api", state: "starting" },
           { job: "broken", state: "invalid" },
-          { job: "coda/web", name: "Coda web", project: "p1", state: "waiting", session: null },
+          { job: "coda/web", name: "Coda web", project: "p1", state: "waiting-for-pomade", session: null },
         ],
       },
     });
 
-    expect(await callScheduler(socketPath, "run", { job: "Coda web" })).toMatchObject({ status: "ok", value: { service: { job: "coda/web", state: "starting", session: { id: "svc:coda.web" } } } });
-    expect(sessions.spawned[1]).toEqual({
-      job: "coda/web",
-      command: { title: "Coda web", command: "./start.sh", cwd: join(dir, "ws/Projects/coda"), background: true, actions: [{ id: "restart", title: "Restart" }] },
-    });
-    expect(await callScheduler(socketPath, "stop", { job: "coda/web" })).toMatchObject({ status: "ok", value: { job: "coda/web", state: "stopped-by-you" } });
-    expect(sessions.stopped).toEqual([{ id: "svc:coda.web", reason: "stopped-by-you" }]);
+    // A service that runs with Pomade is refused while Pomade is not running.
+    expect(await callScheduler(socketPath, "run", { job: "Coda web" })).toEqual({ status: "failed", code: "refused", message: 'cannot run "Coda web": "Coda web" starts with Pomade; Pomade is not running' });
+    expect(await callScheduler(socketPath, "stop", { job: "api" })).toMatchObject({ status: "ok", value: { job: "api", state: "stopped-by-you" } });
+    expect(sessions.stopped).toEqual([{ id: "svc:api", reason: "stopped-by-you" }]);
     expect(await callScheduler(socketPath, "restart", { job: "api" })).toMatchObject({ status: "ok", value: { job: "api" } });
     expect(sessions.restarted.map((restarted) => restarted.job)).toEqual(["api"]);
 
@@ -571,6 +577,10 @@ describe("scheduler and the job files", () => {
     await start();
     link?.connected(await frame(fake, "backend"));
     await vi.waitFor(() => expect(heard.length).toBeGreaterThan(0));
+    // Pomade is ready: the service waits for its project's first open.
+    fake.ready();
+    const ui = await frame(fake);
+    await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", SERVICES_LIST_METHOD)).toMatchObject({ services: [{ job: "alpha/web", state: "waiting" }] }));
     expect(sessions.spawned).toHaveLength(0);
 
     fake.emitEvent("attachedTab.action", { session: { app: "pomade-runner", session: "svc:alpha.web" }, action: "start", projectId: "alpha" });
@@ -729,7 +739,7 @@ describe("scheduler and runs", () => {
       value: [
         { job: "backup", kind: "script", enabled: true, trigger: "daily at 3:00", last: { state: "failed" }, service: null },
         { job: "bad", name: "Bad", kind: "script", trigger: null, problem: expect.stringContaining("bad.md") as string },
-        { job: "web", kind: "service", trigger: "always on · starts at login", service: { job: "web" } },
+        { job: "web", kind: "service", trigger: "always on · starts on Mac startup", service: { job: "web" } },
       ],
     });
     expect(await callScheduler(socketPath(), "run", { job: "web" })).toMatchObject({ status: "failed", code: "refused", message: 'cannot run "web": "Web" is running' });
@@ -840,6 +850,8 @@ describe("scheduler and Pomade's hooks", () => {
   let lines: string[];
   /** The Pomade start the scheduler finds: a new value is a new Pomade start. */
   let pomadeStart: string | null;
+  /** The quit grace, short. */
+  const QUIT_GRACE = 300;
   const running: Scheduler[] = [];
   // Normal priority and parallel: every firing starts at once, none waits for a slot or another run.
   const script = (name: string, hook: string): string => `---\nkind: script\nname: ${name}\nfolder: .\ncommand: ./${name.toLowerCase()}.sh\nhook: ${hook}\nlow-priority: false\noverlap: parallel\n---\n`;
@@ -865,6 +877,7 @@ describe("scheduler and Pomade's hooks", () => {
       shell: "/bin/sh",
       launchPomade: noLaunch,
       pomadeStart: () => Promise.resolve(pomadeStart),
+      quitGraceMs: QUIT_GRACE,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -1130,6 +1143,90 @@ describe("scheduler and Pomade's hooks", () => {
     fake.emitEvent("project.opened", { id: "alpha", kind: "project", name: "Alpha", root: "Projects/alpha" });
     await vi.waitFor(() => expect([hookRuns("alpha-open"), hookRuns("late-open")]).toEqual([2, 1]));
     expect(services()).toEqual(["alpha/web", "docs"]);
+  });
+
+  it("a project opened fires every time a project becomes the one in front, with its project filter; the same project again, the Workspace project and a reconnect fire nothing", async () => {
+    await writeFile(join(jobs, "every-open.md"), script("Every open", "{ event: project-opened }"));
+    await writeFile(join(jobs, "alpha-every.md"), script("Alpha every", "{ event: project-opened, project: alpha }"));
+    const opens = (): (string | undefined)[] => started().filter((run) => run.job === "every-open").map((run) => run.project);
+    const alphaOpens = (): number => started().filter((run) => run.job === "alpha-every").length;
+    await start();
+    fake.setActiveProject("alpha");
+    await connect();
+    fake.ready();
+    // The project in front at Pomade's start counts as opened.
+    await vi.waitFor(() => expect([opens(), alphaOpens()]).toEqual([["alpha"], 1]));
+    expect(started().find((run) => run.job === "every-open")).toEqual({ job: "every-open", trigger: "hook", project: "alpha", path: join(workspace, "Projects/alpha") });
+    fake.setActiveProject("beta");
+    await vi.waitFor(() => expect(opens()).toEqual(["alpha", "beta"]));
+    fake.setActiveProject(null);
+    fake.setActiveProject("alpha");
+    await vi.waitFor(() => expect([opens(), alphaOpens()]).toEqual([["alpha", "beta", "alpha"], 2]));
+    expect(lines).toContain("project Alpha (alpha) opened");
+    // The same Pomade, connected again: its sticky ready and the project in front fire nothing.
+    await connect();
+    await vi.waitFor(() => expect(lines).toContain("Pomade ready: the Pomade started hooks fired for this Pomade start already"));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect([opens(), alphaOpens()]).toEqual([["alpha", "beta", "alpha"], 2]);
+    // A first open is still once per Pomade start.
+    expect(started().filter((run) => run.job === "alpha-open")).toHaveLength(1);
+  });
+
+  it("Pomade quit — the link dropped and no Pomade start found for the grace — stops the services that run with Pomade; a reconnect to the same start stops nothing; Start is refused while Pomade is closed; the next start starts them", async () => {
+    await writeFile(join(jobs, "watch.md"), "---\nkind: service\nname: Watch\nfolder: .\ncommand: ./watch.sh\nstart: pomade-started\n---\n");
+    const socketPath = join(dir, "state", "scheduler.sock");
+    await start();
+    await connect();
+    fake.ready();
+    await vi.waitFor(() => expect(sessions.spawned.filter((spawn) => spawn.job === "watch")).toHaveLength(1));
+
+    // Dropped, Pomade's socket still found, then back: nothing stops.
+    link?.disconnected();
+    await new Promise((resolve) => setTimeout(resolve, 3 * QUIT_GRACE));
+    await connect();
+    await vi.waitFor(() => expect(lines).toContain("Pomade ready: the Pomade started hooks fired for this Pomade start already"));
+    expect(sessions.stopped).toEqual([]);
+
+    // Pomade quits: its socket goes.
+    pomadeStart = null;
+    link?.disconnected();
+    await vi.waitFor(() => expect(sessions.stopped).toEqual([{ id: "svc:watch", reason: "stopped" }]));
+    expect(lines).toContain("Pomade is not running: the services that run with it stop");
+    sessions.stoppedEnds("svc:watch");
+    await vi.waitFor(async () => expect(await callScheduler(socketPath, "services", null)).toMatchObject({ value: { services: [{ job: "watch", state: "waiting-for-pomade" }] } }));
+    expect(await callScheduler(socketPath, "run", { job: "watch" })).toEqual({ status: "failed", code: "refused", message: 'cannot run "watch": "Watch" starts with Pomade; Pomade is not running' });
+
+    // Pomade starts again.
+    pomadeStart = "start-2";
+    await connect();
+    fake.ready();
+    await vi.waitFor(() => expect(sessions.spawned.filter((spawn) => spawn.job === "watch")).toHaveLength(2));
+  });
+
+  it("a new Pomade start found while a service of the last start still runs — its quit unheard, the scheduler down then — stops it and starts it fresh", async () => {
+    await writeFile(join(jobs, "watch.md"), "---\nkind: service\nname: Watch\nfolder: .\ncommand: ./watch.sh\nstart: pomade-started\n---\n");
+    const scheduler = await start();
+    await connect();
+    fake.ready();
+    await vi.waitFor(() => expect(sessions.spawned.filter((spawn) => spawn.job === "watch")).toHaveLength(1));
+    await scheduler.stop();
+    running.splice(0);
+
+    pomadeStart = "start-2";
+    await start();
+    await connect();
+    await vi.waitFor(() => expect(sessions.stopped).toEqual([{ id: "svc:watch", reason: "stopped" }]));
+    sessions.stoppedEnds("svc:watch");
+    await vi.waitFor(() => expect(sessions.spawned.filter((spawn) => spawn.job === "watch")).toHaveLength(2));
+  });
+
+  it("a scheduler started while Pomade is closed finds it closed after the grace: a service that runs with Pomade waits for it", async () => {
+    await writeFile(join(jobs, "watch.md"), "---\nkind: service\nname: Watch\nfolder: .\ncommand: ./watch.sh\nstart: pomade-started\n---\n");
+    pomadeStart = null;
+    await start();
+    await vi.waitFor(() => expect(lines).toContain("Pomade is not running: the services that run with it stop"));
+    expect(await callScheduler(join(dir, "state", "scheduler.sock"), "services", null)).toMatchObject({ value: { services: [{ job: "watch", state: "waiting-for-pomade" }] } });
+    expect(sessions.spawned).toEqual([]);
   });
 
   it("a project moved: its jobs follow it — sub-folder, folders, ids — keep their history and latest run, and its running service starts again in its new folder", async () => {

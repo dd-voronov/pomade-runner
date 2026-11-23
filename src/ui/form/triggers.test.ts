@@ -195,7 +195,7 @@ describe("a service's chain", () => {
 
 describe("triggerWords", () => {
   it("offers every hook the engine fires — Mac login, Pomade's and the agents' — in the prototype's order, and not the chain's own entry", () => {
-    expect(EVENT_CHOICES.map((choice) => choice.label)).toEqual(["Mac login", "Pomade started", "First open of a project since Pomade started", "Project created", "Agent session finished", "Session status changed to…", "Another job finished"]);
+    expect(EVENT_CHOICES.map((choice) => choice.label)).toEqual(["Mac login", "Pomade started", "First open of a project since Pomade started", "Project opened (every time)", "Project created", "Agent session finished", "Session status changed to…", "Another job finished"]);
     expect(["login", "pomade-started", "project-first-open", "project-created", "session-finished", "session-status"].map(formOffersHook)).toEqual([true, true, true, true, true, true]);
     expect(["chain", "session-opened", ""].map(formOffersHook)).toEqual([false, false, false]);
   });

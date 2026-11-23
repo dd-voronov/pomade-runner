@@ -357,12 +357,13 @@ function checkSchedule(c: FileCheck): { schedule: Schedule; words: string } | nu
 }
 
 /** The project whose first open starts a service: `start-project`, else the job's own project;
- *  `null` for a service that starts at login, or when there is none. */
+ *  `null` for a service with another start, or when there is none. */
 function checkStartProject(c: FileCheck, start: ServiceStart | null, project: string | null): string | null {
   const value = c.get("start-project");
   const given = value === undefined ? null : c.text(["start-project"], value, "<project id>", { oneLine: true });
-  if (start === "login" && value !== undefined) {
-    c.add(["start-project"], "a service that starts at login has no start project", "remove it, or write start: project-first-open to start it on that project's first open");
+  if (start !== null && start !== "project-first-open" && value !== undefined) {
+    const which = start === "login" ? "starts on Mac startup" : "runs while Pomade is running";
+    c.add(["start-project"], `a service that ${which} has no start project`, "remove it, or write start: project-first-open to start it on that project's first open");
     return null;
   }
   if (start !== "project-first-open") return null;
@@ -626,8 +627,8 @@ export function parseJobFile(input: JobFileInput): ParsedJobFile {
     const startProject = checkStartProject(c, start, project);
     if (startProject !== null && c.has("start-project")) parsed.startProject = { value: startProject, line: c.doc.line(["start-project"]) };
     const ready = checkReadiness(c);
-    if (folder !== null && command !== null && start !== null && (start === "login" || startProject !== null)) {
-      job = { ...common, kind, folder, command, start, startProject: start === "login" ? null : startProject, ready, after: chain && { ...chain.chain, action: chain.action } };
+    if (folder !== null && command !== null && start !== null && (start !== "project-first-open" || startProject !== null)) {
+      job = { ...common, kind, folder, command, start, startProject: start === "project-first-open" ? startProject : null, ready, after: chain && { ...chain.chain, action: chain.action } };
     }
   } else {
     const trigger = checkTrigger(c, kind, chain?.chain ?? null);

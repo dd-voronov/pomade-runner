@@ -67,7 +67,7 @@ export function Panel({ host }: { host: HostClient }): React.JSX.Element {
               </Button>
             }
           >
-            A <b>service</b> is a command Runner keeps running: it starts at login, restarts on a crash and outlives Pomade — like a project's web server. Scripts, agents
+            A <b>service</b> is a command Runner keeps running and restarts on a crash — from Mac startup, or only while Pomade is running — like a project's web server. Scripts, agents
             and git operations run on schedules and hooks.
           </PanelCard>
         </div>

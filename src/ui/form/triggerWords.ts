@@ -18,6 +18,7 @@ export const EVENT_CHOICES: readonly { value: string; label: string; help: HelpK
   { value: "login", label: "Mac login", help: "hk.login" },
   { value: "pomade-started", label: "Pomade started", help: "hk.pomade-started" },
   { value: "project-first-open", label: "First open of a project since Pomade started", help: "hk.project-first-open" },
+  { value: "project-opened", label: "Project opened (every time)", help: "hk.project-opened" },
   { value: "project-created", label: "Project created", help: "hk.project-created" },
   { value: "session-finished", label: "Agent session finished", help: "hk.session-finished" },
   { value: "session-status", label: "Session status changed to…", help: "hk.session-status" },
@@ -126,6 +127,11 @@ export function hookBoxWords(values: FormValues, snapshot: JobsSnapshot, warmUpM
       const id = values.hookProject.trim();
       const name = id === "" ? "a project" : (projects.find((project) => project.id === id)?.name ?? id);
       return { title: `Runs on first open of ${name}`, sub: POMADE_HOOK_SUB };
+    }
+    case "project-opened": {
+      const id = values.hookProject.trim();
+      const name = id === "" ? "a project" : (projects.find((project) => project.id === id)?.name ?? id);
+      return { title: `Runs whenever ${name} is opened`, sub: POMADE_HOOK_SUB };
     }
     case "project-created":
       return { title: "Runs when a project is created", sub: POMADE_HOOK_SUB };

@@ -4,7 +4,7 @@
 import { WORKSPACE_PROJECT_ID, type ProjectRef } from "pomade-kit/protocol";
 
 import { newRoute } from "../integrations/runner-api";
-import type { Job, ServiceJob } from "../jobs/model";
+import { pomadeBound, type Job, type ServiceJob } from "../jobs/model";
 import { GIT_OPERATION_WORDS } from "../jobs/words";
 import type { ServiceStatus } from "../keeper/model";
 import { FIRING_LIMIT, FIRING_WINDOW_MS } from "../scheduler/loop-guard";
@@ -145,12 +145,13 @@ export function aheadWhen(at: number, now: number): string {
 
 const capitalized = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
 
-/** A job's Next run: disabled, paused by the loop guard, a service's "always on", a hook's or chain's
+/** A job's Next run: disabled, paused by the loop guard, a service's "always on" — "with Pomade"
+ *  for one bound to Pomade — a hook's or chain's
  *  "on event", else its schedule's next time — "in N min" under it within the hour — or "finished". */
 export function nextLook(job: Job, runs: JobRuns | undefined, paused: boolean, now: number): NextLook {
   if (!job.enabled) return { words: "disabled", sub: null, none: true };
   if (paused) return { words: "paused", sub: null, none: true };
-  if (job.kind === "service") return { words: "always on", sub: null, none: true };
+  if (job.kind === "service") return { words: pomadeBound(job.start) ? "with Pomade" : "always on", sub: null, none: true };
   if (job.trigger.kind !== "schedule") return { words: "on event", sub: null, none: true };
   if (runs === undefined) return { words: "—", sub: null, none: true };
   if (runs.next === null) return { words: runs.finished ? "finished" : "—", sub: null, none: true };

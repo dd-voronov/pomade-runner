@@ -63,7 +63,7 @@ export function ServicesView({
   if (all.length === 0) {
     return (
       <EmptyBlock title="Nothing here yet" testId="services-empty" action={newJob("services-empty-new-job")}>
-        <p>A service is a command Runner keeps running: it starts at login, restarts on a crash and outlives Pomade.</p>
+        <p>A service is a command Runner keeps running and restarts on a crash: from Mac startup, outliving Pomade, or only while Pomade is running.</p>
       </EmptyBlock>
     );
   }
@@ -75,7 +75,7 @@ export function ServicesView({
   };
   return (
     <section data-testid="services">
-      <ViewFilters summary="Services keep running when Pomade quits · the switch never pauses them">
+      <ViewFilters summary="Services on Mac startup outlive Pomade · the switch never pauses them">
         <Chip on={thisProject} count={active?.name ?? "…"} onClick={() => onThisProject(!thisProject)} data-testid="this-project">
           This project
         </Chip>
@@ -122,7 +122,7 @@ export function ServicesView({
           const { job } = entry;
           const status = services.find((candidate) => candidate.job === job.id) ?? fallbackService(job);
           const look = serviceLook(status, job.ready, now, job.startProject === null ? null : projectName(job.startProject));
-          const offered = serviceActions(status);
+          const offered = serviceActions(status, job.enabled);
           return (
             <TableRow key={job.id} columns={styles.cols} className={styles.row} data-testid="service-row" data-job={job.id} data-state={status.state}>
               <KindCell icon="service" label="Service" />

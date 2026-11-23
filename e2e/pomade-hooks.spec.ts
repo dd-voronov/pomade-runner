@@ -10,7 +10,9 @@
 // the opens, a first-open hook made late fires for no earlier open, and after a Pomade restart a new
 // one waits again (T-019). Projects are made, opened and moved through Pomade's workspace store, as
 // its Projects panel does. A service's Jobs row starts and stops it, and opens its terminal once it
-// has run (T-020).
+// has run (T-020). A first-open service stops when Pomade quits and starts on the next start's
+// first open (T-021; the other service lifetimes are in `pomade-lifetimes.spec.ts`). The
+// scheduler's quit grace is short here (`QUIT_GRACE_MS`).
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -26,11 +28,13 @@ import type { RunRecord } from "../src/scheduler/model";
 import { newRoute } from "../src/integrations/runner-api";
 import type { ServicesReport } from "../src/keeper/model";
 import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
-import { expectNothingLeft, stopKeeper } from "./support/keeper";
+import { alive, expectNothingLeft, stopKeeper } from "./support/keeper";
 import { pomadeCheckout, pomadeEnv, type PomadeFolders } from "./support/pomade";
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
 
 const HUNT = "proj-hunt";
+/** The scheduler's quit grace in these tests. */
+const QUIT_GRACE_MS = 2000;
 
 test.describe("Pomade's hooks in Pomade", () => {
   test.describe.configure({ mode: "serial" });
@@ -73,6 +77,7 @@ test.describe("Pomade's hooks in Pomade", () => {
         POMADE_HOME: folders.home,
         HOME: join(tmp, "user"),
         SHELL: "/bin/sh",
+        POMADE_RUNNER_QUIT_GRACE_MS: String(QUIT_GRACE_MS),
       }),
     );
     scheduler = started;
@@ -232,7 +237,7 @@ test.describe("Pomade's hooks in Pomade", () => {
     await store("updateProject", HUNT, { name: "Hunt 2", rootPath: "Projects/hunt-2" });
     const path = join(folders.workspace, "Projects/hunt-2");
 
-    await expect.poll(async () => (await command("list")).stdout).toMatch(/^hunt-2\/dash {2}Dash {2}service {2}always on · starts on first open of proj-hunt {2}/);
+    await expect.poll(async () => (await command("list")).stdout).toMatch(/^hunt-2\/dash {2}Dash {2}service {2}from first open of proj-hunt while Pomade is running {2}/);
     const listed = (await command("list")).stdout;
     expect(listed).toMatch(/\nhunt-2\/greet {2}Greet {2}script {2}when a project is created {2}/);
     expect(listed).not.toContain("hunt/");
@@ -350,19 +355,28 @@ test.describe("Pomade's hooks in Pomade", () => {
     }
   });
 
-  test("E-007 #2 · restarting Pomade runs the Pomade started job once more, after its tabs are restored; the next first open fires again", async () => {
+  test("E-007 #2 · T-021 #1 · restarting Pomade runs the Pomade started job once more, after its tabs are restored; a first-open service stops with Pomade and starts on the next first open", async () => {
     const running = scheduler;
+    const dash = (await service("hunt-2/dash"))?.session?.info.pid ?? 0;
+    expect(alive(dash)).toBe(true);
     await app?.close();
     app = null;
     await expect.poll(() => running?.output() ?? "").toContain("Pomade went away; reconnecting");
+    // Pomade quit: within the grace, its first-open service ends and waits for Pomade.
+    await expect.poll(() => alive(dash), { timeout: QUIT_GRACE_MS + 8000 }).toBe(false);
+    expect(running?.output()).toContain("Pomade is not running: the services that run with it stop");
+    await expect.poll(async () => (await service("hunt-2/dash"))?.state).toBe("waiting-for-pomade");
     await launchPomade();
     await expect.poll(() => printed("updates")).toEqual(["updates", "updates"]);
-    // A new Pomade start: the moved project's first open fires its job again; its service still runs.
-    const dash = (await services()).find((service) => service.job === "hunt-2/dash");
+    await expect.poll(async () => (await service("hunt-2/dash"))?.state).toBe("waiting");
+    // A new Pomade start: the moved project's first open fires its job again and starts its service.
     await store("setActiveProject", HUNT);
     await expect.poll(() => printed("scrape")).toHaveLength(2);
     expect((await printed("scrape"))[1]).toBe(`scrape ${HUNT} ${join(folders.workspace, "Projects/hunt-2")}`);
-    expect((await services()).find((service) => service.job === "hunt-2/dash")?.session?.info.pid).toBe(dash?.session?.info.pid);
+    await expect.poll(async () => (await service("hunt-2/dash"))?.state, { timeout: 15_000 }).toBe("running");
+    const again = (await service("hunt-2/dash"))?.session?.info.pid ?? 0;
+    expect(again).not.toBe(dash);
+    pids.push(again);
     // Once per Pomade start, still. The late hook fires on this start's first open.
     expect(await printed("updates")).toHaveLength(2);
     await expect.poll(() => printed("late-scrape")).toEqual(["late"]);

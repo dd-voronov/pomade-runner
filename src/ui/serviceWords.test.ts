@@ -23,8 +23,8 @@ describe("a service in words", () => {
 describe("a service row's actions", () => {
   it("offers Stop while it runs, Start when Start would start it, and Open terminal only with a session to show", () => {
     const ended = { id: "svc:web", job: "web", kind: "service", run: null, log: null, info: { id: "svc:web", title: "Web", command: "./web.sh", cwd: "/ws", pid: null, startedAt: 1, cols: 80, rows: 24, state: "exited", exit: { at: 2, code: 130, signal: null, reason: "stopped-by-you" }, clients: 0, actions: [] } } as unknown as NonNullable<ServiceStatus["session"]>;
-    const offered = (state: ServiceStatus["state"], session: ServiceStatus["session"] = null): [string | null, boolean] => {
-      const { toggle, terminal } = serviceActions({ ...base, state, session });
+    const offered = (state: ServiceStatus["state"], session: ServiceStatus["session"] = null, enabled = true): [string | null, boolean] => {
+      const { toggle, terminal } = serviceActions({ ...base, state, session }, enabled);
       return [toggle, terminal];
     };
     expect(offered("running", ended)).toEqual(["stop", true]);
@@ -35,8 +35,11 @@ describe("a service row's actions", () => {
     expect(offered("stopped-by-you", ended)).toEqual(["start", true]);
     expect(offered("failed", ended)).toEqual(["start", true]);
     // Start would be refused: none.
-    for (const state of ["disabled", "invalid", "removed"] as const) expect(offered(state)).toEqual([null, false]);
+    for (const state of ["disabled", "invalid", "removed", "waiting-for-pomade"] as const) expect(offered(state)).toEqual([null, false]);
     expect(offered("disabled", ended)).toEqual([null, true]);
+    // Its job turned off, a report a tick old still says it would start: no Start either.
+    for (const state of ["waiting", "queued", "stopped-by-you", "failed"] as const) expect(offered(state, null, false)).toEqual([null, false]);
+    expect(offered("running", ended, false)).toEqual(["stop", true]);
   });
 });
 
@@ -97,6 +100,8 @@ describe("a service's look in the Services view and Running now", () => {
     expect(serviceLook({ ...base, state: "queued" }, port, now)).toMatchObject({ on: false, help: "st.svcqueued", words: "queued" });
     expect(serviceLook({ ...base, state: "waiting" }, port, now)).toMatchObject({ help: "st.svcwaiting", words: "waiting for first open", sub: "starts on first open" });
     expect(serviceLook({ ...base, state: "waiting" }, port, now, "job-hunt")).toMatchObject({ words: "waiting for first open", sub: "starts on first open of job-hunt" });
+    expect(serviceLook({ ...base, state: "waiting-for-pomade" }, port, now)).toMatchObject({ help: "st.svcwaitpomade", tone: "hollow", words: "waiting for Pomade", sub: "starts when Pomade starts" });
+    expect(serviceLook({ ...base, state: "waiting-for-pomade" }, port, now, "job-hunt")).toMatchObject({ words: "waiting for Pomade", sub: "starts on first open of job-hunt" });
     expect(serviceLook({ ...base, state: "disabled" }, port, now)).toMatchObject({ help: "st.disabled", words: "disabled", sub: "" });
     expect(serviceLook({ ...base, state: "restarting", restarts: 1, lastCrashAt: crash }, port, now)).toMatchObject({ tone: "warning", words: "restarting", sub: "restarted 1× · last crash 11:20" });
   });

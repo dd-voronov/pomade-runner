@@ -229,6 +229,8 @@ function stateWords({ state, session, retryAt }: ServiceStatus): string {
       return "stopped by you";
     case "waiting":
       return "waits for its project to open";
+    case "waiting-for-pomade":
+      return "waits for Pomade to start";
     case "disabled":
       return "disabled in its file";
     case "invalid":

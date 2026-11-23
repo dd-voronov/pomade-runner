@@ -103,10 +103,12 @@ export function isSessionsReport(value: unknown): value is SessionsReport {
  *  - `stopped-by-you`: Ctrl+C in its tab, or Stop; stays stopped until Start;
  *  - `waiting`: `start: project-first-open`, its start project not opened since Pomade started —
  *    the open starts it, Start runs it now;
+ *  - `waiting-for-pomade`: `start: pomade-started` or `project-first-open` while Pomade is not
+ *    running, or not ready yet — Pomade's start starts it; Start is refused;
  *  - `disabled`: `enabled: false` in its file;
  *  - `invalid`: its file has errors — nothing starts or stops it until the file is fixed;
  *  - `removed`: its file is gone; its session is stopped, and the service leaves the list once it ends. */
-export const SERVICE_STATES = ["queued", "starting", "running", "restarting", "failed", "stopped-by-you", "waiting", "disabled", "invalid", "removed"] as const;
+export const SERVICE_STATES = ["queued", "starting", "running", "restarting", "failed", "stopped-by-you", "waiting", "waiting-for-pomade", "disabled", "invalid", "removed"] as const;
 export type ServiceState = (typeof SERVICE_STATES)[number];
 
 /** One service as supervision sees it. */

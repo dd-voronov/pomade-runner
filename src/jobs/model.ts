@@ -13,8 +13,14 @@ export type JobKind = (typeof JOB_KINDS)[number];
 export const NOTIFY_VALUES = ["always", "on-failure", "never"] as const;
 export type Notify = (typeof NOTIFY_VALUES)[number];
 
-export const SERVICE_STARTS = ["login", "project-first-open"] as const;
+/** When a service starts, and with it how long it lives: `login` on Mac startup, outliving Pomade;
+ *  `pomade-started` when Pomade starts, `project-first-open` on its start project's first open since
+ *  then — both stop when Pomade quits. */
+export const SERVICE_STARTS = ["login", "pomade-started", "project-first-open"] as const;
 export type ServiceStart = (typeof SERVICE_STARTS)[number];
+
+/** Whether a service's start binds it to Pomade: it runs only while Pomade runs. */
+export const pomadeBound = (start: ServiceStart): boolean => start !== "login";
 
 export const CHAIN_RESULTS = ["done", "failed", "any"] as const;
 export type ChainResult = (typeof CHAIN_RESULTS)[number];
@@ -32,7 +38,7 @@ export type OverlapPolicy = (typeof OVERLAP_POLICIES)[number];
 export const GIT_OPERATIONS = GIT_RUN_OPS;
 export type GitOperation = GitRunOp;
 
-export const HOOK_EVENTS = ["login", "pomade-started", "project-first-open", "project-created", "session-finished", "session-status"] as const;
+export const HOOK_EVENTS = ["login", "pomade-started", "project-first-open", "project-opened", "project-created", "session-finished", "session-status"] as const;
 export type HookEvent = (typeof HOOK_EVENTS)[number];
 
 /** The session statuses `pomade-agents` keeps; the `session-status` hook fires on a change to one. */
@@ -47,6 +53,7 @@ export const HOOK_FILTERS: Record<HookEvent, { optional: readonly HookFilter[]; 
   login: { optional: [], required: [] },
   "pomade-started": { optional: [], required: [] },
   "project-first-open": { optional: ["project"], required: [] },
+  "project-opened": { optional: ["project"], required: [] },
   "project-created": { optional: [], required: [] },
   "session-finished": { optional: ["project", "agent"], required: [] },
   "session-status": { optional: ["project", "agent"], required: ["status"] },
@@ -110,7 +117,7 @@ export interface ServiceJob extends JobCommon {
   command: string;
   start: ServiceStart;
   /** `start: project-first-open`: the project whose first open starts it — `start-project`, else
-   *  the job's own; `null` for `start: login`. */
+   *  the job's own; `null` for the other starts. */
   startProject: string | null;
   ready: Readiness;
   /** A chain that acts on the service. */

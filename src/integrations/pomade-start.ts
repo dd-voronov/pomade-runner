@@ -3,11 +3,13 @@
 // scheduler that connects, or connects again, while the same Pomade runs hears it at once — so the
 // event alone does not say Pomade just started. A Pomade start is named by its socket: Pomade
 // creates it at every start and removes it when it quits, so the file's inode and birth time differ
-// from one start to the next. The start each workspace fired for, and the projects opened in it, are
+// from one start to the next; a socket left by a Pomade that crashed answers no connection, and
+// names no start. The start each workspace fired for, and the projects opened in it, are
 // kept in `pomade-started.json` in Runner's state folder: a scheduler restarted while Pomade runs
 // fires nothing again, and knows which projects were opened.
 
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { connect } from "node:net";
 import { dirname } from "node:path";
 
 import { readHostRecord, type Env } from "pomade-kit/node";
@@ -16,13 +18,32 @@ import { POMADE_ENV } from "pomade-kit/protocol";
 import { pomadeStartedRecordPath, type StateFolder } from "../locations";
 import type { Log } from "../scheduler/log";
 
-/** The running Pomade's start, named by its socket file; `null` when the socket is not found. */
+/** How long a socket has to accept a connection to count as Pomade's. */
+const ANSWER_MS = 2_000;
+
+/** Whether something listens on the socket `path`. */
+function answers(path: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect(path);
+    const done = (ok: boolean): void => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(ok);
+    };
+    const timer = setTimeout(() => done(false), ANSWER_MS);
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
+}
+
+/** The running Pomade's start, named by its socket file; `null` when the socket is not found or
+ *  nothing listens on it. */
 export async function pomadeStartOf(env: Env): Promise<string | null> {
   const socket = env[POMADE_ENV.socket] || readHostRecord(env)?.socket;
   if (socket === undefined) return null;
   try {
     const found = await stat(socket);
-    return `${found.dev}:${found.ino}:${Math.round(found.birthtimeMs)}`;
+    return (await answers(socket)) ? `${found.dev}:${found.ino}:${Math.round(found.birthtimeMs)}` : null;
   } catch {
     return null;
   }
