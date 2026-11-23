@@ -15,7 +15,7 @@ import { FolderField, type FormProps } from "./FolderField";
 import { FormSection } from "./FormSection";
 import styles from "./JobForm.module.css";
 import { LOW_PRIORITY_WORDS, MISSED_WORDS, NOTIFY_WORDS, OVERLAP_WORDS, TIME_LIMIT_WORDS, type PolicyWords } from "./policies";
-import type { FormValues, WorthUntil } from "./state";
+import type { FormValues, TriggerKind, WorthUntil } from "./state";
 import { ServiceChainLine, TriggerSection } from "./TriggerSection";
 import { projectPicks } from "./triggerWords";
 
@@ -123,16 +123,25 @@ const WORTH_OPTIONS: readonly { value: WorthUntil; label: string }[] = [
   { value: "time", label: "a time of day" },
 ];
 
-/** What a missed run becomes — for a job on a schedule; a hook or a chain says it does not apply. */
+/** Why a job not on a schedule never misses a run. */
+const MISSED_N_A: Record<Exclude<TriggerKind, "schedule">, string> = {
+  hook: "Doesn’t apply — hooks fire only while Pomade is running.",
+  chain: "Doesn’t apply — a chain runs when the job before it finishes.",
+  manual: "Doesn’t apply — a manual job runs only when you start it.",
+};
+
+/** What a missed run becomes — for a job on a schedule; a hook, a chain or a manual job says it does
+ *  not apply. */
 const MISSED: PolicyRow = {
   ...MISSED_WORDS,
   row: ({ state, set, defaults, error }) => {
     const { values } = state;
     if (values.trigger !== "schedule") {
+      const why = MISSED_N_A[values.trigger];
       return (
         <PolicyLine key="missed" label="If a run is missed" muted>
           <div className={styles.inline} data-testid="missed-n-a">
-            {values.trigger === "hook" ? "Doesn’t apply — hooks fire only while Pomade is running." : "Doesn’t apply — a chain runs when the job before it finishes."}
+            {why}
           </div>
         </PolicyLine>
       );

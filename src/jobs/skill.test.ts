@@ -41,7 +41,7 @@ describe("the pomade-runner-jobs skill", () => {
     const kinds = new Set(snapshot.jobs.map((entry) => (entry.valid ? entry.job.kind : null)));
     expect([...kinds].sort()).toEqual([...JOB_KINDS].sort());
     const triggers = new Set(snapshot.jobs.flatMap((entry) => (entry.valid && entry.job.kind !== "service" ? [entry.job.trigger.kind] : [])));
-    expect([...triggers].sort()).toEqual(["chain", "hook", "schedule"]);
+    expect([...triggers].sort()).toEqual(["chain", "hook", "manual", "schedule"]);
   });
 
   it("tells the agent to run pomade-runner check", () => {

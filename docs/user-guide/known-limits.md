@@ -17,8 +17,8 @@ kind: reference
   running; with no Agents app the run fails. Runner restarted mid-run learns an agent's turn is done only
   from the agent's next window title.
 - **Weekdays are Mon–Fri.** National holidays are not skipped.
-- **No cron syntax.** A schedule is one of the five shapes; a job that runs once per trigger has exactly
-  one trigger — a schedule, a hook or a chain.
+- **No cron syntax.** A schedule is one of the five shapes; a job that runs once per trigger has at most
+  one trigger — a schedule, a hook or a chain; with none it is a manual job.
 - **Services have no schedule and are never followed.** A chain can act on a service (restart, start,
   stop) but cannot start from one finishing. Missed-run policy, overlap and time limit apply to jobs
   that run once per trigger only.

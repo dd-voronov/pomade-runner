@@ -135,6 +135,13 @@
   font-size: var(--fs-sm);
 }
 
+/* Manually: the Trigger section's one sentence. */
+.manual {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
 .inline > [role="group"] {
   flex: none;
 }

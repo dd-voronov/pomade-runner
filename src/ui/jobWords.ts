@@ -148,11 +148,12 @@ const capitalized = (text: string): string => text.charAt(0).toUpperCase() + tex
 
 /** A job's Next run: disabled, paused by the loop guard, a service's "always on" — "with Pomade"
  *  for one bound to Pomade — a hook's or chain's
- *  "on event", else its schedule's next time — "in N min" under it within the hour — or "finished". */
+ *  "on event", a manual job's "on Run now", else its schedule's next time — "in N min" under it within the hour — or "finished". */
 export function nextLook(job: Job, runs: JobRuns | undefined, paused: boolean, now: number): NextLook {
   if (!job.enabled) return { words: "disabled", sub: null, none: true };
   if (paused) return { words: "paused", sub: null, none: true };
   if (job.kind === "service") return { words: pomadeBound(job.start) ? "with Pomade" : "always on", sub: null, none: true };
+  if (job.trigger.kind === "manual") return { words: "on Run now", sub: null, none: true };
   if (job.trigger.kind !== "schedule") return { words: "on event", sub: null, none: true };
   if (runs === undefined) return { words: "—", sub: null, none: true };
   if (runs.next === null) return { words: runs.finished ? "finished" : "—", sub: null, none: true };

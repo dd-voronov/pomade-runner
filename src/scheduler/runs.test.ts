@@ -477,6 +477,21 @@ describe("runs", () => {
       expect(await runs.runNow("q")).toEqual({ ok: false, reason: '"Q" has a run queued already' });
     });
 
+    it("a manual job never runs by itself, has no next run, and runs on Run now — its end fires the jobs that follow it", async () => {
+      files = { "by-hand.md": script("By hand", ""), "then.md": script("Then", "after: { job: by-hand }\n") };
+      load();
+      await at("2026-11-18T12:59:00");
+      await minutes("2026-11-19T13:05:00");
+      expect(sessions.spawned).toEqual([]);
+      expect(runs.nextUp()).toEqual([]);
+      expect(runs.jobRuns().find((info) => info.job === "by-hand")).toMatchObject({ next: null, finished: false });
+      expect(await runs.runNow("by-hand")).toMatchObject({ ok: true, run: { job: "by-hand", trigger: "manual", state: "running" } });
+      sessions.end(sessions.latest("by-hand"), "exited", 0);
+      await runs.tick();
+      expect(finished.at(-1)).toMatchObject({ job: "by-hand", trigger: "manual", state: "done" });
+      expect(runs.active()).toMatchObject([{ job: "then", trigger: "chain", cause: { kind: "chain", job: "by-hand", result: "done" } }]);
+    });
+
     it("refuses what it cannot run, and says why", async () => {
       files = {
         "off.md": script("Off", "enabled: false\nschedule:\n  daily: { at: 13:00 }\n"),

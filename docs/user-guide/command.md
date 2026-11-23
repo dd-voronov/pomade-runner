@@ -16,7 +16,7 @@ socket, so it works with Pomade closed. A job is named by its **id** (`coda-help
 |---|---|
 | `pomade-runner check [file…]` | checks job files and the settings file — every one in the workspace, or the files given. Prints `path:line: field — problem. Fix: …` per problem, then a summary; `no problems` when clean. Exit 1 on any problem. With Pomade closed it checks everything but project ids and says so |
 | `pomade-runner projects` | Pomade's projects: the id a project job's `project:` takes and the sub-folder of `jobs/` its jobs sit in. Needs Pomade running |
-| `pomade-runner list` | every job: its kind, trigger in words, next run and last result |
+| `pomade-runner list` | every job: its kind, trigger in words ("manual" for a manual job), next run and last result |
 | `pomade-runner run <job>` | runs a job now: a script, agent or git job runs (or queues behind its run going, as its overlap says); a service starts — one stopped by you or failed too |
 | `pomade-runner history [job]` | the latest 20 finished runs, newest first, of every job or one, each with its trigger, result, time and output log (`output not on this Mac` when the log did not come along); a git run adds a line per repo |
 | `pomade-runner runs` | the switch, the runs going — running, queued and what each waits for — and what needs you |

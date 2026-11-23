@@ -13,9 +13,13 @@ A **job** is one thing Runner does without you. It has a **kind**, a **trigger**
 | Kind | Does | Trigger |
 |---|---|---|
 | **Service** | keeps a command running; restarts it on a crash; outlives Pomade | always on: at login, or on the first open of a project |
-| **Script** | runs a command once each time its trigger fires, as if typed in a terminal in its folder | schedule · hook · chain |
-| **Agent** | starts an agent with a prompt, unattended, and ends its session when its turn is done | schedule · hook · chain |
-| **Git** | runs a git operation on one or more repos, with Pomade's safety rails | schedule · hook · chain |
+| **Script** | runs a command once each time its trigger fires, as if typed in a terminal in its folder | schedule · hook · chain · manual |
+| **Agent** | starts an agent with a prompt, unattended, and ends its session when its turn is done | schedule · hook · chain · manual |
+| **Git** | runs a git operation on one or more repos, with Pomade's safety rails | schedule · hook · chain · manual |
+
+A **manual job** has no trigger: it never runs by itself, only when you press **Run now** or run
+`pomade-runner run <job>`, and other jobs may chain after it. In the form's **Trigger** section,
+choose `Manually`; the file then has none of `schedule`, `hook` and `after`.
 
 Runner tracks only jobs made in Runner. A terminal you open by hand is just a terminal.
 
@@ -43,7 +47,7 @@ change applies within a second. A file with an error is shown in Runner with the
 | `start`, `start-project`, `ready` | service | [Services](services.md) |
 | `agent`, `mode`, body | agent | [Agent jobs](agent-jobs.md) |
 | `git` | git | [Git jobs](git-jobs.md) |
-| `schedule` · `hook` · `after` | script · agent · git (a service takes `after`) | exactly one for a job that runs once per trigger: [Schedules](schedules.md), [Hooks and chains](hooks-and-chains.md) |
+| `schedule` · `hook` · `after` | script · agent · git (a service takes `after`) | at most one; none is a manual job: [Schedules](schedules.md), [Hooks and chains](hooks-and-chains.md) |
 | `missed`, `worth-until`, `overlap`, `low-priority`, `time-limit`, `notify` | by kind | [Policies](#policies) |
 
 Agents learn the format from Runner's skill, `pomade-runner-jobs`; ask one to "add a job that runs
@@ -56,7 +60,7 @@ in Pomade's order, each group headed by its name, its jobs sub-folder and its co
 reads "N jobs", plus "· N invalid" when a file has errors. Columns:
 
 - **Job · trigger** — the kind icon, the name over the trigger in words ("weekdays at 7:00", "at Mac
-  login", "after Pull is done"). An agent job in Full autonomy carries an amber `Full autonomy` tag. A
+  login", "after Pull is done", "manual"). An agent job in Full autonomy carries an amber `Full autonomy` tag. A
   git job's tooltip adds its operation and repos; a repo the workspace lacks is said in red.
 - **Last result** — the run going ("running", "waiting for you", "queued", "missed · waiting for you")
   or the latest finished one ("done", "failed · exit 1", "stopped: time limit, 45 min", "skipped · …",
@@ -67,7 +71,7 @@ reads "N jobs", plus "· N invalid" when a file has errors. Columns:
   "10× in 10 min". "never ran" for none. Click it to open the run's result card. A service shows its
   state as the Services view does.
 - **Next run** — "disabled", "paused" (the loop guard's), "always on" (a service), "on event" (a hook or
-  a chain), "finished" (a schedule with nothing ahead), else the next time ("Today 13:00", "Wed 7:00"),
+  a chain), "on Run now" (a manual job), "finished" (a schedule with nothing ahead), else the next time ("Today 13:00", "Wed 7:00"),
   with "in N min" under it within the hour.
 - **Row actions** — `Run now`, `Edit`, `Delete`, and the `Enabled` toggle. A service has, in Run
   now's place, `Stop service` while it runs or starts and `Start service` while it does not (none
@@ -124,7 +128,7 @@ Each job that runs once per trigger carries these; each has an (i) help.
 
 | Policy | Values (default per kind) | See |
 |---|---|---|
-| **If a run is missed** | `Run on wake` (script, agent) · `Wait for me` · `Skip` (git); with Run on wake, **Still worth it until** `the next scheduled run` or `a time of day`. Not offered for a hook or a chain | [Missed runs and load](missed-runs-and-load.md) |
+| **If a run is missed** | `Run on wake` (script, agent) · `Wait for me` · `Skip` (git); with Run on wake, **Still worth it until** `the next scheduled run` or `a time of day`. Not offered for a hook, a chain or a manual job; in a manual job's file it is an error | [Missed runs and load](missed-runs-and-load.md) |
 | **If still running** | `Skip` · `Run in parallel` · `Queue after` | same |
 | **Low priority** | on for script and agent, off for git and service | same |
 | **Time limit** | `45m`, `2h`, `1h30m`; empty for none | same |

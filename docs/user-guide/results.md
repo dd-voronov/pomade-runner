@@ -114,7 +114,7 @@ permission). A notification for a run waiting at a prompt opens its terminal tab
 
 **Next up** lists the next five runs of enabled scheduled jobs, soonest first — a job as many times as
 it comes among them — as "in 40 min" within the hour, then the time ("13:00", "tmrw 7:00", "Thu 7:00");
-hover for the full moment. A `Run at…` run is in it. A run the switch holds shows its name faint with a
+hover for the full moment. A `Run at…` run is in it; a manual job never is. A run the switch holds shows its name faint with a
 `held` tag.
 
 **Running now** lists the services that are up or starting, in start order, then the runs going. A row:

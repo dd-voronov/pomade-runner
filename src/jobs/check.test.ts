@@ -132,6 +132,20 @@ describe("valid job files", () => {
     expect(snapshot.jobs[1]).toMatchObject({ valid: true, job: { trigger: { kind: "chain", chain: { job: "a", result: "failed" } }, missed: null } });
   });
 
+  it("reads a script, agent or git job with no schedule, hook or after as a manual job, with no missed-run policy", () => {
+    const files = {
+      "s.md": file("kind: script\nname: S\nfolder: .\ncommand: ./s.sh"),
+      "a.md": file("kind: agent\nname: A\nfolder: .\nagent: claude", "Go."),
+      "g.md": file("kind: git\nname: G\ngit: { operation: pull, repos: [K] }"),
+      "after-s.md": file("kind: script\nname: After S\nfolder: .\ncommand: ./t.sh\nafter: { job: s }"),
+    };
+    const snapshot = check(files);
+    expect(errors(files)).toEqual([]);
+    for (const id of ["s", "a", "g"]) {
+      expect(snapshot.jobs.find((entry) => entry.valid && entry.job.id === id)).toMatchObject({ valid: true, job: { trigger: { kind: "manual" }, missed: null, worthUntil: null } });
+    }
+  });
+
   it("takes CRLF line endings, comments, quoted values and an empty field as its default", () => {
     const text = "---\r\nkind: script # what it is\r\nname: \"Backup\"\r\nfolder: '.'\r\ncommand: ./backup.sh\r\nnotify:\r\nschedule:\r\n  daily: { at: 13:00 }\r\n---\r\nBody\r\n";
     expect(valid("backup.md", text)).toMatchObject({ name: "Backup", notify: "on-failure", body: "Body\r\n" });
@@ -181,7 +195,8 @@ describe("one file's problems: each names its line, its field and the fix", () =
     ["a misspelled notify", file(`${SCRIPT}\nnotify: on-failur`), { fix: "write on-failure" }],
     ["enabled that is not a flag", file(`${SCRIPT}\nenabled: yes`), { field: "enabled", problem: '"yes" is not true or false', fix: "write enabled: true or enabled: false" }],
     ["low-priority that is not a flag", file(`${SCRIPT}\nlow-priority: 1`), { field: "low-priority" }],
-    ["no trigger", file("kind: script\nname: B\nfolder: .\ncommand: ./x.sh"), { line: 2, field: "kind", problem: "a script job needs a trigger", fix: /schedule:.*hook:.*after:/ }],
+    ["missed on a manual job", file("kind: script\nname: B\nfolder: .\ncommand: ./x.sh\nmissed: skip"), { line: 6, field: "missed", problem: "a manual job never misses a run", fix: "remove it — a manual job runs only when you start it" }],
+    ["worth-until on a manual job", file("kind: agent\nname: B\nfolder: .\nagent: claude\nworth-until: 12:00", "Go."), { line: 6, field: "worth-until", problem: "a manual job never misses a run", fix: "remove it — a manual job runs only when you start it" }],
     ["two triggers", file(`${SCRIPT}\nhook: { event: login }`), { line: 8, field: "hook", problem: "a job has one trigger, and this one has schedule and hook", fix: "keep one of them" }],
     ["a schedule with a bad weekday", file("kind: script\nname: B\nfolder: .\ncommand: ./x.sh\nschedule:\n  weekly:\n    days: [mon, fry]\n    at: 7:00"), { line: 8, field: "schedule.weekly.days[1]", problem: '"fry" is not a weekday', fix: /mon, tue/ }],
     ["a schedule with a bad time", file("kind: script\nname: B\nfolder: .\ncommand: ./x.sh\nschedule:\n  daily: { at: 25:00 }"), { line: 7, field: "schedule.daily.at", problem: /"25:00" is not a time/ }],

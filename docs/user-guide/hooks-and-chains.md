@@ -7,7 +7,8 @@ kind: reference
 
 # Hooks and chains
 
-A job starts on a **schedule**, a **hook** or a **chain**. A hook fires when something happens in
+A job starts on a **schedule**, a **hook** or a **chain** — or, a manual job, only when you start it
+([Jobs](jobs.md)). A hook fires when something happens in
 Pomade or on the Mac; a chain fires when another job finishes. In the job form's **Trigger** section,
 choose `When something happens`, then pick from the **Event** list.
 

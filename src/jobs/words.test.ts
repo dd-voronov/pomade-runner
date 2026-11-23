@@ -74,6 +74,16 @@ describe("a job's trigger in words", () => {
     });
   });
 
+  it("says a job with no trigger manual, whatever its kind", () => {
+    expect(
+      words({
+        "by-hand.md": script(""),
+        "agent.md": `---\nkind: agent\nname: Job ${++names}\nfolder: .\nagent: claude\n---\nGo.\n`,
+        "git.md": `---\nkind: git\nname: Job ${++names}\ngit: { operation: pull, repos: [K] }\n---\n`,
+      }),
+    ).toEqual({ "by-hand": "manual", agent: "manual", git: "manual" });
+  });
+
   it("says a job and a project by their names when the caller knows them", () => {
     const snapshot = checkJobs(
       [

@@ -1,13 +1,13 @@
 ---
 name: pomade-runner-jobs
-description: Write, change or remove Pomade Runner jobs — always-on services, scheduled or hook-triggered scripts, unattended agent runs, and scheduled git commit/pull/push — as job files in <workspace>/Apps/pomade-runner/jobs/. Use when asked to keep a server running, run something on a schedule ("every morning", "daily at 13:00", "every 30 min"), run something when Pomade starts, a project opens or an agent session ends, chain one job after another, or schedule an agent prompt or a git commit-push. Always finish with `pomade-runner check`.
+description: Write, change or remove Pomade Runner jobs — always-on services, scheduled or hook-triggered scripts, unattended agent runs, and scheduled git commit/pull/push — as job files in <workspace>/Apps/pomade-runner/jobs/. Use when asked to keep a server running, run something on a schedule ("every morning", "daily at 13:00", "every 30 min"), run something when Pomade starts, a project opens or an agent session ends, chain one job after another, keep a job the user starts only by hand, or schedule an agent prompt or a git commit-push. Always finish with `pomade-runner check`.
 ---
 
 # Runner jobs
 
 Runner (the Pomade app `pomade-runner`) runs jobs without the user: it keeps **services** up — from
 Mac startup, or only while Pomade runs — and runs **scripts**, **agents** and **git** operations on
-schedules, hooks and chains, with Pomade open or closed. A job is one Markdown file; Runner picks up a new, changed or deleted file within a second.
+schedules, hooks and chains — or only when the user starts them — with Pomade open or closed. A job is one Markdown file; Runner picks up a new, changed or deleted file within a second.
 You never start, restart or register anything: write the file, then check it.
 
 ## Steps
@@ -57,7 +57,11 @@ An agent job's **body is its prompt** — it must not be empty.
 
 ## Triggers
 
-A service runs all the time its `start` says. Every script, agent and git job has **exactly one** of:
+A service runs all the time its `start` says. Every script, agent and git job has **at most one**
+of `schedule`, `hook` and `after`; with **none**, it is a **manual** job — it never runs by itself,
+only when the user starts it (Run now in Runner, `pomade-runner run <job>`), and other jobs may
+chain `after` it. Write a manual job when the user wants a command, an agent prompt or a git
+operation kept ready to run by hand.
 
 - **`schedule`** — when, on the Mac's local clock. One shape, plus `only: weekdays | weekends` with
   `every` and `daily`, and optional `start` / `end` dates (`YYYY-MM-DD`):
@@ -103,8 +107,8 @@ A service runs all the time its `start` says. Every script, agent and git job ha
 
 | Field | Value | Default |
 |---|---|---|
-| `missed` | scheduled jobs only — a run the Mac slept through, was off for, or Runner's switch held: `run-on-wake` (one catch-up run after wake, however many were missed) · `wait-for-me` (the user picks Run now, Run at… or Skip) · `skip` (recorded missed) | `run-on-wake` for script and agent, `skip` for git |
-| `worth-until` | with `run-on-wake`: a time (`12:00`) after which a catch-up is skipped, or `next-run` (skipped once the next run is due) | `next-run` |
+| `missed` | scheduled jobs only (a hook, chain or manual job refuses it) — a run the Mac slept through, was off for, or Runner's switch held: `run-on-wake` (one catch-up run after wake, however many were missed) · `wait-for-me` (the user picks Run now, Run at… or Skip) · `skip` (recorded missed) | `run-on-wake` for script and agent, `skip` for git |
+| `worth-until` | scheduled jobs with `run-on-wake`: a time (`12:00`) after which a catch-up is skipped, or `next-run` (skipped once the next run is due) | `next-run` |
 | `overlap` | the previous run is still going: `skip` · `parallel` · `queue` | `skip` |
 | `time-limit` | `45m`, `2h`, `1h30m`; a run past it is stopped and fails; empty = no limit | none |
 
@@ -113,7 +117,7 @@ N ahead". A job with `low-priority: false` neither waits for nor takes a slot.
 
 ## Examples
 
-One complete file per kind, plus a chain and three hooks. They form one valid jobs folder.
+One complete file per kind, plus a chain, three hooks and a manual job. They form one valid jobs folder.
 
 A **service** — a project's web server, restarted after its repo is pulled.
 File: `Apps/pomade-runner/jobs/coda-helper/coda-web.md`
@@ -234,6 +238,19 @@ hook: { event: session-status, status: done }
 ---
 The script gets POMADE_SESSION_ID, POMADE_AGENT, POMADE_SESSION_STATUS, POMADE_SESSION_TRANSCRIPT
 and, for a session in a project, POMADE_PROJECT and POMADE_PROJECT_PATH.
+```
+
+A **manual** job — no `schedule`, `hook` or `after`: it runs only when the user starts it.
+File: `Apps/pomade-runner/jobs/clear-cache.md`
+
+```markdown
+---
+kind: script
+name: Clear cache
+folder: .
+command: ./scripts/clear-cache.sh
+---
+Runs on Run now or `pomade-runner run clear-cache`.
 ```
 
 A **login** one-shot — mount a drive once after each Mac login.

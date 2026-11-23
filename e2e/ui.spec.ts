@@ -2483,6 +2483,48 @@ test.describe("the Script form and the schedule picker", () => {
     expect(await fileText(page, `${JOBS}/web.md`)).toBe(WEB);
   });
 
+  test("T-027 · Manually: the Trigger's third choice, one sentence under it; the file has no trigger and checks clean; the Jobs row says manual, on Run now, and Run now runs it", async ({ page }) => {
+    await start(page);
+    const frame = await newScript(page, "Clean cache");
+    const choice = frame.getByTestId("trigger-choice");
+    await expect(choice.getByRole("button")).toHaveText(["On a schedule", "When something happens", "Manually"]);
+    await choice.getByRole("button", { name: "Manually" }).click();
+    await expect(choice.getByRole("button", { name: "Manually" })).toHaveAttribute("aria-pressed", "true");
+    await expect(frame.getByTestId("manual-trigger")).toHaveText("It runs only when you press Run now — never by itself.");
+    await expect(frame.getByTestId("schedule-box")).toHaveCount(0);
+    await expect(frame.getByTestId("hook-event")).toHaveCount(0);
+    const policies = frame.getByTestId("form-policies");
+    await expect(policies.getByTestId("policy-summary")).toHaveText("Never overlaps itself · low priority · no time limit · notifies on failure");
+    await policies.getByRole("button", { name: "Change" }).click();
+    await expect(policies.getByTestId("missed-n-a")).toHaveText("Doesn’t apply — a manual job runs only when you start it.");
+    await expect(policies.getByRole("group", { name: "If a run is missed" })).toHaveCount(0);
+    await shoot(page, "tab-form-script-manual");
+    expect(await create(page, "clean-cache")).toBe(`${header("Clean cache")}---\n`);
+
+    // The checker takes it: a valid row, its trigger and Next run in words; Run now calls Runner.
+    const row = frame.locator('[data-testid="job-row"][data-job="clean-cache"]');
+    await expect(row.getByTestId("job-trigger")).toHaveText("manual");
+    await expect(row.getByTestId("job-next")).toHaveText("on Run now");
+    await expect(frame.locator('[data-testid="job-invalid"][data-job="clean-cache"]')).toHaveCount(0);
+    await shoot(page, "tab-jobs-manual-row");
+    await page.evaluate(() => (window.runnerCalls.length = 0));
+    await row.getByRole("button", { name: "Run now" }).click();
+    await expect(frame.getByTestId("toast").last()).toHaveText("RunnerClean cache started · trigger “manual”");
+    expect(await page.evaluate(() => window.runnerCalls)).toEqual([{ method: "jobs.run", params: { job: "clean-cache" } }]);
+  });
+
+  test("T-027 · Manually on a scheduled job takes out only its schedule: lines — comments, other fields and the body stay", async ({ page }) => {
+    const text = "---\nkind: script # tidy\nname: Tidy\nfolder: .\ncommand: ./tidy.sh\nschedule:\n  daily: { at: 7:00 }\nnotify: always # say so\n---\nNotes.\n";
+    await start(page, "edit/tidy");
+    await page.evaluate((t) => window.fakeHost.writeFile("Apps/pomade-runner/jobs/tidy.md", t), text);
+    const frame = app(page);
+    await expect(frame.getByRole("textbox", { name: "Time 1" })).toHaveValue("7:00");
+    await frame.getByTestId("trigger-choice").getByRole("button", { name: "Manually" }).click();
+    await frame.getByTestId("form-save").click();
+    await expect(frame.getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page, `${JOBS}/tidy.md`)).toBe(text.replace("schedule:\n  daily: { at: 7:00 }\n", ""));
+  });
+
   test("every field the Script form adds has a working (i)", async ({ page }) => {
     await start(page);
     const frame = await newScript(page, "Help");

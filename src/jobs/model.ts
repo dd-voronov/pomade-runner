@@ -79,14 +79,17 @@ export interface Chain {
 export type Trigger =
   | { kind: "schedule"; schedule: Schedule; /** In words: "weekdays at 7:00". */ words: string }
   | { kind: "hook"; hook: Hook }
-  | { kind: "chain"; chain: Chain };
+  | { kind: "chain"; chain: Chain }
+  /** No `schedule`, `hook` or `after`: the job runs only by hand — Run now, `pomade-runner run` —
+   *  or as another job's chain target. */
+  | { kind: "manual" };
 
 /** How a service tells it is up: alive after 5 s, a port that accepts connections, or a URL that answers. */
 export type Readiness = { kind: "alive" } | { kind: "port"; port: number } | { kind: "url"; url: string };
 
 /** The policies of a job that runs once per trigger. */
 export interface RunPolicies {
-  /** Scheduled jobs only; `null` for a hook or a chain. */
+  /** Scheduled jobs only; `null` for a hook, a chain or a manual job. */
   missed: MissedPolicy | null;
   /** With `missed: run-on-wake`: `"next-run"` or a time of day (`"12:00"`); else `null`. */
   worthUntil: string | null;

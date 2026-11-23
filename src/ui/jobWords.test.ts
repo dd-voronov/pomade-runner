@@ -164,6 +164,10 @@ describe("a job's next run", () => {
     expect(nextLook({ ...hook, trigger: { kind: "chain", chain: { job: "pull", result: "any" } } }, runs(), false, now).words).toBe("on event");
   });
 
+  it("says a manual job's Next run on Run now", () => {
+    expect(nextLook({ ...hook, trigger: { kind: "manual" } }, runs(), false, now)).toEqual({ words: "on Run now", sub: null, none: true });
+  });
+
   it("gives a schedule's next time, and how soon under an hour", () => {
     expect(nextLook(script, runs({ next: at(17, 13, 0) }), false, now)).toEqual({ words: "Today 13:00", sub: "in 12 min", none: false });
     expect(nextLook(script, runs({ next: at(17, 15, 0) }), false, now)).toEqual({ words: "Today 15:00", sub: null, none: false });

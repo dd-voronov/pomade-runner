@@ -42,9 +42,9 @@ import { blankSchedule, readSchedule, scheduleInput, type ScheduleValues } from 
 /** How a service tells it is up, as the form offers it. */
 export type ReadyCheck = "alive" | "port" | "url";
 
-/** A script's trigger: a schedule, a hook (its event in `hookEvent`) or a chain (`chainJob`,
- *  `chainResult`). */
-export type TriggerKind = "schedule" | "hook" | "chain";
+/** A script's trigger: a schedule, a hook (its event in `hookEvent`), a chain (`chainJob`,
+ *  `chainResult`), or none — a manual job, run only by hand. */
+export type TriggerKind = "schedule" | "hook" | "chain" | "manual";
 
 /** Until when a caught-up run is worth starting: the job's next scheduled run, or a time of day. */
 export type WorthUntil = "next-run" | "time";
@@ -179,8 +179,8 @@ const SERVICE: KindFile = {
   errorFields: { ...COMMON_ERROR_FIELDS, command: "command", start: "start", "start-project": "start", ready: "ready", after: "chainJob" },
 };
 
-/** A job that runs once per trigger writes its one trigger — a schedule, a hook's event, or a chain
- *  — and, for a schedule, its missed-run policy (`worth-until` only with `run-on-wake`); and its
+/** A job that runs once per trigger writes its one trigger — a schedule, a hook's event, or a chain;
+ *  a manual job none of them — and, for a schedule, its missed-run policy (`worth-until` only with `run-on-wake`); and its
  *  overlap and time limit. A policy at its default is left out; a limit of digits only is written
  *  as a number, so the checker says it has no unit. A hook writes its event and the filters its
  *  event takes — a first open's project; a session finished's project and agent; a status change's
@@ -276,6 +276,14 @@ export function newForm(kind: JobKind): FormState {
 const asText = (value: unknown): string => (typeof value === "string" ? value : typeof value === "number" ? String(value) : "");
 const isMapping = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
+/** The trigger a job file says: its schedule, else its hook, else its chain; none is manual. A
+ *  service has no trigger, and keeps the form's default for a switch of kind. */
+function runTrigger(kind: JobKind, fields: Readonly<Record<string, unknown>>): TriggerKind {
+  if (kind === "service" || fields.schedule !== undefined) return "schedule";
+  if (fields.hook !== undefined) return "hook";
+  return fields.after !== undefined ? "chain" : "manual";
+}
+
 /** The values a job file's text says; `null` when its frontmatter cannot be read or its kind is not
  *  one the format has. A value the form cannot show stands at its default. */
 export function valuesFromText(text: string): FormValues | null {
@@ -304,7 +312,7 @@ export function valuesFromText(text: string): FormValues | null {
     ready: isMapping(ready) && ready.port != null ? "port" : isMapping(ready) && ready.url != null ? "url" : "alive",
     port: isMapping(ready) ? asText(ready.port) : "",
     url: isMapping(ready) ? asText(ready.url) : "",
-    trigger: kind !== "service" && fields.schedule === undefined && fields.hook !== undefined ? "hook" : kind !== "service" && fields.schedule === undefined && fields.after !== undefined ? "chain" : "schedule",
+    trigger: runTrigger(kind, fields),
     schedule: readSchedule(fields.schedule),
     hookEvent: isMapping(hook) ? asText(hook.event).trim() : hook === undefined ? values.hookEvent : "",
     hookProject: isMapping(hook) ? asText(hook.project).trim() : "",

@@ -159,6 +159,25 @@ test.describe("scheduled scripts", () => {
     expect(await world.queuedNotices()).toEqual([]);
   });
 
+  test("T-027 · a manual job — no schedule, hook or after — checks clean and never runs by itself; pomade-runner run runs it as manual, and its end fires the job chained after it", async () => {
+    await world.writeJob("by-hand.md", scriptFile("By hand", "echo by hand", ""));
+    await world.writeJob("then.md", scriptFile("Then", "echo then", "after: { job: by-hand }\n"));
+    expect(await world.command("check")).toMatchObject({ code: 0, stdout: expect.stringMatching(/^2 job files in \S+: no problems\.\n/) as unknown });
+    // Two hours of the scheduler's clock pass in seconds: nothing runs.
+    const scheduler = world.startScheduler(clock("2026-11-18T12:00:00", 1800));
+    await world.ready(scheduler);
+    await expect.poll(() => schedulerTime(world), { timeout: 10_000 }).toBeGreaterThan(Date.parse("2026-11-18T14:00:00+01:00"));
+    expect(await world.history()).toEqual([]);
+    expect((await world.command("list")).stdout).toMatch(/^by-hand {2}By hand {2}script {2}manual {2}no next run · never ran\n/);
+
+    expect(await world.command("run", "by-hand")).toMatchObject({ code: 0, stderr: "" });
+    await expect.poll(() => world.history(), { timeout: 10_000 }).toEqual([
+      expect.objectContaining({ job: "then", trigger: "chain", state: "done", lastLines: ["then"] }) as RunRecord,
+      expect.objectContaining({ job: "by-hand", trigger: "manual", state: "done", lastLines: ["by hand"] }) as RunRecord,
+    ]);
+    expect((await world.command("history", "by-hand")).stdout).toMatch(/^by-hand {2}By hand {2}manual {2}done, /);
+  });
+
   test("Enable and Disable write the job's file; a disabled job does not run", async () => {
     await world.writeJob("backup.md", scriptFile("Backup", "true", "schedule:\n  daily: { at: 13:00 }\n"));
     const scheduler = world.startScheduler(clock("2026-11-18T12:59:57"));
@@ -203,8 +222,9 @@ test.describe("scheduled scripts", () => {
     expect(day).not.toContain(world.tmp);
     expect(await readFile(join(records, "runs.json"), "utf8")).not.toContain(world.tmp);
     // The state folder: the control socket, the keeper, the session records, the output being
-    // written, the projects heard and this Mac's service supervision — nothing of the records.
-    expect((await readdir(state)).filter((name) => !["keeper", "output", "projects.json", "scheduler.sock", "services.json", "sessions.json"].includes(name))).toEqual([]);
+    // written, the projects heard, this Mac's service supervision and where it put the agent skill —
+    // nothing of the records.
+    expect((await readdir(state)).filter((name) => !["keeper", "output", "projects.json", "scheduler.sock", "services.json", "sessions.json", "skill.json"].includes(name))).toEqual([]);
   });
 
   test("a workspace copied to a fresh user-data folder shows the same History with its output, switch and Needs you; what it missed since its last alive time goes to each job's policy", async () => {

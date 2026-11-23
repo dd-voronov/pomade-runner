@@ -93,5 +93,7 @@ export function jobTriggerWords(job: Job, names: WordNames = {}, now: Date = new
       return hookWords(job.trigger.hook, names);
     case "chain":
       return chainWords(job.trigger.chain, names);
+    case "manual":
+      return "manual";
   }
 }

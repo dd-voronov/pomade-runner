@@ -58,7 +58,7 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
 | `form/JobForm.tsx` | the form's page: head, Kind, kind sections, Policies, the Save bar, following the file |
 | `form/state.ts` | the form's state (pure): values, what the person set, the file as last read, the fields each kind writes (`FORM_KINDS`) |
 | `form/kinds.tsx` | each kind's card, sections, policy rows and Create button (`KIND_UI`) |
-| `form/TriggerSection.tsx` | On a schedule / When something happens: the schedule editor, the Event list and its filters, a service's chain line |
+| `form/TriggerSection.tsx` | On a schedule / When something happens / Manually: the schedule editor, the Event list and its filters, Manually's one line, a service's chain line |
 | `form/schedule.ts` | the schedule editor's values and their canonical lines (pure) |
 | `form/triggerWords.ts` | the Event list (`EVENT_CHOICES`), the pickers (jobs, projects, statuses, agents) and the trigger in words under the editor (pure) |
 | `form/policies.ts` | the policies' words in the one-sentence summary (pure) |

@@ -1,10 +1,10 @@
-// The job form's Trigger section for a job that runs once per trigger: the choice between a schedule
-// and a hook, then the schedule editor — the shape (Once · Every… · Daily · Weekly · Monthly), the
+// The job form's Trigger section for a job that runs once per trigger: the choice between a schedule,
+// a hook and none (Manually — the job runs only by hand), then the schedule editor — the shape (Once · Every… · Daily · Weekly · Monthly), the
 // shape's own controls, the Weekdays only / Weekends only filter — and the schedule in words with its
 // next three runs, live; or the hook editor — the Event list of the hooks the engine fires, with
 // "Another job finished" (a chain) last, a chain's job and result — and the trigger in words. A
 // hook on an event the form does not offer keeps it: the section says it in words and that it is
-// changed in the file. A service's chain is its own line (`ServiceChainLine`).
+// changed in the file. Manually is a sentence and no controls. A service's chain is its own line (`ServiceChainLine`).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { addDays, localDateOf, WEEKDAYS, type MonthDay, type Nth, type Weekday } from "pomade-kit/schedule";
@@ -72,24 +72,35 @@ export function TriggerSection(props: FormProps): React.JSX.Element {
   // Back from a schedule, the hook editor shows the hook or the chain it last showed.
   const [lastHook, setLastHook] = useState<"hook" | "chain">(trigger === "chain" ? "chain" : "hook");
   useEffect(() => {
-    if (trigger !== "schedule") setLastHook(trigger);
+    if (trigger === "hook" || trigger === "chain") setLastHook(trigger);
   }, [trigger]);
   return (
     <FormSection title="Trigger" sub="when it runs" testId="form-trigger">
       <div className={styles.inline}>
-        <Segmented<"schedule" | "hook">
+        <Segmented<"schedule" | "hook" | "manual">
           label="Trigger"
-          value={trigger === "schedule" ? "schedule" : "hook"}
-          onChange={(value) => set("trigger", value === "schedule" ? "schedule" : lastHook)}
+          value={trigger === "chain" ? "hook" : trigger}
+          onChange={(value) => set("trigger", value === "hook" ? lastHook : value)}
           testId="trigger-choice"
           options={[
             { value: "schedule", label: "On a schedule" },
             { value: "hook", label: "When something happens" },
+            { value: "manual", label: "Manually" },
           ]}
         />
         <Help k="f.trigger" />
       </div>
-      {trigger === "schedule" ? <ScheduleEditor {...props} /> : trigger === "hook" && !formOffersHook(state.values.hookEvent) ? <FileHook {...props} /> : <HookEditor {...props} />}
+      {trigger === "schedule" ? (
+        <ScheduleEditor {...props} />
+      ) : trigger === "manual" ? (
+        <p className={styles.manual} data-testid="manual-trigger">
+          It runs only when you press Run now — never by itself.
+        </p>
+      ) : trigger === "hook" && !formOffersHook(state.values.hookEvent) ? (
+        <FileHook {...props} />
+      ) : (
+        <HookEditor {...props} />
+      )}
     </FormSection>
   );
 }

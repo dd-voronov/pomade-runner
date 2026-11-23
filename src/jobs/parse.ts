@@ -372,13 +372,10 @@ function checkStartProject(c: FileCheck, start: ServiceStart | null, project: st
   return project;
 }
 
-/** The job's trigger: exactly one of schedule, hook and after. */
-function checkTrigger(c: FileCheck, kind: JobKind, chain: Chain | null): Trigger | "invalid" {
+/** The job's trigger: at most one of schedule, hook and after; none is a manual job. */
+function checkTrigger(c: FileCheck, chain: Chain | null): Trigger | "invalid" {
   const given = (["schedule", "hook", "after"] as const).filter((key) => c.has(key));
-  if (given.length === 0) {
-    c.add(["kind"], `${aJob(kind)} needs a trigger`, "add one of schedule: (when), hook: (on an event) or after: (when another job finishes)");
-    return "invalid";
-  }
+  if (given.length === 0) return { kind: "manual" };
   if (given.length > 1) {
     const [, second] = given;
     c.add([second ?? "after"], `a job has one trigger, and this one has ${listWords(given).replace(" or ", " and ")}`, `keep one of them`);
@@ -398,14 +395,18 @@ function checkTrigger(c: FileCheck, kind: JobKind, chain: Chain | null): Trigger
 function checkPolicies(c: FileCheck, kind: JobKind, trigger: Trigger | null): RunPolicies {
   const scheduled = trigger?.kind === "schedule" || c.has("schedule");
   let missed: RunPolicies["missed"] = scheduled ? KIND_DEFAULTS[kind].missed : null;
+  const manual = trigger?.kind === "manual";
   if (c.has("missed")) {
-    if (!scheduled) c.add(["missed"], "only a scheduled job can miss a run", "remove it — hooks and chains have no missed runs");
+    if (manual) c.add(["missed"], "a manual job never misses a run", "remove it — a manual job runs only when you start it");
+    else if (!scheduled) c.add(["missed"], "only a scheduled job can miss a run", "remove it — hooks and chains have no missed runs");
     else missed = c.oneOf(["missed"], c.get("missed"), MISSED_POLICIES) ?? missed;
   }
   let worthUntil: string | null = missed === "run-on-wake" ? "next-run" : null;
   if (c.has("worth-until")) {
     const value = c.get("worth-until");
-    if (missed !== "run-on-wake") {
+    if (manual) {
+      c.add(["worth-until"], "a manual job never misses a run", "remove it — a manual job runs only when you start it");
+    } else if (missed !== "run-on-wake") {
       c.add(["worth-until"], "only applies with missed: run-on-wake", scheduled ? "remove it, or set missed: run-on-wake" : "remove it");
     } else if (value === "next-run") {
       worthUntil = "next-run";
@@ -631,7 +632,7 @@ export function parseJobFile(input: JobFileInput): ParsedJobFile {
       job = { ...common, kind, folder, command, start, startProject: start === "project-first-open" ? startProject : null, ready, after: chain && { ...chain.chain, action: chain.action } };
     }
   } else {
-    const trigger = checkTrigger(c, kind, chain?.chain ?? null);
+    const trigger = checkTrigger(c, chain?.chain ?? null);
     const policies = checkPolicies(c, kind, trigger === "invalid" ? null : trigger);
     if (kind === "script") {
       const folder = checkFolder(c, kind);

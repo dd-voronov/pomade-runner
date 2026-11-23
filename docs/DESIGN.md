@@ -45,9 +45,9 @@ A job has a **kind**, a **trigger**, a **folder** and **policies**.
 | Kind | Does | Trigger |
 |---|---|---|
 | **Service** | keeps a command running; restarts it on crash | always on: from Mac startup; while Pomade is running; or from the first open of a project until Pomade quits |
-| **Script** | runs a command once per trigger | schedule · hook · chain |
-| **Agent** | runs an agent with a prompt, unattended | schedule · hook · chain |
-| **Git** | runs `pomade-git <operation> <repo>` for one or more repos | schedule · hook · chain |
+| **Script** | runs a command once per trigger | schedule · hook · chain · manual |
+| **Agent** | runs an agent with a prompt, unattended | schedule · hook · chain · manual |
+| **Git** | runs `pomade-git <operation> <repo>` for one or more repos | schedule · hook · chain · manual |
 
 ### Job files
 
@@ -119,7 +119,7 @@ Notes for humans and agents.
 | `after` | script · agent · git · service | `{ job: <id>, result: done \| failed \| any }` (chains); a service also takes `action: restart \| start \| stop` |
 | `agent`, `mode` | agent | `agent` (required): a roster id from `pomade-agents`; `mode`: one of that agent's modes, default `normal`; the file **body is the prompt**: not empty, at most 16,384 characters (`AGENT_PROMPT_MAX`), no NUL — its errors name the field `body` |
 | `git` | git | required: `{ operation: commit-push \| pull \| push \| fetch, repos: [...] }`; repos by the name `pomade-git` accepts, each once, none starting with `-` (the command would read it as an option); one repo may be written without the list |
-| `missed` | scheduled jobs only | `run-on-wake` (agent, script) · `wait-for-me` · `skip` (git) — what a missed run becomes ("Missed runs and load") |
+| `missed` | scheduled jobs only; a hook, chain or manual job refuses it | `run-on-wake` (agent, script) · `wait-for-me` · `skip` (git) — what a missed run becomes ("Missed runs and load") |
 | `worth-until` | with `missed: run-on-wake` | `next-run` (default) or a time of day (`12:00`): until when a caught-up run is worth starting |
 | `overlap` | non-service jobs | `skip` · `parallel` · `queue` |
 | `low-priority` | all | `true` for agent and script; `false` for service and git — macOS background priority; a low-priority run takes one of the low-priority slots and is held by Pause low-priority |
@@ -127,8 +127,10 @@ Notes for humans and agents.
 | `notify` | all | `always` for agent; `on-failure` otherwise; `never` |
 
 **Format rules:**
-- A script, agent or git job has exactly one trigger: `schedule`, `hook` or `after`. A service has
-  none of `schedule` and `hook`; its `after` acts on it.
+- A script, agent or git job has at most one trigger: `schedule`, `hook` or `after`. One with none
+  is a **manual job**: it never runs by itself — only on Run now and `pomade-runner run` — and other
+  jobs may chain after it; `missed` and `worth-until` in its file are errors ("a manual job never
+  misses a run"). A service has none of `schedule` and `hook`; its `after` acts on it.
 - An empty field (`notify:`) means its default; in a mapping the form writes, an entry it leaves
   empty is left out.
 - Values are read as YAML 1.2 core: `7:00` and `2026-11-20` are text, `yes` is not `true`.
@@ -192,7 +194,9 @@ disk.
   - while the keeper is not followed nothing is due: the look waits for it, so a short keeper
     outage delays a run instead of losing it.
 - **Once at** runs once; after its time it has no next run and shows as **finished**.
-- Script, agent and git jobs fire on schedules, hooks and chains.
+- Script, agent and git jobs fire on schedules, hooks and chains. A manual job fires on none: the
+  scheduler never starts it, it has no next run and never shows in Next up; Run now runs it with
+  trigger `manual`, and a run of it that ends done or failed fires its chains like any run.
 
 **Hooks:**
 
@@ -960,7 +964,7 @@ to it, light theme only.
   id>`, `newJobRoute`).
   - **A row:** the kind icon (the kind as its tooltip), the name — an agent job in Full autonomy with
     the amber **Full autonomy** tag and its help beside it — over the trigger in words
-    (`jobTriggerWords`, a chain's job and a hook's project by name; the tooltip is the full text, and
+    (`jobTriggerWords`, a chain's job and a hook's project by name, "manual" for a manual job; the tooltip is the full text, and
     a git job's adds its operation and repos — a repo the workspace lacks is said in red), **Last
     result**, **Next run**, the actions, and the **Disable** toggle. A disabled row is dimmed.
   - **Last result** (`lastLook`, `src/ui/jobWords.ts`): a chip with the status's help over a sub line.
@@ -976,7 +980,7 @@ to it, light theme only.
     click on a job's cell opens that run's result card (`run/<job>/<run>`); a service's, a paused
     job's and a never-ran job's cell has none.
   - **Next run** (`nextLook`): "disabled", "paused" (the loop guard's), "always on" (a service on Mac startup), "with Pomade" (a Pomade-bound one), "on
-    event" (a hook or a chain), "finished" (a schedule with nothing ahead), else the next time —
+    event" (a hook or a chain), "on Run now" (a manual job), "finished" (a schedule with nothing ahead), else the next time —
     "Today 13:00", "Tomorrow 7:00", "Wed 7:00", "Wed 25 Nov 7:00" — with the countdown under it
     within the hour.
   - **The countdown** (`soonWords`, `src/ui/runWords.ts`): one function, read by Next run and by the
@@ -1124,9 +1128,12 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   in `KIND_UI` (`kinds.tsx`: its sections between Kind and Policies, its policy rows, its Create
   button). A file the form cannot read — broken frontmatter, a kind Runner does not have — opens a
   page saying so, with **Open file**.
-- **Trigger** (script and git; `TriggerSection.tsx`, the values in `schedule.ts` and `state.ts`, the words
-  in `triggerWords.ts`, pure). A choice of **On a schedule** · **When something happens**; back
-  from a schedule, the hook or the chain shown last returns. A schedule has the schedule editor:
+- **Trigger** (script, agent and git; `TriggerSection.tsx`, the values in `schedule.ts` and `state.ts`, the words
+  in `triggerWords.ts`, pure). A choice of **On a schedule** · **When something happens** ·
+  **Manually**; back to When something happens, the hook or the chain shown last returns. A file
+  with none of `schedule`, `hook` and `after` opens on Manually. **Manually** has one line under it,
+  "It runs only when you press Run now — never by itself.", and no controls; it removes `schedule`,
+  `hook`, `after` and the missed-run policy from the file, field-only. A schedule has the schedule editor:
   - **Repeats**: Once (a date of the coming week and a time, or a phrase typed in words — `tonight
     23:00`, `tomorrow 7:00`, `+2h` — read by `pomade-kit/dates`, which fills in the date and time) ·
     Every N minutes or hours, optionally only between two times · Daily at one or more times ·
@@ -1215,8 +1222,8 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   A script's, in that order:
   - **If a run is missed**: Run on wake · Wait for me · Skip, each with its own help; with Run on
     wake, **Still worth it until** the next scheduled run or a time of day (`worth-until`, the time
-    typed). For a script whose trigger is a hook or a chain the row says it does not apply, and the
-    sentence leaves it out. `worth-until` is written only with Run on wake and a time; choosing
+    typed). For a script whose trigger is a hook, a chain or Manually the row says it does not apply
+    ("Doesn’t apply — a manual job runs only when you start it."), and the sentence leaves it out. `worth-until` is written only with Run on wake and a time; choosing
     another policy takes it out of the file.
   - **If still running**: Skip · Run in parallel · Queue after;
   - **Low priority**: a switch;
@@ -1380,7 +1387,7 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
   `RepoJob`). Params `{ repo: { name, path } }`; a job targets the repo when one of its `repos` is
   the name, or the absolute path. The answer, by id: every valid, enabled git job that targets it,
   with its operation, `schedule` — its trigger in words, as the Jobs view shows it ("daily at 13:00
-  and 20:00", "at Mac login") — `nextRun` (ISO 8601, or `null`), `lastResult` (the repo's own
+  and 20:00", "at Mac login", "manual") — `nextRun` (ISO 8601, or `null`), `lastResult` (the repo's own
   result in the latest run when it has one, else the run's: a missed run is `skipped`, one stopped
   by you `failed`; `at` its end) and `route` (`jobs/<encoded job id>`). Answered from the snapshot
   in memory, in milliseconds.

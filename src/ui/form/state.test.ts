@@ -282,6 +282,37 @@ describe("editing a job file", () => {
   });
 });
 
+describe("a manual job", () => {
+  const PATH = "Apps/pomade-runner/jobs/tidy.md";
+  const SCHEDULED = "---\nkind: script # tidy\nname: Tidy\nfolder: .\ncommand: ./t.sh\nschedule: # Sunday night\n  weekly: { days: [sun], at: 3:00 }\nmissed: wait-for-me\noverlap: queue # one at a time\n---\nNotes.\n";
+
+  it("a new one writes none of schedule, hook and after, and checks with no problems", () => {
+    for (const kind of ["script", "agent", "git"] as const) {
+      let state = setValue(fill(newForm(kind), { name: "By hand", folder: ".", command: "./x.sh" }), "trigger", "manual");
+      if (kind === "agent") state = setValue(state, "prompt", "Go.");
+      if (kind === "git") state = setValue(state, "repos", ["Knowledge"]);
+      const { text } = wouldBe(state, EMPTY, PROJECTS);
+      expect(text).not.toMatch(/^(schedule|hook|after|missed|worth-until):/m);
+      expect(formErrors(state, EMPTY, PROJECTS)).toEqual([]);
+    }
+  });
+
+  it("reads a file with no trigger as Manually, and Manually takes only the trigger and its missed-run policy out of a scheduled one", () => {
+    expect(valuesFromText("---\nkind: script\nname: By hand\nfolder: .\ncommand: ./x.sh\n---\n")?.trigger).toBe("manual");
+    const state = editForm(PATH, SCHEDULED);
+    if (state === null) throw new Error("not editable");
+    const manual = setValue(state, "trigger", "manual");
+    expect(fieldChanges(manual)).toEqual({ schedule: undefined, missed: undefined });
+    expect(wouldBe(manual, EMPTY, PROJECTS).text).toBe("---\nkind: script # tidy\nname: Tidy\nfolder: .\ncommand: ./t.sh\noverlap: queue # one at a time\n---\nNotes.\n");
+  });
+
+  it("a missed-run policy in its file is the file's error: the form draws no missed row for it", () => {
+    const state = editForm(PATH, "---\nkind: script\nname: By hand\nfolder: .\ncommand: ./x.sh\nmissed: skip\n---\n");
+    if (state === null) throw new Error("not editable");
+    expect(shown(state, EMPTY)).toEqual({ file: ["missed — a manual job never misses a run. Fix: remove it — a manual job runs only when you start it."] });
+  });
+});
+
 describe("the policies: missed-run, worth-until, time limit", () => {
   const PATH = "Apps/pomade-runner/jobs/librarian.md";
   const FILE = (extra: string): string => `---\nkind: script # tidy\nname: Librarian\nfolder: .\ncommand: ./l.sh\nschedule:\n  weekly: { days: [sun], at: 3:00 }\n${extra}---\nNotes.\n`;
