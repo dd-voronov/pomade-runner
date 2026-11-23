@@ -10,7 +10,7 @@ import { turnTracker, type TurnHandlers } from "./agent-turns";
 const title = (text: string): string => `\x1b]0;${text}\x07`;
 
 /** Claude Code's permission dialog as it draws it: the question, the options, the footer last. */
-const DIALOG = ["", " Bash command", "   git mv 00-Inbox/*.md 01-Raw/Notes/", "", " Do you want to proceed?", " ❯ 1. Yes", "   2. Yes, and don't ask again for git mv", "   3. No, tell Claude what to do differently", "", " Esc to cancel"].join("\r\n");
+const DIALOG = ["", " Bash command", "   git mv drafts/*.md published/", "", " Do you want to proceed?", " ❯ 1. Yes", "   2. Yes, and don't ask again for git mv", "   3. No, tell Claude what to do differently", "", " Esc to cancel"].join("\r\n");
 
 function recorder(): { handlers: TurnHandlers; done: () => number; waits: (string | null)[] } {
   let done = 0;

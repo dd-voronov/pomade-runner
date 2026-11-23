@@ -6,8 +6,8 @@ import type { Job, JobError, JobsSnapshot, ProjectRecord } from "./model";
 import { closest, parseDuration } from "./parse";
 
 const PROJECTS: ProjectRecord[] = [
-  { id: "p7Kx2_coda", name: "Coda Helper", root: "Projects/coda-helper" },
-  { id: "p9Lq4_hunt", name: "Job hunt", root: "Projects/job-hunt" },
+  { id: "p7Kx2_blog", name: "Blog Helper", root: "Projects/blog" },
+  { id: "p9Lq4_shop", name: "Shop", root: "Projects/shop" },
 ];
 
 const file = (fields: string, body = ""): string => `---\n${fields}\n---\n${body}`;
@@ -36,22 +36,22 @@ function valid(path: string, text: string, projects: ProjectRecord[] | null = PR
   return entry.job;
 }
 
-const SERVICE = "kind: service\nname: Coda web\nproject: p7Kx2_coda\nfolder: Projects/coda-helper\ncommand: ./start.sh";
+const SERVICE = "kind: service\nname: Dev server\nproject: p7Kx2_blog\nfolder: Projects/blog\ncommand: ./start.sh";
 const SCRIPT = "kind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\nschedule:\n  daily: { at: 13:00 }";
 
 describe("valid job files", () => {
   it("reads a service with its defaults", () => {
-    expect(valid("coda-helper/coda-web.md", file(SERVICE, "Notes.\n"))).toEqual({
-      id: "coda-helper/coda-web",
-      path: "Apps/pomade-runner/jobs/coda-helper/coda-web.md",
+    expect(valid("blog/dev-server.md", file(SERVICE, "Notes.\n"))).toEqual({
+      id: "blog/dev-server",
+      path: "Apps/pomade-runner/jobs/blog/dev-server.md",
       kind: "service",
-      name: "Coda web",
-      project: "p7Kx2_coda",
+      name: "Dev server",
+      project: "p7Kx2_blog",
       enabled: true,
       notify: "on-failure",
       lowPriority: false,
       body: "Notes.\n",
-      folder: "Projects/coda-helper",
+      folder: "Projects/blog",
       command: "./start.sh",
       start: "login",
       startProject: null,
@@ -61,18 +61,18 @@ describe("valid job files", () => {
   });
 
   it("reads a service's readiness, start and chain", () => {
-    const pull = file("kind: git\nname: Pull\ngit: { operation: pull, repos: [coda-helper] }\nschedule:\n  every: { hours: 1 }");
-    const withPull = (service: string): JobsSnapshot => check({ "coda-helper/coda-web.md": service, "pull.md": pull });
+    const pull = file("kind: git\nname: Pull\ngit: { operation: pull, repos: [blog] }\nschedule:\n  every: { hours: 1 }");
+    const withPull = (service: string): JobsSnapshot => check({ "blog/dev-server.md": service, "pull.md": pull });
     expect(withPull(file(`${SERVICE}\nstart: project-first-open\nready: { port: 5173 }\nafter: { job: pull, result: any, action: stop }`)).jobs[0]).toMatchObject({
       valid: true,
-      job: { start: "project-first-open", startProject: "p7Kx2_coda", ready: { kind: "port", port: 5173 }, after: { job: "pull", result: "any", action: "stop" } },
+      job: { start: "project-first-open", startProject: "p7Kx2_blog", ready: { kind: "port", port: 5173 }, after: { job: "pull", result: "any", action: "stop" } },
     });
     // On the first open of another project: a workspace service, or a project's.
-    expect(valid("docs.md", file("kind: service\nname: Docs\nfolder: .\ncommand: ./d.sh\nstart: project-first-open\nstart-project: p9Lq4_hunt"))).toMatchObject({ project: null, start: "project-first-open", startProject: "p9Lq4_hunt" });
-    expect(valid("coda-helper/coda-web.md", file(`${SERVICE}\nstart: project-first-open\nstart-project: p9Lq4_hunt`))).toMatchObject({ startProject: "p9Lq4_hunt" });
+    expect(valid("docs.md", file("kind: service\nname: Docs\nfolder: .\ncommand: ./d.sh\nstart: project-first-open\nstart-project: p9Lq4_shop"))).toMatchObject({ project: null, start: "project-first-open", startProject: "p9Lq4_shop" });
+    expect(valid("blog/dev-server.md", file(`${SERVICE}\nstart: project-first-open\nstart-project: p9Lq4_shop`))).toMatchObject({ startProject: "p9Lq4_shop" });
     expect(valid("watch.md", file("kind: service\nname: Watch\nfolder: .\ncommand: ./w.sh\nstart: pomade-started"))).toMatchObject({ start: "pomade-started", startProject: null });
     expect(withPull(file(`${SERVICE}\nafter: { job: pull }`)).jobs[0]).toMatchObject({ valid: true, job: { after: { job: "pull", result: "done", action: "restart" } } });
-    expect(valid("coda-helper/coda-web.md", file(`${SERVICE}\nready: { url: http://localhost:5173/ }`))).toMatchObject({ ready: { kind: "url", url: "http://localhost:5173/" } });
+    expect(valid("blog/dev-server.md", file(`${SERVICE}\nready: { url: http://localhost:5173/ }`))).toMatchObject({ ready: { kind: "url", url: "http://localhost:5173/" } });
   });
 
   it("reads a scheduled script with its defaults and the schedule in words", () => {
@@ -104,21 +104,21 @@ describe("valid job files", () => {
   });
 
   it("reads a git job, which has no folder, misses with skip and runs at normal priority", () => {
-    const job = valid("knowledge.md", file("kind: git\nname: Knowledge commit\ngit: { operation: commit-push, repos: [Knowledge] }\nschedule:\n  daily: { at: [13:00, 20:00] }"));
-    expect(job).toMatchObject({ kind: "git", git: { operation: "commit-push", repos: ["Knowledge"] }, missed: "skip", worthUntil: null, lowPriority: false });
-    expect(valid("pull.md", file("kind: git\nname: Pull\ngit: { operation: pull, repos: coda-helper }\nhook: { event: pomade-started }"))).toMatchObject({ git: { repos: ["coda-helper"] } });
+    const job = valid("notes.md", file("kind: git\nname: Commit notes\ngit: { operation: commit-push, repos: [notes] }\nschedule:\n  daily: { at: [13:00, 20:00] }"));
+    expect(job).toMatchObject({ kind: "git", git: { operation: "commit-push", repos: ["notes"] }, missed: "skip", worthUntil: null, lowPriority: false });
+    expect(valid("pull.md", file("kind: git\nname: Pull\ngit: { operation: pull, repos: blog }\nhook: { event: pomade-started }"))).toMatchObject({ git: { repos: ["blog"] } });
   });
 
   it("reads every hook, with its filters", () => {
     const hooks: Array<[string, object]> = [
       ["{ event: login }", { event: "login", project: null, agent: null, status: null }],
       ["{ event: pomade-started }", { event: "pomade-started" }],
-      ["{ event: project-first-open, project: p9Lq4_hunt }", { event: "project-first-open", project: "p9Lq4_hunt" }],
+      ["{ event: project-first-open, project: p9Lq4_shop }", { event: "project-first-open", project: "p9Lq4_shop" }],
       ["{ event: project-first-open }", { event: "project-first-open", project: null }],
-      ["{ event: project-opened, project: p9Lq4_hunt }", { event: "project-opened", project: "p9Lq4_hunt" }],
+      ["{ event: project-opened, project: p9Lq4_shop }", { event: "project-opened", project: "p9Lq4_shop" }],
       ["{ event: project-opened }", { event: "project-opened", project: null }],
       ["{ event: project-created }", { event: "project-created" }],
-      ["{ event: session-finished, agent: claude, project: p9Lq4_hunt }", { event: "session-finished", agent: "claude", project: "p9Lq4_hunt" }],
+      ["{ event: session-finished, agent: claude, project: p9Lq4_shop }", { event: "session-finished", agent: "claude", project: "p9Lq4_shop" }],
       ["{ event: session-status, status: done }", { event: "session-status", status: "done" }],
     ];
     for (const [hook, expected] of hooks) {
@@ -177,7 +177,7 @@ describe("one file's problems: each names its line, its field and the fix", () =
     ["no fields", file("# only a comment"), { line: 2, problem: "the frontmatter holds no fields", fix: /kind:/ }],
     ["no kind", file("name: Backup"), { line: 2, field: "kind", problem: "the file says no kind", fix: /service, script, agent or git/ }],
     ["a bad kind", file("kind: scirpt\nname: Backup"), { line: 2, field: "kind", problem: '"scirpt" is not allowed', fix: "write script" }],
-    ["no name", file("kind: script\nfolder: .\ncommand: ./x.sh\nhook: { event: login }"), { line: 2, field: "name", problem: "the job has no name", fix: /name: Coda web/ }],
+    ["no name", file("kind: script\nfolder: .\ncommand: ./x.sh\nhook: { event: login }"), { line: 2, field: "name", problem: "the job has no name", fix: /name: Dev server/ }],
     ["an empty name", file('kind: script\nname: " "\nfolder: .\ncommand: ./x.sh\nhook: { event: login }'), { line: 3, field: "name", problem: "is empty" }],
     ["a name that is a number", file("kind: script\nname: 2024\nfolder: .\ncommand: ./x.sh\nhook: { event: login }"), { line: 3, problem: "2024 reads as a number, not text", fix: 'put it in quotes: name: "2024"' }],
     ["an unknown field", file(`${SCRIPT}\ncolor: red`), { line: 8, field: "color", problem: "color is not a job field", fix: /remove it/ }],
@@ -185,7 +185,7 @@ describe("one file's problems: each names its line, its field and the fix", () =
     ["a camelCase field", file(`${SCRIPT}\ntimeLimit: 5m`), { fix: "rename it to time-limit" }],
     ["a field of another kind", file(`${SCRIPT}\nready: { port: 1 }`), { line: 8, field: "ready", problem: "a script job has no ready", fix: "remove it — ready is for service jobs" }],
     ["a git job with a folder", file("kind: git\nname: G\nfolder: .\ngit: { operation: pull, repos: [K] }\nhook: { event: login }"), { line: 4, field: "folder", problem: "a git job has no folder" }],
-    ["a missing folder", file("kind: script\nname: B\ncommand: ./x.sh\nhook: { event: login }"), { line: 2, field: "folder", problem: "a script job needs folder", fix: "add folder: Projects/my-project" }],
+    ["a missing folder", file("kind: script\nname: B\ncommand: ./x.sh\nhook: { event: login }"), { line: 2, field: "folder", problem: "a script job needs folder", fix: "add folder: Projects/blog" }],
     ["a folder outside the workspace", file(SCRIPT.replace("folder: .", "folder: ../elsewhere")), { line: 4, field: "folder", problem: /outside the workspace/ }],
     ["an absolute folder", file(SCRIPT.replace("folder: .", "folder: /Users/me")), { problem: /outside the workspace/ }],
     ["a folder with backslashes", file(SCRIPT.replace("folder: .", "folder: Projects\\x")), { problem: /backslashes/ }],
@@ -209,7 +209,7 @@ describe("one file's problems: each names its line, its field and the fix", () =
     ["a hook that is not a mapping", file("kind: script\nname: B\nfolder: .\ncommand: ./x.sh\nhook: login"), { line: 6, field: "hook", problem: '"login" is not a hook', fix: /hook: \{ event: login \}/ }],
     ["a hook with no event", file("kind: script\nname: B\nfolder: .\ncommand: ./x.sh\nhook: { agent: claude }"), { field: "hook", problem: "names no event" }],
     ["a hook with a bad event", file("kind: script\nname: B\nfolder: .\ncommand: ./x.sh\nhook: { event: logon }"), { field: "hook.event", fix: "write login" }],
-    ["a hook filter its event does not take", file("kind: script\nname: B\nfolder: .\ncommand: ./x.sh\nhook: { event: login, project: p9Lq4_hunt }"), { field: "hook.project", problem: "the login hook has no project filter", fix: "remove it" }],
+    ["a hook filter its event does not take", file("kind: script\nname: B\nfolder: .\ncommand: ./x.sh\nhook: { event: login, project: p9Lq4_shop }"), { field: "hook.project", problem: "the login hook has no project filter", fix: "remove it" }],
     ["a status filter on session-finished", file("kind: script\nname: B\nfolder: .\ncommand: ./x.sh\nhook: { event: session-finished, status: done }"), { field: "hook.status", fix: "remove it — this hook filters by project or agent" }],
     ["an unknown hook key", file("kind: script\nname: B\nfolder: .\ncommand: ./x.sh\nhook: { event: login, when: now }"), { field: "hook.when", problem: "the login hook does not take when" }],
     ["session-status with no status", file("kind: script\nname: B\nfolder: .\ncommand: ./x.sh\nhook: { event: session-status }"), { field: "hook", problem: "the session-status hook needs a status" }],
@@ -227,9 +227,9 @@ describe("one file's problems: each names its line, its field and the fix", () =
     ["a service with a schedule", file(`${SCRIPT.replace("kind: script", "kind: service")}`), { field: "schedule", problem: "a service job has no schedule" }],
     ["a bad start", file(`${SERVICE}\nstart: boot`), { field: "start", fix: "use one of login, pomade-started or project-first-open" }],
     ["project-first-open without a project", file("kind: service\nname: W\nfolder: .\ncommand: ./w.sh\nstart: project-first-open"), { field: "start", problem: "starts on the first open of a project, and names none", fix: /add start-project:/ }],
-    ["a start project for a service that starts on Mac startup", file(`${SERVICE}\nstart-project: p9Lq4_hunt`), { field: "start-project", problem: "a service that starts on Mac startup has no start project" }],
-    ["a start project for a service that runs while Pomade is running", file(`${SERVICE}\nstart: pomade-started\nstart-project: p9Lq4_hunt`), { field: "start-project", problem: "a service that runs while Pomade is running has no start project" }],
-    ["a start project on a script", file(`${SCRIPT}\nstart-project: p9Lq4_hunt`), { field: "start-project", problem: "a script job has no start-project" }],
+    ["a start project for a service that starts on Mac startup", file(`${SERVICE}\nstart-project: p9Lq4_shop`), { field: "start-project", problem: "a service that starts on Mac startup has no start project" }],
+    ["a start project for a service that runs while Pomade is running", file(`${SERVICE}\nstart: pomade-started\nstart-project: p9Lq4_shop`), { field: "start-project", problem: "a service that runs while Pomade is running has no start project" }],
+    ["a start project on a script", file(`${SCRIPT}\nstart-project: p9Lq4_shop`), { field: "start-project", problem: "a script job has no start-project" }],
     ["ready that is not a mapping", file(`${SERVICE}\nready: 5173`), { field: "ready", problem: "5173 is not a readiness check" }],
     ["ready with both checks", file(`${SERVICE}\nready: { port: 1, url: http://x/ }`), { field: "ready", problem: "has both port and url" }],
     ["ready with no check", file(`${SERVICE}\nready: {}`), { field: "ready", problem: "names no check" }],
@@ -264,7 +264,7 @@ describe("one file's problems: each names its line, its field and the fix", () =
 
   for (const [what, text, expected] of cases) {
     it(what, () => {
-      const path = text.includes("project: p7Kx2_coda") ? "coda-helper/job.md" : "job.md";
+      const path = text.includes("project: p7Kx2_blog") ? "blog/job.md" : "job.md";
       // `x` is a job a chain may name.
       const error = only({ [path]: text, "x.md": file("kind: script\nname: X\nfolder: .\ncommand: ./x.sh\nhook: { event: login }") });
       const { problem, fix, ...rest } = expected;
@@ -308,13 +308,13 @@ describe("where a file sits", () => {
   });
 
   it("a file two sub-folders deep", () => {
-    const error = only({ "coda-helper/old/web.md": file(SERVICE) }, null);
-    expect(error).toMatchObject({ line: 1, problem: /one sub-folder deep/, fix: "move it to Apps/pomade-runner/jobs/coda-helper/web.md" });
+    const error = only({ "blog/old/web.md": file(SERVICE) }, null);
+    expect(error).toMatchObject({ line: 1, problem: /one sub-folder deep/, fix: "move it to Apps/pomade-runner/jobs/blog/web.md" });
   });
 
   it("a project job outside its sub-folder, a workspace job inside one", () => {
     expect(only({ "web.md": file(SERVICE) })).toMatchObject({ line: 4, field: "project", problem: /at the top of the jobs folder/ });
-    expect(only({ "coda-helper/backup.md": file(SCRIPT) }, null)).toMatchObject({ line: 2, field: "project", problem: /coda-helper\/ sub-folder, which holds project jobs, and says no project/, fix: /pomade-runner projects/ });
+    expect(only({ "blog/backup.md": file(SCRIPT) }, null)).toMatchObject({ line: 2, field: "project", problem: /blog\/ sub-folder, which holds project jobs, and says no project/, fix: /pomade-runner projects/ });
   });
 
   it("a file that cannot be read", () => {
@@ -325,20 +325,20 @@ describe("where a file sits", () => {
 
 describe("projects", () => {
   it("an unknown project id, with the project its sub-folder belongs to as the fix", () => {
-    expect(only({ "coda-helper/web.md": file(SERVICE.replace("p7Kx2_coda", "nope")) })).toMatchObject({
+    expect(only({ "blog/web.md": file(SERVICE.replace("p7Kx2_blog", "nope")) })).toMatchObject({
       line: 4,
       field: "project",
       problem: "Pomade has no project with the id nope",
-      fix: "write project: p7Kx2_coda (Coda Helper)",
+      fix: "write project: p7Kx2_blog (Blog Helper)",
     });
-    expect(only({ "elsewhere/web.md": file(SERVICE.replace("p7Kx2_coda", "nope")) }).fix).toMatch(/pomade-runner projects/);
+    expect(only({ "elsewhere/web.md": file(SERVICE.replace("p7Kx2_blog", "nope")) }).fix).toMatch(/pomade-runner projects/);
   });
 
   it("a project job in another project's sub-folder", () => {
-    expect(only({ "job-hunt/web.md": file(SERVICE) })).toMatchObject({
+    expect(only({ "shop/web.md": file(SERVICE) })).toMatchObject({
       field: "project",
-      problem: "the job belongs to Coda Helper, whose jobs sit in Apps/pomade-runner/jobs/coda-helper/",
-      fix: "move the file to Apps/pomade-runner/jobs/coda-helper/web.md, or fix project:",
+      problem: "the job belongs to Blog Helper, whose jobs sit in Apps/pomade-runner/jobs/blog/",
+      fix: "move the file to Apps/pomade-runner/jobs/blog/web.md, or fix project:",
     });
   });
 
@@ -351,7 +351,7 @@ describe("projects", () => {
   });
 
   it("goes unchecked while Pomade's projects are not known, and says so", () => {
-    const snapshot = check({ "elsewhere/web.md": file(SERVICE.replace("p7Kx2_coda", "nope")) }, null);
+    const snapshot = check({ "elsewhere/web.md": file(SERVICE.replace("p7Kx2_blog", "nope")) }, null);
     expect(snapshot.projectsChecked).toBe(false);
     expect(snapshot.jobs[0]?.valid).toBe(true);
     expect(check({}).projectsChecked).toBe(true);
@@ -366,7 +366,7 @@ describe("across files", () => {
   });
 
   it("a chain that follows a service", () => {
-    expect(only({ "coda-helper/web.md": file(SERVICE), "b.md": chained("b", "coda-helper/web") })).toMatchObject({ field: "after.job", problem: /is a service/ });
+    expect(only({ "blog/web.md": file(SERVICE), "b.md": chained("b", "blog/web") })).toMatchObject({ field: "after.job", problem: /is a service/ });
   });
 
   it("a job that follows itself", () => {
@@ -384,8 +384,8 @@ describe("across files", () => {
   });
 
   it("a loop a service chain cannot be part of: a service is never followed", () => {
-    const found = errors({ "coda-helper/web.md": file(`${SERVICE}\nafter: { job: a }`), "a.md": chained("a", "coda-helper/web") });
-    expect(found.map((e) => e.problem)).toEqual(["coda-helper/web is a service, and a service never finishes"]);
+    const found = errors({ "blog/web.md": file(`${SERVICE}\nafter: { job: a }`), "a.md": chained("a", "blog/web") });
+    expect(found.map((e) => e.problem)).toEqual(["blog/web is a service, and a service never finishes"]);
   });
 
   it("two jobs with the same name, case aside", () => {
@@ -394,9 +394,9 @@ describe("across files", () => {
   });
 
   it("lists files by path, invalid ones kept with what is known of them", () => {
-    const snapshot = check({ "z.md": file(SCRIPT.replace("Backup", "Z")), "coda-helper/web.md": file(`${SERVICE}\nready: nope`) });
-    expect(snapshot.jobs.map((e) => (e.valid ? e.job.id : e.invalid.id))).toEqual(["coda-helper/web", "z"]);
-    expect(snapshot.jobs[0]).toMatchObject({ valid: false, invalid: { name: "Coda web", kind: "service", project: "p7Kx2_coda" } });
+    const snapshot = check({ "z.md": file(SCRIPT.replace("Backup", "Z")), "blog/web.md": file(`${SERVICE}\nready: nope`) });
+    expect(snapshot.jobs.map((e) => (e.valid ? e.job.id : e.invalid.id))).toEqual(["blog/web", "z"]);
+    expect(snapshot.jobs[0]).toMatchObject({ valid: false, invalid: { name: "Dev server", kind: "service", project: "p7Kx2_blog" } });
   });
 });
 
@@ -418,7 +418,7 @@ it("formats an error as one line an agent can act on", () => {
 
 describe("one file among the others (the job form's check)", () => {
   const snapshot = check({
-    "coda-helper/coda-web.md": file(SERVICE),
+    "blog/dev-server.md": file(SERVICE),
     "backup.md": file(SCRIPT),
     "pull.md": file("kind: script\nname: Pull\nfolder: .\ncommand: ./pull.sh\nafter: { job: backup }"),
   });
@@ -440,18 +440,18 @@ describe("one file among the others (the job form's check)", () => {
   });
 
   it("checks the project and the sub-folder the file sits in", () => {
-    expect(among("coda-web-2.md", file("kind: service\nname: Web\nproject: p7Kx2_coda\nfolder: .\ncommand: ./a.sh"))).toEqual([
-      "Apps/pomade-runner/jobs/coda-web-2.md:4: project — a project job sits in its project's sub-folder, and this file is at the top of the jobs folder. Fix: move the file into the project's sub-folder (`pomade-runner projects` shows it), or remove project: for a workspace job.",
+    expect(among("dev-server-2.md", file("kind: service\nname: Web\nproject: p7Kx2_blog\nfolder: .\ncommand: ./a.sh"))).toEqual([
+      "Apps/pomade-runner/jobs/dev-server-2.md:4: project — a project job sits in its project's sub-folder, and this file is at the top of the jobs folder. Fix: move the file into the project's sub-folder (`pomade-runner projects` shows it), or remove project: for a workspace job.",
     ]);
-    expect(among("job-hunt/web.md", file("kind: service\nname: Web\nproject: p9Lq4_hunt\nfolder: .\ncommand: ./a.sh"))).toEqual([]);
+    expect(among("shop/web.md", file("kind: service\nname: Web\nproject: p9Lq4_shop\nfolder: .\ncommand: ./a.sh"))).toEqual([]);
   });
 
   it("follows chains through the others: a loop back through them is refused", () => {
     expect(among("backup.md", file("kind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\nafter: { job: pull }"))).toEqual([
       "Apps/pomade-runner/jobs/backup.md:6: after.job — the chain loops back: backup → pull → backup. Fix: remove after: from one of these jobs, or point it at a job outside the loop.",
     ]);
-    expect(among("web.md", file("kind: script\nname: Web\nfolder: .\ncommand: ./a.sh\nafter: { job: coda-helper/coda-web }"))).toEqual([
-      "Apps/pomade-runner/jobs/web.md:6: after.job — coda-helper/coda-web is a service, and a service never finishes. Fix: follow a script, agent or git job.",
+    expect(among("web.md", file("kind: script\nname: Web\nfolder: .\ncommand: ./a.sh\nafter: { job: blog/dev-server }"))).toEqual([
+      "Apps/pomade-runner/jobs/web.md:6: after.job — blog/dev-server is a service, and a service never finishes. Fix: follow a script, agent or git job.",
     ]);
   });
 
@@ -467,8 +467,8 @@ describe("one file among the others (the job form's check)", () => {
   });
 
   it("a moved file leaves its old entry: its name is free", () => {
-    const moved = file("kind: service\nname: Coda web\nproject: p9Lq4_hunt\nfolder: .\ncommand: ./a.sh");
-    expect(among("job-hunt/coda-web.md", moved)).toHaveLength(1);
-    expect(among("job-hunt/coda-web.md", moved, "Apps/pomade-runner/jobs/coda-helper/coda-web.md")).toEqual([]);
+    const moved = file("kind: service\nname: Dev server\nproject: p9Lq4_shop\nfolder: .\ncommand: ./a.sh");
+    expect(among("shop/dev-server.md", moved)).toHaveLength(1);
+    expect(among("shop/dev-server.md", moved, "Apps/pomade-runner/jobs/blog/dev-server.md")).toEqual([]);
   });
 });

@@ -166,7 +166,7 @@ export function newJobText(fields: Readonly<Record<string, FieldInput>>, body: s
   return withBody.ok ? withBody.text : written.text;
 }
 
-/** The slug a job name gives its file: `Coda web` → `coda-web`. */
+/** The slug a job name gives its file: `Dev server` → `dev-server`. */
 export function slugify(name: string): string {
   const slug = name
     .normalize("NFKD")

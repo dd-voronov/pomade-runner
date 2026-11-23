@@ -11,9 +11,9 @@ function written(text: string, changes: Parameters<typeof setJobFields>[1]): str
 
 const HAND_WRITTEN = `---
 kind: service   # keeps it up
-name: Coda web
+name: Dev server
 # the folder is the repo
-folder: Projects/coda-helper
+folder: Projects/blog
 command: ./start.sh
 ready:
   port: 5173
@@ -59,8 +59,8 @@ describe("field-only writes", () => {
   });
 
   it("quotes values that would not read back as themselves", () => {
-    const next = written("", { git: { operation: "pull", repos: ["Knowledge", "a, b", "true", "x: y"] }, name: "true" });
-    expect(next).toContain('git: { operation: pull, repos: [Knowledge, "a, b", "true", "x: y"] }');
+    const next = written("", { git: { operation: "pull", repos: ["notes", "a, b", "true", "x: y"] }, name: "true" });
+    expect(next).toContain('git: { operation: pull, repos: [notes, "a, b", "true", "x: y"] }');
     expect(next).toContain('name: "true"');
   });
 
@@ -74,7 +74,7 @@ describe("field-only writes", () => {
   });
 
   it("says when nothing changed", () => {
-    expect(setJobFields(HAND_WRITTEN, { name: "Coda web" })).toEqual({ ok: true, text: HAND_WRITTEN, changed: false });
+    expect(setJobFields(HAND_WRITTEN, { name: "Dev server" })).toEqual({ ok: true, text: HAND_WRITTEN, changed: false });
   });
 });
 
@@ -97,14 +97,14 @@ describe("new job files", () => {
   });
 
   it("names the file after the job: a slug, a project's sub-folder, a free name", () => {
-    expect([slugify("Coda web"), slugify("  Ünïcode — job!  "), slugify("!!!")]).toEqual(["coda-web", "unicode-job", "job"]);
+    expect([slugify("Dev server"), slugify("  Ünïcode — job!  "), slugify("!!!")]).toEqual(["dev-server", "unicode-job", "job"]);
     expect(jobFilePath(null, "backup")).toBe("Apps/pomade-runner/jobs/backup.md");
-    expect(jobFilePath("coda-helper", "coda-web")).toBe("Apps/pomade-runner/jobs/coda-helper/coda-web.md");
-    const candidates = jobFileCandidates("coda-helper", "Coda web");
+    expect(jobFilePath("blog", "dev-server")).toBe("Apps/pomade-runner/jobs/blog/dev-server.md");
+    const candidates = jobFileCandidates("blog", "Dev server");
     expect([candidates.next().value, candidates.next().value, candidates.next().value]).toEqual([
-      "Apps/pomade-runner/jobs/coda-helper/coda-web.md",
-      "Apps/pomade-runner/jobs/coda-helper/coda-web-2.md",
-      "Apps/pomade-runner/jobs/coda-helper/coda-web-3.md",
+      "Apps/pomade-runner/jobs/blog/dev-server.md",
+      "Apps/pomade-runner/jobs/blog/dev-server-2.md",
+      "Apps/pomade-runner/jobs/blog/dev-server-3.md",
     ]);
   });
 });

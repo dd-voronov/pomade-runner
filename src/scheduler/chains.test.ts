@@ -108,11 +108,11 @@ describe("chains", () => {
   it("names project jobs by their id, sub-folder included", () => {
     const snapshot = checkJobs(
       [
-        { path: "coda/git-pull.md", text: "---\nkind: script\nname: Pull\nproject: p1\nfolder: .\ncommand: ./x.sh\nhook: { event: project-created }\n---\n" },
-        { path: "coda/web.md", text: "---\nkind: service\nname: Web\nproject: p1\nfolder: .\ncommand: ./web.sh\nafter: { job: coda/git-pull }\n---\n" },
+        { path: "blog/pull.md", text: "---\nkind: script\nname: Pull\nproject: p1\nfolder: .\ncommand: ./x.sh\nhook: { event: project-created }\n---\n" },
+        { path: "blog/web.md", text: "---\nkind: service\nname: Web\nproject: p1\nfolder: .\ncommand: ./web.sh\nafter: { job: blog/pull }\n---\n" },
       ],
-      { workspace: "/ws", projects: [{ id: "p1", name: "Coda", root: "Projects/coda" }] },
+      { workspace: "/ws", projects: [{ id: "p1", name: "Blog", root: "Projects/blog" }] },
     );
-    expect(followers(snapshot, record("done", { job: "coda/git-pull" })).map((job) => job.id)).toEqual(["coda/web"]);
+    expect(followers(snapshot, record("done", { job: "blog/pull" })).map((job) => job.id)).toEqual(["blog/web"]);
   });
 });

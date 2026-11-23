@@ -9,7 +9,7 @@ kind: reference
 
 `pomade-runner` is Runner's command line. It is on your `PATH` through Pomade's command folder
 (`~/.pomade/bin`), reads your job files and settings directly and talks to the scheduler over its own
-socket, so it works with Pomade closed. A job is named by its **id** (`coda-helper/coda-web`) or its
+socket, so it works with Pomade closed. A job is named by its **id** (`blog/dev-server`) or its
 **name**.
 
 | Command | Does |

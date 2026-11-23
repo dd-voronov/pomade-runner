@@ -8,7 +8,7 @@ kind: reference
 # Agent jobs
 
 An **agent job** starts one of your agents with a prompt, unattended, and ends its session once its turn
-is done. Use it for a morning summary, a weekly vault clean-up, inbox triage. It runs on a schedule, a
+is done. Use it for a morning summary, a weekly review of drafts, a link check. It runs on a schedule, a
 hook or a chain, like a script ([Schedules](schedules.md), [Hooks and chains](hooks-and-chains.md)).
 
 ## What needs the Agents app

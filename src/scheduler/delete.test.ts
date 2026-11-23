@@ -5,7 +5,7 @@ import type { ServiceActionResult } from "../keeper/model";
 import { deleteJob, STOP_WAIT_MS, type DeleteJobDeps } from "./delete";
 import type { ActiveRun } from "./model";
 
-const SERVICE = "---\nkind: service\nname: Coda web\nfolder: .\ncommand: ./start.sh\n---\n";
+const SERVICE = "---\nkind: service\nname: Dev server\nfolder: .\ncommand: ./start.sh\n---\n";
 const SCRIPT = "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\nschedule:\n  daily: { at: 13:00 }\n---\n";
 const BROKEN = "---\nkind: service\nname: Broken\n---\n";
 
@@ -86,7 +86,7 @@ describe("deleting a job", () => {
 
   it("stops a running service first, waits for its session to end, then removes the file", async () => {
     const { deps, steps } = world({ "web.md": SERVICE }, { live: ["web"], endsAfter: 3 });
-    expect(await deleteJob("Coda web", deps)).toEqual({ ok: true, job: "web", path: "Apps/pomade-runner/jobs/web.md", stopped: true });
+    expect(await deleteJob("Dev server", deps)).toEqual({ ok: true, job: "web", path: "Apps/pomade-runner/jobs/web.md", stopped: true });
     expect(steps).toEqual([
       "stop web",
       "refresh sessions",
@@ -113,12 +113,12 @@ describe("deleting a job", () => {
 
   it("keeps the file when the service does not stop in time, or Stop is refused", async () => {
     const slow = world({ "web.md": SERVICE }, { live: ["web"], endsAfter: Number.POSITIVE_INFINITY });
-    expect(await deleteJob("web", slow.deps)).toEqual({ ok: false, reason: '"Coda web" did not stop, so its file is kept' });
+    expect(await deleteJob("web", slow.deps)).toEqual({ ok: false, reason: '"Dev server" did not stop, so its file is kept' });
     expect(slow.steps.some((step) => step.startsWith("remove"))).toBe(false);
     expect(slow.steps.filter((step) => step.startsWith("refresh sessions")).length).toBeGreaterThan(STOP_WAIT_MS / 100);
 
     const refused = world({ "web.md": SERVICE }, { live: ["web"], stop: { ok: false, reason: "the keeper is not running" } });
-    expect(await deleteJob("web", refused.deps)).toEqual({ ok: false, reason: 'cannot stop "Coda web": the keeper is not running' });
+    expect(await deleteJob("web", refused.deps)).toEqual({ ok: false, reason: 'cannot stop "Dev server": the keeper is not running' });
     expect(refused.steps).toEqual(["stop web"]);
   });
 

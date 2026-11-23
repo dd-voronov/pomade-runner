@@ -236,11 +236,11 @@ class FileCheck {
 }
 
 function checkFolder(c: FileCheck, kind: JobKind): string | null {
-  const value = c.required("folder", "Projects/my-project", kind);
+  const value = c.required("folder", "Projects/blog", kind);
   if (value === undefined) return null;
-  const text = c.text(["folder"], value, "Projects/my-project", { oneLine: true });
+  const text = c.text(["folder"], value, "Projects/blog", { oneLine: true });
   if (text === null) return null;
-  const fix = "write a folder inside the workspace, relative to its root, e.g. folder: Projects/my-project (. is the workspace root)";
+  const fix = "write a folder inside the workspace, relative to its root, e.g. folder: Projects/blog (. is the workspace root)";
   if (text.includes("\\")) {
     c.add(["folder"], `${show(text)} uses backslashes`, `write it with forward slashes — ${fix}`);
     return null;
@@ -277,7 +277,7 @@ function checkChain(c: FileCheck, kind: JobKind): { chain: Chain; action: Servic
   } else if (typeof value.job === "string" && value.job.trim().endsWith(".md")) {
     c.add(["after", "job"], `${show(value.job)} is a file name`, `write the job's id, without .md: ${value.job.trim().slice(0, -3)}`);
   } else if (typeof value.job !== "string" || !JOB_ID_RE.test(value.job.trim())) {
-    c.add(["after", "job"], `${show(value.job)} is not a job id`, "write the other job's id: its file name without .md, with its sub-folder for a project job — backup, coda-helper/git-pull");
+    c.add(["after", "job"], `${show(value.job)} is not a job id`, "write the other job's id: its file name without .md, with its sub-folder for a project job — backup, blog/pull");
   } else {
     job = value.job.trim();
   }
@@ -455,9 +455,9 @@ function checkReadiness(c: FileCheck): Readiness {
 }
 
 function checkGit(c: FileCheck): { operation: GitOperation; repos: string[] } | null {
-  const value = c.required("git", "{ operation: commit-push, repos: [Knowledge] }", "git");
+  const value = c.required("git", "{ operation: commit-push, repos: [notes] }", "git");
   if (value === undefined) return null;
-  const fix = "write git: { operation: commit-push, repos: [Knowledge] }";
+  const fix = "write git: { operation: commit-push, repos: [notes] }";
   if (!isMapping(value)) {
     c.add(["git"], `${show(value)} is not a git operation`, fix);
     return null;
@@ -468,7 +468,7 @@ function checkGit(c: FileCheck): { operation: GitOperation; repos: string[] } | 
   else operation = c.oneOf(["git", "operation"], value.operation, GIT_OPERATIONS);
   const repos: string[] = [];
   const raw = value.repos;
-  const reposFix = "list the repos by the name Pomade's Git panel shows: repos: [Knowledge, coda-helper]";
+  const reposFix = "list the repos by the name Pomade's Git panel shows: repos: [notes, blog]";
   if (raw === undefined || raw === null || (Array.isArray(raw) && raw.length === 0)) {
     c.add(raw === undefined || raw === null ? ["git"] : ["git", "repos"], "names no repos", reposFix);
   } else if (!Array.isArray(raw)) {
@@ -543,7 +543,7 @@ function locate(path: string): { id: string; folder: string | null; problem: { p
   return { id, folder, problem: null };
 }
 
-/** Check one job file on its own. `path` is inside the jobs folder (`coda-helper/coda-web.md`). */
+/** Check one job file on its own. `path` is inside the jobs folder (`blog/dev-server.md`). */
 export function parseJobFile(input: JobFileInput): ParsedJobFile {
   const path = workspacePath(input.path);
   const where = locate(input.path);
@@ -589,8 +589,8 @@ export function parseJobFile(input: JobFileInput): ParsedJobFile {
   }
 
   const nameValue = c.get("name");
-  const name = nameValue === undefined ? null : c.text(["name"], nameValue, "Coda web", { oneLine: true });
-  if (nameValue === undefined) c.add(["name"], "the job has no name", "add name: — what Runner shows, e.g. name: Coda web");
+  const name = nameValue === undefined ? null : c.text(["name"], nameValue, "Dev server", { oneLine: true });
+  if (nameValue === undefined) c.add(["name"], "the job has no name", "add name: — what Runner shows, e.g. name: Dev server");
   if (name !== null) parsed.name = { value: name, line: c.doc.line(["name"]) };
 
   const projectValue = c.get("project");

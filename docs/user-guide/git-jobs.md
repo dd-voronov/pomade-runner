@@ -8,7 +8,7 @@ kind: reference
 # Git jobs
 
 A **git job** runs a git operation on one or more repos of your workspace — for example **Commit & push**
-on `Knowledge` at 13:00 and 20:00. Pomade's `pomade-git` does the work and keeps Pomade's safety
+on `notes` at 13:00 and 20:00. Pomade's `pomade-git` does the work and keeps Pomade's safety
 rails. It works with Pomade open or closed, on schedules, hooks and chains.
 
 ## The Git section
@@ -38,7 +38,7 @@ For each repo, in order, `pomade-git` does the operation with its rails:
 - A conflict is aborted and the run **fails**, the repo left as it was.
 
 The run is **done** when every repo is done or skipped, and **failed** when a repo failed (the reason is
-the repo's: "Knowledge: Their changes conflict with yours in notes.md. …"), when the command line was
+the repo's: "notes: Their changes conflict with yours in notes.md. …"), when the command line was
 wrong, or when `pomade-git` gave no result. It fails without starting when `pomade-git` is not in
 Pomade's command folder; open Pomade once. A failed run is a notice and a Needs-you item as the job's
 **Notify me** says.
@@ -46,7 +46,7 @@ Pomade's command folder; open Pomade once. A failed run is a notice and a Needs-
 ## The result card
 
 A git run's card lists each repo with its commit hash and its steps — a tick for done, a cross for
-failed, faint for skipped: "Knowledge · committed a1b2c3d · pulled · pushed", "skipped · agent working".
+failed, faint for skipped: "notes · committed a1b2c3d · pulled · pushed", "skipped · agent working".
 It ends with **View output** (what `pomade-git` wrote to standard error — nothing when all went well),
 **Run again** and **Edit job**. In the Jobs view a done git run's Last result shows its commit in place
 of the duration; `pomade-runner history` prints the result per repo.
@@ -62,8 +62,8 @@ valid, enabled git jobs that name the repo count.
 ```markdown
 ---
 kind: git
-name: Knowledge twice daily
-git: { operation: commit-push, repos: [Knowledge] }   # commit-push | pull | push | fetch
+name: Commit notes
+git: { operation: commit-push, repos: [notes] }   # commit-push | pull | push | fetch
 schedule:
   daily: { at: [13:00, 20:00] }
 ---

@@ -1,6 +1,6 @@
 // Git jobs with a real Pomade: the Pomade checkout's built app (`POMADE_REPO`) in test mode on a temp
 // workspace, user data, home and git configuration, with the built `dist/` dev-linked and a
-// throwaway repo `Knowledge` in the workspace (`support/git.ts`). The scheduler is started the way
+// throwaway repo `notes` in the workspace (`support/git.ts`). The scheduler is started the way
 // the login item starts it (`pomade.spec.ts`). A git job made in Runner's job form — the file one
 // written by hand is — runs through the `pomade-git` Pomade wrote into its command folder; Pomade's
 // Git panel shows the job on the repo's row — the Scheduled line Runner's `jobs.forRepo` answers —
@@ -29,11 +29,11 @@ import { pomadeCheckout, pomadeEnv, type PomadeFolders } from "./support/pomade"
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
 
 const SHOTS = process.env.RUNNER_SHOTS;
-const NAME = "Knowledge twice daily";
+const NAME = "Commit notes";
 /** The job's id: the form files it under its name's slug, at the top of the jobs folder. */
-const ID = "knowledge-twice-daily";
+const ID = "commit-notes";
 /** The job as a person or an agent writes it by hand. */
-const HAND = `---\nkind: git\nname: ${NAME}\ngit: { operation: commit-push, repos: [Knowledge] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n`;
+const HAND = `---\nkind: git\nname: ${NAME}\ngit: { operation: commit-push, repos: [notes] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n`;
 
 async function shoot(page: Page, name: string): Promise<void> {
   if (!SHOTS) return;
@@ -62,7 +62,7 @@ test.describe("git jobs in Pomade", () => {
     await mkdir(join(tmp, "user"));
     repos = await createGitFixture(tmp, folders.workspace);
     // A second repo, so the Git panel lists the workspace's repos rather than opening the one.
-    repos.git(folders.workspace, "init", "--quiet", "Notes");
+    repos.git(folders.workspace, "init", "--quiet", "Journal");
     // Pomade reads the repo's state with git too: the same throwaway configuration and home.
     app = await electron.launch({ executablePath: pomade.runtime, args: [pomade.main], env: pomadeEnv(folders, { POMADE_DEV_APPS: DIST, HOME: join(tmp, "user"), ...gitEnv(tmp) }) });
     page = await app.firstWindow();
@@ -151,8 +151,8 @@ test.describe("git jobs in Pomade", () => {
     await expect(form.getByRole("textbox", { name: "Time 2" })).toHaveValue("20:00");
     // Pomade's git state: the workspace's repos, by the names its Git panel shows.
     const picks = form.getByRole("group", { name: "Repositories" }).getByRole("checkbox");
-    await expect(picks).toHaveText(["Knowledge", "Notes"]);
-    await picks.filter({ hasText: "Knowledge" }).click();
+    await expect(picks).toHaveText(["Journal", "notes"]);
+    await picks.filter({ hasText: "notes" }).click();
     await expect(form.getByTestId("policy-summary")).toHaveText("If missed, skip · never overlaps itself · normal priority · no time limit · notifies on failure");
     await shoot(page, "pomade-git-form");
     await tab().getByTestId("form-save").click();
@@ -175,21 +175,21 @@ test.describe("git jobs in Pomade", () => {
     expect(repos.git(repos.remote, "rev-parse", "main")).toBe(hash);
 
     await openGitPanel();
-    await expect(page.getByTestId("git-run-Knowledge")).toHaveAttribute("data-status", "done");
+    await expect(page.getByTestId("git-run-notes")).toHaveAttribute("data-status", "done");
   });
 
   test("4 · the repo's row shows the job's Scheduled line from jobs.forRepo; its link opens Runner's tab at the job", async () => {
     await openGitPanel();
     await windowRegainsFocus();
-    const line = page.getByTestId("git-scheduled-Knowledge");
+    const line = page.getByTestId("git-scheduled-notes");
     await expect(line).toHaveText("Scheduled: Commit & push · daily at 13:00 and 20:00 — edit in Runner");
     await expect(line).toHaveAttribute("data-job", ID);
     await shoot(page, "pomade-git-scheduled");
 
-    await page.getByTestId("git-scheduled-edit-Knowledge").click();
+    await page.getByTestId("git-scheduled-edit-notes").click();
     const row = tab().locator(`[data-testid="job-row"][data-job="${ID}"]`);
     await expect(row).toHaveAttribute("aria-current", "true");
-    await expect(row.getByTestId("job-trigger")).toHaveAttribute("data-tip", "Daily at 13:00 and 20:00 · Commit & push · Knowledge");
+    await expect(row.getByTestId("job-trigger")).toHaveAttribute("data-tip", "Daily at 13:00 and 20:00 · Commit & push · notes");
     await shoot(page, "pomade-git-job");
   });
 
@@ -213,7 +213,7 @@ test.describe("git jobs in Pomade", () => {
     await expect(tab().getByTestId("run-result")).toHaveText("Failed");
     const repo = dialog.getByTestId("run-git-repo");
     await expect(repo).toHaveAttribute("data-status", "failed");
-    await expect(repo).toContainText("Knowledge");
+    await expect(repo).toContainText("notes");
     // The step that stopped says the conflict; the repo's reason — what the conflict left — follows.
     await expect(repo.locator('[data-testid="run-git-step"][data-outcome="failed"]')).toHaveText("conflict in notes.md");
     await expect(dialog.getByTestId("run-git-note")).toHaveText(reason);
@@ -225,7 +225,7 @@ test.describe("git jobs in Pomade", () => {
     scheduler = null;
     await openGitPanel();
     await windowRegainsFocus();
-    await expect(page.getByTestId("git-run-Knowledge")).toBeVisible();
-    await expect(page.getByTestId("git-scheduled-Knowledge")).toHaveCount(0);
+    await expect(page.getByTestId("git-run-notes")).toBeVisible();
+    await expect(page.getByTestId("git-scheduled-notes")).toHaveCount(0);
   });
 });

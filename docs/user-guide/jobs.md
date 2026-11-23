@@ -27,9 +27,9 @@ Runner tracks only jobs made in Runner. A terminal you open by hand is just a te
 
 Each job is one Markdown file in `<workspace>/Apps/pomade-runner/jobs/`: the fields in its frontmatter,
 notes — or an agent job's prompt — in its body. Workspace jobs sit at the top level; a project's jobs sit
-in a sub-folder named after the project's folder (`Projects/coda-helper` → `jobs/coda-helper/`). The
+in a sub-folder named after the project's folder (`Projects/blog` → `jobs/blog/`). The
 file name is the job's slug: lower-case letters, digits and dashes. A job's **id** is its path inside
-the jobs folder without `.md` (`coda-helper/coda-web`); chains and the command name jobs by it. A
+the jobs folder without `.md` (`blog/dev-server`); chains and the command name jobs by it. A
 project job is bound to its project by the project's id, so renaming or moving the project in Pomade
 keeps its jobs working: Runner renames the sub-folder and rewrites the jobs' `folder:` paths.
 
@@ -50,8 +50,8 @@ change applies within a second. A file with an error is shown in Runner with the
 | `schedule` · `hook` · `after` | script · agent · git (a service takes `after`) | at most one; none is a manual job: [Schedules](schedules.md), [Hooks and chains](hooks-and-chains.md) |
 | `missed`, `worth-until`, `overlap`, `low-priority`, `time-limit`, `notify` | by kind | [Policies](#policies) |
 
-Agents learn the format from Runner's skill, `pomade-runner-jobs`; ask one to "add a job that runs
-inbox triage every Sunday at 3:00". `pomade-runner check` validates the files ([the command](command.md)).
+Agents learn the format from Runner's skill, `pomade-runner-jobs`; ask one to "add a job that tidies
+drafts every Sunday at 3:00". `pomade-runner check` validates the files ([the command](command.md)).
 
 ## The Jobs view
 

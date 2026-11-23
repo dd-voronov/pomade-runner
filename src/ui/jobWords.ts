@@ -164,7 +164,7 @@ export function nextLook(job: Job, runs: JobRuns | undefined, paused: boolean, n
   return { words: capitalized(aheadWhen(runs.next, now)), sub: soonWords(runs.next, now), none: false, held: runs.held };
 }
 
-/** A git job's operation and repos: "Commit & push · Knowledge, coda-helper"; a repo the workspace
+/** A git job's operation and repos: "Commit & push · notes, blog"; a repo the workspace
  *  does not have is said, once the workspace's repos are known (`known`). `missing` lists those. */
 export function gitDetail(job: Extract<Job, { kind: "git" }>, known: ReadonlySet<string> | null): { text: string; missing: string[] } {
   const missing = job.git.repos.filter((repo) => known !== null && !known.has(repo) && !repo.startsWith("/"));

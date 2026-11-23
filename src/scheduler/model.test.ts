@@ -6,7 +6,7 @@ import { editRoute, jobsRoute, newRoute, outputRoute, outputTab, outputTabKey, p
 import { MAX_ENCODED_JOB_ID } from "../keeper/ids";
 import { clockTime, dayTime, durationWords, hookCauseWords, isActiveRun, isMissedChoiceResult, isRunsReport, otherMissedRuns, parseRunRecord, runTriggerWords, runWords, type ActiveRun, type RunRecord } from "./model";
 
-const base = { job: "coda/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/coda", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1, agent: null, missed: null, series: null };
+const base = { job: "blog/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/blog", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1, agent: null, missed: null, series: null };
 const active: ActiveRun = {
   ...base,
   state: "running",
@@ -15,7 +15,7 @@ const active: ActiveRun = {
   deadline: null,
   waits: null,
   startedAt: 1,
-  session: "run:coda.web:20261117-120000-abcdef",
+  session: "run:blog.web:20261117-120000-abcdef",
   log: "/o.log",
   limitHit: null,
   warnedAt: null,
@@ -119,8 +119,8 @@ describe("runs in words", () => {
 
   it("says a project's hooks as a run's cause", () => {
     const hook = (event: "project-first-open" | "project-opened", projectName?: string) => ({ kind: "hook" as const, event, context: {}, ...(projectName === undefined ? {} : { projectName }) });
-    expect(hookCauseWords(hook("project-first-open", "job-hunt"))).toBe("first open of job-hunt");
-    expect(hookCauseWords(hook("project-opened", "job-hunt"))).toBe("job-hunt opened");
+    expect(hookCauseWords(hook("project-first-open", "shop"))).toBe("first open of shop");
+    expect(hookCauseWords(hook("project-opened", "shop"))).toBe("shop opened");
     expect(hookCauseWords(hook("project-opened"))).toBe("a project opened");
   });
 
@@ -131,30 +131,30 @@ describe("runs in words", () => {
 
 describe("routes", () => {
   it("name a run's result and output by the job id and run id, and read back", () => {
-    expect(runRoute("coda/web", "20261117-120000-abcdef")).toBe("run/coda.web/20261117-120000-abcdef");
+    expect(runRoute("blog/web", "20261117-120000-abcdef")).toBe("run/blog.web/20261117-120000-abcdef");
     expect(outputRoute("Café", "r1")).toBe("output/Caf_c3_a9/r1");
-    expect(parseRoute(runRoute("coda/web", "20261117-120000-abcdef"))).toEqual({ view: "run", job: "coda/web", run: "20261117-120000-abcdef" });
+    expect(parseRoute(runRoute("blog/web", "20261117-120000-abcdef"))).toEqual({ view: "run", job: "blog/web", run: "20261117-120000-abcdef" });
     expect(parseRoute(outputRoute("Café", "r1"))).toEqual({ view: "output", job: "Café", run: "r1" });
-    expect(promptRoute("coda/web", "r1")).toBe("prompt/coda.web/r1");
-    expect(parseRoute(promptRoute("coda/web", "r1"))).toEqual({ view: "prompt", job: "coda/web", run: "r1" });
+    expect(promptRoute("blog/web", "r1")).toBe("prompt/blog.web/r1");
+    expect(parseRoute(promptRoute("blog/web", "r1"))).toEqual({ view: "prompt", job: "blog/web", run: "r1" });
     expect(parseRoute("history")).toEqual({ view: "history" });
     expect(parseRoute("services")).toEqual({ view: "services" });
     expect(parseRoute("settings")).toEqual({ view: "settings" });
     for (const route of ["", "jobs", "run/x", "run/a_zz/r", "run//r", "nope/a/b", "jobs/a/b"]) expect(parseRoute(route)).toEqual({ view: "jobs", job: null });
-    expect(jobsRoute("coda/knowledge")).toBe("jobs/coda.knowledge");
-    expect(parseRoute(jobsRoute("coda/knowledge"))).toEqual({ view: "jobs", job: "coda/knowledge" });
+    expect(jobsRoute("blog/notes")).toBe("jobs/blog.notes");
+    expect(parseRoute(jobsRoute("blog/notes"))).toEqual({ view: "jobs", job: "blog/notes" });
     expect(parseRoute("jobs/a_zz")).toEqual({ view: "jobs", job: null });
   });
 
   it("open a run's output in its own keyed tab, one per run, whose key Pomade takes for any job id", () => {
-    expect(outputTab("coda/web", "20261117-120000-abcdef", "Coda web")).toEqual({
-      route: "output/coda.web/20261117-120000-abcdef",
-      key: "out:coda.web:20261117-120000-abcdef",
-      title: "Coda web · output",
+    expect(outputTab("blog/web", "20261117-120000-abcdef", "Dev server")).toEqual({
+      route: "output/blog.web/20261117-120000-abcdef",
+      key: "out:blog.web:20261117-120000-abcdef",
+      title: "Dev server · output",
       kind: "output",
     });
-    expect(outputTabKey("coda/web", "20261117-120000-abcdef")).not.toBe(outputTabKey("coda/web", "20261117-120001-abcdef"));
-    expect(outputTabKey("coda.web", "r")).not.toBe(outputTabKey("coda/web", "r"));
+    expect(outputTabKey("blog/web", "20261117-120000-abcdef")).not.toBe(outputTabKey("blog/web", "20261117-120001-abcdef"));
+    expect(outputTabKey("blog.web", "r")).not.toBe(outputTabKey("blog/web", "r"));
     const run = "20261117-120000-abcdef";
     for (const job of ["Café", "a b/c", "a".repeat(MAX_ENCODED_JOB_ID), "é".repeat(Math.floor(MAX_ENCODED_JOB_ID / 6))]) {
       expect(outputTabKey(job, run)).toMatch(APP_TAB_KEY_RE);
@@ -164,11 +164,11 @@ describe("routes", () => {
   it("name the job form: a new job, or a job by its id, and read back", () => {
     expect(newRoute()).toBe("new");
     expect(parseRoute(newRoute())).toEqual({ view: "new", project: null });
-    expect(newRoute("coda-helper")).toBe("new/coda-helper");
-    expect(parseRoute(newRoute("coda-helper"))).toEqual({ view: "new", project: "coda-helper" });
+    expect(newRoute("blog")).toBe("new/blog");
+    expect(parseRoute(newRoute("blog"))).toEqual({ view: "new", project: "blog" });
     expect(parseRoute(newRoute("Café"))).toEqual({ view: "new", project: "Café" });
-    expect(editRoute("coda-helper/coda-web")).toBe("edit/coda-helper.coda-web");
-    expect(parseRoute(editRoute("coda-helper/coda-web"))).toEqual({ view: "edit", job: "coda-helper/coda-web" });
+    expect(editRoute("blog/dev-server")).toBe("edit/blog.dev-server");
+    expect(parseRoute(editRoute("blog/dev-server"))).toEqual({ view: "edit", job: "blog/dev-server" });
     expect(parseRoute(editRoute("Café"))).toEqual({ view: "edit", job: "Café" });
     for (const route of ["edit", "edit/", "edit/a_zz", "edit/a/b", "new/", "new/a_zz", "new/a/b"]) expect(parseRoute(route)).toEqual({ view: "jobs", job: null });
   });

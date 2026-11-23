@@ -8,11 +8,11 @@ const RUN = "20261117-080000-a1b2c3";
 describe("session ids", () => {
   it("name a service by its job, the same every time", () => {
     expect(sessionIdOf({ kind: "service", job: "backup" })).toBe("svc:backup");
-    expect(sessionIdOf({ kind: "service", job: "coda-helper/coda-web" })).toBe("svc:coda-helper.coda-web");
+    expect(sessionIdOf({ kind: "service", job: "blog/dev-server" })).toBe("svc:blog.dev-server");
   });
 
   it("name a run by its job and run id", () => {
-    expect(sessionIdOf({ kind: "run", job: "coda-helper/nightly", run: RUN })).toBe(`run:coda-helper.nightly:${RUN}`);
+    expect(sessionIdOf({ kind: "run", job: "blog/nightly", run: RUN })).toBe(`run:blog.nightly:${RUN}`);
     expect(sessionIdOf({ kind: "run", job: "nightly", run: "today" })).toBeNull();
   });
 
@@ -28,7 +28,7 @@ describe("session ids", () => {
   });
 
   it("are reversible: the session id says whose session it is", () => {
-    const jobs = ["backup", "coda-helper/coda-web", "My Project/web", "Café/web", "a.b/web", "x_y/web", "a:b/web", "日本/web", "emoji 🍅/web"];
+    const jobs = ["backup", "blog/dev-server", "My Project/web", "Café/web", "a.b/web", "x_y/web", "a:b/web", "日本/web", "emoji 🍅/web"];
     for (const job of jobs) {
       expect(decodeJobId(encodeJobId(job))).toBe(job);
       expect(sessionOwner(sessionIdOf({ kind: "service", job }) ?? "")).toEqual({ kind: "service", job });

@@ -100,7 +100,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
               A job is something Runner does without you. A <b>service</b> keeps a command running and restarts it on a crash — from Mac startup, or only while Pomade is running. A{" "}
               <b>script</b>, an <b>agent</b> or a <b>git</b> operation runs on a schedule, on a hook, or after another job.
             </p>
-            <p>You can also ask an agent: “add a job that runs inbox triage every Sunday at 3:00”.</p>
+            <p>You can also ask an agent: “add a job that tidies drafts every Sunday at 3:00”.</p>
           </EmptyBlock>,
         );
       }

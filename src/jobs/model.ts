@@ -99,7 +99,7 @@ export interface RunPolicies {
 }
 
 interface JobCommon {
-  /** The job's id: its path inside the jobs folder without `.md` — `backup`, `coda-helper/coda-web`. */
+  /** The job's id: its path inside the jobs folder without `.md` — `backup`, `blog/dev-server`. */
   id: string;
   /** The file, workspace-relative. */
   path: string;

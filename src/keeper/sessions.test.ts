@@ -95,26 +95,26 @@ describe("sessions", () => {
 
   it("starts a service under its job's session id, with its run's output log, and records whose it is", async () => {
     const { sessions } = await connected();
-    const web = await sessions.spawn({ kind: "service", job: "coda/web" }, command("echo hello from web; exec sleep 30", { actions: [{ id: "restart", title: "Restart" }] }));
+    const web = await sessions.spawn({ kind: "service", job: "blog/web" }, command("echo hello from web; exec sleep 30", { actions: [{ id: "restart", title: "Restart" }] }));
     expect(web).toMatchObject({
-      id: "svc:coda.web",
-      job: "coda/web",
+      id: "svc:blog.web",
+      job: "blog/web",
       kind: "service",
       run: expect.stringMatching(/^20261117-080000-[0-9a-f]{6}$/) as string,
       info: { title: "Web", cwd: dir, state: "running", actions: [{ id: "restart", title: "Restart" }] },
     });
-    expect(web.log).toBe(join(dir, "ud/app-state/pomade-runner/output/coda.web", `${web.run ?? ""}.log`));
+    expect(web.log).toBe(join(dir, "ud/app-state/pomade-runner/output/blog.web", `${web.run ?? ""}.log`));
     await vi.waitFor(async () => expect(await readFile(web.log ?? "", "utf8")).toContain("hello from web"));
     await vi.waitFor(async () =>
       expect(JSON.parse(await readFile(join(state, "sessions.json"), "utf8"))).toEqual({
-        sessions: { "svc:coda.web": { job: "coda/web", kind: "service", run: web.run, log: web.log, exit: null } },
+        sessions: { "svc:blog.web": { job: "blog/web", kind: "service", run: web.run, log: web.log, exit: null } },
       }),
     );
-    await expect(sessions.spawn({ kind: "service", job: "coda/web" }, command("true"))).rejects.toThrow("session svc:coda.web is running");
-    const owner = runOf("coda/web");
+    await expect(sessions.spawn({ kind: "service", job: "blog/web" }, command("true"))).rejects.toThrow("session svc:blog.web is running");
+    const owner = runOf("blog/web");
     const run = await sessions.spawn(owner, command("exit 0"));
-    expect(run).toMatchObject({ id: `run:coda.web:${owner.run}`, run: owner.run, log: liveOutputLogPath(state, "coda/web", owner.run) });
-    expect(lines).toContain(`session svc:coda.web: started — pid ${web.info.pid ?? ""}, in ${dir}`);
+    expect(run).toMatchObject({ id: `run:blog.web:${owner.run}`, run: owner.run, log: liveOutputLogPath(state, "blog/web", owner.run) });
+    expect(lines).toContain(`session svc:blog.web: started — pid ${web.info.pid ?? ""}, in ${dir}`);
   });
 
   it("runs low-priority sessions with background priority", async () => {
@@ -150,7 +150,7 @@ describe("sessions", () => {
 
   it("a restarted scheduler rebuilds its view from the keeper and its records, and reports only the ends it missed", async () => {
     const first = await connected();
-    const web = await first.sessions.spawn({ kind: "service", job: "coda/web" }, command("exec sleep 30"));
+    const web = await first.sessions.spawn({ kind: "service", job: "blog/web" }, command("exec sleep 30"));
     const gone = await first.sessions.spawn({ kind: "service", job: "gone" }, command("exit 3"));
     await until(first.sessions, () => first.ended.length === 1);
     await first.sessions.close();
@@ -162,7 +162,7 @@ describe("sessions", () => {
 
     const second = await connected();
     expect(second.sessions.list().map(({ id, job, run, log }) => ({ id, job, run, log }))).toEqual([
-      { id: web.id, job: "coda/web", run: web.run, log: web.log },
+      { id: web.id, job: "blog/web", run: web.run, log: web.log },
       { id: gone.id, job: "gone", run: gone.run, log: gone.log },
     ]);
     expect(second.ended.map((session) => [session.id, session.info.exit?.reason])).toEqual([[web.id, "crashed"]]);
@@ -175,13 +175,13 @@ describe("sessions", () => {
   it("reads a session it has no record of from its id; skips ids it does not make", async () => {
     await rm(join(state, "sessions.json"), { force: true });
     const owner = await connected();
-    await owner.sessions.spawn({ kind: "service", job: "coda/web" }, command("exec sleep 30"));
+    await owner.sessions.spawn({ kind: "service", job: "blog/web" }, command("exec sleep 30"));
     await owner.sessions.close();
     await rm(join(state, "sessions.json"), { force: true });
     await writeFile(join(state, "sessions.json"), "{ not json");
 
     const { sessions } = await connected();
-    expect(sessions.list()).toEqual([expect.objectContaining({ id: "svc:coda.web", job: "coda/web", kind: "service", run: null, log: null })]);
+    expect(sessions.list()).toEqual([expect.objectContaining({ id: "svc:blog.web", job: "blog/web", kind: "service", run: null, log: null })]);
     expect(lines).toContain(`keeper: ${join(state, "sessions.json")} is not readable JSON; starting from the keeper's list alone`);
   });
 

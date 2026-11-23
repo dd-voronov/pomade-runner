@@ -131,7 +131,7 @@ test.describe("Pomade opened for an agent run", () => {
   test("E-004 1 · at a weekday 7:00 with Pomade closed, Runner opens Pomade, the runs that came due meanwhile wait for that one launch and start in their order, and the panel shows them running", async () => {
     const jobs = join(folders.workspace, "Apps/pomade-runner/jobs");
     await writeFile(join(jobs, "summary.md"), summaryJob("Write my morning summary. [long]"));
-    await writeFile(join(jobs, "inbox.md"), summaryJob("Triage the inbox. [long]").replace("name: Morning summary", "name: Inbox triage"));
+    await writeFile(join(jobs, "inbox.md"), summaryJob("Tidy the drafts. [long]").replace("name: Morning summary", "name: Tidy drafts"));
     await writeFile(join(jobs, "backup.md"), "---\nkind: script\nname: Backup\nfolder: .\ncommand: echo backed up\nschedule:\n  daily: { at: 7:00 }\n---\n");
     // The recorded launch, with a DevTools port: the test reaches the Pomade the scheduler opens.
     const hostFile = join(folders.home, "host.json");
@@ -187,7 +187,7 @@ test.describe("Pomade opened for an agent run", () => {
     await drawn(page);
     const panel = page.frameLocator(`[data-testid="panel-frame-${STRIP_KEY}"]`);
     await expect(panel.getByTestId("active-run").filter({ hasText: "Morning summary" })).toContainText("running");
-    await expect(panel.getByTestId("active-run").filter({ hasText: "Inbox triage" })).toContainText("running");
+    await expect(panel.getByTestId("active-run").filter({ hasText: "Tidy drafts" })).toContainText("running");
     await expect(panel.getByTestId("next-up-item").filter({ hasText: "Morning summary" })).toBeVisible();
     await page.mouse.move(900, 600);
     await shoot(page, "pomade-opened-panel");

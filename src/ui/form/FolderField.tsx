@@ -33,7 +33,7 @@ export interface FormProps {
   /** Opens the job's file in Pomade's editor; `undefined` for a new job or a file that is gone. */
   openFile: (() => void) | undefined;
   projects: ProjectChoices;
-  /** The workspace folder's name ("git-base"). */
+  /** The workspace folder's name ("my-workspace"). */
   workspaceName: string;
   /** The jobs as the scheduler checked them: the ones a chain can follow. */
   jobs: JobsSnapshot;
@@ -58,7 +58,7 @@ export function FolderField({ host, state, setFolder, error, projects, workspace
       {(id) => (
         <>
         <div className={styles.pick}>
-          <TextInput id={id} mono placeholder="Projects/coda-helper" value={folder} bad={error("folder") !== undefined} data-field="folder" onChange={(event) => setFolder(event.target.value)} />
+          <TextInput id={id} mono placeholder="Projects/blog" value={folder} bad={error("folder") !== undefined} data-field="folder" onChange={(event) => setFolder(event.target.value)} />
           <Button className={styles.pickButton} icon="folder" aria-haspopup="menu" aria-expanded={menu !== null} onClick={(event) => setMenu(event.currentTarget)}>
             Choose…
           </Button>

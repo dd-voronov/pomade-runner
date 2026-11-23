@@ -40,7 +40,7 @@ seconds; otherwise it reads **Create job**.
   then stays `starting` and keeps being checked. Restarts after a crash take their turn the same way.
   Start, Stop and Restart act at once.
 - An `On first open of a project` service starts the first time you open that project after Pomade
-  starts. Until then it waits — "waiting for first open · starts on first open of job-hunt" — and
+  starts. Until then it waits — "waiting for first open · starts on first open of blog" — and
   Start runs it now. When that project was already opened since Pomade started, the service starts
   as soon as it exists: created, enabled, or changed to that start or that project. After the next
   Pomade start it waits for the project's open again. Once started it is kept up like any service.
@@ -82,7 +82,7 @@ is disabled); `Open terminal` once it has run, `Edit` and `Open file`. A toast r
 | `restarting` | the crash count, or "again at 14:05" |
 | `failed · gave up` | "crashed 5× in 1 min · today 11:20", or why the start failed |
 | `stopped by you` | when |
-| `waiting for first open` | "starts on first open of job-hunt" |
+| `waiting for first open` | "starts on first open of blog" |
 | `disabled` | — |
 | `invalid` | "its file has errors" |
 

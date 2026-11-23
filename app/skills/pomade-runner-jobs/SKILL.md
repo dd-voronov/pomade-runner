@@ -51,7 +51,7 @@ By kind:
 | `ready` | service | `{ port: 5173 }` or `{ url: http://localhost:5173/ }`; default: up = alive after 5 s |
 | `agent` | agent (required) | the agent's id, e.g. `claude` |
 | `mode` | agent | one of the agent's modes; default `normal` (`full-autonomy` skips every approval) |
-| `git` | git (required) | `{ operation: commit-push \| pull \| push \| fetch, repos: [Knowledge, …] }` — repos by the name Pomade's Git panel shows; a git job's `name` is at most 100 characters (its commits carry it) |
+| `git` | git (required) | `{ operation: commit-push \| pull \| push \| fetch, repos: [notes, …] }` — repos by the name Pomade's Git panel shows; a git job's `name` is at most 100 characters (its commits carry it) |
 
 An agent job's **body is its prompt** — it must not be empty.
 
@@ -96,7 +96,7 @@ operation kept ready to run by hand.
   | `session-finished` | an agent session the user ran ends (never one Runner started, so it can't loop) | `project`, `agent` (a roster id) |
   | `session-status` | the user changes a session's status to `status` in the Agents app (Runner's sessions too) | `status` (required: `active` · `on-hold` · `done` · `done-skip`), `project`, `agent` |
 - **`after`** — a chain: `{ job: <id>, result: done | failed | any }` (default `done`). `<id>` is
-  the other job's path inside the jobs folder without `.md`: `backup`, `coda-helper/git-pull`.
+  the other job's path inside the jobs folder without `.md`: `backup`, `blog/pull`.
   `failed` is any failure — an exit code, a signal, a time limit; a run the user stopped fires no
   chain. A service can also have `after:`, with `action: restart | start | stop` (default
   `restart`; `restart` leaves a service that is not running alone). Chains must not loop back
@@ -120,45 +120,45 @@ N ahead". A job with `low-priority: false` neither waits for nor takes a slot.
 One complete file per kind, plus a chain, three hooks and a manual job. They form one valid jobs folder.
 
 A **service** — a project's web server, restarted after its repo is pulled.
-File: `Apps/pomade-runner/jobs/coda-helper/coda-web.md`
+File: `Apps/pomade-runner/jobs/blog/dev-server.md`
 
 ```markdown
 ---
 kind: service
-name: Coda web
+name: Dev server
 project: V1StGXR8_Z5jdHi6B-myT   # the id from `pomade-runner projects`
-folder: Projects/coda-helper
+folder: Projects/blog
 command: ./start.sh
 start: login
 ready: { port: 5173 }
-after: { job: coda-helper/git-pull, result: done, action: restart }
+after: { job: blog/pull, result: done, action: restart }
 ---
-The local web server of Coda Helper.
+The local dev server of the blog.
 ```
 
 A **git** job — pull the project's repo every hour on weekdays.
-File: `Apps/pomade-runner/jobs/coda-helper/git-pull.md`
+File: `Apps/pomade-runner/jobs/blog/pull.md`
 
 ```markdown
 ---
 kind: git
-name: Pull coda-helper
+name: Pull
 project: V1StGXR8_Z5jdHi6B-myT
-git: { operation: pull, repos: [coda-helper] }
+git: { operation: pull, repos: [blog] }
 schedule:
   every: { hours: 1, from: 8:00, to: 20:00 }
   only: weekdays
 ---
 ```
 
-A **git** job — commit and push the Knowledge repo at 13:00 and 20:00.
-File: `Apps/pomade-runner/jobs/knowledge-commit.md`
+A **git** job — commit and push the notes repo at 13:00 and 20:00.
+File: `Apps/pomade-runner/jobs/commit-notes.md`
 
 ```markdown
 ---
 kind: git
-name: Knowledge twice daily
-git: { operation: commit-push, repos: [Knowledge] }
+name: Commit notes
+git: { operation: commit-push, repos: [notes] }
 schedule:
   daily: { at: [13:00, 20:00] }
 ---

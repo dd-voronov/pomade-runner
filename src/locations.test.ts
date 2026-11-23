@@ -43,7 +43,7 @@ describe("locations", () => {
     expect(sessionsRecordPath(state)).toBe("/ud/app-state/pomade-runner/sessions.json");
     expect(keeperOutPath(state)).toBe("/ud/app-state/pomade-runner/keeper/keeper.out");
     expect(supervisionRecordPath(state)).toBe("/ud/app-state/pomade-runner/services.json");
-    expect(liveOutputLogPath(state, "coda-helper/coda-web", "20261117-080000-a1b2c3")).toBe("/ud/app-state/pomade-runner/output/coda-helper.coda-web/20261117-080000-a1b2c3.log");
+    expect(liveOutputLogPath(state, "blog/dev-server", "20261117-080000-a1b2c3")).toBe("/ud/app-state/pomade-runner/output/blog.dev-server/20261117-080000-a1b2c3.log");
     expect(liveOutputLogPath(state, "My Project/web", "20261117-080000-a1b2c3")).toBe("/ud/app-state/pomade-runner/output/My_20Project.web/20261117-080000-a1b2c3.log");
     expect(outputLogName("My Project/web", "20261117-080000-a1b2c3")).toBe("output/My_20Project.web/20261117-080000-a1b2c3.log");
     expect(gitResultPath(state, "pull", "20261117-080000-a1b2c3")).toBe("/ud/app-state/pomade-runner/output/pull/20261117-080000-a1b2c3.json");

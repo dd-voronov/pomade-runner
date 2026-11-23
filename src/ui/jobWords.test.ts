@@ -30,7 +30,7 @@ const script: ScriptJob = {
 };
 const hook: ScriptJob = { ...script, trigger: { kind: "hook", hook: { event: "login", project: null, agent: null, status: null } } };
 const service: ServiceJob = { ...script, kind: "service", start: "login", ready: { kind: "alive" }, after: null } as unknown as ServiceJob;
-const git: GitJob = { ...script, kind: "git", git: { operation: "commit-push", repos: ["Knowledge", "Notes"] } } as unknown as GitJob;
+const git: GitJob = { ...script, kind: "git", git: { operation: "commit-push", repos: ["notes", "Journal"] } } as unknown as GitJob;
 
 const record = (state: RunRecord["state"], extra: Partial<RunRecord> = {}): RunRecord => ({
   job: "backup",
@@ -109,11 +109,11 @@ describe("a job's last result", () => {
   });
 
   it("says a done git run's commit instead of how long it took; a run with no commit, or one that failed, its duration", () => {
-    const repo = (commit: string | null) => ({ repo: "Knowledge", path: "/ws/Knowledge", op: "commit-push" as const, status: "done" as const, reason: null, steps: [], commit });
+    const repo = (commit: string | null) => ({ repo: "notes", path: "/ws/notes", op: "commit-push" as const, status: "done" as const, reason: null, steps: [], commit });
     const git = (commits: (string | null)[]) => ({ op: "commit-push" as const, job: "K", at: "2026-11-17T11:20:00.000Z", results: commits.map(repo) });
     expect(look(record("done", { git: git([null, "a1b2c3d4e5f6", "9f8e7d6c5b4a"]) }))).toMatchObject({ words: "done", sub: "today 11:17 · a1b2c3d" });
     expect(look(record("done", { git: git([null]) }))).toMatchObject({ sub: "today 11:17 · 3s" });
-    expect(look(record("failed", { git: git(["9f8e7d6c5b4a"]), reason: "Knowledge: push rejected" }))).toMatchObject({ sub: "today 11:17 · 3s" });
+    expect(look(record("failed", { git: git(["9f8e7d6c5b4a"]), reason: "notes: push rejected" }))).toMatchObject({ sub: "today 11:17 · 3s" });
   });
 
   it("gives a run that never started its reason and no duration", () => {
@@ -222,16 +222,16 @@ describe("a moment ahead", () => {
 
 describe("a git job's detail", () => {
   it("names the operation and the repos, and says a repo the workspace lacks once they are known", () => {
-    expect(gitDetail(git, null)).toEqual({ text: "Commit & push · Knowledge, Notes", missing: [] });
-    expect(gitDetail(git, new Set(["Knowledge"]))).toEqual({ text: "Commit & push · Knowledge, Notes (not in this workspace)", missing: ["Notes"] });
+    expect(gitDetail(git, null)).toEqual({ text: "Commit & push · notes, Journal", missing: [] });
+    expect(gitDetail(git, new Set(["notes"]))).toEqual({ text: "Commit & push · notes, Journal (not in this workspace)", missing: ["Journal"] });
     expect(gitDetail({ ...git, git: { operation: "pull", repos: ["/abs/repo"] } }, new Set())).toEqual({ text: "Pull · /abs/repo", missing: [] });
   });
 });
 
 describe("where New job starts", () => {
-  const project: ProjectRef = { id: "coda-helper", kind: "project", name: "coda-helper", root: "Projects/coda-helper" };
+  const project: ProjectRef = { id: "blog", kind: "project", name: "blog", root: "Projects/blog" };
   it("is the open project while the chip is on, else a project-less form", () => {
-    expect(newJobRoute(true, project)).toBe("new/coda-helper");
+    expect(newJobRoute(true, project)).toBe("new/blog");
     expect(newJobRoute(false, project)).toBe("new");
     expect(newJobRoute(true, null)).toBe("new");
   });

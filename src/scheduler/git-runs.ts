@@ -11,7 +11,7 @@
 //   file that is missing or not a `GitRunOutput` makes the run `failed` with that said. Every other
 //   end — Stop, a time limit, a lost session — is a script's.
 // - **The record** keeps the `GitRunOutput` whole (`git`), and its last lines are one line per repo:
-//   "Knowledge · committed a1b2c3d · pulled · pushed", "Knowledge · skipped · agent working".
+//   "notes · committed a1b2c3d · pulled · pushed", "notes · skipped · agent working".
 
 import type { GitRunOutput, GitRunResult, GitRunStatus, GitRunStepName, RepoJob, RepoJobsParams } from "pomade-kit/protocol";
 
@@ -37,8 +37,8 @@ export function gitCommandLine(pomadeGit: string, job: GitJob, resultFile: strin
 
 const STEP_DONE: Record<Exclude<GitRunStepName, "agents" | "commit">, string> = { pull: "pulled", push: "pushed", fetch: "fetched" };
 
-/** One repo's result in a line: "Knowledge · committed a1b2c3d · pulled · pushed", "Knowledge ·
- *  skipped · agent working", "Knowledge · failed · <the reason>". */
+/** One repo's result in a line: "notes · committed a1b2c3d · pulled · pushed", "notes ·
+ *  skipped · agent working", "notes · failed · <the reason>". */
 export function gitRepoLine(result: GitRunResult): string {
   if (result.status !== "done") return [result.repo, result.status, result.reason].filter((part) => part !== null && part !== "").join(" · ");
   const done = result.steps.flatMap((step): string[] => {
@@ -49,7 +49,7 @@ export function gitRepoLine(result: GitRunResult): string {
   return [result.repo, ...(done.length === 0 ? ["nothing to do"] : done)].join(" · ");
 }
 
-/** The failed repos and their reasons: "Knowledge: Their changes conflict with yours in notes.md. …". */
+/** The failed repos and their reasons: "notes: Their changes conflict with yours in notes.md. …". */
 function failedWords(output: GitRunOutput): string | null {
   const failed = output.results.filter((result) => result.status === "failed");
   return failed.length === 0 ? null : failed.map((result) => `${result.repo}: ${result.reason ?? "failed"}`).join("; ");

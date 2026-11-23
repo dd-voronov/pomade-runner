@@ -54,11 +54,11 @@ A job has a **kind**, a **trigger**, a **folder** and **policies**.
 **Location.** One md file per job, in `<workspace>/Apps/pomade-runner/jobs/`:
 - workspace jobs at the top level;
 - project jobs in a sub-folder named after the project's folder — the last segment of its root
-  (`Projects/coda-helper` → `jobs/coda-helper/coda-web.md`); nothing sits deeper.
+  (`Projects/blog` → `jobs/blog/dev-server.md`); nothing sits deeper.
 - The file name is the job's slug: lower-case letters, digits and single dashes. Other files —
   not `.md`, or hidden (`.x.md`, an editor's swap file) — are not job files.
 - A job's **id** is its path inside the jobs folder without `.md`: `backup`,
-  `coda-helper/coda-web`. Chains name jobs by id. It names the job's terminal sessions too (see
+  `blog/dev-server`. Chains name jobs by id. It names the job's terminal sessions too (see
   "Sessions"), so it is at most 101 characters once encoded — a character other than a letter, a
   digit or `-` counts 3 or more; a longer one is refused.
 - A job is bound to its project by the stable project id, so renaming the project doesn't orphan
@@ -88,9 +88,9 @@ writes field-only changes, so comments and the body survive. The file on disk is
 ```markdown
 ---
 kind: service                    # service | script | agent | git
-name: Coda web
+name: Dev server
 project: <stable project id>     # omit for a workspace job
-folder: Projects/coda-helper     # working folder, workspace-relative
+folder: Projects/blog     # working folder, workspace-relative
 enabled: true
 command: ./start.sh              # service, script
 start: login                     # service: login | pomade-started | project-first-open
@@ -270,8 +270,8 @@ disk.
   - Both filter on the session's project (its stable id; a session in the Workspace bucket has none,
     so only a hook without a project filter takes it) and its agent (roster id).
 - A hook run has trigger `hook` and its event in `cause` (History: "hook: Mac login", "hook: first
-  open of job-hunt", "hook: agent session finished", "hook: session marked Done"; its card: "First
-  open of job-hunt"). It joins the queue and waits for the
+  open of blog", "hook: agent session finished", "hook: session marked Done"; its card: "First
+  open of blog"). It joins the queue and waits for the
   warm-up while a staged start is under way ("Missed runs and load"). It has no missed-run policy:
   the switch holds it, and it runs late on release.
 
@@ -301,7 +301,7 @@ disk.
   it. A record already in the history fired them then, and fires nothing again.
 
 **Context for scripts.** Scripts receive the context as environment variables:
-- `POMADE_JOB` (the job's id: `backup`, `coda-helper/nightly`), `POMADE_RUN_ID`, `POMADE_TRIGGER`
+- `POMADE_JOB` (the job's id: `backup`, `blog/nightly`), `POMADE_RUN_ID`, `POMADE_TRIGGER`
   (`scheduled` · `caught-up` · `manual` · `hook` · `chain`)
 - `POMADE_PROJECT` (a project job's stable id), `POMADE_PROJECT_PATH` (its project's folder,
   absolute — from Pomade's projects as the scheduler last heard them, `projects.json`; absent until
@@ -390,7 +390,7 @@ stays connected to it as the owner (`connectKeeper`, with the app's key), at
   died — and reads its `list`. A restarted scheduler rebuilds its view from that list, with no
   effect on any session.
 - **Ids** (`src/keeper/ids.ts`) say whose session it is:
-  - a service's one session: `svc:<job>`, the same across restarts (`svc:coda-helper.coda-web`);
+  - a service's one session: `svc:<job>`, the same across restarts (`svc:blog.dev-server`);
   - one run of a job: `run:<job>:<run id>`.
   - `<job>` is the job id encoded into the characters a session id allows: letters, digits and `-`
     stay; `/` becomes `.`; every other character becomes `_` and two hex digits per UTF-8 byte
@@ -480,9 +480,9 @@ the keeper reports updates the service's record.
   is not running joins the staged start at once: at Pomade's start or at the open, and one made,
   enabled, or changed to that start or that project afterwards within a tick. While Pomade is not
   running it is `waiting-for-pomade` ("waiting for Pomade · starts when Pomade starts" or "· starts
-  on first open of job-hunt") and Start is refused ("starts with Pomade; Pomade is not running") — its rows offer none;
+  on first open of blog") and Start is refused ("starts with Pomade; Pomade is not running") — its rows offer none;
   with Pomade running, a first-open one before its project's open is `waiting` ("waiting for first
-  open · starts on first open of job-hunt"), and Start runs it until Pomade quits. **When Pomade
+  open · starts on first open of blog"), and Start runs it until Pomade quits. **When Pomade
   quits** (`pomadeEnded`), every Pomade-bound service is stopped (reason `stopped`) and its record
   starts fresh: no `stopped by you`, no `failed`, no crash count — the next Pomade start begins
   fresh, each waiting for its trigger. While Pomade is closed, supervision stops any bound service
@@ -640,14 +640,14 @@ limit, Run now, hooks, chains, History, notices and Needs you.
   | Session ends | Result file | Run |
   |---|---|---|
   | exit 0 | a `GitRunOutput` | **done** — every repo done or skipped |
-  | exit 1 | a `GitRunOutput` | **failed**, reason each failed repo's: "Knowledge: Their changes conflict with yours in notes.md. …" |
+  | exit 1 | a `GitRunOutput` | **failed**, reason each failed repo's: "notes: Their changes conflict with yours in notes.md. …" |
   | exit 2 | — | **failed**: "the command line was wrong — <what the command said>"; nothing ran |
   | any other exit, a signal, or exit 0 / 1 | missing or not a `GitRunOutput` | **failed**: "pomade-git gave no result (exit 127)" |
   | Stop, time limit, a lost session | either | as for a script |
 
 - **The record** keeps the `GitRunOutput` whole (`git`): per repo done / skipped / failed and the
-  reason, the steps, the commit hash. Its last lines are one line per repo: "Knowledge · committed
-  a1b2c3d · pulled · pushed", "Knowledge · skipped · agent working", "Knowledge · failed · <the
+  reason, the steps, the commit hash. Its last lines are one line per repo: "notes · committed
+  a1b2c3d · pulled · pushed", "notes · skipped · agent working", "notes · failed · <the
   reason>"; without a result, the output log's last lines. The result file goes once the record
   holds it. The run's folder is the workspace root (`""`).
 - A failed run is noticed by Runner as its job's `notify` says (default on failure), the notice's
@@ -720,7 +720,7 @@ for each project whose folder changed, one after another:
 - its jobs' sub-folder is renamed after the folder's new last segment, when that changed. A
   sub-folder of that name already there keeps the jobs where they are, said in the log. A new
   name alone changes nothing on disk.
-- The sub-folder's jobs change id with it (`hunt/scrape` → `hunt-2/scrape`); their state goes with
+- The sub-folder's jobs change id with it (`blog/scrape` → `blog-2/scrape`); their state goes with
   them. Each running service of them is stopped and its session forgotten before its file moves,
   and starts again under its new id in the new folder — a first-open one too. Their supervision
   records, latest runs, runs not started yet, looks the switch holds and the loop guard's counts
@@ -753,7 +753,7 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
     a caught-up run still queued when its moment passes goes the same way. An on-time run of the
     job in the same look covers it: **missed · skipped · the 09:00 run covers it**. A `once`
     schedule has no next run: its catch-up is always worth it.
-  - **`wait-for-me`**: the run waits as **missed · waiting for you**, a Needs-you item *"Inbox triage
+  - **`wait-for-me`**: the run waits as **missed · waiting for you**, a Needs-you item *"Tidy drafts
     · missed Sun 3:00"* with a notice; one per job — a later miss moves it to the later time and
     adds to its count. It never starts on its own:
     - **Run now** — a run of yours (trigger `manual`) takes its place, under the job's overlap; for
@@ -923,7 +923,7 @@ skills-folder: Knowledge/_skills/apps/   # where Runner keeps its agent skill
     one (its command could not start) has Start alone, its name opens the job in Jobs, and the card
     and the notice say why it could not start.
   - **A missed run that waits for you** (`missed:<job>`, one per job) is an item while it waits;
-    noticed when it comes ("Inbox triage · missed Sun 03:00"), its click opening the run's card.
+    noticed when it comes ("Tidy drafts · missed Sun 03:00"), its click opening the run's card.
     Actions: Run now · Run at… · Skip (`runs.missed`); for more than one missed run Run once · Run
     all N · Run at… · Skip. Its notice's body names them: "It waits for you: Run once, Run all 4,
     Run at… or Skip."
@@ -989,7 +989,7 @@ to it, light theme only.
 3. **Running now** (`src/ui/RunningNow.tsx`): the services that are up or starting, in start
    order, then the runs going, as one list of rows (`PanelRow`): the status dot, the name and at
    its end where it stands with its help ("up 3d 4h", "starting", "running 3m", "queued · 1
-   ahead", an agent run at a prompt amber "waiting for you · 17m"); project · folder below ("workspace · git-base" for the workspace root); a third line
+   ahead", an agent run at a prompt amber "waiting for you · 17m"); project · folder below ("workspace · my-workspace" for the workspace root); a third line
    only for news ("waiting for port 5173", "restarted 3× · last crash 14:02", "restart to apply
    its file"). A row's status words explain themselves on hover (no (i) in rows). A service's row
    opens its attached tab, titled with its name; a running run's row its terminal (the run's
@@ -1006,7 +1006,7 @@ to it, light theme only.
 **Runner tab:**
 - **Jobs** (`src/ui/JobsView.tsx`): the job files grouped by project — workspace jobs first, then each
   project in Pomade's order — each group headed by its name (the Workspace's with its help), its
-  jobs sub-folder (`jobs/coda-helper/`) and its count; the files of a group by path. The filter row
+  jobs sub-folder (`jobs/blog/`) and its count; the files of a group by path. The filter row
   has the "This project" chip with its help and the "N jobs" summary ("· N invalid" when a file is
   invalid); the table head carries the helps on **Last result** and **Next run**. The chip is the
   tab's: on in Jobs, it is on in Services; it keeps the open project's jobs ("No jobs in <project>"
@@ -1078,8 +1078,8 @@ to it, light theme only.
   its command or folder), "starting" over what it waits for ("waiting for port 4000", "up once it
   has run 5 s"), "failed · gave up" over "crashed 5× in 1 min · today 11:20", "stopped by you" over
   when, "queued" over "starts when the one before it is up", "restarting" over its crashes or
-  "again at 14:03", "waiting for first open" over "starts on first open of job-hunt", "waiting for
-  Pomade" over "starts when Pomade starts" or "starts on first open of job-hunt", "disabled",
+  "again at 14:03", "waiting for first open" over "starts on first open of blog", "waiting for
+  Pomade" over "starts when Pomade starts" or "starts on first open of blog", "disabled",
   "stopping" over "its file is gone" — each with its help; **Restart · Stop** while it is up or
   starting, **Start** while Start would start it (its job enabled — the file's word, so a report a
   tick behind never offers it — and not invalid or gone; a service waiting for Pomade has none, since
@@ -1217,7 +1217,7 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   it, the **Job** (every valid job but services and the job itself, by name; one the file names
   that is not among them stays, by its id) and **When it**: Is done · Fails · Either. Under them,
   the trigger in words: "Runs at Mac login · Once per login, after the 2-minute warm-up" (the
-  warm-up as the settings say it); "Runs when Pomade starts", "Runs on first open of job-hunt", "Runs whenever job-hunt is opened",
+  warm-up as the settings say it); "Runs when Pomade starts", "Runs on first open of blog", "Runs whenever blog is opened",
   "Runs when a project is created", "Runs after a claude session finishes in Pomade", "Runs when a
   session is marked Done" · "Fires only while Pomade is running, so there are no missed runs."; or
   "Runs after Pull is done · A chain. History will show “chain: after Pull”". The file gets

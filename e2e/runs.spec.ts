@@ -229,7 +229,7 @@ test.describe("scheduled scripts", () => {
 
   test("a workspace copied to a fresh user-data folder shows the same History with its output, switch and Needs you; what it missed since its last alive time goes to each job's policy", async () => {
     await world.writeJob("fail.md", scriptFile("Fail", "echo boom; exit 3", "schedule:\n  daily: { at: 13:00 }\nlow-priority: false\n"));
-    await world.writeJob("inbox.md", scriptFile("Inbox", "echo triaged", "schedule:\n  daily: { at: 14:00 }\nlow-priority: false\nmissed: wait-for-me\n"));
+    await world.writeJob("inbox.md", scriptFile("Inbox", "echo tidied", "schedule:\n  daily: { at: 14:00 }\nlow-priority: false\nmissed: wait-for-me\n"));
     const first = world.startScheduler(clock("2026-11-18T12:59:58"));
     await world.ready(first);
     await expect.poll(() => world.history(), { timeout: 10_000 }).toHaveLength(1);

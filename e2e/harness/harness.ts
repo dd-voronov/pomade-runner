@@ -28,18 +28,18 @@ const projects = query.get("projects");
 // screenshots that compare with it (`scripts/shots.mjs`).
 const PROTOTYPE_PROJECTS = {
   groups: [
-    { id: "g-os", name: "Personal OS" },
+    { id: "g-os", name: "Personal" },
     { id: "g-pomade", name: "Pomade" },
     { id: "g-side", name: "Side projects" },
   ],
   projects: [
     { id: "alpha", name: "Alpha", root: "Projects/alpha", group: "g-side" },
-    { id: "knowledge", name: "Knowledge", root: "Knowledge", group: "g-os" },
+    { id: "notes", name: "notes", root: "notes", group: "g-os" },
     { id: "pomade", name: "Pomade", root: "Projects/Pomade", group: "g-pomade" },
     { id: "pomade-kit", name: "pomade-kit", root: "Projects/pomade-kit", group: "g-pomade" },
     { id: "pomade-runner", name: "pomade-runner", root: "Projects/pomade-runner", group: "g-pomade" },
-    { id: "coda-helper", name: "coda-helper", root: "Projects/coda-helper", group: "g-side" },
-    { id: "job-hunt", name: "job-hunt", root: "Projects/job-hunt", group: "g-side" },
+    { id: "blog", name: "blog", root: "Projects/blog", group: "g-side" },
+    { id: "shop", name: "shop", root: "Projects/shop", group: "g-side" },
   ],
 };
 
@@ -50,7 +50,7 @@ const fakeHost = createFakeHost({
   activeProject: query.get("active") ?? "alpha",
   // The workspace's one repo, as Pomade's git state reads it: the name git jobs name it by.
   // `?repos=a,b` names more, for the screenshots that compare with the prototype's.
-  git: ["Knowledge", ...(query.get("repos")?.split(",") ?? [])].map((name) => ({ name, root: name, absPath: `/fake/workspace/${name}`, remoteUrl: null, branch: "main", upstream: null, ahead: 0, behind: 0, hasCommits: true, changes: [] })),
+  git: ["notes", ...(query.get("repos")?.split(",") ?? [])].map((name) => ({ name, root: name, absPath: `/fake/workspace/${name}`, remoteUrl: null, branch: "main", upstream: null, ahead: 0, behind: 0, hasCommits: true, changes: [] })),
   ...(hostApi === null ? {} : { hostApi: Number(hostApi) }),
   apps: agentsStandIn(query.get("agents")),
   roster: HARNESS_ROSTER,

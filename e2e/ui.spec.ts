@@ -103,7 +103,7 @@ test.describe("the Runner tab", () => {
   test("the header's views: Jobs · History · Services · Settings, the current one marked; each opens its route", async ({ page }) => {
     await page.goto(harness());
     await expect(app(page).getByTestId("tab-empty")).toBeVisible();
-    await writeJob(page, "alpha/coda-web.md", VALID);
+    await writeJob(page, "alpha/dev-server.md", VALID);
     await writeJob(page, "weekly-report.md", BROKEN);
     const nav = app(page).getByRole("navigation", { name: "Runner views" });
     await expect(nav.getByRole("button")).toHaveText(["Jobs2", "History", "Services1", "Settings"]);
@@ -122,9 +122,9 @@ test.describe("the Runner tab", () => {
     await expect(app(page).getByTestId("services-empty")).toContainText("A service is a command Runner keeps running");
     await expect(app(page).getByTestId("services-empty-new-job")).toHaveText("New job");
     await expect(app(page).getByTestId("nav-services")).toHaveAttribute("aria-current", "page");
-    await writeJob(page, "alpha/coda-web.md", VALID);
+    await writeJob(page, "alpha/dev-server.md", VALID);
     const row = app(page).getByTestId("service-row");
-    await expect(row).toHaveText(/Coda web\s*Alpha · Projects\/alpha\s*\.\/start\.sh\s*running · up 0s\s*no crashes/);
+    await expect(row).toHaveText(/Dev server\s*Alpha · Projects\/alpha\s*\.\/start\.sh\s*running · up 0s\s*no crashes/);
     await shoot(page, "tab-services");
   });
 
@@ -137,7 +137,7 @@ test.describe("the Runner tab", () => {
   });
 });
 
-const VALID = "---\nkind: service\nname: Coda web\nproject: alpha\nfolder: Projects/alpha\ncommand: ./start.sh\n---\n";
+const VALID = "---\nkind: service\nname: Dev server\nproject: alpha\nfolder: Projects/alpha\ncommand: ./start.sh\n---\n";
 const BROKEN = "---\nkind: script\nname: Weekly report\nfolder: .\ncommand: ./report.sh\nschedule:\n  weekly: { days: [fri], at: 25:00 }\n---\n";
 
 /** Write a job file into the fake workspace, as an agent or the user would. */
@@ -175,9 +175,9 @@ test.describe("the jobs list", () => {
     await page.goto(harness());
     await expect(app(page).getByTestId("tab-empty")).toBeVisible();
 
-    await writeJob(page, "alpha/coda-web.md", VALID);
+    await writeJob(page, "alpha/dev-server.md", VALID);
     const row = app(page).getByTestId("job-row");
-    await expect(row).toContainText("Coda web", { timeout: 1000 });
+    await expect(row).toContainText("Dev server", { timeout: 1000 });
     await expect(app(page).getByTestId("job-group")).toHaveText(["Alphajobs/alpha/1"]);
 
     await writeJob(page, "weekly-report.md", BROKEN);
@@ -189,24 +189,24 @@ test.describe("the jobs list", () => {
     await invalid.getByRole("button", { name: "Open file" }).click();
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/weekly-report.md" }]);
 
-    await page.evaluate(() => window.fakeHost.deleteFile("Apps/pomade-runner/jobs/alpha/coda-web.md"));
+    await page.evaluate(() => window.fakeHost.deleteFile("Apps/pomade-runner/jobs/alpha/dev-server.md"));
     await expect(row).toHaveCount(0, { timeout: 1000 });
   });
 
   test("a service's row says where it stands: its state, restarts and last crash", async ({ page }) => {
     await page.goto(harness());
     await expect(app(page).getByTestId("tab-empty")).toBeVisible();
-    await writeJob(page, "alpha/coda-web.md", VALID);
+    await writeJob(page, "alpha/dev-server.md", VALID);
     const state = app(page).getByTestId("job-status");
     const sub = app(page).getByTestId("job-last-sub");
     await expect(state).toHaveText(/^running · up \d+s$/);
     await expect(sub).toHaveText("no crashes");
     const crash = new Date(2026, 10, 17, 14, 2).getTime();
-    await page.evaluate((at) => window.setServiceStatus("alpha/coda-web", { restarts: 3, lastCrashAt: at }), crash);
+    await page.evaluate((at) => window.setServiceStatus("alpha/dev-server", { restarts: 3, lastCrashAt: at }), crash);
     await expect(sub).toHaveText("restarted 3× · last crash 14:02");
     await expect(sub).toHaveAttribute("data-help", "st.restarted");
     await shoot(page, "tab-service-restarted");
-    await page.evaluate((at) => window.setServiceStatus("alpha/coda-web", { state: "failed", restarts: 4, lastCrashAt: at }), crash);
+    await page.evaluate((at) => window.setServiceStatus("alpha/dev-server", { state: "failed", restarts: 4, lastCrashAt: at }), crash);
     await expect(state).toHaveText("failed · gave up");
     await expect(state).toHaveAttribute("data-help", "st.svcfailed");
     await expect(sub).toContainText("crashed 5× in 1 min");
@@ -217,11 +217,11 @@ test.describe("the jobs list", () => {
     await page.setViewportSize({ width: 240, height: 640 });
     await page.goto(harness({ surface: "panel" }));
     await expect(app(page).getByTestId("panel-empty")).toBeVisible();
-    await writeJob(page, "alpha/coda-web.md", VALID);
+    await writeJob(page, "alpha/dev-server.md", VALID);
     await writeJob(page, "weekly-report.md", BROKEN);
     const panel = app(page).getByTestId("panel-jobs");
     await expect(panel.getByTestId("switch")).toBeVisible();
-    await expect(panel.getByRole("region")).toHaveText([/^Needs you0Nothing needs you\.$/, /^Running now1Coda webup 0sAlpha · Projects\/alpha$/, /^Next upNothing is scheduled\.$/]);
+    await expect(panel.getByRole("region")).toHaveText([/^Needs you0Nothing needs you\.$/, /^Running now1Dev serverup 0sAlpha · Projects\/alpha$/, /^Next upNothing is scheduled\.$/]);
     await expect(panel.getByTestId("job-row")).toHaveCount(0);
     await expect(panel.getByTestId("job-invalid")).toHaveCount(0);
     const open = panel.getByRole("button", { name: "Open Runner" });
@@ -247,21 +247,21 @@ test.describe("the jobs list", () => {
   });
 
   test("a git job's row says its operation and repos — one the workspace lacks, so — with Run now; its route marks it", async ({ page }) => {
-    const GIT = "---\nkind: git\nname: Knowledge twice daily\ngit: { operation: commit-push, repos: [Knowledge, Notes] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n";
-    await page.goto(harness({ route: "jobs/knowledge" }));
+    const GIT = "---\nkind: git\nname: Commit notes\ngit: { operation: commit-push, repos: [notes, Journal] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n";
+    await page.goto(harness({ route: "jobs/notes" }));
     await expect(app(page).getByTestId("tab-empty")).toBeVisible();
-    await writeJob(page, "alpha/coda-web.md", VALID);
-    await writeJob(page, "knowledge.md", GIT);
-    const row = app(page).locator('[data-testid="job-row"][data-job="knowledge"]');
+    await writeJob(page, "alpha/dev-server.md", VALID);
+    await writeJob(page, "notes.md", GIT);
+    const row = app(page).locator('[data-testid="job-row"][data-job="notes"]');
     const trigger = row.getByTestId("job-trigger");
-    await expect(trigger).toHaveText("daily at 13:00 and 20:00 · Notes is not in this workspace");
-    await expect(trigger).toHaveAttribute("data-tip", "Daily at 13:00 and 20:00 · Commit & push · Knowledge, Notes (not in this workspace)");
+    await expect(trigger).toHaveText("daily at 13:00 and 20:00 · Journal is not in this workspace");
+    await expect(trigger).toHaveAttribute("data-tip", "Daily at 13:00 and 20:00 · Commit & push · notes, Journal (not in this workspace)");
     await expect(row.getByTestId("job-status")).toHaveText("never ran");
     await expect(row).toHaveAttribute("aria-current", "true");
-    await expect(app(page).locator('[data-testid="job-row"][data-job="alpha/coda-web"]')).not.toHaveAttribute("aria-current", /.*/);
+    await expect(app(page).locator('[data-testid="job-row"][data-job="alpha/dev-server"]')).not.toHaveAttribute("aria-current", /.*/);
     await shoot(page, "tab-jobs-git");
     await row.getByRole("button", { name: "Run now" }).click();
-    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toEqual([{ method: "jobs.run", params: { job: "knowledge" } }]);
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toEqual([{ method: "jobs.run", params: { job: "notes" } }]);
   });
 
   test("says so when the scheduler does not answer", async ({ page }) => {
@@ -559,31 +559,31 @@ test.describe("runs", () => {
     const reason = "Their changes conflict with yours in notes.md. Nothing was changed — the repository is exactly as before, and nothing was pushed.";
     const git: RunRecord = {
       ...failed,
-      job: "knowledge",
-      name: "Knowledge twice daily",
+      job: "notes",
+      name: "Commit notes",
       kind: "git",
       exitCode: 1,
       reason: `Pomade: ${reason}`,
       lastLines: [],
       git: {
         op: "commit-push",
-        job: "Knowledge twice daily",
+        job: "Commit notes",
         at: new Date(at(13, 0)).toISOString(),
         results: [
-          { repo: "Knowledge", path: "/fake/workspace/Knowledge", op: "commit-push", status: "done", reason: null, steps, commit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
-          { repo: "coda-helper", path: "/fake/workspace/Projects/coda-helper", op: "commit-push", status: "skipped", reason: "agent working", steps: [], commit: null },
+          { repo: "notes", path: "/fake/workspace/notes", op: "commit-push", status: "done", reason: null, steps, commit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
+          { repo: "blog", path: "/fake/workspace/Projects/blog", op: "commit-push", status: "skipped", reason: "agent working", steps: [], commit: null },
           { repo: "Pomade", path: "/fake/workspace/Projects/Pomade", op: "commit-push", status: "failed", reason, steps: [], commit: null },
         ],
       },
     };
-    await page.goto(harness({ route: `run/knowledge/${RUN}` }));
+    await page.goto(harness({ route: `run/notes/${RUN}` }));
     await setRuns(page, [git]);
     const card = app(page).getByTestId("run-card");
     await expect(app(page).getByTestId("run-result")).toHaveText("Failed");
     const repos = card.getByTestId("run-git-repo");
     await expect(repos).toHaveCount(3);
     await expect(repos.nth(0)).toHaveAttribute("data-status", "done");
-    await expect(repos.nth(0)).toContainText("Knowledgea1b2c3d");
+    await expect(repos.nth(0)).toContainText("notesa1b2c3d");
     await expect(repos.nth(0).getByTestId("run-git-step")).toHaveText(["committed a1b2c3d (2 files)", "up to date with origin/main", "pushed 1 commit to origin/main"]);
     await expect(repos.nth(1).getByTestId("run-git-step")).toHaveText(["agent working"]);
     await expect(repos.nth(1).getByTestId("run-git-step")).toHaveAttribute("data-outcome", "skipped");
@@ -600,7 +600,7 @@ test.describe("runs", () => {
     await expect(card.getByTestId("run-last-lines")).toHaveCount(0);
     await shoot(page, "tab-run-git");
     await app(page).getByRole("button", { name: "Run again" }).click();
-    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toContainEqual({ method: "jobs.run", params: { job: "knowledge" } });
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toContainEqual({ method: "jobs.run", params: { job: "notes" } });
   });
 
   test("the tab opens at a run's route, as a notice's click opens it", async ({ page }) => {
@@ -1059,8 +1059,8 @@ test.describe("hooks and chains", () => {
 
 test.describe("the job form", () => {
   test.use({ viewport: { width: 1040, height: 760 } });
-  const WEB = "Apps/pomade-runner/jobs/alpha/coda-web.md";
-  const HAND = "---\nkind: service # the dev server\nname: Coda web\nproject: alpha\nfolder: Projects/alpha\ncommand: ./start.sh\nready: { port: 5173 } # vite\n---\nNotes for humans.\n";
+  const WEB = "Apps/pomade-runner/jobs/alpha/dev-server.md";
+  const HAND = "---\nkind: service # the dev server\nname: Dev server\nproject: alpha\nfolder: Projects/alpha\ncommand: ./start.sh\nready: { port: 5173 } # vite\n---\nNotes for humans.\n";
 
   async function start(page: Page, query: Record<string, string> = {}): Promise<void> {
     await page.goto(harness(query));
@@ -1096,29 +1096,29 @@ test.describe("the job form", () => {
     await expect(form.getByTestId("kind-service")).toHaveAttribute("aria-checked", "true");
     for (const kind of ["script", "agent", "git"]) await expect(form.getByTestId(`kind-${kind}`)).toHaveAttribute("aria-checked", "false");
 
-    await form.getByRole("textbox", { name: "Name", exact: true }).fill("Coda web");
+    await form.getByRole("textbox", { name: "Name", exact: true }).fill("Dev server");
     await form.getByRole("textbox", { name: "Command", exact: true }).fill("./start.sh");
     // Choose…: a project's folder fills in the folder and the project.
     await form.getByRole("button", { name: "Choose…" }).click();
     const menu = app(page).getByTestId("folder-menu");
-    await expect(menu.getByRole("menuitem")).toHaveText(["workspaceworkspace root", "KnowledgeKnowledge", "PomadeProjects/Pomade", "pomade-kitProjects/pomade-kit", "pomade-runnerProjects/pomade-runner", "AlphaProjects/alpha", "coda-helperProjects/coda-helper", "job-huntProjects/job-hunt", "Other folder…Pomade's folder picker"]);
-    await menu.getByRole("menuitem", { name: /^coda-helper/ }).click();
-    await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("Projects/coda-helper");
+    await expect(menu.getByRole("menuitem")).toHaveText(["workspaceworkspace root", "notesnotes", "PomadeProjects/Pomade", "pomade-kitProjects/pomade-kit", "pomade-runnerProjects/pomade-runner", "AlphaProjects/alpha", "blogProjects/blog", "shopProjects/shop", "Other folder…Pomade's folder picker"]);
+    await menu.getByRole("menuitem", { name: /^blog/ }).click();
+    await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("Projects/blog");
     const project = form.getByRole("combobox", { name: "Project" });
-    await expect(project).toHaveValue("coda-helper");
+    await expect(project).toHaveValue("blog");
     // The projects under their groups, after the Workspace.
     await expect(project.locator("optgroup")).toHaveCount(3);
-    await expect(project.locator('optgroup[label="Side projects"] option')).toHaveText(["Alpha", "coda-helper", "job-hunt"]);
+    await expect(project.locator('optgroup[label="Side projects"] option')).toHaveText(["Alpha", "blog", "shop"]);
     // Other folder…: Pomade's folder picker; a folder outside every project keeps the project.
     await page.evaluate(() => {
-      window.fakeHost.writeFile("Projects/coda-helper/web/index.html", "");
-      window.fakeHost.answerPick("Projects/coda-helper/web");
+      window.fakeHost.writeFile("Projects/blog/web/index.html", "");
+      window.fakeHost.answerPick("Projects/blog/web");
     });
     await form.getByRole("button", { name: "Choose…" }).click();
     await menu.getByRole("menuitem", { name: /^Other folder/ }).click();
-    await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("Projects/coda-helper/web");
-    expect(await page.evaluate(() => window.fakeHost.pickRequests)).toEqual([{ kind: "folder", root: "", initial: "Projects/coda-helper" }]);
-    await form.getByRole("textbox", { name: "Folder", exact: true }).fill("Projects/coda-helper");
+    await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("Projects/blog/web");
+    expect(await page.evaluate(() => window.fakeHost.pickRequests)).toEqual([{ kind: "folder", root: "", initial: "Projects/blog" }]);
+    await form.getByRole("textbox", { name: "Folder", exact: true }).fill("Projects/blog");
 
     // Readiness: collapsed to a line until asked for.
     await form.getByRole("button", { name: "Check a port or URL instead" }).click();
@@ -1129,14 +1129,14 @@ test.describe("the job form", () => {
     await form.getByTestId("form-policies").getByRole("button", { name: "Change" }).click();
     await form.getByRole("button", { name: "Always" }).click();
     await expect(form.getByTestId("form-policies")).toContainText("customised");
-    await expect(app(page).getByTestId("form-path")).toHaveText("Apps/pomade-runner/jobs/coda-helper/coda-web.md");
+    await expect(app(page).getByTestId("form-path")).toHaveText("Apps/pomade-runner/jobs/blog/dev-server.md");
     await shoot(page, "tab-form-new");
 
     await app(page).getByTestId("form-save").click();
-    await expect(app(page).getByTestId("toast")).toHaveText("RunnerCreated Apps/pomade-runner/jobs/coda-helper/coda-web.md · started");
-    await expect(app(page).getByTestId("tab-jobs").getByTestId("job-row")).toContainText("Coda web");
-    expect(await fileText(page, "Apps/pomade-runner/jobs/coda-helper/coda-web.md")).toBe(
-      "---\nkind: service\nname: Coda web\nproject: coda-helper\nfolder: Projects/coda-helper\nenabled: true\ncommand: ./start.sh\nready: { port: 5173 }\nnotify: always\n---\n",
+    await expect(app(page).getByTestId("toast")).toHaveText("RunnerCreated Apps/pomade-runner/jobs/blog/dev-server.md · started");
+    await expect(app(page).getByTestId("tab-jobs").getByTestId("job-row")).toContainText("Dev server");
+    expect(await fileText(page, "Apps/pomade-runner/jobs/blog/dev-server.md")).toBe(
+      "---\nkind: service\nname: Dev server\nproject: blog\nfolder: Projects/blog\nenabled: true\ncommand: ./start.sh\nready: { port: 5173 }\nnotify: always\n---\n",
     );
   });
 
@@ -1150,7 +1150,7 @@ test.describe("the job form", () => {
 
   test("validation: Save shows the checker's words on each field, the count in the Save bar, and focuses the first; a filled-in field's error shows at once", async ({ page }) => {
     await start(page);
-    await writeJob(page, "alpha/coda-web.md", VALID);
+    await writeJob(page, "alpha/dev-server.md", VALID);
     await app(page).getByTestId("new-job").click();
     const form = app(page).getByTestId("form-service");
     // A new job's form opens with the cursor in Name, as the prototype's does.
@@ -1159,21 +1159,21 @@ test.describe("the job form", () => {
     await expect(form.getByRole("alert")).toHaveCount(0);
     await app(page).getByTestId("form-save").click();
     await expect(form.getByRole("alert")).toHaveText([
-      "name — is empty. Fix: write it, e.g. name: Coda web.",
+      "name — is empty. Fix: write it, e.g. name: Dev server.",
       "command — is empty. Fix: write it, e.g. command: ./start.sh.",
-      "folder — is empty. Fix: write it, e.g. folder: Projects/my-project.",
+      "folder — is empty. Fix: write it, e.g. folder: Projects/blog.",
     ]);
     await expect(app(page).getByTestId("form-error-count")).toHaveText("3 things to fix before saving");
     await expect(form.getByRole("textbox", { name: "Name", exact: true })).toBeFocused();
     await shoot(page, "tab-form-errors");
 
     // The checker's cross-file checks: a name another job has.
-    await form.getByRole("textbox", { name: "Name", exact: true }).fill("coda WEB");
-    await expect(form.getByRole("alert").first()).toHaveText("name — coda WEB is also the name of Apps/pomade-runner/jobs/alpha/coda-web.md. Fix: give each job its own name — History, notices and `pomade-runner run` tell jobs apart by name.");
+    await form.getByRole("textbox", { name: "Name", exact: true }).fill("dev SERVER");
+    await expect(form.getByRole("alert").first()).toHaveText("name — dev SERVER is also the name of Apps/pomade-runner/jobs/alpha/dev-server.md. Fix: give each job its own name — History, notices and `pomade-runner run` tell jobs apart by name.");
     await form.getByRole("textbox", { name: "Name", exact: true }).fill("Docs");
     await form.getByRole("textbox", { name: "Command", exact: true }).fill("npm run docs");
     await form.getByRole("textbox", { name: "Folder", exact: true }).fill("../outside");
-    await expect(form.getByRole("alert")).toHaveText(['folder — "../outside" is outside the workspace. Fix: write a folder inside the workspace, relative to its root, e.g. folder: Projects/my-project (. is the workspace root).']);
+    await expect(form.getByRole("alert")).toHaveText(['folder — "../outside" is outside the workspace. Fix: write a folder inside the workspace, relative to its root, e.g. folder: Projects/blog (. is the workspace root).']);
     await expect(app(page).getByTestId("form-error-count")).toHaveText("1 thing to fix before saving");
     await form.getByRole("textbox", { name: "Folder", exact: true }).fill(".");
     await expect(form.getByText("“.” is the workspace root, workspace.")).toBeVisible();
@@ -1202,11 +1202,11 @@ test.describe("the job form", () => {
   });
 
   test("editing writes only the changed fields — comments, the body stay — and a project moves the file to its sub-folder", async ({ page }) => {
-    await start(page, { route: "edit/alpha.coda-web" });
-    await writeJob(page, "alpha/coda-web.md", HAND);
+    await start(page, { route: "edit/alpha.dev-server" });
+    await writeJob(page, "alpha/dev-server.md", HAND);
     const form = app(page).getByTestId("form-service");
     await expect(form.getByRole("textbox", { name: "Command", exact: true })).toHaveValue("./start.sh");
-    await expect(app(page).getByTestId("form-title")).toHaveText("Jobs / Coda web");
+    await expect(app(page).getByTestId("form-title")).toHaveText("Jobs / Dev server");
     await expect(form.getByRole("textbox", { name: "Port" })).toHaveValue("5173");
     // Nothing changed: nothing to save.
     await expect(app(page).getByTestId("form-save")).toHaveText("Saved");
@@ -1222,37 +1222,37 @@ test.describe("the job form", () => {
     expect(await fileText(page, WEB)).toBe(HAND.replace("./start.sh", "npm run dev").replace("# vite\n", "# vite\nenabled: false\n"));
 
     // Open file opens the file in Pomade.
-    await navigate(page, "edit/alpha.coda-web");
+    await navigate(page, "edit/alpha.dev-server");
     await app(page).getByTestId("form-open-file").click();
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: WEB }]);
 
     // To the Workspace: the file moves to the top of the jobs folder, its text kept.
     await app(page).getByTestId("form-service").getByRole("combobox", { name: "Project" }).selectOption("");
-    await expect(app(page).getByTestId("form-path")).toHaveText("Apps/pomade-runner/jobs/coda-web.md");
+    await expect(app(page).getByTestId("form-path")).toHaveText("Apps/pomade-runner/jobs/dev-server.md");
     await app(page).getByTestId("form-save").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
     expect(await fileText(page, WEB)).toBeNull();
-    expect(await fileText(page, "Apps/pomade-runner/jobs/coda-web.md")).toBe(HAND.replace("./start.sh", "npm run dev").replace("project: alpha\n", "").replace("# vite\n", "# vite\nenabled: false\n"));
+    expect(await fileText(page, "Apps/pomade-runner/jobs/dev-server.md")).toBe(HAND.replace("./start.sh", "npm run dev").replace("project: alpha\n", "").replace("# vite\n", "# vite\nenabled: false\n"));
   });
 
   test("the form follows the file on disk: untouched fields take its values, the person's edits stay with a notice", async ({ page }) => {
-    await start(page, { route: "edit/alpha.coda-web" });
-    await writeJob(page, "alpha/coda-web.md", HAND);
+    await start(page, { route: "edit/alpha.dev-server" });
+    await writeJob(page, "alpha/dev-server.md", HAND);
     const form = app(page).getByTestId("form-service");
     await form.getByRole("textbox", { name: "Command", exact: true }).fill("npm run dev");
-    await writeJob(page, "alpha/coda-web.md", HAND.replace("name: Coda web", "name: Coda site").replace("./start.sh", "./serve.sh"));
-    await expect(form.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Coda site");
+    await writeJob(page, "alpha/dev-server.md", HAND.replace("name: Dev server", "name: Web server").replace("./start.sh", "./serve.sh"));
+    await expect(form.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Web server");
     await expect(form.getByRole("textbox", { name: "Command", exact: true })).toHaveValue("npm run dev");
     await expect(app(page).getByTestId("form-clash")).toHaveText("The file changed on disk while you edited it: command. Your edits stay, and Save writes them over the file's.");
     await shoot(page, "tab-form-clash");
     // A problem the form has no field for is the file's: shown, and Save still writes.
-    await writeJob(page, "alpha/coda-web.md", HAND.replace("name: Coda web", "name: Coda site\nowner: me"));
+    await writeJob(page, "alpha/dev-server.md", HAND.replace("name: Dev server", "name: Web server\nowner: me"));
     await expect(app(page).getByTestId("form-file-errors")).toContainText("line 4: owner — owner is not a job field. Fix: remove it — the pomade-runner-jobs skill lists every field.");
     await app(page).getByTestId("form-save").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
-    expect(await fileText(page, WEB)).toBe(HAND.replace("name: Coda web", "name: Coda site\nowner: me").replace("./start.sh", "npm run dev"));
+    expect(await fileText(page, WEB)).toBe(HAND.replace("name: Dev server", "name: Web server\nowner: me").replace("./start.sh", "npm run dev"));
     // The file deleted while the form is open: it says so, and Save has nothing to write to.
-    await navigate(page, "edit/alpha.coda-web");
+    await navigate(page, "edit/alpha.dev-server");
     await expect(app(page).getByTestId("form-service")).toBeVisible();
     await page.evaluate((p) => window.fakeHost.deleteFile(p), WEB);
     await expect(app(page).getByTestId("form-gone")).toBeVisible();
@@ -1262,8 +1262,8 @@ test.describe("the job form", () => {
   test("a job file deleted while its form follows it: the form says so, with no unhandled error", async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", (err) => errors.push(err.message));
-    await start(page, { route: "edit/alpha.coda-web" });
-    await writeJob(page, "alpha/coda-web.md", HAND);
+    await start(page, { route: "edit/alpha.dev-server" });
+    await writeJob(page, "alpha/dev-server.md", HAND);
     await expect(app(page).getByTestId("form-service")).toBeVisible();
     await app(page).getByTestId("form-open-file").click();
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: WEB }]);
@@ -1272,7 +1272,7 @@ test.describe("the job form", () => {
     await expect(app(page).getByTestId("form-delete")).toBeDisabled();
     // Nothing to open: Open file is off, so it cannot ask the host for a file that is gone.
     await expect(app(page).getByTestId("form-open-file")).toBeDisabled();
-    await writeJob(page, "alpha/coda-web.md", HAND);
+    await writeJob(page, "alpha/dev-server.md", HAND);
     await expect(app(page).getByTestId("form-gone")).toHaveCount(0);
     await expect(app(page).getByTestId("form-open-file")).toBeEnabled();
     expect(errors).toEqual([]);
@@ -1281,8 +1281,8 @@ test.describe("the job form", () => {
   test("Open file on a file that vanished before the form heard of it says so in a toast, with no unhandled error", async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", (err) => errors.push(err.message));
-    await start(page, { route: "edit/alpha.coda-web" });
-    await writeJob(page, "alpha/coda-web.md", HAND);
+    await start(page, { route: "edit/alpha.dev-server" });
+    await writeJob(page, "alpha/dev-server.md", HAND);
     await expect(app(page).getByTestId("form-service")).toBeVisible();
     // Gone without a change event: the form still has it, and Pomade refuses to open it.
     await page.evaluate((p) => (window.fakeHost as unknown as { workspace: { deleteFile(path: string): unknown } }).workspace.deleteFile(p), WEB);
@@ -1292,14 +1292,14 @@ test.describe("the job form", () => {
   });
 
   test("Delete sits next to Open file; it confirms with the file's name, and a running service is said to be stopped first", async ({ page }) => {
-    await start(page, { route: "edit/alpha.coda-web" });
-    await writeJob(page, "alpha/coda-web.md", HAND);
+    await start(page, { route: "edit/alpha.dev-server" });
+    await writeJob(page, "alpha/dev-server.md", HAND);
     const actions = app(page).getByTestId("form-head").getByRole("button");
     await expect(actions.last()).toHaveText("Delete");
     expect(await actions.evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label") ?? button.textContent))).toEqual(["Back to Jobs", "Help", "Open file", "Delete"]);
     await app(page).getByTestId("form-delete").click();
     const confirm = app(page).getByTestId("delete-confirm");
-    await expect(confirm.getByRole("heading")).toHaveText("Delete “Coda web”?");
+    await expect(confirm.getByRole("heading")).toHaveText("Delete “Dev server”?");
     await expect(confirm.getByTestId("delete-path")).toHaveText(WEB);
     await expect(confirm).toContainText("The service is running: Runner stops it first, then removes the file. This can't be undone.");
     await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
@@ -1309,18 +1309,18 @@ test.describe("the job form", () => {
     expect(await fileText(page, WEB)).toBe(HAND);
 
     // A refusal stays in the dialog, in the scheduler's words.
-    await page.evaluate(() => (window.refuseDelete = '"Coda web" did not stop, so its file is kept'));
+    await page.evaluate(() => (window.refuseDelete = '"Dev server" did not stop, so its file is kept'));
     await app(page).getByTestId("form-delete").click();
     await confirm.getByRole("button", { name: "Delete job" }).click();
-    await expect(confirm.getByRole("alert")).toHaveText('"Coda web" did not stop, so its file is kept');
+    await expect(confirm.getByRole("alert")).toHaveText('"Dev server" did not stop, so its file is kept');
     await page.evaluate(() => (window.refuseDelete = null));
     await confirm.getByRole("button", { name: "Delete job" }).click();
     await expect(app(page).getByTestId("toast").last()).toHaveText(`RunnerDeleted ${WEB} · stopped first`);
     await expect(app(page).getByTestId("tab-empty")).toBeVisible();
     expect(await fileText(page, WEB)).toBeNull();
     expect(await page.evaluate(() => window.runnerCalls)).toEqual([
-      { method: "jobs.delete", params: { job: "alpha/coda-web" } },
-      { method: "jobs.delete", params: { job: "alpha/coda-web" } },
+      { method: "jobs.delete", params: { job: "alpha/dev-server" } },
+      { method: "jobs.delete", params: { job: "alpha/dev-server" } },
     ]);
   });
 
@@ -1341,7 +1341,7 @@ test.describe("the job form", () => {
 
   test("an unknown job's route says so; a job whose file the form cannot read offers Open file", async ({ page }) => {
     await start(page, { route: "edit/nope" });
-    await writeJob(page, "alpha/coda-web.md", VALID);
+    await writeJob(page, "alpha/dev-server.md", VALID);
     await expect(app(page).getByTestId("form-missing")).toContainText("No job file has the id nope.");
     await writeJob(page, "summary.md", "---\nkind: [agent\nname: Summary\n---\nWrite my summary.\n");
     await navigate(page, "edit/summary");
@@ -1365,9 +1365,9 @@ test.describe("the Jobs view", () => {
   const BACKUP = file("script", "Backup", "folder: .\ncommand: ./backup.sh\nschedule:\n  daily: { at: 13:00 }\n");
   const MOUNT = file("script", "Mount drive", "folder: .\ncommand: ./mount.sh\nhook: { event: login }\n");
   const LINT = file("script", "Lint", "folder: Projects/beta\ncommand: npm run lint\nschedule:\n  daily: { at: 9:00 }\n", "beta");
-  const WEB = file("service", "Coda web", "folder: Projects/alpha\ncommand: ./start.sh\nready: { port: 5173 }\n", "alpha");
-  const PULL = file("git", "Pull", "git: { operation: pull, repos: [Knowledge] }\nschedule:\n  daily: { at: 9:00 }\n", "alpha");
-  const FILES: Record<string, string> = { "backup.md": BACKUP, "mount.md": MOUNT, "weekly-report.md": BROKEN, "beta/lint.md": LINT, "alpha/coda-web.md": WEB, "alpha/pull.md": PULL };
+  const WEB = file("service", "Dev server", "folder: Projects/alpha\ncommand: ./start.sh\nready: { port: 5173 }\n", "alpha");
+  const PULL = file("git", "Pull", "git: { operation: pull, repos: [notes] }\nschedule:\n  daily: { at: 9:00 }\n", "alpha");
+  const FILES: Record<string, string> = { "backup.md": BACKUP, "mount.md": MOUNT, "weekly-report.md": BROKEN, "beta/lint.md": LINT, "alpha/dev-server.md": WEB, "alpha/pull.md": PULL };
 
   async function start(page: Page, query: Record<string, string> = {}, files: Record<string, string> = FILES): Promise<void> {
     await page.goto(harness({ projects: PROJECTS, ...query }));
@@ -1408,17 +1408,17 @@ test.describe("the Jobs view", () => {
     await start(page);
     await expect(app(page).getByTestId("job-group")).toHaveText(["Workspacejobs/3", "Betajobs/beta/1", "Alphajobs/alpha/2"]);
     await expect(app(page).getByTestId("tab-jobs")).toContainText("6 jobs · 1 invalid");
-    await expect(app(page).getByTestId("job-row")).toHaveText([/^Backup/, /^Mount drive/, /^Lint/, /^Coda web/, /^Pull/]);
+    await expect(app(page).getByTestId("job-row")).toHaveText([/^Backup/, /^Mount drive/, /^Lint/, /^Dev server/, /^Pull/]);
     const kinds = await app(page).getByTestId("job-row").evaluateAll((rows) => rows.map((row) => row.querySelector("[data-tip]")?.getAttribute("data-tip")));
     expect(kinds).toEqual(["Script", "Script", "Script", "Service", "Git"]);
     for (const key of ["jobs.workspace", "jobs.this", "jobs.last", "jobs.next", "jobs.invalid"]) await expect(app(page).getByTestId(`help-${key}`)).toBeVisible();
     await expect(app(page).getByTestId("job-trigger")).toHaveText(["daily at 13:00", "at Mac login", "daily at 9:00", "always on · starts on Mac startup", "daily at 9:00"]);
     await expect(app(page).getByTestId("job-trigger").first()).toHaveAttribute("data-tip", "Daily at 13:00");
     // A running service's row stops it where the others run now, its terminal before; every row has Edit and Delete.
-    await page.evaluate((session) => window.setServiceStatus("alpha/coda-web", { state: "running", session }), serviceSession("alpha/coda-web", 60_000));
+    await page.evaluate((session) => window.setServiceStatus("alpha/dev-server", { state: "running", session }), serviceSession("alpha/dev-server", 60_000));
     const buttons = (job: string) => app(page).locator(`[data-testid="job-row"][data-job="${job}"]`).getByRole("button").evaluateAll((all) => all.map((b) => b.getAttribute("aria-label")));
     expect(await buttons("backup")).toEqual(["Run now", "Edit", "Delete"]);
-    await expect.poll(() => buttons("alpha/coda-web")).toEqual(["Open terminal", "Stop service", "Edit", "Delete"]);
+    await expect.poll(() => buttons("alpha/dev-server")).toEqual(["Open terminal", "Stop service", "Edit", "Delete"]);
     await shoot(page, "tab-jobs-view");
   });
 
@@ -1487,11 +1487,11 @@ test.describe("the Jobs view", () => {
     await expect(row("mount").getByTestId("job-status")).toHaveText("paused · looks like a loop");
     await expect(row("mount").getByTestId("job-status")).toHaveAttribute("data-help", "st.paused");
     await expect(row("mount").getByTestId("job-last-sub")).toHaveText(/^today \d+:\d\d · 10× in 10 min$/);
-    await expect(row("alpha/coda-web").getByTestId("job-next")).toHaveText("always on");
-    await expect(row("alpha/coda-web").getByTestId("job-status")).toHaveText(/^running · up /);
+    await expect(row("alpha/dev-server").getByTestId("job-next")).toHaveText("always on");
+    await expect(row("alpha/dev-server").getByTestId("job-status")).toHaveText(/^running · up /);
     // A click on the last result opens that run's card; a service and a job that never ran have none.
     await expect(row("mount").getByTestId("job-last")).not.toHaveAttribute("role", "button");
-    await expect(row("alpha/coda-web").getByTestId("job-last")).not.toHaveAttribute("role", "button");
+    await expect(row("alpha/dev-server").getByTestId("job-last")).not.toHaveAttribute("role", "button");
     await shoot(page, "tab-jobs-cells");
     await row("backup").getByTestId("job-last").click();
     await expect(app(page).getByTestId("run-card")).toBeVisible();
@@ -1551,7 +1551,7 @@ test.describe("the Jobs view", () => {
     await expect(chip).toHaveAttribute("aria-pressed", "false");
     await chip.click();
     await expect(chip).toHaveAttribute("aria-pressed", "true");
-    await expect(app(page).getByTestId("job-row")).toHaveText([/^Coda web/, /^Pull/]);
+    await expect(app(page).getByTestId("job-row")).toHaveText([/^Dev server/, /^Pull/]);
     await expect(app(page).getByTestId("job-invalid")).toHaveCount(0);
     await expect(app(page).getByTestId("job-group")).toHaveText(["Alphajobs/alpha/2"]);
     await expect(app(page).getByTestId("tab-jobs")).toContainText("2 jobs");
@@ -1561,7 +1561,7 @@ test.describe("the Jobs view", () => {
     await expect(app(page).getByTestId("this-project")).toHaveAttribute("aria-pressed", "true");
     await app(page).getByTestId("nav-jobs").click();
     await expect(app(page).getByTestId("this-project")).toHaveAttribute("aria-pressed", "true");
-    for (const path of ["alpha/coda-web.md", "alpha/pull.md"]) await page.evaluate((p) => window.fakeHost.deleteFile(`Apps/pomade-runner/jobs/${p}`), path);
+    for (const path of ["alpha/dev-server.md", "alpha/pull.md"]) await page.evaluate((p) => window.fakeHost.deleteFile(`Apps/pomade-runner/jobs/${p}`), path);
     const none = app(page).getByTestId("jobs-none");
     await expect(none.getByRole("heading")).toHaveText("No jobs in Alpha");
     await expect(none).toContainText("Jobs of other projects are hidden by the “This project” filter.");
@@ -1574,30 +1574,30 @@ test.describe("the Jobs view", () => {
 
   test("Run now calls Runner and toasts; Open terminal opens a service's attached tab; Edit opens the job's form", async ({ page }) => {
     await start(page);
-    await page.evaluate((session) => window.setServiceStatus("alpha/coda-web", { state: "running", session }), serviceSession("alpha/coda-web", 60_000));
+    await page.evaluate((session) => window.setServiceStatus("alpha/dev-server", { state: "running", session }), serviceSession("alpha/dev-server", 60_000));
     const row = (job: string) => app(page).locator(`[data-testid="job-row"][data-job="${job}"]`);
     await row("backup").getByRole("button", { name: "Run now" }).click();
     await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerBackup started · trigger “manual”");
-    await row("alpha/coda-web").getByRole("button", { name: "Open terminal" }).click();
-    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:alpha.coda-web" }, title: "Coda web" }]);
+    await row("alpha/dev-server").getByRole("button", { name: "Open terminal" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:alpha.dev-server" }, title: "Dev server" }]);
     expect(await page.evaluate(() => window.runnerCalls)).toEqual([{ method: "jobs.run", params: { job: "backup" } }]);
-    await row("alpha/coda-web").getByRole("button", { name: "Edit" }).click();
+    await row("alpha/dev-server").getByRole("button", { name: "Edit" }).click();
     await expect(app(page).getByTestId("tab-jobs")).toHaveCount(0);
-    await expect(app(page).getByTestId("form-title")).toContainText("Coda web");
+    await expect(app(page).getByTestId("form-title")).toContainText("Dev server");
   });
 
   test("a service's row: Start service where a script has Run now while it does not run, Stop service while it does; Open terminal only with a session to show; none of them a no-op", async ({ page }) => {
     await start(page);
-    const row = app(page).locator('[data-testid="job-row"][data-job="alpha/coda-web"]');
+    const row = app(page).locator('[data-testid="job-row"][data-job="alpha/dev-server"]');
     const labels = () => row.getByRole("button").evaluateAll((all) => all.map((b) => b.getAttribute("aria-label")));
     const set = async (status: Partial<ServiceStatus>, words: RegExp, shot: string): Promise<void> => {
-      await page.evaluate((next) => window.setServiceStatus("alpha/coda-web", next), status);
+      await page.evaluate((next) => window.setServiceStatus("alpha/dev-server", next), status);
       await expect(row.getByTestId("job-status")).toHaveText(words);
       await page.mouse.move(0, 0);
       await shoot(page, shot);
     };
-    const ended = serviceSession("alpha/coda-web", 3_600_000, Date.now() - 60_000);
-    const up = serviceSession("alpha/coda-web", 60_000);
+    const ended = serviceSession("alpha/dev-server", 3_600_000, Date.now() - 60_000);
+    const up = serviceSession("alpha/dev-server", 60_000);
 
     // Stopped by you, its last output in the keeper: Start service, and its terminal.
     await set({ state: "stopped-by-you", session: ended }, /^stopped by you$/, "tab-jobs-service-stopped");
@@ -1625,29 +1625,29 @@ test.describe("the Jobs view", () => {
 
     // Start service and Stop service call Runner's service actions and toast what they did.
     await row.getByRole("button", { name: "Start service" }).click();
-    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCoda web started");
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerDev server started");
     await set({ state: "running", session: up }, /^running · up /, "tab-jobs-service-started");
     await row.getByRole("button", { name: "Stop service" }).click();
-    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCoda web stopped by you — it stays stopped until Start");
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerDev server stopped by you — it stays stopped until Start");
     await page.evaluate(() => {
       window.refuse["services.start"] = "the keeper is not connected";
     });
     await set({ state: "stopped-by-you", session: ended }, /^stopped by you$/, "tab-jobs-service-refused");
     await row.getByRole("button", { name: "Start service" }).click();
-    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCould not start Coda web: the keeper is not connected");
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCould not start Dev server: the keeper is not connected");
     await row.getByRole("button", { name: "Open terminal" }).click();
-    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:alpha.coda-web" }, title: "Coda web" }]);
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:alpha.dev-server" }, title: "Dev server" }]);
     expect(await page.evaluate(() => window.runnerCalls)).toEqual([
-      { method: "services.start", params: { job: "alpha/coda-web" } },
-      { method: "services.stop", params: { job: "alpha/coda-web" } },
-      { method: "services.start", params: { job: "alpha/coda-web" } },
+      { method: "services.start", params: { job: "alpha/dev-server" } },
+      { method: "services.stop", params: { job: "alpha/dev-server" } },
+      { method: "services.start", params: { job: "alpha/dev-server" } },
     ]);
   });
 
   test("Delete turns red under the pointer and on focus, confirms with the file's name — a running service is stopped first — and can be cancelled or refused", async ({ page }) => {
     await start(page);
     const row = (job: string) => app(page).locator(`[data-testid="job-row"][data-job="${job}"]`);
-    const remove = row("alpha/coda-web").getByRole("button", { name: "Delete" });
+    const remove = row("alpha/dev-server").getByRole("button", { name: "Delete" });
     await expect(remove).toHaveCSS("color", "rgb(90, 107, 122)");
     await remove.hover();
     await expect(remove).toHaveCSS("color", "rgb(192, 55, 75)");
@@ -1659,26 +1659,26 @@ test.describe("the Jobs view", () => {
 
     await remove.click();
     const confirm = app(page).getByTestId("delete-confirm");
-    await expect(confirm.getByRole("heading")).toHaveText("Delete “Coda web”?");
-    await expect(confirm.getByTestId("delete-path")).toHaveText("Apps/pomade-runner/jobs/alpha/coda-web.md");
+    await expect(confirm.getByRole("heading")).toHaveText("Delete “Dev server”?");
+    await expect(confirm.getByTestId("delete-path")).toHaveText("Apps/pomade-runner/jobs/alpha/dev-server.md");
     await expect(confirm).toContainText("The service is running: Runner stops it first, then removes the file. This can't be undone.");
     await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
     await shoot(page, "tab-jobs-delete-confirm");
     await confirm.getByRole("button", { name: "Cancel" }).click();
     await expect(confirm).toHaveCount(0);
-    expect(await page.evaluate(() => window.fakeHost.readFile("Apps/pomade-runner/jobs/alpha/coda-web.md"))).toBe(WEB);
+    expect(await page.evaluate(() => window.fakeHost.readFile("Apps/pomade-runner/jobs/alpha/dev-server.md"))).toBe(WEB);
 
     // A refusal stays in the dialog in the scheduler's words, and the row stays.
-    await page.evaluate(() => (window.refuseDelete = '"Coda web" did not stop, so its file is kept'));
+    await page.evaluate(() => (window.refuseDelete = '"Dev server" did not stop, so its file is kept'));
     await remove.click();
     await confirm.getByRole("button", { name: "Delete job" }).click();
-    await expect(confirm.getByRole("alert")).toHaveText('"Coda web" did not stop, so its file is kept');
-    await expect(row("alpha/coda-web")).toBeVisible();
+    await expect(confirm.getByRole("alert")).toHaveText('"Dev server" did not stop, so its file is kept');
+    await expect(row("alpha/dev-server")).toBeVisible();
     await page.evaluate(() => (window.refuseDelete = null));
     await confirm.getByRole("button", { name: "Delete job" }).click();
-    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerDeleted Apps/pomade-runner/jobs/alpha/coda-web.md · stopped first");
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerDeleted Apps/pomade-runner/jobs/alpha/dev-server.md · stopped first");
     await expect(confirm).toHaveCount(0);
-    await expect(row("alpha/coda-web")).toHaveCount(0);
+    await expect(row("alpha/dev-server")).toHaveCount(0);
     await expect(app(page).getByTestId("job-group")).toHaveText(["Workspacejobs/3", "Betajobs/beta/1", "Alphajobs/alpha/1"]);
 
     // A script's confirm says no more than that it cannot be undone.
@@ -1741,7 +1741,7 @@ test.describe("services: Running now and the Services view", () => {
   async function services(page: Page, query: Record<string, string>): Promise<void> {
     await page.goto(harness(query));
     await page.waitForFunction(() => typeof window.setServiceStatus === "function");
-    await writeJob(page, "alpha/coda-web.md", WEB);
+    await writeJob(page, "alpha/dev-server.md", WEB);
     await writeJob(page, "alpha/graph-viewer.md", GRAPH);
     await writeJob(page, "docs-preview.md", DOCS);
     await writeJob(page, "api.md", BAD);
@@ -1749,11 +1749,11 @@ test.describe("services: Running now and the Services view", () => {
     const stopped = at(18, 10, 1);
     await page.evaluate(
       ([web, graph, docs, lastCrashAt]) => {
-        window.setServiceStatus("alpha/coda-web", { state: "running", session: web, restarts: 3, lastCrashAt });
+        window.setServiceStatus("alpha/dev-server", { state: "running", session: web, restarts: 3, lastCrashAt });
         window.setServiceStatus("alpha/graph-viewer", { state: "starting", session: graph });
         window.setServiceStatus("docs-preview", { state: "stopped-by-you", session: docs });
       },
-      [serviceSession("alpha/coda-web", (3 * 24 + 4) * 3_600_000 + 60_000), serviceSession("alpha/graph-viewer", 2000), serviceSession("docs-preview", 3_600_000, stopped), crash] as const,
+      [serviceSession("alpha/dev-server", (3 * 24 + 4) * 3_600_000 + 60_000), serviceSession("alpha/graph-viewer", 2000), serviceSession("docs-preview", 3_600_000, stopped), crash] as const,
     );
   }
 
@@ -1765,8 +1765,8 @@ test.describe("services: Running now and the Services view", () => {
       const section = app(page).getByTestId("section-running");
       await expect(app(page).getByTestId("section-running-head-count")).toHaveText("2");
       const rows = section.getByTestId("running-service");
-      await expect(rows).toHaveText([/^Coda web/, /^Graph viewer/]);
-      await expect(rows.nth(0)).toHaveText(`Coda webup 3d 4hAlpha · Projects/alpharestarted 3× · last crash ${shortClock(at(14, 2, 1))}`);
+      await expect(rows).toHaveText([/^Dev server/, /^Graph viewer/]);
+      await expect(rows.nth(0)).toHaveText(`Dev serverup 3d 4hAlpha · Projects/alpharestarted 3× · last crash ${shortClock(at(14, 2, 1))}`);
       await expect(rows.nth(1)).toHaveText("Graph viewerstartingAlpha · Projects/alpha/graphwaiting for port 4000");
       await expect(rows.nth(0).locator('[data-help="st.up"]')).toHaveText("up 3d 4h");
       await expect(rows.nth(0).locator('[data-help="st.restarted"]')).toBeVisible();
@@ -1779,7 +1779,7 @@ test.describe("services: Running now and the Services view", () => {
       await rows.nth(0).click();
       await expect
         .poll(() => page.evaluate(() => window.fakeHost.openedTabs))
-        .toEqual([{ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:alpha.coda-web" }, title: "Coda web" }]);
+        .toEqual([{ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:alpha.dev-server" }, title: "Dev server" }]);
     });
   });
 
@@ -1846,7 +1846,7 @@ test.describe("services: Running now and the Services view", () => {
       // Start order: workspace jobs first, then each project's, each by id.
       await expect(rows.locator('[data-testid="service-status"]')).toHaveText(["stopped by you", "running · up 3d 4h", "starting"]);
       await expect(rows.getByTestId("service-sub")).toHaveText([`yesterday ${shortClock(at(18, 10))}`, `restarted 3× · last crash ${shortClock(at(14, 2))}`, "waiting for port 4000"]);
-      await expect(rows.nth(1)).toContainText("Coda webAlpha · Projects/alpha./start.sh");
+      await expect(rows.nth(1)).toContainText("Dev serverAlpha · Projects/alpha./start.sh");
       for (const [i, help] of ["st.stopped", "st.up", "st.starting"].entries()) await expect(rows.nth(i).getByTestId("service-status")).toHaveAttribute("data-help", help);
       await expect(rows.nth(1).getByTestId("service-sub")).toHaveAttribute("data-help", "st.restarted");
       await expect(rows.nth(0).getByRole("button")).toHaveText(["Start", "", "", ""]);
@@ -1861,13 +1861,13 @@ test.describe("services: Running now and the Services view", () => {
       await rows.nth(0).getByRole("button", { name: "Start" }).click();
       await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerDocs preview started");
       await rows.nth(1).getByRole("button", { name: "Stop" }).click();
-      await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCoda web stopped by you — it stays stopped until Start");
+      await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerDev server stopped by you — it stays stopped until Start");
       await rows.nth(1).getByRole("button", { name: "Restart" }).click();
-      await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCould not restart Coda web: the keeper is not connected");
+      await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCould not restart Dev server: the keeper is not connected");
       expect(await page.evaluate(() => window.runnerCalls)).toEqual([
         { method: "services.start", params: { job: "docs-preview" } },
-        { method: "services.stop", params: { job: "alpha/coda-web" } },
-        { method: "services.restart", params: { job: "alpha/coda-web" } },
+        { method: "services.stop", params: { job: "alpha/dev-server" } },
+        { method: "services.restart", params: { job: "alpha/dev-server" } },
       ]);
 
       await rows.nth(1).getByRole("button", { name: "Open terminal" }).click();
@@ -1876,8 +1876,8 @@ test.describe("services: Running now and the Services view", () => {
       await expect
         .poll(() => page.evaluate(() => window.fakeHost.openedTabs))
         .toEqual([
-          { kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:alpha.coda-web" }, title: "Coda web" },
-          { kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/alpha/coda-web.md" },
+          { kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:alpha.dev-server" }, title: "Dev server" },
+          { kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/alpha/dev-server.md" },
           { kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/api.md" },
         ]);
 
@@ -1893,10 +1893,10 @@ test.describe("services: Running now and the Services view", () => {
       await expect(chip).toHaveAttribute("aria-pressed", "false");
       await chip.click();
       await expect(chip).toHaveAttribute("aria-pressed", "true");
-      await expect(app(page).getByTestId("service-row")).toHaveText([/^Coda web/, /^Graph viewer/]);
+      await expect(app(page).getByTestId("service-row")).toHaveText([/^Dev server/, /^Graph viewer/]);
       await expect(app(page).getByTestId("service-invalid")).toHaveCount(0);
       await shoot(page, "tab-services-this-project");
-      await page.evaluate(() => window.fakeHost.deleteFile("Apps/pomade-runner/jobs/alpha/coda-web.md"));
+      await page.evaluate(() => window.fakeHost.deleteFile("Apps/pomade-runner/jobs/alpha/dev-server.md"));
       await page.evaluate(() => window.fakeHost.deleteFile("Apps/pomade-runner/jobs/alpha/graph-viewer.md"));
       await expect(app(page).getByTestId("services-none")).toHaveText("No services in this project.");
       await shoot(page, "tab-services-none");
@@ -2304,7 +2304,7 @@ test.describe("the Script form and the schedule picker", () => {
 
   test("policies: what a missed run becomes, until when a catch-up is worth it, a time limit — each written to the job file, the file's other fields untouched", async ({ page }) => {
     await start(page);
-    const frame = await newScript(page, "Librarian");
+    const frame = await newScript(page, "Weekly review");
     const policies = frame.getByTestId("form-policies");
     await policies.getByRole("button", { name: "Change" }).click();
     const missed = policies.getByRole("group", { name: "If a run is missed" });
@@ -2320,7 +2320,7 @@ test.describe("the Script form and the schedule picker", () => {
     await policies.getByRole("textbox", { name: "Time limit" }).fill("45m");
     await expect(policies).toContainText("Stops the run with a red card");
     await shoot(page, "tab-form-script-policies-open");
-    expect(await create(page, "librarian")).toBe(`${header("Librarian")}schedule:\n  daily: { at: 9:00 }\nworth-until: 8:30\ntime-limit: 45m\n---\n`);
+    expect(await create(page, "weekly-review")).toBe(`${header("Weekly review")}schedule:\n  daily: { at: 9:00 }\nworth-until: 8:30\ntime-limit: 45m\n---\n`);
 
     // Edited from the file: the form shows it, a change writes only that field.
     const text = "---\nkind: script # tidy\nname: Tidy\nfolder: .\ncommand: ./t.sh\nschedule:\n  daily: { at: 7:00 } # early\nworth-until: 12:00\ntime-limit: 45m\nnotify: always # say so\n---\nNotes.\n";
@@ -2547,7 +2547,7 @@ test.describe("the Script form and the schedule picker", () => {
     const project = frame.getByTestId("hook-project");
     const agent = frame.getByTestId("hook-agent");
     await expect(project.locator("option")).toHaveText(["Any project", "Alpha"]);
-    await expect(agent.locator("option")).toHaveText(["Any agent", "claude", "claude-libra", "claude-coder", "claude-pm", "codex"]);
+    await expect(agent.locator("option")).toHaveText(["Any agent", "claude", "claude-editor", "claude-coder", "claude-pm", "codex"]);
     await expect(frame.getByTestId("hook-box").getByRole("combobox", { name: "Only in project" })).toBeVisible();
     await expect(frame.getByTestId("hook-box").getByRole("combobox", { name: "Only agent" })).toBeVisible();
     await expect(frame.getByTestId("hook-words")).toHaveText(`Runs after an agent session finishes${pomade}`);
@@ -2848,7 +2848,7 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
     { id: "missed:weekly", kind: "missed", job: "weekly", name: "Weekly", project: null, run: "20261117-030000-bbbbbb", at: now - 2 * 86_400_000, missed: null, detail: "missed" },
     { id: "long-run:lint:20261117-100000-cccccc", kind: "long-run", job: "lint", name: "Lint", project: null, run: "20261117-100000-cccccc", at: now, startedAt: now - minutes(3 * 60 + 2), detail: "running 3 h" },
     { id: "loop-paused:echo", kind: "loop-paused", job: "echo", name: "Echo", project: null, at: now - 86_400_000, detail: "triggered 10× in 10 min — looks like a loop" },
-    { id: "waiting:triage:20261117-123100-dddddd", kind: "waiting", job: "triage", name: "Inbox triage", project: null, run: "20261117-123100-dddddd", prompt: "permission", at: now - minutes(17), detail: "waiting for approval" },
+    { id: "waiting:tidy-drafts:20261117-123100-dddddd", kind: "waiting", job: "tidy-drafts", name: "Tidy drafts", project: null, run: "20261117-123100-dddddd", prompt: "permission", at: now - minutes(17), detail: "waiting for approval" },
   ];
 
   async function panel(page: Page, report: (now: number) => RunsReport): Promise<void> {
@@ -2880,7 +2880,7 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
       missed: { help: "need.waitforme", words: "Missed — it waits for you to pick a time.", when: /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d{1,2}:\d{2}$/, buttons: ["Weekly", "", "Run now", "Run at…", "Skip"] },
       "long-run": { help: "need.longrun", words: "Running 3h — still expected?", when: /^3h 0[23]m$/, buttons: ["Lint", "", "Open", "Stop", "Dismiss"] },
       "loop-paused": { help: "need.loopguard", words: "Paused: triggered 10× in 10 min.", when: /^yesterday$/, buttons: ["Echo", "", "Resume", "Edit job"] },
-      waiting: { help: "need.approval", words: "Waiting for approval at a permission prompt.", when: /^17m$/, buttons: ["Inbox triage", "", "Open at the prompt"] },
+      waiting: { help: "need.approval", words: "Waiting for approval at a permission prompt.", when: /^17m$/, buttons: ["Tidy drafts", "", "Open at the prompt"] },
     };
     for (const [kind, expected] of Object.entries(look)) {
       const item = card(page, kind);
@@ -2972,7 +2972,7 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
 
     // A run waiting for you: Open at the prompt opens its terminal tab; it cannot be dismissed.
     await card(page, "waiting").getByRole("button", { name: "Open at the prompt" }).click();
-    await expect.poll(async () => (await page.evaluate(() => window.fakeHost.openedTabs))[1]).toEqual({ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "run:triage:20261117-123100-dddddd" }, title: "Inbox triage" });
+    await expect.poll(async () => (await page.evaluate(() => window.fakeHost.openedTabs))[1]).toEqual({ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "run:tidy-drafts:20261117-123100-dddddd" }, title: "Tidy drafts" });
   });
 
   test("a missed run: Run now, Skip, and Run at… with its field, what the time comes to, and Set", async ({ page }) => {
@@ -3458,7 +3458,7 @@ test.describe("the Git form (T-011)", () => {
 
   async function start(page: Page, route: string): Promise<void> {
     await page.clock.setFixedTime(NOW);
-    await page.goto(harness({ route, projects: "prototype", repos: "coda-helper,job-hunt" }));
+    await page.goto(harness({ route, projects: "prototype", repos: "blog,shop" }));
     await page.waitForFunction(() => typeof window.setServiceStatus === "function" && typeof window.mounted === "object");
   }
 
@@ -3482,7 +3482,7 @@ test.describe("the Git form (T-011)", () => {
     await expect(git.getByRole("group", { name: "Operation" }).getByRole("button")).toHaveText(["Commit & push", "Pull", "Push", "Fetch"]);
     await expect(git.getByRole("button", { name: "Commit & push" })).toHaveAttribute("aria-pressed", "true");
     const repos = git.getByRole("group", { name: "Repositories" }).getByRole("checkbox");
-    await expect(repos).toHaveText(["Knowledge", "coda-helper", "job-hunt"]);
+    await expect(repos).toHaveText(["blog", "notes", "shop"]);
     await expect(git.getByRole("combobox", { name: "Project" })).toHaveValue("");
     await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveCount(0);
     await expect(form.getByRole("textbox", { name: "Command", exact: true })).toHaveCount(0);
@@ -3492,29 +3492,29 @@ test.describe("the Git form (T-011)", () => {
     await expect(form.getByTestId("form-policies")).toContainText("Runs at normal priority · default for Git");
 
     // Save with no repo: the checker's words on the repos.
-    await form.getByRole("textbox", { name: "Name", exact: true }).fill("Pull coda-helper");
+    await form.getByRole("textbox", { name: "Name", exact: true }).fill("Pull");
     await app(page).getByTestId("form-save").click();
-    await expect(git.getByRole("alert")).toHaveText("git.repos — names no repos. Fix: list the repos by the name Pomade's Git panel shows: repos: [Knowledge, coda-helper].");
+    await expect(git.getByRole("alert")).toHaveText("git.repos — names no repos. Fix: list the repos by the name Pomade's Git panel shows: repos: [notes, blog].");
     await expect(app(page).getByTestId("form-error-count")).toHaveText("1 thing to fix before saving");
     await shoot(page, "tab-form-git-errors");
 
     // Picked in the order they run; the project puts the file in its sub-folder.
     await git.getByRole("button", { name: "Pull" }).click();
-    await repos.filter({ hasText: "coda-helper" }).click();
-    await repos.filter({ hasText: "Knowledge" }).click();
-    await expect(repos.filter({ hasText: "coda-helper" })).toHaveAttribute("aria-checked", "true");
+    await repos.filter({ hasText: "blog" }).click();
+    await repos.filter({ hasText: "notes" }).click();
+    await expect(repos.filter({ hasText: "blog" })).toHaveAttribute("aria-checked", "true");
     await expect(git.getByRole("alert")).toHaveCount(0);
-    await git.getByRole("combobox", { name: "Project" }).selectOption("coda-helper");
-    await expect(app(page).getByTestId("form-path")).toHaveText(`${JOBS}/coda-helper/pull-coda-helper.md`);
+    await git.getByRole("combobox", { name: "Project" }).selectOption("blog");
+    await expect(app(page).getByTestId("form-path")).toHaveText(`${JOBS}/blog/pull.md`);
     await shoot(page, "tab-form-git-new");
     await expect(app(page).getByTestId("form-save")).toHaveText("Create job");
     await app(page).getByTestId("form-save").click();
-    await expect(app(page).getByTestId("toast")).toHaveText(`RunnerCreated ${JOBS}/coda-helper/pull-coda-helper.md`);
-    expect(await fileText(page, `${JOBS}/coda-helper/pull-coda-helper.md`)).toBe(
-      "---\nkind: git\nname: Pull coda-helper\nproject: coda-helper\nenabled: true\ngit: { operation: pull, repos: [coda-helper, Knowledge] }\nschedule:\n  daily: { at: 9:00 }\n---\n",
+    await expect(app(page).getByTestId("toast")).toHaveText(`RunnerCreated ${JOBS}/blog/pull.md`);
+    expect(await fileText(page, `${JOBS}/blog/pull.md`)).toBe(
+      "---\nkind: git\nname: Pull\nproject: blog\nenabled: true\ngit: { operation: pull, repos: [blog, notes] }\nschedule:\n  daily: { at: 9:00 }\n---\n",
     );
-    const row = app(page).locator('[data-testid="job-row"][data-job="coda-helper/pull-coda-helper"]');
-    await expect(row.getByTestId("job-trigger")).toHaveAttribute("data-tip", "Daily at 9:00 · Pull · coda-helper, Knowledge");
+    const row = app(page).locator('[data-testid="job-row"][data-job="blog/pull"]');
+    await expect(row.getByTestId("job-trigger")).toHaveAttribute("data-tip", "Daily at 9:00 · Pull · blog, notes");
   });
 
   test("every field of the Git form has a working (i): the kind, the operation, the repos, the project and each policy with its kind's default", async ({ page }) => {
@@ -3540,27 +3540,27 @@ test.describe("the Git form (T-011)", () => {
   });
 
   test("editing a git job: its operation and repos as the file says — one the workspace lacks stays, checked and said — and Save writes only what changed", async ({ page }) => {
-    const HAND = "---\nkind: git # twice a day\nname: Knowledge commit & push\nproject: knowledge\ngit: { operation: commit-push, repos: [Knowledge, Notes] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\nThe vault.\n";
-    await start(page, "edit/Knowledge.knowledge-commit");
-    await writeJob(page, "Knowledge/knowledge-commit.md", HAND);
+    const HAND = "---\nkind: git # twice a day\nname: Commit notes\nproject: notes\ngit: { operation: commit-push, repos: [notes, Journal] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\nThe notes.\n";
+    await start(page, "edit/notes.commit-notes");
+    await writeJob(page, "notes/commit-notes.md", HAND);
     const form = app(page).getByTestId("form-git");
     const git = form.getByRole("region", { name: "Git" });
     await expect(git.getByRole("button", { name: "Commit & push" })).toHaveAttribute("aria-pressed", "true");
     const repos = git.getByRole("group", { name: "Repositories" }).getByRole("checkbox");
-    await expect(repos).toHaveText(["Knowledge", "coda-helper", "job-hunt", "Notes"]);
-    await expect(git.locator('[role="checkbox"][aria-checked="true"]')).toHaveText(["Knowledge", "Notes"]);
-    await expect(git.getByTestId("repos-missing")).toHaveText("Notes is not in this workspace.");
-    await expect(git.getByRole("combobox", { name: "Project" })).toHaveValue("knowledge");
+    await expect(repos).toHaveText(["blog", "notes", "shop", "Journal"]);
+    await expect(git.locator('[role="checkbox"][aria-checked="true"]')).toHaveText(["notes", "Journal"]);
+    await expect(git.getByTestId("repos-missing")).toHaveText("Journal is not in this workspace.");
+    await expect(git.getByRole("combobox", { name: "Project" })).toHaveValue("notes");
     await expect(app(page).getByTestId("form-save")).toHaveText("Saved");
     await shoot(page, "tab-form-git-edit");
 
-    await repos.filter({ hasText: "Notes" }).click();
+    await repos.filter({ hasText: "Journal" }).click();
     await expect(git.getByTestId("repos-missing")).toHaveCount(0);
-    await expect(repos).toHaveText(["Knowledge", "coda-helper", "job-hunt"]);
+    await expect(repos).toHaveText(["blog", "notes", "shop"]);
     await git.getByRole("button", { name: "Fetch" }).click();
     await app(page).getByTestId("form-save").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
-    expect(await fileText(page, `${JOBS}/Knowledge/knowledge-commit.md`)).toBe(HAND.replace("{ operation: commit-push, repos: [Knowledge, Notes] }", "{ operation: fetch, repos: [Knowledge] }"));
+    expect(await fileText(page, `${JOBS}/notes/commit-notes.md`)).toBe(HAND.replace("{ operation: commit-push, repos: [notes, Journal] }", "{ operation: fetch, repos: [notes] }"));
   });
 });
 
@@ -3619,14 +3619,14 @@ test.describe("agent jobs", () => {
     const form = app(page).getByTestId("form-agent");
     await form.getByRole("textbox", { name: "Name", exact: true }).fill("Morning summary");
     const agents = form.getByRole("group", { name: "Agent" });
-    await expect(agents.getByRole("button")).toHaveText(["claude", "claude-libra", "claude-coder", "claude-pm", "codex"]);
+    await expect(agents.getByRole("button")).toHaveText(["claude", "claude-editor", "claude-coder", "claude-pm", "codex"]);
     await expect(agents.getByRole("button", { name: "claude", exact: true })).toHaveAttribute("aria-pressed", "true");
     // The projects connected to the agent first, then the workspace root; a pick fills the project.
     const folders = form.getByTestId("agent-folders");
-    await expect(folders).toHaveText("Connected to claude:Pomadecoda-helperjob-huntworkspace (workspace root)");
-    await folders.getByRole("button", { name: "coda-helper" }).click();
-    await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("Projects/coda-helper");
-    await expect(form.getByRole("combobox", { name: "Project" })).toHaveValue("coda-helper");
+    await expect(folders).toHaveText("Connected to claude:Pomadeblogshopworkspace (workspace root)");
+    await folders.getByRole("button", { name: "blog" }).click();
+    await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("Projects/blog");
+    await expect(form.getByRole("combobox", { name: "Project" })).toHaveValue("blog");
     // Only the agent's modes; one it lacks is faded with why; another agent's own modes after them.
     const modes = form.getByRole("group", { name: "Mode" });
     await expect(modes.getByRole("button")).toHaveText(["Normaldefault", "Full autonomy"]);
@@ -3651,9 +3651,9 @@ test.describe("agent jobs", () => {
     await expect(form.getByTestId("policy-summary")).toHaveText("If missed, run on wake · never overlaps itself · low priority · no time limit · always notifies");
     await shoot(page, "agent-form");
     await app(page).getByTestId("form-save").click();
-    await expect(app(page).getByTestId("toast")).toHaveText("RunnerCreated Apps/pomade-runner/jobs/coda-helper/morning-summary.md");
-    expect(await page.evaluate(() => window.fakeHost.readFile("Apps/pomade-runner/jobs/coda-helper/morning-summary.md"))).toBe(
-      "---\nkind: agent\nname: Morning summary\nproject: coda-helper\nfolder: Projects/coda-helper\nenabled: true\nagent: claude\nschedule:\n  daily: { at: 9:00 }\n---\nWrite my morning summary.\n\n1. Read today's items with `pomade-planner today`.\n",
+    await expect(app(page).getByTestId("toast")).toHaveText("RunnerCreated Apps/pomade-runner/jobs/blog/morning-summary.md");
+    expect(await page.evaluate(() => window.fakeHost.readFile("Apps/pomade-runner/jobs/blog/morning-summary.md"))).toBe(
+      "---\nkind: agent\nname: Morning summary\nproject: blog\nfolder: Projects/blog\nenabled: true\nagent: claude\nschedule:\n  daily: { at: 9:00 }\n---\nWrite my morning summary.\n\n1. Read today's items with `pomade-planner today`.\n",
     );
   });
 
@@ -3689,27 +3689,27 @@ test.describe("agent jobs", () => {
 
   test("an agent job's row: the Full-autonomy mark with its help, Run now", async ({ page }) => {
     await start(page);
-    await writeJob(page, "librarian-weekly.md", SUMMARY.replace("name: Morning summary", "name: Librarian weekly").replace("agent: claude\n", "agent: claude\nmode: full-autonomy\n"));
+    await writeJob(page, "weekly-review.md", SUMMARY.replace("name: Morning summary", "name: Weekly review").replace("agent: claude\n", "agent: claude\nmode: full-autonomy\n"));
     await writeJob(page, "morning-summary.md", SUMMARY);
     const rows = app(page).getByTestId("job-row");
     await expect(rows).toHaveCount(2);
-    const weekly = app(page).locator('[data-testid="job-row"][data-job="librarian-weekly"]');
+    const weekly = app(page).locator('[data-testid="job-row"][data-job="weekly-review"]');
     await expect(weekly.getByTestId("job-full-autonomy")).toHaveText("Full autonomy");
     await expect(weekly.getByTestId("job-full-autonomy")).toHaveAttribute("data-help", "jobs.fullauto");
     await expect(app(page).locator('[data-testid="job-row"][data-job="morning-summary"]').getByTestId("job-full-autonomy")).toHaveCount(0);
     await weekly.getByRole("button", { name: "Run now" }).click();
-    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toContainEqual({ method: "jobs.run", params: { job: "librarian-weekly" } });
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toContainEqual({ method: "jobs.run", params: { job: "weekly-review" } });
     await shoot(page, "agent-rows");
   });
 
   test("a done agent run's card: agent · mode, the last message; Open session resumes the session in a Pomade agent tab", async ({ page }) => {
     await start(page, { route: `run/morning-summary/${RUN}` });
-    await setHistory(page, [done], { [SESSION]: "**Tuesday 17 Nov.** Four items today.\n\nOvernight: Knowledge was committed and pushed at 20:00 (`a1b2c3d`)." });
+    await setHistory(page, [done], { [SESSION]: "**Tuesday 17 Nov.** Four items today.\n\nOvernight: notes was committed and pushed at 20:00 (`a1b2c3d`)." });
     const dialog = app(page).getByTestId("run-dialog");
     await expect(app(page).getByTestId("run-result")).toHaveText("Done");
     await expect(dialog.getByTestId("run-agent")).toHaveText("claude · Normal");
     const message = dialog.getByTestId("run-agent-message");
-    await expect(message.locator("p")).toHaveText(["Tuesday 17 Nov. Four items today.", "Overnight: Knowledge was committed and pushed at 20:00 (a1b2c3d)."]);
+    await expect(message.locator("p")).toHaveText(["Tuesday 17 Nov. Four items today.", "Overnight: notes was committed and pushed at 20:00 (a1b2c3d)."]);
     await expect(message.locator("b")).toHaveText("Tuesday 17 Nov.");
     await expect(dialog.getByTestId("dialog-foot").getByRole("button")).toHaveText(["Open session", "View output", "Run again", "Edit job"]);
     await shoot(page, "agent-card-done");

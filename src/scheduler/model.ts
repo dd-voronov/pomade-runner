@@ -106,7 +106,7 @@ export function waitingAt(run: { agent: AgentRun | null }): AgentWait | null {
 
 /** What every run carries, going or ended. */
 interface RunBase {
-  /** The job's id (`backup`, `coda-helper/nightly`). */
+  /** The job's id (`backup`, `blog/nightly`). */
   job: string;
   /** The job's name when the run was due. */
   name: string;
@@ -698,7 +698,7 @@ export function dayTime(epochMs: number): string {
 /** What started a run, in words: "scheduled", "caught up", "manual", "hook", "chain". */
 export const TRIGGER_WORDS: Record<RunTrigger, string> = { scheduled: "scheduled", "caught-up": "caught up", manual: "manual", hook: "hook", chain: "chain" };
 
-/** A hook's event in words, as a run's cause says it: "Mac login", "first open of job-hunt",
+/** A hook's event in words, as a run's cause says it: "Mac login", "first open of blog",
  *  "agent session finished", "session marked Done". */
 export function hookCauseWords(cause: Extract<RunCause, { kind: "hook" }>): string {
   const project = cause.projectName;

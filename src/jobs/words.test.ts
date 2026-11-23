@@ -97,11 +97,11 @@ describe("a job's trigger in words", () => {
       ],
       { workspace: "/ws", projects: [{ id: "p1", name: "One", root: "Projects/one" }] },
     );
-    const named = { job: (id: string) => (id === "pull" ? "Pull coda-helper" : id), project: (id: string) => (id === "p1" ? "One" : id) };
+    const named = { job: (id: string) => (id === "pull" ? "Pull" : id), project: (id: string) => (id === "p1" ? "One" : id) };
     const said = Object.fromEntries(snapshot.jobs.map((entry) => (entry.valid ? [entry.job.id, jobTriggerWords(entry.job, named)] : [entry.invalid.id, ""])));
     const { web, tests, first, every, any, later } = said;
-    expect(web).toBe("always on · starts on Mac startup · restarts after Pull coda-helper is done");
-    expect(tests).toBe("after Pull coda-helper finishes");
+    expect(web).toBe("always on · starts on Mac startup · restarts after Pull is done");
+    expect(tests).toBe("after Pull finishes");
     expect(first).toBe("on first open of One");
     expect(every).toBe("whenever One is opened");
     expect(any).toBe("whenever a project is opened");

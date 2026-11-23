@@ -7,7 +7,7 @@
 // - every job file whose `folder` is the project's folder, or inside it, is rewritten to the new
 //   one (field-only: the rest of the file stays byte for byte);
 // - its jobs' sub-folder is renamed after the folder's new last segment, when that changed — the
-//   jobs' ids change with it (`coda-helper/web` → `coda/web`), and the scheduler carries each job's
+//   jobs' ids change with it (`blog/web` → `blog-2/web`), and the scheduler carries each job's
 //   state to its new id (`JobMoves`).
 //
 // A pure part (what moves) and the files' writes.

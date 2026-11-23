@@ -1,5 +1,5 @@
 // Runner's names for the keeper's sessions and for runs (docs/DESIGN.md "Sessions"). A job id is a
-// path (`coda-helper/coda-web`), and a keeper session id allows only letters, digits and `._:-`, so
+// path (`blog/dev-server`), and a keeper session id allows only letters, digits and `._:-`, so
 // the job id is encoded into it, reversibly: the session id alone says which job it belongs to.
 // Pure.
 

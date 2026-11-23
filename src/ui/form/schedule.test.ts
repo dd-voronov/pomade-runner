@@ -8,7 +8,7 @@ import type { JobsSnapshot, ProjectRecord } from "../../jobs/model";
 import { blankSchedule, dayWords, nextTime, readOncePhrase, scheduleInput, schedulePreview, scheduleTarget, whenWords, type ScheduleValues } from "./schedule";
 import { blocksSave, editForm, errorPlace, errorsByPlace, fieldChanges, formErrors, hasChanges, newForm, setFolder, setValue, switchKind, wouldBe, type FormState } from "./state";
 
-const PROJECTS: ProjectRecord[] = [{ id: "p-coda", name: "coda-helper", root: "Projects/coda-helper" }];
+const PROJECTS: ProjectRecord[] = [{ id: "p-blog", name: "blog", root: "Projects/blog" }];
 const EMPTY: JobsSnapshot = checkJobs([], { workspace: "/ws", projects: PROJECTS });
 /** Tue 17 Nov 2026, 12:48 — the prototype's clock. */
 const NOW = new Date(2026, 10, 17, 12, 48);

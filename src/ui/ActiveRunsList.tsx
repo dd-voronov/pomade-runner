@@ -7,7 +7,7 @@ import { upWords } from "./serviceWords";
 import { useNow } from "./useNow";
 import { useProjectNames } from "./useRunnerApi";
 
-/** Where a row's job works, as Running now says it: "Alpha · Projects/alpha", "workspace · git-base"
+/** Where a row's job works, as Running now says it: "Alpha · Projects/alpha", "workspace · my-workspace"
  *  — the workspace root by its folder's name. */
 export function placeWords(project: string | null, projectName: (id: string | null) => string, folder: string, workspace: string | null): string {
   const root = workspace === null ? "workspace root" : workspace.slice(workspace.replace(/\/+$/, "").lastIndexOf("/") + 1).replace(/\/+$/, "");

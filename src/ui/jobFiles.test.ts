@@ -6,8 +6,8 @@ import manifest from "../../app/manifest.json" with { type: "json" };
 import { checkJobs } from "../jobs/check";
 import { createJobFile, followJobFile, updateJobFile } from "./jobFiles";
 
-const WEB = "Apps/pomade-runner/jobs/coda-helper/coda-web.md";
-const HAND_WRITTEN = "---\nkind: service # by hand\nname: Coda web\nproject: p1\nfolder: Projects/coda-helper\ncommand: ./start.sh\n---\nNotes.\n";
+const WEB = "Apps/pomade-runner/jobs/blog/dev-server.md";
+const HAND_WRITTEN = "---\nkind: service # by hand\nname: Dev server\nproject: p1\nfolder: Projects/blog\ncommand: ./start.sh\n---\nNotes.\n";
 
 describe("job files through the Host API", () => {
   let fake: FakeHost;
@@ -22,14 +22,14 @@ describe("job files through the Host API", () => {
 
   it("creates a new job in its project's sub-folder, under a free slug, as a valid job file", async () => {
     const path = await createJobFile(host, {
-      folder: "coda-helper",
-      fields: { kind: "service", name: "Coda web", project: "p1", folder: "Projects/coda-helper", command: "npm run dev", ready: { port: 5173 } },
+      folder: "blog",
+      fields: { kind: "service", name: "Dev server", project: "p1", folder: "Projects/blog", command: "npm run dev", ready: { port: 5173 } },
       body: "",
     });
-    expect(path).toBe("Apps/pomade-runner/jobs/coda-helper/coda-web-2.md");
+    expect(path).toBe("Apps/pomade-runner/jobs/blog/dev-server-2.md");
     const text = fake.readFile(path);
-    expect(text).toBe("---\nkind: service\nname: Coda web\nproject: p1\nfolder: Projects/coda-helper\ncommand: npm run dev\nready: { port: 5173 }\n---\n");
-    const snapshot = checkJobs([{ path: "coda-helper/coda-web-2.md", text }], { workspace: null, projects: null });
+    expect(text).toBe("---\nkind: service\nname: Dev server\nproject: p1\nfolder: Projects/blog\ncommand: npm run dev\nready: { port: 5173 }\n---\n");
+    const snapshot = checkJobs([{ path: "blog/dev-server-2.md", text }], { workspace: null, projects: null });
     expect(snapshot.jobs[0]?.valid).toBe(true);
   });
 
@@ -53,7 +53,7 @@ describe("job files through the Host API", () => {
       throw err;
     });
     expect(seen).toEqual([HAND_WRITTEN]);
-    fake.writeFile(WEB, HAND_WRITTEN.replace("Coda web", "Edited"));
+    fake.writeFile(WEB, HAND_WRITTEN.replace("Dev server", "Edited"));
     await vi.waitFor(() => expect(seen.at(-1)).toContain("name: Edited"));
     fake.writeFile("Apps/pomade-runner/jobs/other.md", "x");
     fake.deleteFile(WEB);

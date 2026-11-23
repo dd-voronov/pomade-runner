@@ -34,7 +34,7 @@ describe("the pomade-runner-jobs skill", () => {
     for (const { path } of files) expect(path.startsWith(`${JOBS_FOLDER}/`)).toBe(true);
     const snapshot = checkJobs(
       files.map(({ path, text }) => ({ path: path.slice(JOBS_FOLDER.length + 1), text })),
-      { workspace: null, projects: [{ id: "V1StGXR8_Z5jdHi6B-myT", name: "Coda Helper", root: "Projects/coda-helper" }] },
+      { workspace: null, projects: [{ id: "V1StGXR8_Z5jdHi6B-myT", name: "Blog Helper", root: "Projects/blog" }] },
     );
     const problems = snapshot.jobs.flatMap((entry) => (entry.valid ? [] : entry.invalid.errors.map((e) => formatJobError(e))));
     expect(problems).toEqual([]);

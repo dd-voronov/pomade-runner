@@ -214,7 +214,7 @@ test.describe("agent runs in Pomade", () => {
   });
 
   test("4 · Full autonomy passes the agent's autonomy argument", async () => {
-    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/weekly.md"), agentJob("Librarian weekly", "claude", "Weekly maintenance.", "mode: full-autonomy\n"));
+    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/weekly.md"), agentJob("Weekly review", "claude", "Weekly maintenance.", "mode: full-autonomy\n"));
     const record = await runToEnd("weekly");
     expect(record).toMatchObject({ state: "done", agent: { mode: "full-autonomy", modeName: "Full autonomy" } });
     expect((await agents.session(record.agent?.sessionId ?? "")).args[0]).toBe("--dangerously-skip-permissions");
@@ -249,18 +249,18 @@ test.describe("agent runs in Pomade", () => {
       runner.close();
     }
     expect(await needsYou()).toEqual([]);
-    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/triage.md"), agentJob("Inbox triage", "claude", "Triage the inbox. [ask]", "time-limit: 30m\n"));
-    expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "triage"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
-    await expect.poll(async () => (await going("triage"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("permission");
-    const waiting = await going("triage");
-    const id = `waiting:triage:${waiting?.run ?? ""}`;
+    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/tidy-drafts.md"), agentJob("Tidy drafts", "claude", "Tidy the drafts. [ask]", "time-limit: 30m\n"));
+    expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "tidy-drafts"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+    await expect.poll(async () => (await going("tidy-drafts"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("permission");
+    const waiting = await going("tidy-drafts");
+    const id = `waiting:tidy-drafts:${waiting?.run ?? ""}`;
     expect(await needsYou()).toEqual([id]);
-    await expect.poll(() => runnerNotices()).toContain("Inbox triage needs your approval");
+    await expect.poll(() => runnerNotices()).toContain("Tidy drafts needs your approval");
     await expect(page.getByTestId(`strip-badge-${STRIP_KEY}`)).toHaveText("1");
     await shoot(page, "pomade-waiting-notice");
 
     // The notice opens the run's terminal tab at the prompt.
-    await page.getByTestId("notices-panel").locator('[data-testid="notice-row"][data-source="pomade-runner"]').filter({ hasText: "Inbox triage needs your approval" }).click();
+    await page.getByTestId("notices-panel").locator('[data-testid="notice-row"][data-source="pomade-runner"]').filter({ hasText: "Tidy drafts needs your approval" }).click();
     await closeTab(await atThePrompt());
 
     // Needs you's card: amber, "Open at the prompt".
@@ -268,9 +268,9 @@ test.describe("agent runs in Pomade", () => {
     await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
     await drawn(page);
     const card = panel().locator('[data-testid="needs-you-item"][data-kind="waiting"]');
-    await expect(card).toContainText("Inbox triage");
+    await expect(card).toContainText("Tidy drafts");
     await expect(card.getByTestId("needs-you-words")).toHaveText("Waiting for approval at a permission prompt.");
-    const row = panel().getByTestId("active-run").filter({ hasText: "Inbox triage" });
+    const row = panel().getByTestId("active-run").filter({ hasText: "Tidy drafts" });
     await expect(row).toContainText("waiting for you");
     await shoot(page, "pomade-waiting-panel");
     await card.getByRole("button", { name: "Open at the prompt" }).click();
@@ -284,8 +284,8 @@ test.describe("agent runs in Pomade", () => {
     await page.keyboard.press("1");
     await expect.poll(() => needsYou()).toEqual([]);
     await expect(page.getByTestId(`strip-badge-${STRIP_KEY}`)).toHaveCount(0);
-    await expect.poll(async () => (await history("triage")).length, { timeout: 30_000 }).toBe(1);
-    const [record] = await history("triage");
+    await expect.poll(async () => (await history("tidy-drafts")).length, { timeout: 30_000 }).toBe(1);
+    const [record] = await history("tidy-drafts");
     expect(record).toMatchObject({ state: "done", agent: { waiting: null } });
     expect(record?.agent?.waitedMs).toBeGreaterThan(0);
     await expect.poll(() => buffer(tabId)).toContain("Moved 14 notes.");
@@ -293,7 +293,7 @@ test.describe("agent runs in Pomade", () => {
   });
 
   test("a prompt that comes while the scheduler is down is read from the session's screen once it is back — it waits for you — and answered, the run is done", async () => {
-    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/late.md"), agentJob("Late ask", "codex", "Triage later. [ask-late]"));
+    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/late.md"), agentJob("Late ask", "codex", "Tidy later. [ask-late]"));
     expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "late"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
     await expect.poll(async () => (await going("late"))?.state, { timeout: 15_000 }).toBe("running");
     await scheduler?.kill();

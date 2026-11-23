@@ -22,7 +22,7 @@ const snapshot = checkJobs(
     "status-done-codex.md": script("Status done codex", "{ event: session-status, status: done, agent: codex }"),
     "scheduled.md": "---\nkind: script\nname: Scheduled\nfolder: .\ncommand: ./x.sh\nschedule:\n  daily: { at: 7:00 }\n---\n",
     "agent.md": "---\nkind: agent\nname: Agent\nfolder: .\nagent: claude\nhook: { event: login }\n---\nGo.\n",
-    "pull.md": "---\nkind: git\nname: Pull\ngit: { operation: pull, repos: [Knowledge] }\nhook: { event: login }\n---\n",
+    "pull.md": "---\nkind: git\nname: Pull\ngit: { operation: pull, repos: [notes] }\nhook: { event: login }\n---\n",
   }).map(([path, text]) => ({ path, text })),
   { workspace: "/ws", projects: [{ id: "p1", name: "One", root: "Projects/one" }] },
 );
@@ -75,9 +75,9 @@ describe("hooks", () => {
     const hook = (event: HookFiring["event"], projectName?: string): string => runTriggerWords({ trigger: "hook", cause: { kind: "hook", event, context: {}, ...(projectName === undefined ? {} : { projectName }) } });
     expect(hook("login")).toBe("hook: Mac login");
     expect(hook("pomade-started")).toBe("hook: Pomade started");
-    expect(hook("project-first-open", "job-hunt")).toBe("hook: first open of job-hunt");
+    expect(hook("project-first-open", "blog")).toBe("hook: first open of blog");
     expect(hook("project-first-open")).toBe("hook: first open of a project");
-    expect(hook("project-created", "job-hunt")).toBe("hook: project job-hunt created");
+    expect(hook("project-created", "blog")).toBe("hook: project blog created");
     expect(hook("project-created")).toBe("hook: project created");
     expect(hook("session-finished", "One")).toBe("hook: agent session finished");
     expect(hook("session-status")).toBe("hook: session status changed");

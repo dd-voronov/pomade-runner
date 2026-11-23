@@ -16,7 +16,7 @@ export type KeeperLink =
 
 /** One keeper session, with what Runner knows of it beyond the keeper's own `SessionInfo`. */
 export interface RunnerSession {
-  /** The keeper's session id (`svc:coda-helper.coda-web`). */
+  /** The keeper's session id (`svc:blog.dev-server`). */
   id: string;
   /** The job it belongs to. */
   job: string;
@@ -113,7 +113,7 @@ export type ServiceState = (typeof SERVICE_STATES)[number];
 
 /** One service as supervision sees it. */
 export interface ServiceStatus {
-  /** The job's id (`coda-helper/coda-web`). */
+  /** The job's id (`blog/dev-server`). */
   job: string;
   /** The job's name; for a service whose file is invalid or gone, its session's title or the id. */
   name: string;

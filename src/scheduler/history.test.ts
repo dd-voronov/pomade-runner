@@ -110,32 +110,32 @@ describe("history", () => {
   });
 
   it("keeps a record's output log by name, and reads it back where it is: kept, else still in the state folder", async () => {
-    await history.append(record("coda/web", "r1", T0, { log: "/Users/other/Library/Application Support/pomade/app-state/pomade-runner/output/coda.web/r1.log" }));
+    await history.append(record("blog/web", "r1", T0, { log: "/Users/other/Library/Application Support/pomade/app-state/pomade-runner/output/blog.web/r1.log" }));
     await history.append(record("a", "r2", T0 + 1000));
     const names = (await readFile(join(records, "history/2026-11-17.jsonl"), "utf8")).split("\n").map((line) => (line === "" ? null : (JSON.parse(line) as RunRecord).log));
-    expect(names).toEqual(["output/coda.web/r1.log", null, null]);
-    const kept = keptOutputLogPath(records, "coda/web", "r1");
-    const live = liveOutputLogPath(state, "coda/web", "r1");
+    expect(names).toEqual(["output/blog.web/r1.log", null, null]);
+    const kept = keptOutputLogPath(records, "blog/web", "r1");
+    const live = liveOutputLogPath(state, "blog/web", "r1");
     // In neither place: where it would be kept, which reads as missing.
     expect((await history.page({ job: null, before: null, limit: 10 })).records.map((r) => r.log)).toEqual([null, kept]);
     await mkdir(dirname(live), { recursive: true });
     await writeFile(live, "x");
-    expect(await history.find("coda/web", "r1")).toMatchObject({ log: live });
+    expect(await history.find("blog/web", "r1")).toMatchObject({ log: live });
     await mkdir(dirname(kept), { recursive: true });
     await writeFile(kept, "x");
-    expect(await history.find("coda/web", "r1")).toMatchObject({ log: kept });
+    expect(await history.find("blog/web", "r1")).toMatchObject({ log: kept });
   });
 
   it("moves a finished run's log into the records folder once, and finishes a move done again", async () => {
-    const live = liveOutputLogPath(state, "coda/web", "r1");
-    const kept = keptOutputLogPath(records, "coda/web", "r1");
-    expect(await keepOutputLog(records, state, "coda/web", "r1")).toBeNull();
+    const live = liveOutputLogPath(state, "blog/web", "r1");
+    const kept = keptOutputLogPath(records, "blog/web", "r1");
+    expect(await keepOutputLog(records, state, "blog/web", "r1")).toBeNull();
     await mkdir(dirname(live), { recursive: true });
     await writeFile(live, "output\n");
-    expect(await keepOutputLog(records, state, "coda/web", "r1")).toBe(kept);
+    expect(await keepOutputLog(records, state, "blog/web", "r1")).toBe(kept);
     expect(await readFile(kept, "utf8")).toBe("output\n");
     await expect(readFile(live)).rejects.toThrow();
-    expect(await keepOutputLog(records, state, "coda/web", "r1")).toBe(kept);
+    expect(await keepOutputLog(records, state, "blog/web", "r1")).toBe(kept);
     expect(await readFile(kept, "utf8")).toBe("output\n");
   });
 

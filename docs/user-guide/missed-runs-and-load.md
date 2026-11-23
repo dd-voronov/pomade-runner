@@ -39,7 +39,7 @@ No policy runs every missed run by itself; **Run all** does, when you ask (below
 
 ### Wait for me
 
-The missed run is a Needs-you item, "Inbox triage · missed Sun 3:00", and a notice; one per job (a later
+The missed run is a Needs-you item, "Tidy drafts · missed Sun 3:00", and a notice; one per job (a later
 miss moves it to the later time and adds to its count: "missed 4 runs, …"). Its card offers:
 
 - **Run now** — runs it now as a run of yours (trigger `manual`). When it stands for more than one

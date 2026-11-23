@@ -1,6 +1,6 @@
 // A stand-in for the Agents app (`pomade-agents`) in the fake host: the calls Runner's frames make,
 // with the published contract's shapes (`../pomade-agents/docs/CONTRACTS.md` "Roster", "Reads for
-// Runner") — the prototype's roster (`AGENTS`: claude, claude-libra, claude-coder, claude-pm with
+// Runner") — the prototype's roster (`AGENTS`: claude, claude-editor, claude-coder, claude-pm with
 // Normal only, codex with a third mode), the projects connected to each, and a session's last
 // message from `window.agentMessages` (a session it lacks is `not-found`). `?agents=none` leaves
 // it out, so the frames find the Agents app absent; `?agents=silent` keeps it from answering.
@@ -14,7 +14,7 @@ const full = { id: "full-autonomy", name: "Full autonomy", args: ["--dangerously
 
 export const HARNESS_ROSTER: RosterAgent[] = [
   { id: "claude", name: "claude", command: "claude", provider: "claude", modes: [normal, full] },
-  { id: "claude-libra", name: "claude-libra", command: "claude-libra", provider: "claude", modes: [normal, full] },
+  { id: "claude-editor", name: "claude-editor", command: "claude-editor", provider: "claude", modes: [normal, full] },
   { id: "claude-coder", name: "claude-coder", command: "claude-coder", provider: "claude", modes: [normal, full] },
   { id: "claude-pm", name: "claude-pm", command: "claude-pm", provider: "claude", modes: [normal] },
   { id: "codex", name: "codex", command: "codex", provider: "codex", modes: [normal, { ...full, args: ["--dangerously-bypass-approvals-and-sandbox"] }, { id: "read-only", name: "Read-only", args: ["--sandbox", "read-only"] }] },
@@ -22,8 +22,8 @@ export const HARNESS_ROSTER: RosterAgent[] = [
 
 /** The prototype's projects connected to each agent. */
 const CONNECTED: Record<string, string[]> = {
-  claude: ["pomade", "coda-helper", "job-hunt"],
-  "claude-libra": ["knowledge"],
+  claude: ["pomade", "blog", "shop"],
+  "claude-editor": ["notes"],
   "claude-coder": ["pomade", "pomade-kit", "pomade-runner"],
   "claude-pm": ["pomade"],
   codex: ["pomade-kit"],

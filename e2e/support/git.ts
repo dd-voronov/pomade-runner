@@ -21,7 +21,7 @@ export function gitEnv(tmp: string): Record<string, string> {
 export interface GitFixture {
   /** The bare remote. */
   remote: string;
-  /** The workspace's clone: the repo `Knowledge`. */
+  /** The workspace's clone: the repo `notes`. */
   repo: string;
   /** Another clone of the remote, for changes that come from elsewhere. */
   other: string;
@@ -32,15 +32,15 @@ export interface GitFixture {
   snapshot(): { head: string; branch: string; status: string; notes: string };
 }
 
-/** A remote with one commit (`notes.md`), cloned into `<workspace>/Knowledge` and into another
+/** A remote with one commit (`notes.md`), cloned into `<workspace>/notes` and into another
  *  folder, with the configuration `gitEnv` names. */
 export async function createGitFixture(tmp: string, workspace: string): Promise<GitFixture> {
   await writeFile(join(tmp, "gitconfig"), "[user]\n\tname = Runner Test\n\temail = runner@test.invalid\n[init]\n\tdefaultBranch = main\n[commit]\n\tgpgSign = false\n");
   const env = { ...withoutGit(cleanEnv()), ...gitEnv(tmp), HOME: join(tmp, "user") };
   const git = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-  const remote = join(tmp, "remote", "knowledge.git");
+  const remote = join(tmp, "remote", "notes.git");
   const seed = join(tmp, "seed");
-  const repo = join(workspace, "Knowledge");
+  const repo = join(workspace, "notes");
   const other = join(tmp, "other");
   await mkdir(remote, { recursive: true });
   git(remote, "init", "--bare", "--quiet", "--initial-branch=main");

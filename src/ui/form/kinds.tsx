@@ -517,7 +517,7 @@ export const KIND_UI: Record<JobKind, KindUi> = {
     line: "Keeps a command running, always",
     icon: "service",
     help: "kind.service",
-    namePlaceholder: "Coda web",
+    namePlaceholder: "Dev server",
     build: {
       sections: (props) => <ServiceSections {...props} />,
       policies: [LOW_PRIORITY, NOTIFY],
@@ -553,7 +553,7 @@ export const KIND_UI: Record<JobKind, KindUi> = {
     line: "Git operation on your repos",
     icon: "git",
     help: "kind.git",
-    namePlaceholder: "Knowledge commit & push",
+    namePlaceholder: "Commit notes",
     build: {
       sections: (props) => <GitSections {...props} />,
       policies: SCRIPT_POLICIES,

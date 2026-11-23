@@ -25,7 +25,7 @@ choose `When something happens`, then pick from the **Event** list.
 | `Another job finished` | a chain: when another job finishes with the result you pick | **Job**, **When it** |
 
 Under the picker the form says what the trigger comes to, e.g. "Runs at Mac login · Once per login,
-after the 2-minute warm-up.", "Runs when Pomade starts", "Runs on first open of job-hunt", "Runs when
+after the 2-minute warm-up.", "Runs when Pomade starts", "Runs on first open of blog", "Runs when
 a project is created", "Runs after Pull is done · A chain. History will show “chain: after Pull”".
 
 - Pomade's and the Agents app's events fire only while Pomade runs. One that happens while Pomade or
@@ -38,7 +38,7 @@ a project is created", "Runs after Pull is done · A chain. History will show �
 - A session in the Workspace bucket has no project, so only a hook without a project filter takes it.
 - A hook run has no missed-run policy: while the switch holds it, it waits and runs late.
 
-History shows a hook run as "hook: Mac login", "hook: Pomade started", "hook: first open of job-hunt",
+History shows a hook run as "hook: Mac login", "hook: Pomade started", "hook: first open of blog",
 "hook: project <name> created", "hook: agent session finished", "hook: session marked Done".
 
 ## Chains
@@ -64,7 +64,7 @@ A script or git job's run has these in its environment:
 
 | Variable | When |
 |---|---|
-| `POMADE_JOB` | always — the job's id (`backup`, `coda-helper/nightly`) |
+| `POMADE_JOB` | always — the job's id (`backup`, `blog/nightly`) |
 | `POMADE_RUN_ID` | always |
 | `POMADE_TRIGGER` | always — `scheduled` · `caught-up` · `manual` · `hook` · `chain` |
 | `POMADE_PROJECT`, `POMADE_PROJECT_PATH` | a project job: its project's id and absolute folder. A `First open` or `Project created` hook gives the event's project; a session hook gives the session's project, if it has one |
@@ -96,7 +96,7 @@ hook: { event: project-first-open, project: <project id> }     # no project = an
 hook: { event: session-finished, project: <id>, agent: claude }
 hook: { event: session-status, status: done }                  # active · on-hold · done · done-skip
 after: { job: photo-backup, result: failed }                   # done · failed · any
-after: { job: coda-helper/git-pull, result: done, action: restart }   # on a service
+after: { job: blog/pull, result: done, action: restart }   # on a service
 ```
 
 Events are `login`, `pomade-started`, `project-first-open`, `project-created`, `session-finished`

@@ -626,20 +626,20 @@ describe("runs", () => {
   });
 
   describe("git runs", () => {
-    const KNOWLEDGE = "---\nkind: git\nname: Knowledge twice daily\ngit: { operation: commit-push, repos: [Knowledge] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n";
+    const NOTES = "---\nkind: git\nname: Commit notes\ngit: { operation: commit-push, repos: [notes] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n";
     const RUN = "20261118-120000-000001";
-    const ID = `run:knowledge:${RUN}`;
+    const ID = `run:notes:${RUN}`;
     /** A run started at 12:00 local (Run now, a hook): its id is in UTC. */
     const NOW = "20261118-110000-000001";
-    const NOW_ID = `run:knowledge:${NOW}`;
+    const NOW_ID = `run:notes:${NOW}`;
     const result = (status: "done" | "failed", reason: string | null = null): GitRunOutput => ({
       op: "commit-push",
-      job: "Knowledge twice daily",
+      job: "Commit notes",
       at: "2026-11-18T12:00:01.000Z",
       results: [
         {
-          repo: "Knowledge",
-          path: "/ws/Knowledge",
+          repo: "notes",
+          path: "/ws/notes",
           op: "commit-push",
           status,
           reason,
@@ -648,12 +648,12 @@ describe("runs", () => {
         },
       ],
     });
-    const resultFile = (run = RUN): string => join(dir, "output", "knowledge", `${run}.json`);
+    const resultFile = (run = RUN): string => join(dir, "output", "notes", `${run}.json`);
 
     beforeEach(async () => {
       await mkdir(join(dir, "bin"), { recursive: true });
       await writeFile(join(dir, "bin", "pomade-git"), "#!/bin/sh\n", { mode: 0o755 });
-      files = { "knowledge.md": KNOWLEDGE, "backup.md": script("Backup", "after: { job: knowledge, result: failed }\n") };
+      files = { "notes.md": NOTES, "backup.md": script("Backup", "after: { job: notes, result: failed }\n") };
       load();
     });
 
@@ -662,23 +662,23 @@ describe("runs", () => {
       await at("2026-11-18T13:00:00");
       expect(sessions.spawned).toEqual([
         {
-          owner: { kind: "run", job: "knowledge", run: RUN },
+          owner: { kind: "run", job: "notes", run: RUN },
           command: {
-            title: "Knowledge twice daily",
-            command: `'${join(dir, "bin", "pomade-git")}' 'commit-push' 'Knowledge' '--json' '--job' 'Knowledge twice daily' > '${resultFile()}'`,
+            title: "Commit notes",
+            command: `'${join(dir, "bin", "pomade-git")}' 'commit-push' 'notes' '--json' '--job' 'Commit notes' > '${resultFile()}'`,
             cwd: WS,
-            env: { POMADE_JOB: "knowledge", POMADE_RUN_ID: RUN, POMADE_TRIGGER: "scheduled", POMADE_WORKSPACE: WS },
+            env: { POMADE_JOB: "notes", POMADE_RUN_ID: RUN, POMADE_TRIGGER: "scheduled", POMADE_WORKSPACE: WS },
             background: false,
           },
         },
       ]);
       expect(runs.active()).toMatchObject([{ kind: "git", folder: "", state: "running" }]);
-      expect(runs.logsInUse()).toEqual(new Set([logOf("knowledge", RUN), resultFile()]));
+      expect(runs.logsInUse()).toEqual(new Set([logOf("notes", RUN), resultFile()]));
       await writeFile(resultFile(), JSON.stringify(result("done")));
       sessions.end(ID, "exited", 0);
       await at("2026-11-18T13:00:03");
       expect(await page()).toEqual([
-        expect.objectContaining({ kind: "git", state: "done", reason: null, exitCode: 0, git: result("done"), lastLines: ["Knowledge · committed a1b2c3d"] }),
+        expect.objectContaining({ kind: "git", state: "done", reason: null, exitCode: 0, git: result("done"), lastLines: ["notes · committed a1b2c3d"] }),
       ]);
       await expect(access(resultFile())).rejects.toThrow();
       // Its skip default: a missed 20:00 is missed · skipped, never caught up.
@@ -688,18 +688,18 @@ describe("runs", () => {
     });
 
     it("a failed repo fails the run with its reason, and fires the chains that follow a failure", async () => {
-      await runs.runNow("knowledge");
+      await runs.runNow("notes");
       await writeFile(resultFile(NOW), JSON.stringify(result("failed", "Their changes conflict with yours in notes.md.")));
       sessions.end(NOW_ID, "crashed", 1);
       await runs.tick();
-      expect(finished[0]).toMatchObject({ state: "failed", reason: "Knowledge: Their changes conflict with yours in notes.md.", exitCode: 1, trigger: "manual" });
-      expect(sessions.spawned.map((spawn) => spawn.owner.job)).toEqual(["knowledge", "backup"]);
-      expect(sessions.spawned[1]?.command.env).toMatchObject({ POMADE_PARENT_JOB: "knowledge", POMADE_PARENT_RESULT: "failed" });
+      expect(finished[0]).toMatchObject({ state: "failed", reason: "notes: Their changes conflict with yours in notes.md.", exitCode: 1, trigger: "manual" });
+      expect(sessions.spawned.map((spawn) => spawn.owner.job)).toEqual(["notes", "backup"]);
+      expect(sessions.spawned[1]?.command.env).toMatchObject({ POMADE_PARENT_JOB: "notes", POMADE_PARENT_RESULT: "failed" });
     });
 
     it("no result file is a failed run that says so, its output's last lines kept", async () => {
-      await runs.runNow("knowledge");
-      await writeLog("knowledge", NOW, "pomade-git: something broke\r\n");
+      await runs.runNow("notes");
+      await writeLog("notes", NOW, "pomade-git: something broke\r\n");
       sessions.end(NOW_ID, "crashed", 1);
       await runs.tick();
       expect(finished[0]).toMatchObject({ state: "failed", reason: "pomade-git gave no result (exit 1)", git: null, lastLines: ["pomade-git: something broke"] });
@@ -707,29 +707,29 @@ describe("runs", () => {
 
     it("without pomade-git in Pomade's command folder, the run fails without starting", async () => {
       await rm(join(dir, "bin", "pomade-git"));
-      expect(await runs.runNow("knowledge")).toEqual({ ok: false, reason: `cannot start — pomade-git is not in Pomade's command folder (${join(dir, "bin", "pomade-git")}); Pomade puts it there when it starts` });
-      expect(finished[0]).toMatchObject({ job: "knowledge", state: "failed", startedAt: null });
+      expect(await runs.runNow("notes")).toEqual({ ok: false, reason: `cannot start — pomade-git is not in Pomade's command folder (${join(dir, "bin", "pomade-git")}); Pomade puts it there when it starts` });
+      expect(finished[0]).toMatchObject({ job: "notes", state: "failed", startedAt: null });
       // A start that failed is a failure: the chains that follow one fire.
       expect(sessions.spawned.map((spawn) => spawn.owner.job)).toEqual(["backup"]);
     });
 
     it("fires from a hook and from a chain like a script", async () => {
       files = {
-        "knowledge.md": KNOWLEDGE.replace("schedule:\n  daily: { at: [13:00, 20:00] }", "hook: { event: login }"),
-        "push.md": "---\nkind: git\nname: Push\ngit: { operation: push, repos: [Knowledge] }\nafter: { job: knowledge }\n---\n",
+        "notes.md": NOTES.replace("schedule:\n  daily: { at: [13:00, 20:00] }", "hook: { event: login }"),
+        "push.md": "---\nkind: git\nname: Push\ngit: { operation: push, repos: [notes] }\nafter: { job: notes }\n---\n",
       };
       load();
       sessions.loggedIn = false;
       await runs.hook({ event: "login", project: null, agent: null, status: null, context: {} });
-      expect(runs.active()).toMatchObject([{ job: "knowledge", trigger: "hook", state: "running" }]);
+      expect(runs.active()).toMatchObject([{ job: "notes", trigger: "hook", state: "running" }]);
       await writeFile(resultFile(NOW), JSON.stringify(result("done")));
       sessions.end(NOW_ID, "exited", 0);
       await runs.tick();
-      expect(runs.active()).toMatchObject([{ job: "push", trigger: "chain", kind: "git", cause: { kind: "chain", job: "knowledge", result: "done" } }]);
+      expect(runs.active()).toMatchObject([{ job: "push", trigger: "chain", kind: "git", cause: { kind: "chain", job: "notes", result: "done" } }]);
     });
 
     it("a scheduler restarted mid-run records the run once, from the result pomade-git left", async () => {
-      await runs.runNow("knowledge");
+      await runs.runNow("notes");
       await runs.close();
       await writeFile(resultFile(NOW), JSON.stringify(result("done")));
       sessions.end(NOW_ID, "exited", 0);

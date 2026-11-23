@@ -222,6 +222,8 @@ test.describe("service lifetimes in Pomade", () => {
     await up("beta-web");
     for (const one of ["alpha-web", "beta-web"]) expect((await command("stop", one)).code).toBe(0);
     await expect.poll(async () => [await state("alpha-web"), await state("beta-web")]).toEqual(["stopped-by-you", "stopped-by-you"]);
+    // Enabling a service whose session has not yet been seen to end reads as running: wait until it has.
+    await expect.poll(async () => (await services()).filter((one) => one.session?.info.state === "running").length).toBe(0);
     for (const one of ["alpha-web", "beta-web"]) expect((await command("disable", one)).code).toBe(0);
     await expect.poll(async () => [await state("alpha-web"), await state("beta-web")]).toEqual(["disabled", "disabled"]);
     for (const one of ["alpha-web", "beta-web"]) expect((await command("enable", one)).code).toBe(0);

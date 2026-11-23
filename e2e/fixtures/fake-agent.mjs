@@ -51,8 +51,8 @@ const save = (record) => writeFileSync(recordFile, `${JSON.stringify(record, nul
 /** The permission dialog, as each provider draws it: the question, the options, the footer last. */
 const DIALOG =
   provider === "claude"
-    ? ["", "  Bash command", "    git mv 00-Inbox/2026-11-16-*.md 01-Raw/Notes/", "", "  Do you want to proceed?", "  ❯ 1. Yes", "    2. Yes, and don't ask again for git mv", "    3. No, tell Claude what to do differently", "", "  Esc to cancel"]
-    : ["", "  Would you like to run the following command?", "    $ git mv 00-Inbox/2026-11-16-*.md 01-Raw/Notes/", "", "  › 1. Yes, proceed", "    2. No, and tell Codex what to do differently", "", "  Press enter to confirm or esc to cancel"];
+    ? ["", "  Bash command", "    git mv drafts/2026-11-16-*.md published/", "", "  Do you want to proceed?", "  ❯ 1. Yes", "    2. Yes, and don't ask again for git mv", "    3. No, tell Claude what to do differently", "", "  Esc to cancel"]
+    : ["", "  Would you like to run the following command?", "    $ git mv drafts/2026-11-16-*.md published/", "", "  › 1. Yes, proceed", "    2. No, and tell Codex what to do differently", "", "  Press enter to confirm or esc to cancel"];
 
 let input = "";
 /** While a permission prompt is up: what answering it does. */
@@ -141,7 +141,7 @@ if (resume !== null) {
     setTimeout(() => {
       // As the real CLIs do: the spinner stops, the dialog is drawn, the title shows idle.
       clearInterval(spin);
-      process.stdout.write(`● Moving 14 notes out of 00-Inbox/ into 01-Raw/Notes/\r\n${DIALOG.join("\r\n")}`);
+      process.stdout.write(`● Moving 14 notes out of drafts/ into published/\r\n${DIALOG.join("\r\n")}`);
       title(provider === "claude" ? IDLE : "[ ! ] Action Required | fake-agent");
       answer = (choice) => {
         process.stdout.write("\r\n\r\n");

@@ -37,7 +37,7 @@ function checkChains(files: readonly ParsedJobFile[]): void {
       add(file, line, "after.job", "the job follows itself, so it would run forever", "name another job, or remove after:");
     } else if (target === undefined) {
       const guess = closest(job, [...byId.keys()]);
-      add(file, line, "after.job", `no job has the id ${job}`, guess ? `write ${guess}` : `write the id of a job in ${JOBS_FOLDER}: its path there without .md, e.g. backup or coda-helper/git-pull`);
+      add(file, line, "after.job", `no job has the id ${job}`, guess ? `write ${guess}` : `write the id of a job in ${JOBS_FOLDER}: its path there without .md, e.g. backup or blog/pull`);
     } else if (target.kind === "service") {
       add(file, line, "after.job", `${job} is a service, and a service never finishes`, "follow a script, agent or git job");
     }

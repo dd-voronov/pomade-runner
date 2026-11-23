@@ -226,10 +226,10 @@ describe("pomade-runner", () => {
   });
 
   it("projects lists each project's id and jobs sub-folder, and needs Pomade", async () => {
-    const r = await run(["projects"], undefined, { projects: [{ id: "p1", name: "Coda Helper", root: "Projects/coda-helper" }] });
+    const r = await run(["projects"], undefined, { projects: [{ id: "p1", name: "Blog Helper", root: "Projects/blog" }] });
     expect(r).toMatchObject({
       code: 0,
-      out: "p1  Coda Helper  (Projects/coda-helper)  → Apps/pomade-runner/jobs/coda-helper/\n",
+      out: "p1  Blog Helper  (Projects/blog)  → Apps/pomade-runner/jobs/blog/\n",
     });
     expect(await run(["projects"], undefined, { projects: [] })).toMatchObject({ code: 0, out: "Pomade has no projects.\n" });
     expect(await run(["projects"])).toMatchObject({ code: 1, err: expect.stringContaining("Pomade is not running") as string });
@@ -237,8 +237,8 @@ describe("pomade-runner", () => {
   });
 
   it("sessions lists the keeper and each session with its job, state and output log", async () => {
-    const info = { title: "Coda web", command: "./start.sh", cwd: "/ws/Projects/coda", pid: 501, startedAt: Date.parse("2026-11-17T08:00:00.000Z"), cols: 80, rows: 24, state: "running" as const, exit: null, clients: 1, actions: [] };
-    const web: RunnerSession = { id: "svc:coda.web", job: "coda/web", kind: "service", run: "20261117-080000-abcdef", log: "/ud/output/coda.web/20261117-080000-abcdef.log", info: { ...info, id: "svc:coda.web" } };
+    const info = { title: "Dev server", command: "./start.sh", cwd: "/ws/Projects/blog", pid: 501, startedAt: Date.parse("2026-11-17T08:00:00.000Z"), cols: 80, rows: 24, state: "running" as const, exit: null, clients: 1, actions: [] };
+    const web: RunnerSession = { id: "svc:blog.web", job: "blog/web", kind: "service", run: "20261117-080000-abcdef", log: "/ud/output/blog.web/20261117-080000-abcdef.log", info: { ...info, id: "svc:blog.web" } };
     const ended: RunnerSession = {
       id: "svc:api",
       job: "api",
@@ -253,7 +253,7 @@ describe("pomade-runner", () => {
       out:
         "keeper: running — version 3ec9b16fc34c, pid 77\n" +
         "svc:api  job api  ended: crashed — code 137, SIGKILL, at 2026-11-17T08:01:00.000Z\n" +
-        "svc:coda.web  job coda/web  running, pid 501, since 2026-11-17T08:00:00.000Z  output /ud/output/coda.web/20261117-080000-abcdef.log\n",
+        "svc:blog.web  job blog/web  running, pid 501, since 2026-11-17T08:00:00.000Z  output /ud/output/blog.web/20261117-080000-abcdef.log\n",
       err: "",
       asked: 0,
     });
@@ -276,9 +276,9 @@ describe("pomade-runner", () => {
   });
 
   describe("services", () => {
-    const info = { title: "Coda web", command: "./start.sh", cwd: "/ws/Projects/coda", pid: 501, startedAt: Date.parse("2026-11-17T08:00:00.000Z"), cols: 80, rows: 24, state: "running" as const, exit: null, clients: 0, actions: [] };
-    const session: RunnerSession = { id: "svc:coda.web", job: "coda/web", kind: "service", run: null, log: null, info: { ...info, id: "svc:coda.web" } };
-    const base: ServiceStatus = { job: "coda/web", name: "Coda web", project: "p1", state: "running", session, restarts: 0, lastCrashAt: null, retryAt: null, needsRestart: false, problem: null };
+    const info = { title: "Dev server", command: "./start.sh", cwd: "/ws/Projects/blog", pid: 501, startedAt: Date.parse("2026-11-17T08:00:00.000Z"), cols: 80, rows: 24, state: "running" as const, exit: null, clients: 0, actions: [] };
+    const session: RunnerSession = { id: "svc:blog.web", job: "blog/web", kind: "service", run: null, log: null, info: { ...info, id: "svc:blog.web" } };
+    const base: ServiceStatus = { job: "blog/web", name: "Dev server", project: "p1", state: "running", session, restarts: 0, lastCrashAt: null, retryAt: null, needsRestart: false, problem: null };
     const at = (time: string): number => Date.parse(`2026-11-17T${time}.000Z`);
 
     it("lists every service with its state, restarts and last crash", async () => {
@@ -300,7 +300,7 @@ describe("pomade-runner", () => {
       expect(r.code).toBe(0);
       expect(r.out.split("\n")).toEqual([
         "keeper: running — version v9, pid 77",
-        "coda/web  Coda web  running, pid 501, since 2026-11-17T08:00:00.000Z · restarted 2× · last crash 2026-11-17T07:59:00.000Z · its job file changed: restart to apply it",
+        "blog/web  Dev server  running, pid 501, since 2026-11-17T08:00:00.000Z · restarted 2× · last crash 2026-11-17T07:59:00.000Z · its job file changed: restart to apply it",
         "a  A  starting, pid 501, since 2026-11-17T08:00:00.000Z",
         "b  B  queued to start",
         "c  C  restarting at 2026-11-17T08:00:05.000Z · restarted 1× · last crash 2026-11-17T08:00:04.000Z",
@@ -331,9 +331,9 @@ describe("pomade-runner", () => {
       const actions: { verb: ControlMethod; job: string }[] = [];
       const starting = { ...base, state: "starting" as const };
       for (const [command, value] of [["run", { service: starting }], ["stop", starting], ["restart", starting]] as const) {
-        const r = await run([command, "Coda web"], undefined, { action: { status: "ok", value }, actions });
-        expect(r).toEqual({ code: 0, out: "coda/web  Coda web  starting, pid 501, since 2026-11-17T08:00:00.000Z\n", err: "", asked: 0 });
-        expect(actions.at(-1)).toEqual({ verb: command, job: "Coda web" });
+        const r = await run([command, "Dev server"], undefined, { action: { status: "ok", value }, actions });
+        expect(r).toEqual({ code: 0, out: "blog/web  Dev server  starting, pid 501, since 2026-11-17T08:00:00.000Z\n", err: "", asked: 0 });
+        expect(actions.at(-1)).toEqual({ verb: command, job: "Dev server" });
       }
     });
 
@@ -462,12 +462,12 @@ describe("pomade-runner", () => {
       expect((await run(["history"], undefined, { history: { status: "ok", value: { records: [], next: null } } })).out).toBe("No runs yet.\n");
       const steps = [{ step: "commit" as const, outcome: "done" as const, detail: "committed a1b2c3d (1 file)" }, { step: "push" as const, outcome: "done" as const, detail: "pushed 1 commit" }];
       const results = [
-        { repo: "Knowledge", path: "/ws/Knowledge", op: "commit-push" as const, status: "done" as const, reason: null, steps, commit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
-        { repo: "coda-helper", path: "/ws/Projects/coda-helper", op: "commit-push" as const, status: "skipped" as const, reason: "agent working", steps: [], commit: null },
+        { repo: "notes", path: "/ws/notes", op: "commit-push" as const, status: "done" as const, reason: null, steps, commit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
+        { repo: "blog", path: "/ws/Projects/blog", op: "commit-push" as const, status: "skipped" as const, reason: "agent working", steps: [], commit: null },
       ];
-      const git = { ...failed, job: "knowledge", name: "Knowledge", kind: "git" as const, state: "done" as const, exitCode: 0, log: null, git: { op: "commit-push" as const, job: "Knowledge", at: "2026-11-17T12:00:00.000Z", results } };
+      const git = { ...failed, job: "notes", name: "notes", kind: "git" as const, state: "done" as const, exitCode: 0, log: null, git: { op: "commit-push" as const, job: "notes", at: "2026-11-17T12:00:00.000Z", results } };
       expect((await run(["history"], undefined, { history: { status: "ok", value: { records: [git], next: null } } })).out).toBe(
-        "knowledge  Knowledge  scheduled  done, 2026-11-17T12:00:03.000Z, took 3 s\n    Knowledge · committed a1b2c3d · pushed\n    coda-helper · skipped · agent working\n",
+        "notes  notes  scheduled  done, 2026-11-17T12:00:03.000Z, took 3 s\n    notes · committed a1b2c3d · pushed\n    blog · skipped · agent working\n",
       );
       expect(await run(["history", "a", "b"])).toMatchObject({ code: 2, err: expect.stringContaining('unexpected "b"') as string });
       expect(await run(["history"])).toMatchObject({ code: 1, err: expect.stringContaining("it keeps the history") as string });

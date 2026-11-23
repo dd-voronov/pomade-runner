@@ -458,30 +458,30 @@ describe("scheduler and the job files", () => {
     const fake = createFakeHost({ manifest });
     const ui = await frame(fake);
     await writeFile(
-      join(dir, "ws/Apps/pomade-runner/jobs/knowledge.md"),
-      "---\nkind: git\nname: Knowledge twice daily\ngit: { operation: commit-push, repos: [Knowledge] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n",
+      join(dir, "ws/Apps/pomade-runner/jobs/notes.md"),
+      "---\nkind: git\nname: Commit notes\ngit: { operation: commit-push, repos: [notes] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n",
     );
     await writeFile(join(dir, "ws/Apps/pomade-runner/jobs/a.md"), job("A"));
     await start();
     link?.connected(await frame(fake, "backend"));
-    const params = { repo: { name: "Knowledge", path: join(dir, "ws/Knowledge") } } satisfies RepoJobsParams;
+    const params = { repo: { name: "notes", path: join(dir, "ws/notes") } } satisfies RepoJobsParams;
     await vi.waitFor(async () => expect(await ui.apps.call(REPO_JOBS_APP_ID, REPO_JOBS_METHOD, params)).toBeTruthy());
     const asked = performance.now();
     const answer = await ui.apps.call(REPO_JOBS_APP_ID, REPO_JOBS_METHOD, params);
     expect(performance.now() - asked).toBeLessThan(150);
     const jobs = checkRepoJobs(answer);
     expect(answer).toEqual({ jobs });
-    expect(jobs).toEqual([{ id: "knowledge", name: "Knowledge twice daily", operation: "commit-push", schedule: "daily at 13:00 and 20:00", nextRun: expect.any(String) as string, lastResult: null, route: "jobs/knowledge" }]);
+    expect(jobs).toEqual([{ id: "notes", name: "Commit notes", operation: "commit-push", schedule: "daily at 13:00 and 20:00", nextRun: expect.any(String) as string, lastResult: null, route: "jobs/notes" }]);
     expect(await ui.apps.call(REPO_JOBS_APP_ID, REPO_JOBS_METHOD, { repo: { name: "Pomade", path: join(dir, "ws/Projects/Pomade") } })).toEqual({ jobs: [] });
-    for (const bad of [null, {}, { repo: "Knowledge" }, { repo: { name: "Knowledge" } }, { repo: { name: "", path: "/x" } }]) {
+    for (const bad of [null, {}, { repo: "notes" }, { repo: { name: "notes" } }, { repo: { name: "", path: "/x" } }]) {
       await expect(ui.apps.call(REPO_JOBS_APP_ID, REPO_JOBS_METHOD, bad)).rejects.toMatchObject({ code: "invalid-params" });
     }
   });
 
   it("supervises the services: starts the ones due at its start, answers services, and starts, stops and restarts one on request", async () => {
     const jobs = join(dir, "ws/Apps/pomade-runner/jobs");
-    await mkdir(join(jobs, "coda"));
-    await writeFile(join(jobs, "coda/web.md"), "---\nkind: service\nname: Coda web\nproject: p1\nfolder: Projects/coda\ncommand: ./start.sh\nstart: project-first-open\nlow-priority: true\n---\n");
+    await mkdir(join(jobs, "blog"));
+    await writeFile(join(jobs, "blog/web.md"), "---\nkind: service\nname: Dev server\nproject: p1\nfolder: Projects/blog\ncommand: ./start.sh\nstart: project-first-open\nlow-priority: true\n---\n");
     await writeFile(join(jobs, "api.md"), "---\nkind: service\nname: Api\nfolder: .\ncommand: ./api.sh\n---\n");
     await writeFile(join(jobs, "a.md"), job("A"));
     await writeFile(join(jobs, "broken.md"), "---\nkind: service\n---\n");
@@ -498,13 +498,13 @@ describe("scheduler and the job files", () => {
         services: [
           { job: "api", state: "starting" },
           { job: "broken", state: "invalid" },
-          { job: "coda/web", name: "Coda web", project: "p1", state: "waiting-for-pomade", session: null },
+          { job: "blog/web", name: "Dev server", project: "p1", state: "waiting-for-pomade", session: null },
         ],
       },
     });
 
     // A service that runs with Pomade is refused while Pomade is not running.
-    expect(await callScheduler(socketPath, "run", { job: "Coda web" })).toEqual({ status: "failed", code: "refused", message: 'cannot run "Coda web": "Coda web" starts with Pomade; Pomade is not running' });
+    expect(await callScheduler(socketPath, "run", { job: "Dev server" })).toEqual({ status: "failed", code: "refused", message: 'cannot run "Dev server": "Dev server" starts with Pomade; Pomade is not running' });
     expect(await callScheduler(socketPath, "stop", { job: "api" })).toMatchObject({ status: "ok", value: { job: "api", state: "stopped-by-you" } });
     expect(sessions.stopped).toEqual([{ id: "svc:api", reason: "stopped-by-you" }]);
     expect(await callScheduler(socketPath, "restart", { job: "api" })).toMatchObject({ status: "ok", value: { job: "api" } });
@@ -955,7 +955,7 @@ describe("scheduler and Pomade's hooks", () => {
     link?.disconnected();
     await connect();
     await vi.waitFor(() => expect(started().map((run) => run.job)).toEqual(["updates", "updates"]));
-    expect(await readFile(join(dir, "ud/app-state/pomade-runner/pomade-started.json"), "utf8")).toBe(`${JSON.stringify({ fired: { [workspace]: "start-2" }, opened: { [workspace]: [] } }, null, 2)}\n`);
+    await vi.waitFor(async () => expect(await readFile(join(dir, "ud/app-state/pomade-runner/pomade-started.json"), "utf8")).toBe(`${JSON.stringify({ fired: { [workspace]: "start-2" }, opened: { [workspace]: [] } }, null, 2)}\n`));
 
     // A Pomade start that cannot be told fires nothing and says why.
     pomadeStart = null;

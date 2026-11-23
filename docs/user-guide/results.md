@@ -124,7 +124,7 @@ hover for the full moment. A `Run at…` run is in it; a manual job never is. A 
 
 **Running now** lists the services that are up or starting, in start order, then the runs going. A row:
 a status dot, the name and where it stands ("up 3d 4h", "starting", "running 3m", "queued · 1 ahead",
-amber "waiting for you · 17m"), the project · folder below ("workspace · git-base" for the root), and a
+amber "waiting for you · 17m"), the project · folder below ("workspace · my-workspace" for the root), and a
 third line only for news ("waiting for port 5173", "restarted 3× · last crash 14:02", "restart to apply
 its file"). A queued run says what it waits for: "queued · at Wed 23:00", "queued · held · Pause all",
 "queued · warm-up until 08:32", "queued · after the previous run", "queued · opening Pomade".

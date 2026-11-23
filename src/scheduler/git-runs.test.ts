@@ -14,8 +14,8 @@ import type { JobRuns, RunRecord } from "./model";
 const HASH = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
 
 const result = (extra: Partial<GitRunResult> = {}): GitRunResult => ({
-  repo: "Knowledge",
-  path: "/ws/Knowledge",
+  repo: "notes",
+  path: "/ws/notes",
   op: "commit-push",
   status: "done",
   reason: null,
@@ -29,7 +29,7 @@ const result = (extra: Partial<GitRunResult> = {}): GitRunResult => ({
   ...extra,
 });
 
-const output = (...results: GitRunResult[]): GitRunOutput => ({ op: "commit-push", job: "Knowledge twice daily", at: "2026-11-18T12:00:00.000Z", results });
+const output = (...results: GitRunResult[]): GitRunOutput => ({ op: "commit-push", job: "Commit notes", at: "2026-11-18T12:00:00.000Z", results });
 
 const CONFLICT = "Their changes conflict with yours in notes.md. Nothing was changed — the repository is exactly as before, and nothing was pushed.";
 const conflict = result({
@@ -42,12 +42,12 @@ const conflict = result({
   ],
   commit: null,
 });
-const agentWorking = result({ repo: "coda-helper", path: "/ws/Projects/coda-helper", status: "skipped", reason: "agent working", steps: [{ step: "agents", outcome: "skipped", detail: "agent working: claude in /ws/Projects/coda-helper (pid 7)" }], commit: null });
+const agentWorking = result({ repo: "blog", path: "/ws/Projects/blog", status: "skipped", reason: "agent working", steps: [{ step: "agents", outcome: "skipped", detail: "agent working: claude in /ws/Projects/blog (pid 7)" }], commit: null });
 
 const exited = (code: number): SessionEnd => ({ state: code === 0 ? "done" : "failed", reason: null, exitCode: code, signal: null, limitHit: null });
 
 function gitJob(text: string): GitJob {
-  const snapshot = checkJobs([{ path: "knowledge.md", text }], { workspace: "/ws", projects: [] });
+  const snapshot = checkJobs([{ path: "notes.md", text }], { workspace: "/ws", projects: [] });
   const entry = snapshot.jobs[0];
   if (entry?.valid !== true || entry.job.kind !== "git") throw new Error("not a valid git job");
   return entry.job;
@@ -56,17 +56,17 @@ function gitJob(text: string): GitJob {
 describe("the command line", () => {
   it("quotes every word for the shell, and sends the JSON result to the run's file", () => {
     expect(shellQuote("it's")).toBe(`'it'\\''s'`);
-    const job = gitJob("---\nkind: git\nname: Daniil's notes · twice\ngit: { operation: commit-push, repos: [Knowledge, \"My repo\"] }\nschedule:\n  daily: { at: 13:00 }\n---\n");
-    expect(gitCommandLine("/home/bin/pomade-git", job, "/state/output/knowledge/r.json")).toBe(
-      `'/home/bin/pomade-git' 'commit-push' 'Knowledge' 'My repo' '--json' '--job' 'Daniil'\\''s notes · twice' > '/state/output/knowledge/r.json'`,
+    const job = gitJob("---\nkind: git\nname: Daniil's notes · twice\ngit: { operation: commit-push, repos: [notes, \"My repo\"] }\nschedule:\n  daily: { at: 13:00 }\n---\n");
+    expect(gitCommandLine("/home/bin/pomade-git", job, "/state/output/notes/r.json")).toBe(
+      `'/home/bin/pomade-git' 'commit-push' 'notes' 'My repo' '--json' '--job' 'Daniil'\\''s notes · twice' > '/state/output/notes/r.json'`,
     );
   });
 });
 
 describe("a repo's line", () => {
   it("says what was done, in order, with the commit's short hash", () => {
-    expect(gitRepoLine(result())).toBe("Knowledge · committed a1b2c3d · pulled · pushed");
-    expect(gitRepoLine(result({ op: "fetch", steps: [{ step: "fetch", outcome: "done", detail: "fetched origin" }], commit: null }))).toBe("Knowledge · fetched");
+    expect(gitRepoLine(result())).toBe("notes · committed a1b2c3d · pulled · pushed");
+    expect(gitRepoLine(result({ op: "fetch", steps: [{ step: "fetch", outcome: "done", detail: "fetched origin" }], commit: null }))).toBe("notes · fetched");
   });
 
   it("leaves out what was skipped, and says when there was nothing to do", () => {
@@ -79,13 +79,13 @@ describe("a repo's line", () => {
       ],
       commit: null,
     });
-    expect(gitRepoLine(quiet)).toBe("Knowledge · pulled");
-    expect(gitRepoLine(result({ op: "push", steps: [{ step: "push", outcome: "skipped", detail: "nothing to push" }], commit: null }))).toBe("Knowledge · nothing to do");
+    expect(gitRepoLine(quiet)).toBe("notes · pulled");
+    expect(gitRepoLine(result({ op: "push", steps: [{ step: "push", outcome: "skipped", detail: "nothing to push" }], commit: null }))).toBe("notes · nothing to do");
   });
 
   it("says skipped or failed with the reason", () => {
-    expect(gitRepoLine(agentWorking)).toBe("coda-helper · skipped · agent working");
-    expect(gitRepoLine(conflict)).toBe(`Knowledge · failed · ${CONFLICT}`);
+    expect(gitRepoLine(agentWorking)).toBe("blog · skipped · agent working");
+    expect(gitRepoLine(conflict)).toBe(`notes · failed · ${CONFLICT}`);
   });
 });
 
@@ -97,7 +97,7 @@ describe("a git run's end", () => {
     expect(gitRunEnd(exited(0), printed, [])).toEqual({
       ...exited(0),
       git: printed,
-      lastLines: ["Knowledge · committed a1b2c3d · pulled · pushed", "coda-helper · skipped · agent working"],
+      lastLines: ["notes · committed a1b2c3d · pulled · pushed", "blog · skipped · agent working"],
     });
   });
 
@@ -105,9 +105,9 @@ describe("a git run's end", () => {
     const printed = output(conflict, result({ repo: "Pomade", path: "/ws/Projects/Pomade", status: "failed", reason: "No remote — there is nowhere to push.", steps: [], commit: null }));
     expect(gitRunEnd(exited(1), printed, stderr)).toEqual({
       ...exited(1),
-      reason: `Knowledge: ${CONFLICT}; Pomade: No remote — there is nowhere to push.`,
+      reason: `notes: ${CONFLICT}; Pomade: No remote — there is nowhere to push.`,
       git: printed,
-      lastLines: [`Knowledge · failed · ${CONFLICT}`, "Pomade · failed · No remote — there is nowhere to push."],
+      lastLines: [`notes · failed · ${CONFLICT}`, "Pomade · failed · No remote — there is nowhere to push."],
     });
     expect(gitRunEnd(exited(1), output(result()), []).reason).toBe("pomade-git failed (exit 1)");
   });
@@ -130,28 +130,28 @@ describe("a git run's end", () => {
     const stopped: SessionEnd = { state: "stopped-by-you", reason: null, exitCode: null, signal: "SIGINT", limitHit: null };
     expect(gitRunEnd(stopped, null, [])).toEqual({ ...stopped, git: null, lastLines: [] });
     const lost: SessionEnd = { state: "failed", reason: "its session is gone", exitCode: null, signal: null, limitHit: null };
-    expect(gitRunEnd(lost, output(result()), [])).toEqual({ ...lost, git: output(result()), lastLines: ["Knowledge · committed a1b2c3d · pulled · pushed"] });
+    expect(gitRunEnd(lost, output(result()), [])).toEqual({ ...lost, git: output(result()), lastLines: ["notes · committed a1b2c3d · pulled · pushed"] });
   });
 });
 
 describe("jobs.forRepo", () => {
   const files: Record<string, string> = {
-    "knowledge.md": "---\nkind: git\nname: Knowledge twice daily\ngit: { operation: commit-push, repos: [Knowledge, coda-helper] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n",
-    "fetch.md": "---\nkind: git\nname: Fetch all\ngit: { operation: fetch, repos: [/ws/Knowledge] }\nhook: { event: login }\n---\n",
-    "off.md": "---\nkind: git\nname: Off\nenabled: false\ngit: { operation: pull, repos: [Knowledge] }\nschedule:\n  daily: { at: 9:00 }\n---\n",
+    "notes.md": "---\nkind: git\nname: Commit notes\ngit: { operation: commit-push, repos: [notes, blog] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n",
+    "fetch.md": "---\nkind: git\nname: Fetch all\ngit: { operation: fetch, repos: [/ws/notes] }\nhook: { event: login }\n---\n",
+    "off.md": "---\nkind: git\nname: Off\nenabled: false\ngit: { operation: pull, repos: [notes] }\nschedule:\n  daily: { at: 9:00 }\n---\n",
     "other.md": "---\nkind: git\nname: Other\ngit: { operation: pull, repos: [Pomade] }\nschedule:\n  daily: { at: 9:00 }\n---\n",
     "backup.md": "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\nschedule:\n  daily: { at: 13:00 }\n---\n",
-    "coda/knowledge-pull.md": "---\nkind: git\nname: Coda pull\nproject: p1\ngit: { operation: pull, repos: [Knowledge] }\nschedule:\n  weekly: { days: [mon], at: 9:00 }\n---\n",
+    "blog/notes-pull.md": "---\nkind: git\nname: Blog pull\nproject: p1\ngit: { operation: pull, repos: [notes] }\nschedule:\n  weekly: { days: [mon], at: 9:00 }\n---\n",
   };
   const snapshot = checkJobs(
     Object.entries(files).map(([path, text]) => ({ path, text })),
-    { workspace: "/ws", projects: [{ id: "p1", name: "Coda", root: "Projects/coda" }] },
+    { workspace: "/ws", projects: [{ id: "p1", name: "Blog", root: "Projects/blog" }] },
   );
-  const repo = { name: "Knowledge", path: "/ws/Knowledge" };
+  const repo = { name: "notes", path: "/ws/notes" };
   const next = new Date("2026-11-18T20:00:00").getTime();
   const last: RunRecord = {
-    job: "knowledge",
-    name: "Knowledge twice daily",
+    job: "notes",
+    name: "Commit notes",
     kind: "git",
     project: null,
     folder: "",
@@ -176,7 +176,7 @@ describe("jobs.forRepo", () => {
     limitHit: null,
   };
   const runs: JobRuns[] = [
-    { job: "knowledge", next, finished: false, last, held: false },
+    { job: "notes", next, finished: false, last, held: false },
     { job: "fetch", next: null, finished: false, last: { ...last, job: "fetch", state: "missed", git: null }, held: false },
   ];
 
@@ -188,25 +188,25 @@ describe("jobs.forRepo", () => {
     const jobs = repoJobs(snapshot, runs, repo);
     expect(checkRepoJobs({ jobs })).toEqual(jobs);
     expect(jobs).toEqual([
-      { id: "coda/knowledge-pull", name: "Coda pull", operation: "pull", schedule: "every Mon at 9:00", nextRun: null, lastResult: null, route: "jobs/coda.knowledge-pull" },
+      { id: "blog/notes-pull", name: "Blog pull", operation: "pull", schedule: "every Mon at 9:00", nextRun: null, lastResult: null, route: "jobs/blog.notes-pull" },
       { id: "fetch", name: "Fetch all", operation: "fetch", schedule: "at Mac login", nextRun: null, lastResult: { status: "skipped", at: new Date(last.endedAt).toISOString() }, route: "jobs/fetch" },
       {
-        id: "knowledge",
-        name: "Knowledge twice daily",
+        id: "notes",
+        name: "Commit notes",
         operation: "commit-push",
         schedule: "daily at 13:00 and 20:00",
         nextRun: new Date(next).toISOString(),
         lastResult: { status: "done", at: new Date(last.endedAt).toISOString() },
-        route: "jobs/knowledge",
+        route: "jobs/notes",
       },
     ]);
   });
 
   it("the last result is the repo's own in the run when it has one", () => {
-    const coda = repoJobs(snapshot, runs, { name: "coda-helper", path: "/ws/Projects/coda-helper" });
-    expect(coda.map((job) => [job.id, job.lastResult?.status])).toEqual([["knowledge", "skipped"]]);
-    const stopped = repoJobs(snapshot, [{ job: "knowledge", next: null, finished: false, last: { ...last, state: "stopped-by-you", git: null }, held: false }], repo);
-    expect(stopped.find((job) => job.id === "knowledge")?.lastResult?.status).toBe("failed");
+    const blog = repoJobs(snapshot, runs, { name: "blog", path: "/ws/Projects/blog" });
+    expect(blog.map((job) => [job.id, job.lastResult?.status])).toEqual([["notes", "skipped"]]);
+    const stopped = repoJobs(snapshot, [{ job: "notes", next: null, finished: false, last: { ...last, state: "stopped-by-you", git: null }, held: false }], repo);
+    expect(stopped.find((job) => job.id === "notes")?.lastResult?.status).toBe("failed");
   });
 
   it("no job targets an unknown repo", () => {

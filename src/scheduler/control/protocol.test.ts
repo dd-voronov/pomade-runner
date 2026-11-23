@@ -42,7 +42,7 @@ describe("control protocol", () => {
     expect(PARAMS_PARSERS.sessions({})).toBeUndefined();
     expect(PARAMS_PARSERS.services(null)).toBeNull();
     for (const method of ["run", "stop", "restart", "enable", "disable", "resumeJob"] as const) {
-      expect(PARAMS_PARSERS[method]({ job: "coda/web", extra: 1 })).toEqual({ job: "coda/web" });
+      expect(PARAMS_PARSERS[method]({ job: "blog/web", extra: 1 })).toEqual({ job: "blog/web" });
       for (const bad of [null, {}, { job: "" }, { job: 3 }, "web"]) expect(PARAMS_PARSERS[method](bad)).toBeUndefined();
     }
     expect(PARAMS_PARSERS.list(null)).toBeNull();

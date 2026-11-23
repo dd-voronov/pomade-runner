@@ -67,7 +67,7 @@ export function scheduleWords(schedule: Schedule, now: Date = new Date()): strin
 }
 
 /** A service's start in words: "always on · starts on Mac startup", "while Pomade is running",
- *  "from first open of job-hunt while Pomade is running". */
+ *  "from first open of blog while Pomade is running". */
 function serviceStartWords(job: Extract<Job, { kind: "service" }>, names: WordNames): string {
   switch (job.start) {
     case "login":

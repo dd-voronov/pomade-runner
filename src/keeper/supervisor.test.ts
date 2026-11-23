@@ -1202,11 +1202,11 @@ describe("the records on disk", () => {
     expect(await store.load()).toEqual(new Map());
     const failed: SupervisionRecord = { hold: "failed", restarts: 4, lastCrashAt: 5, crashes: [1, 2, 3, 4, 5], retryAt: null, problem: "p" };
     const stopped: SupervisionRecord = { hold: "stopped-by-you", restarts: 1, lastCrashAt: 3, crashes: [3], retryAt: null, problem: null };
-    store.save(new Map([["coda/web", failed], ["api", stopped]]));
+    store.save(new Map([["blog/web", failed], ["api", stopped]]));
     await store.flush();
-    expect(await read(join(dir, "ud/app-state/pomade-runner/services.json"))).toEqual({ services: { "coda/web": failed, api: { ...stopped, hold: null } } });
+    expect(await read(join(dir, "ud/app-state/pomade-runner/services.json"))).toEqual({ services: { "blog/web": failed, api: { ...stopped, hold: null } } });
     expect(await read(join(dir, "ws/Apps/pomade-runner/records/services.json"))).toEqual({ stoppedByYou: ["api"] });
-    expect(await fileStore(state, records, () => undefined).load()).toEqual(new Map([["coda/web", failed], ["api", stopped]]));
+    expect(await fileStore(state, records, () => undefined).load()).toEqual(new Map([["blog/web", failed], ["api", stopped]]));
   });
 
   it("carry the services you stopped to a Mac that has no crash counts for them, and only those", async () => {

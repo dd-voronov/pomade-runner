@@ -250,9 +250,9 @@ describe("agent runs", () => {
     agents.fail = new AgentsError("absent", "the Agents app (pomade-agents) is not running");
     expect(await reason()).toBe("cannot start — the Agents app (pomade-agents) is not running");
     agents.fail = null;
-    files = { "summary.md": agentFile().replace("agent: claude", "agent: claude-libra") };
+    files = { "summary.md": agentFile().replace("agent: claude", "agent: claude-editor") };
     load();
-    expect(await reason()).toBe('cannot start — the Agents app has no agent "claude-libra"');
+    expect(await reason()).toBe('cannot start — the Agents app has no agent "claude-editor"');
     files = { "summary.md": agentFile("mode: full-autonomy\n").replace("agent: claude", "agent: claude-pm") };
     load();
     expect(await reason()).toBe("cannot start — claude-pm has no Full autonomy mode");
@@ -278,7 +278,7 @@ describe("agent runs", () => {
       await mkdir(join(workspace, "Projects/x"), { recursive: true });
       files = {
         "summary.md": agentFile(),
-        "inbox.md": agentFile().replace("name: Morning summary", "name: Inbox triage").replace("at: 7:00", "at: 7:01"),
+        "inbox.md": agentFile().replace("name: Morning summary", "name: Tidy drafts").replace("at: 7:00", "at: 7:01"),
         "backup.md": script("Backup", "schedule:\n  daily: { at: 7:00 }\n").replace("folder: Projects/x", "folder: ."),
       };
       load();
