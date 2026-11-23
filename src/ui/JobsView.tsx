@@ -17,7 +17,7 @@ import { Button, Chip, EmptyBlock, GroupHead, Help, Icon, IconButton, KindCell, 
 import { useOpenServiceTab } from "./RunningNow";
 import { SERVICE_RUNS, serviceActions } from "./serviceWords";
 import { ViewFilters } from "./shell/TabShell";
-import { useNow } from "./useNow";
+import { useCountdownNow } from "./useNow";
 import { useProjectList, useRepos } from "./useRunnerApi";
 import { useServiceAction } from "./useServiceAction";
 
@@ -270,7 +270,6 @@ export function JobsView({
   /** The New job button, as the tab's header has it. */
   newJob: (testId: string) => React.JSX.Element;
 }): React.JSX.Element {
-  const now = useNow();
   const projects = useProjectList(host);
   const repos = useRepos(host);
   const known = repos.status === "ready" ? new Set(repos.value.map((repo) => repo.name)) : null;
@@ -282,6 +281,9 @@ export function JobsView({
   const groups = groupsOf(shown, projects);
   const invalid = shown.filter((entry) => !entry.valid).length;
   const paused = new Map((report?.needsYou ?? []).flatMap((item) => (item.kind === "loop-paused" ? [[item.job, item.at] as const] : [])));
+  // The moments the rows count down to: a shown schedule's next run, as its Next run cell shows it.
+  const counting = new Set(shown.flatMap((entry) => (entry.valid && entry.job.enabled && entry.job.kind !== "service" && entry.job.trigger.kind === "schedule" && !paused.has(entry.job.id) ? [entry.job.id] : [])));
+  const now = useCountdownNow((report?.jobs ?? []).flatMap((info) => (counting.has(info.job) ? (info.next ?? []) : [])));
   const jobNames = new Map(jobs.flatMap((entry) => (entry.valid ? [[entry.job.id, entry.job.name] as const] : [])));
   const names: WordNames = { job: (id) => jobNames.get(id) ?? id, project: (id) => projects.find((project) => project.id === id)?.name ?? id };
   const activeRuns = (id: string): ActiveRun[] => (report?.active ?? []).filter((run) => run.job === id);

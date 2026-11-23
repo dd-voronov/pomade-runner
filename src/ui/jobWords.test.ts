@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { GitJob, ScriptJob, ServiceJob } from "../jobs/model";
 import type { ServiceStatus } from "../keeper/model";
 import type { ActiveRun, JobRuns, RunRecord } from "../scheduler/model";
+import { nextUpWords } from "./panelWords";
 import { aheadWhen, gitDetail, lastLook, newJobRoute, nextLook } from "./jobWords";
 
 const now = new Date(2026, 10, 17, 12, 48).getTime();
@@ -168,6 +169,24 @@ describe("a job's next run", () => {
     expect(nextLook(script, runs({ next: at(17, 15, 0) }), false, now)).toEqual({ words: "Today 15:00", sub: null, none: false });
     expect(nextLook(script, runs({ next: at(18, 7, 0) }), false, now)).toEqual({ words: "Tomorrow 7:00", sub: null, none: false });
     expect(nextLook(script, runs({ next: at(17, 12, 48) }), false, now).sub).toBe("now");
+  });
+
+  it("says the same countdown as the panel's Next up, to the second", () => {
+    const next = (seconds: number): string | null => nextLook(script, runs({ next: now + seconds * 1000 }), false, now).sub;
+    expect([-1, 0, 56, 59, 60, 61, 90, 119, 120, 3599, 3600].map(next)).toEqual([
+      "now",
+      "now",
+      "in 56 s",
+      "in 59 s",
+      "in 1 min",
+      "in 2 min",
+      "in 2 min",
+      "in 2 min",
+      "in 2 min",
+      "in 1 h",
+      null,
+    ]);
+    for (const seconds of [-1, 0, 30, 56, 60, 61, 90, 119, 120, 600, 3599]) expect(nextUpWords(now + seconds * 1000, now)).toBe(next(seconds));
   });
 
   it("says a schedule with nothing ahead finished, and one not yet reported a dash", () => {

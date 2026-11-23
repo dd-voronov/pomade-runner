@@ -5,7 +5,7 @@ import { FIRING_LIMIT, FIRING_WINDOW_MS } from "../scheduler/loop-guard";
 import type { NeedsYouItem } from "../scheduler/model";
 import type { HelpKey } from "./help";
 import type { DotTone } from "./kit";
-import { aheadWords } from "./runWords";
+import { soonWords } from "./runWords";
 import { shortClock, upWords } from "./serviceWords";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -25,10 +25,10 @@ export function aheadMoment(epochMs: number, now: number): string {
   return `${day} ${shortClock(epochMs)}`;
 }
 
-/** A Next up row's time: "in 40 min" within the hour, else the time ("13:00", "tmrw 7:00", "Thu 7:00"). */
+/** A Next up row's time: "in 40 min" ("in 56 s" under a minute) within the hour, else the time
+ *  ("13:00", "tmrw 7:00", "Thu 7:00"). */
 export function nextUpWords(at: number, now: number): string {
-  if (at - now < 60 * 60_000) return aheadWords(at, now);
-  return aheadMoment(at, now).replace(/^today /, "").replace(/^tomorrow /, "tmrw ");
+  return soonWords(at, now) ?? aheadMoment(at, now).replace(/^today /, "").replace(/^tomorrow /, "tmrw ");
 }
 
 /** A Next up row's full time, for its tooltip: "Today 13:00". */

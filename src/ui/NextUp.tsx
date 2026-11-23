@@ -6,12 +6,12 @@ import { NEXT_UP_RUNS, type NextRun } from "../scheduler/model";
 import { Icon, PanelEmpty, Tag, useToast } from "./kit";
 import styles from "./NextUp.module.css";
 import { nextUpTip, nextUpWords } from "./panelWords";
-import { useNow } from "./useNow";
+import { useCountdownNow } from "./useNow";
 
 /** Next up's content: the next runs, soonest first — when ("in 40 min", "13:00"), the job's kind,
  *  its name, and "held" on a run the switch holds. A row opens the job in the Jobs view. */
 export function NextUp({ host, next, jobs }: { host: HostClient; next: readonly NextRun[]; jobs: readonly JobEntry[] }): React.JSX.Element {
-  const now = useNow();
+  const now = useCountdownNow(next.map((run) => run.at));
   const toast = useToast();
   const kindOf = (id: string): "service" | "script" | "agent" | "git" | null => {
     const entry = jobs.find((candidate) => candidate.valid && candidate.job.id === id);

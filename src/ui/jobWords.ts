@@ -12,6 +12,7 @@ import { runWords, TRIGGER_WORDS, waitingAt, type ActiveRun, type JobRuns, type 
 import type { HelpKey } from "./help";
 import type { DotTone } from "./kit";
 import { shortDuration } from "./runLook";
+import { soonWords } from "./runWords";
 import { serviceLook, shortClock, upWords, whenWords } from "./serviceWords";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -36,7 +37,7 @@ export interface LastLook {
 export interface NextLook {
   /** "Today 13:00", "always on", "on event", "disabled". */
   words: string;
-  /** "in 12 min" under an hour away. */
+  /** "in 12 min" under an hour away, "in 56 s" under a minute, "now" from the run's moment. */
   sub: string | null;
   /** Nothing is scheduled: shown faint. */
   none: boolean;
@@ -155,8 +156,7 @@ export function nextLook(job: Job, runs: JobRuns | undefined, paused: boolean, n
   if (job.trigger.kind !== "schedule") return { words: "on event", sub: null, none: true };
   if (runs === undefined) return { words: "—", sub: null, none: true };
   if (runs.next === null) return { words: runs.finished ? "finished" : "—", sub: null, none: true };
-  const minutes = Math.round((runs.next - now) / 60_000);
-  return { words: capitalized(aheadWhen(runs.next, now)), sub: minutes < 60 ? (minutes <= 0 ? "now" : `in ${minutes} min`) : null, none: false };
+  return { words: capitalized(aheadWhen(runs.next, now)), sub: soonWords(runs.next, now), none: false };
 }
 
 /** A git job's operation and repos: "Commit & push · Knowledge, coda-helper"; a repo the workspace

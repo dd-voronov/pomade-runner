@@ -4,7 +4,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, test, type FrameLocator, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Browser, type FrameLocator, type Locator, type Page } from "@playwright/test";
 
 import manifest from "../app/manifest.json" with { type: "json" };
 import type { ServiceStatus } from "../src/keeper/model";
@@ -3632,5 +3632,112 @@ test.describe("T-022 · the Services view's Command column", () => {
     await page.setViewportSize({ width: 860, height: 700 });
     await expect(cell(page, "mid")).toHaveAttribute("data-cut", "true");
     await expect(cell(page, "mid")).toHaveAttribute("data-tip", MID);
+  });
+});
+
+test.describe("the countdown to the next run", () => {
+  const SCRIPT = "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\nschedule:\n  every: { minutes: 2 }\n---\n";
+  const SECOND = 1000;
+
+  /** The panel and the Jobs view, each in a page of its own on the same clock: the panel's Next up and
+   *  the Jobs row of a script due `ahead` ms after the clocks stop. */
+  async function surfaces(browser: Browser, ahead: number): Promise<{ panel: Page; jobs: Page }> {
+    const open = async (query: Record<string, string>, size: { width: number; height: number }): Promise<Page> => {
+      const page = await browser.newPage({ viewport: size });
+      // The clock runs from 17:48:00 while the page loads, and stops at 17:49:10.
+      await page.clock.install({ time: new Date(2026, 10, 17, 17, 48, 0) });
+      await page.goto(harness(query));
+      await page.waitForFunction(() => typeof window.setServiceStatus === "function");
+      await writeJob(page, "backup.md", SCRIPT);
+      await expect(app(page).getByTestId(query.surface === "panel" ? "panel-jobs" : "job-row")).toBeVisible();
+      return page;
+    };
+    const panel = await open({ surface: "panel" }, { width: 240, height: 640 });
+    const jobs = await open({}, { width: 1040, height: 760 });
+    const stop = new Date(2026, 10, 17, 17, 49, 10);
+    const due = stop.getTime() + ahead;
+    for (const page of [panel, jobs]) {
+      const report: RunsReport = {
+        active: [],
+        nextUp: [{ job: "backup", name: "Backup", project: null, at: due, held: false }],
+        jobs: [{ job: "backup", next: due, finished: false, last: null }],
+        needsYou: [],
+        switch: { position: "running", since: null },
+      };
+      await page.evaluate((r) => window.setRuns({ report: r, history: [] }), report);
+      await expect(app(page).getByTestId(page === panel ? "next-up-item" : "job-next").first()).toBeVisible();
+      await page.clock.pauseAt(stop);
+    }
+    return { panel, jobs };
+  }
+
+  const words = (page: Page, testId: string): Promise<string> => app(page).getByTestId(testId).first().innerText();
+
+  /** What the two places say now, after `elapsed` ms more on both clocks. */
+  async function both(pages: { panel: Page; jobs: Page }, elapsed: number, expected: string): Promise<void> {
+    // A second at a time: the page schedules its next redraw after it has drawn, as it does in real time.
+    for (let done = 0; done < elapsed; done += SECOND) {
+      for (const page of [pages.panel, pages.jobs]) await page.clock.runFor(Math.min(SECOND, elapsed - done));
+      await pages.panel.waitForTimeout(25);
+    }
+    await expect(app(pages.panel).getByTestId("next-up-item").first()).toContainText(expected);
+    await expect(app(pages.jobs).getByTestId("job-next")).toContainText(expected);
+  }
+
+  test("a script every 2 minutes reads the same in Next up and in Jobs: clock minutes, then seconds, then now", async ({ browser }) => {
+    // 17:49:10 now, due 17:51:00: 110 s ahead.
+    const pages = await surfaces(browser, 110 * SECOND);
+    try {
+      await expect(app(pages.panel).getByTestId("next-up-item").first()).toContainText("in 2 min");
+      await expect(app(pages.jobs).getByTestId("job-next")).toContainText("Today 17:51");
+      await expect(app(pages.jobs).getByTestId("job-next")).toContainText("in 2 min");
+      expect(await words(pages.panel, "next-up-item")).toMatch(/^in 2 min\s*Backup/);
+      await both(pages, 49 * SECOND, "in 2 min"); // 17:49:59
+      await both(pages, 1 * SECOND, "in 1 min"); // 17:50:00 → 60 s ahead
+      await both(pages, 4 * SECOND, "in 56 s"); // 17:50:04
+      await both(pages, 1 * SECOND, "in 55 s");
+      await shoot(pages.panel, "t028-panel-next-up-seconds");
+      await shoot(pages.jobs, "t028-jobs-next-run-seconds");
+      await both(pages, 54 * SECOND, "in 1 s"); // 17:50:59
+      await both(pages, 1 * SECOND, "now"); // 17:51:00
+      expect(await words(pages.panel, "next-up-item")).toMatch(/^now\s*Backup/);
+      await both(pages, 30 * SECOND, "now"); // nothing says anything else before the row turns to running
+    } finally {
+      await pages.panel.close();
+      await pages.jobs.close();
+    }
+  });
+
+  test("a run 90 s ahead: 2 minutes in both places, then 1 minute, then the seconds", async ({ browser }) => {
+    const pages = await surfaces(browser, 90 * SECOND);
+    try {
+      expect([await words(pages.panel, "next-up-item"), await words(pages.jobs, "job-next")]).toEqual([expect.stringMatching(/^in 2 min\s*Backup/), expect.stringContaining("in 2 min")]);
+      await shoot(pages.panel, "t028-panel-next-up-90s");
+      await shoot(pages.jobs, "t028-jobs-next-run-90s");
+      await both(pages, 30 * SECOND, "in 1 min"); // 60 s ahead
+      await both(pages, 20 * SECOND, "in 40 s");
+      await shoot(pages.panel, "t028-panel-next-up-40s");
+      await shoot(pages.jobs, "t028-jobs-next-run-40s");
+    } finally {
+      await pages.panel.close();
+      await pages.jobs.close();
+    }
+  });
+
+  test("the seconds do not move the layout: the name in Next up and the cells of the Jobs row stay put from 1 min to 55 s", async ({ browser }) => {
+    const pages = await surfaces(browser, 62 * SECOND);
+    try {
+      const places = async (): Promise<number[]> => {
+        const name = await app(pages.panel).getByTestId("next-up-item").first().locator("span").last().boundingBox();
+        const cells = await app(pages.jobs).getByTestId("job-row").first().locator("> *").evaluateAll((all) => all.map((cell) => cell.getBoundingClientRect().x));
+        return [name!.x, ...cells];
+      };
+      const before = await places();
+      await both(pages, 7 * SECOND, "in 55 s");
+      expect(await places()).toEqual(before);
+    } finally {
+      await pages.panel.close();
+      await pages.jobs.close();
+    }
   });
 });

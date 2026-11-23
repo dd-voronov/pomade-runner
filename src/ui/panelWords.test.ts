@@ -19,6 +19,19 @@ describe("Next up's time", () => {
     ]);
   });
 
+  it("counts seconds under a minute and says now from the run's moment", () => {
+    expect([NOW + 56_000, NOW + 59_000, NOW + 60_000, NOW + 61_000, NOW + 119_000, NOW + 120_000, NOW, NOW - 4000].map((when) => nextUpWords(when, NOW))).toEqual([
+      "in 56 s",
+      "in 59 s",
+      "in 1 min",
+      "in 2 min",
+      "in 2 min",
+      "in 2 min",
+      "now",
+      "now",
+    ]);
+  });
+
   it("says the full moment in its tooltip", () => {
     expect(nextUpTip(at(18, 13, 20), NOW)).toBe("Today 13:20");
     expect(nextUpTip(at(19, 7), NOW)).toBe("Tomorrow 7:00");

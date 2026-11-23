@@ -935,7 +935,8 @@ to it, light theme only.
    opens its attached tab, titled with its name; a running run's row its terminal (the run's
    attached session); a queued run's row — it has no session yet — its result card;
 4. **Next up** (`src/ui/NextUp.tsx`): the next five runs (`NEXT_UP_RUNS`), soonest first — a job
-   as many times as it comes among them — "in 40 min" within the hour, then the time ("13:00",
+   as many times as it comes among them — "in 40 min" within the hour ("in 56 s" under a minute,
+   "now" from the run's moment; the countdown below), then the time ("13:00",
    "tmrw 7:00", "Thu 7:00", a later date cut short with "…"; the full moment on hover), the job's kind icon and its name, and on a
    run the switch holds (`held`) its name faint and the amber **held** tag with the switch's help;
    a row opens the job in the Jobs view (`jobs/<encoded job id>`); "Nothing is scheduled." when
@@ -970,8 +971,15 @@ to it, light theme only.
     job's and a never-ran job's cell has none.
   - **Next run** (`nextLook`): "disabled", "paused" (the loop guard's), "always on" (a service on Mac startup), "with Pomade" (a Pomade-bound one), "on
     event" (a hook or a chain), "finished" (a schedule with nothing ahead), else the next time —
-    "Today 13:00", "Tomorrow 7:00", "Wed 7:00", "Wed 25 Nov 7:00" — with "in N min" under it within the
-    hour.
+    "Today 13:00", "Tomorrow 7:00", "Wed 7:00", "Wed 25 Nov 7:00" — with the countdown under it
+    within the hour.
+  - **The countdown** (`soonWords`, `src/ui/runWords.ts`): one function, read by Next run and by the
+    panel's Next up, so the two always say the same. Minutes are counted as a clock reader does —
+    at 17:49:10 a run at 17:51:00 is "in 2 min" until 17:50:00 — under a minute it counts whole
+    seconds ("in 56 s"), and "now" shows from the run's moment until the row turns to running.
+    The view reads the clock again the moment the words change (`useCountdownNow`): each second
+    while a shown run is under a minute away, else each minute; with none under a minute nothing
+    redraws per second.
   - **Actions**, always visible icon buttons, right-aligned: **Run now**, **Edit**
     (`edit/<encoded job id>`), **Delete** — the bin in the row's icon colour, red under the pointer
     and on focus — which opens the confirm of "Deleting a job". A service's row has in Run now's place
