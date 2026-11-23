@@ -93,7 +93,7 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     if (text !== null) fake.writeFile(SETTINGS_PATH, text);
     else if (there) fake.deleteFile(SETTINGS_PATH);
   };
-  let environment: EnvironmentReport = { notifications: "unavailable", skill: { linked: 0, folders: 1 } };
+  let environment: EnvironmentReport = { notifications: "unavailable", skill: { folder: "Knowledge/_skills/apps/pomade-runner-jobs", problem: null } };
   const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
   /** An action the UI asked for: recorded, answered `answer`. */
   const action =

@@ -219,7 +219,7 @@ describe("scheduler", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
+      pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -295,7 +295,7 @@ describe("scheduler", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
+      pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
     });
     expect(result).toEqual({ status: "already-running" });
     expect(second.refreshes).toBe(0);
@@ -357,7 +357,7 @@ describe("scheduler", () => {
 
   it("refuses a socket path macOS cannot bind", async () => {
     socketPath = join(dir, "x".repeat(120), "scheduler.sock");
-    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: join(dir, "ws"), sessions, ...supervision, state: stateFolderOf(join(dir, "ud")), postNotice, pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart });
+    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: join(dir, "ws"), sessions, ...supervision, state: stateFolderOf(join(dir, "ud")), postNotice, pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart });
     expect(result.status).toBe("failed");
   });
 
@@ -401,7 +401,7 @@ describe("scheduler and the job files", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
+      pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -616,7 +616,7 @@ describe("scheduler and runs", () => {
       sessions,
       ...supervision,
       postNotice: noticePoster(join(dir, "ud"), log),
-      pomadeGit: "/nowhere/bin/pomade-git", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
+      pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -776,15 +776,21 @@ describe("scheduler and runs", () => {
     expect(await readFile(join(dir, "ws/Apps/pomade-runner/settings.yaml"), "utf8")).toBe("max-low-priority-runs: 3\n");
     await vi.waitFor(() => expect(heard.length).toBeGreaterThan(heardBefore));
     expect(await ui.apps.call("pomade-runner", SETTINGS_SET_METHOD, { field: "history-days", value: 0 })).toMatchObject({ ok: false, reason: expect.stringContaining("out of range") as string });
+    expect(await ui.apps.call("pomade-runner", SETTINGS_SET_METHOD, { field: "skills-folder", value: "../skills/" })).toMatchObject({ ok: false, reason: expect.stringContaining("is not inside the workspace") as string });
+    expect(await ui.apps.call("pomade-runner", SETTINGS_SET_METHOD, { field: "skills-folder", value: "Skills/" })).toMatchObject({ ok: true, settings: { settings: { skillsFolder: "Skills/" } } });
+    expect(await readFile(join(dir, "ws/Apps/pomade-runner/settings.yaml"), "utf8")).toBe("max-low-priority-runs: 3\nskills-folder: Skills/\n");
     // An edit by hand applies within a tick.
     await writeFile(join(dir, "ws/Apps/pomade-runner/settings.yaml"), "history-days: 7\n");
     await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", SETTINGS_GET_METHOD)).toMatchObject({ settings: { maxLowPriorityRuns: 2, historyDays: 7 } }));
   });
 
-  it("tells Runner's frames about the Mac: the notification permission and the skill's links", async () => {
+  it("tells Runner's frames about the Mac: the notification permission and where the skill is", async () => {
     await start();
     await vi.waitFor(async () => expect(isEnvironmentReport(await ui.apps.call("pomade-runner", ENVIRONMENT_GET_METHOD))).toBe(true));
-    expect(await ui.apps.call("pomade-runner", ENVIRONMENT_GET_METHOD)).toMatchObject({ notifications: "unavailable", skill: { folders: expect.any(Number) as number } });
+    expect(await ui.apps.call("pomade-runner", ENVIRONMENT_GET_METHOD)).toMatchObject({
+      notifications: "unavailable",
+      skill: { folder: "Knowledge/_skills/apps/pomade-runner-jobs", problem: expect.stringContaining("cannot read the installed skill") as string },
+    });
   });
 
   it("a run's end fires its chains: a service restarts through the supervisor and History says so; a runaway chain is paused, noticed and badged, and Resume answers through Pomade and the control socket", async () => {
@@ -834,6 +840,7 @@ describe("scheduler and runs", () => {
       [SWITCH_METHOD, { position: "off" }],
       [SETTINGS_SET_METHOD, { field: "colour", value: 1 }],
       [SETTINGS_SET_METHOD, { field: "warm-up", value: "2m" }],
+      [SETTINGS_SET_METHOD, { field: "skills-folder", value: 3 }],
     ] as const) {
       await expect(ui.apps.call("pomade-runner", method, params)).rejects.toMatchObject({ code: "invalid-params" });
     }
@@ -872,7 +879,7 @@ describe("scheduler and Pomade's hooks", () => {
       sessions,
       ...supervision,
       postNotice: noticePoster(join(dir, "ud"), log),
-      pomadeGit: "/nowhere/bin/pomade-git",
+      pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md",
       turns: new FakeTurns(),
       shell: "/bin/sh",
       launchPomade: noLaunch,

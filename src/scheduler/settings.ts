@@ -23,13 +23,20 @@ export interface Settings {
   longRunWarningMinutes: number;
   /** Run history and output logs are kept this many days. */
   historyDays: number;
+  /** Where Runner keeps its agent skill: a folder inside the workspace, workspace-relative. */
+  skillsFolder: string;
 }
 
-export const DEFAULT_SETTINGS: Settings = { maxLowPriorityRuns: 2, warmUpMinutes: 2, longRunWarningMinutes: 180, historyDays: 30 };
+export const DEFAULT_SKILLS_FOLDER = "Knowledge/_skills/apps/";
 
-/** How a field is written: a whole number of something, or a duration (`2m`, `3h`, `1h30m`). */
-interface FieldSpec {
-  key: keyof Settings;
+export const DEFAULT_SETTINGS: Settings = { maxLowPriorityRuns: 2, warmUpMinutes: 2, longRunWarningMinutes: 180, historyDays: 30, skillsFolder: DEFAULT_SKILLS_FOLDER };
+
+/** The settings that hold a number. */
+type NumberKey = { [K in keyof Settings]: Settings[K] extends number ? K : never }[keyof Settings];
+
+/** How a number field is written: a whole number of something, or a duration (`2m`, `3h`, `1h30m`). */
+interface NumberSpec {
+  key: NumberKey;
   kind: "count" | "duration";
   min: number;
   max: number;
@@ -38,15 +45,27 @@ interface FieldSpec {
   example: string;
 }
 
+/** How a path field is written: a folder inside the workspace, relative to its root. */
+interface PathSpec {
+  key: "skillsFolder";
+  kind: "path";
+  example: string;
+}
+
+type FieldSpec = NumberSpec | PathSpec;
+
 /** The fields of the file, in the order the form shows them. Durations' bounds are minutes. */
 export const SETTINGS_FIELDS = {
   "max-low-priority-runs": { key: "maxLowPriorityRuns", kind: "count", min: 1, max: 16, unit: "runs", example: "2" },
   "warm-up": { key: "warmUpMinutes", kind: "duration", min: 0, max: 60, unit: "", example: "2m" },
   "long-run-warning": { key: "longRunWarningMinutes", kind: "duration", min: 1, max: 24 * 60, unit: "", example: "3h" },
   "history-days": { key: "historyDays", kind: "count", min: 1, max: 365, unit: "days", example: "30" },
+  "skills-folder": { key: "skillsFolder", kind: "path", example: DEFAULT_SKILLS_FOLDER },
 } as const satisfies Record<string, FieldSpec>;
 
 export type SettingsField = keyof typeof SETTINGS_FIELDS;
+/** The fields that hold a number: the form's steppers. */
+export type NumberSettingsField = { [K in SettingsField]: (typeof SETTINGS_FIELDS)[K]["kind"] extends "path" ? never : K }[SettingsField];
 const FIELD_NAMES = Object.keys(SETTINGS_FIELDS) as SettingsField[];
 
 export function isSettingsField(value: string): value is SettingsField {
@@ -77,7 +96,7 @@ export function isSettingsReport(value: unknown): value is SettingsReport {
   if (!isRecord(value) || typeof value.path !== "string" || typeof value.exists !== "boolean" || !Array.isArray(value.errors) || !isRecord(value.settings)) return false;
   const { settings } = value;
   return (
-    Object.values(SETTINGS_FIELDS).every(({ key }) => typeof settings[key] === "number") &&
+    Object.values(SETTINGS_FIELDS).every((spec: FieldSpec) => typeof settings[spec.key] === (spec.kind === "path" ? "string" : "number")) &&
     value.errors.every((error: unknown) => isRecord(error) && typeof error.path === "string" && typeof error.line === "number" && typeof error.field === "string" && typeof error.problem === "string" && typeof error.fix === "string")
   );
 }
@@ -105,9 +124,30 @@ export function minutesText(minutes: number): string {
 
 const show = (value: unknown): string => (value === null || value === undefined ? "empty" : JSON.stringify(value));
 
+/** A folder inside the workspace as the file writes it: relative, never leaving the root. `null`
+ *  when `text` is not one. */
+export function workspaceFolder(text: string): string | null {
+  const trimmed = text.trim();
+  if (trimmed === "" || trimmed.startsWith("/") || trimmed.startsWith("~") || trimmed.includes("\\")) return null;
+  let depth = 0;
+  for (const part of trimmed.split("/")) {
+    if (part === "" || part === ".") continue;
+    depth += part === ".." ? -1 : 1;
+    if (depth < 0) return null;
+  }
+  return trimmed;
+}
+
 /** A field's value, or its problem and fix. */
-function readField(name: SettingsField, value: unknown): { ok: true; value: number } | { ok: false; problem: string; fix: string } {
+function readField(name: SettingsField, value: unknown): { ok: true; value: number | string } | { ok: false; problem: string; fix: string } {
   const spec: FieldSpec = SETTINGS_FIELDS[name];
+  if (spec.kind === "path") {
+    const fix = `write a folder relative to the workspace root, e.g. ${name}: ${spec.example}`;
+    if (typeof value !== "string") return { ok: false, problem: `${show(value)} is not a folder`, fix };
+    const folder = workspaceFolder(value);
+    if (folder === null) return { ok: false, problem: value.trim() === "" ? "the folder is empty" : `${value} is not inside the workspace`, fix };
+    return { ok: true, value: folder };
+  }
   if (spec.kind === "count") {
     const fix = `write a whole number from ${spec.min} to ${spec.max}, e.g. ${name}: ${spec.example}`;
     if (typeof value !== "number" || !Number.isSafeInteger(value)) return { ok: false, problem: `${show(value)} is not a whole number`, fix };
@@ -140,21 +180,23 @@ export function checkSettings(text: string | null, path: string = SETTINGS_PATH)
     // An empty field (`warm-up:`) means its default.
     if (value === null) continue;
     const field = readField(name, value);
-    if (field.ok) settings[SETTINGS_FIELDS[name].key] = field.value;
+    if (field.ok) Object.assign(settings, { [SETTINGS_FIELDS[name].key]: field.value });
     else errors.push({ path, line, field: name, problem: field.problem, fix: field.fix });
   }
   return { path, exists: true, settings, errors: errors.sort((a, b) => a.line - b.line) };
 }
 
-/** What the form writes for a field: its value as the file holds it — a count, or a duration in
- *  minutes — or `null` to remove it, so the default applies. */
-export type SettingsValue = number | null;
+/** What the form writes for a field: its value as the file holds it — a count, a duration in
+ *  minutes, a folder — or `null` to remove it, so the default applies. */
+export type SettingsValue = number | string | null;
 
 /** Why `value` cannot be written to `name`; `null` when it can. */
 export function settingsValueProblem(name: SettingsField, value: SettingsValue): string | null {
   if (value === null) return null;
   const spec: FieldSpec = SETTINGS_FIELDS[name];
-  const field = readField(name, spec.kind === "duration" ? (Number.isSafeInteger(value) && value >= 0 ? minutesText(value) : String(value)) : value);
+  if (spec.kind === "duration" && typeof value === "string") return `${name}: ${show(value)} is not a number of minutes — the form writes a duration as minutes, e.g. 120 for 2h`;
+  const asFile = spec.kind === "duration" && typeof value === "number" ? (Number.isSafeInteger(value) && value >= 0 ? minutesText(value) : String(value)) : value;
+  const field = readField(name, asFile);
   return field.ok ? null : `${name}: ${field.problem} — ${field.fix}`;
 }
 
@@ -173,7 +215,9 @@ export function setSettingsField(text: string, name: SettingsField, value: Setti
     next = yaml.replace(`${getKeyLines(`---\n${yaml}---\n`, name)}\n`, "");
   } else {
     // The YAML is written as a frontmatter block, the one shape the field writer edits in place.
-    const result = setField(yaml.trim() === "" ? "" : `---\n${yaml}---\n`, name, SETTINGS_FIELDS[name].kind === "duration" ? minutesText(value) : value);
+    const spec: FieldSpec = SETTINGS_FIELDS[name];
+    const written = spec.kind === "duration" && typeof value === "number" ? minutesText(value) : typeof value === "string" ? value.trim() : value;
+    const result = setField(yaml.trim() === "" ? "" : `---\n${yaml}---\n`, name, written);
     if (!result.ok) return result;
     next = result.text.slice(4, result.text.indexOf("\n---\n", 3) + 1);
     if (yaml.trim() === "") next = yaml + next;

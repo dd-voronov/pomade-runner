@@ -1,8 +1,8 @@
 // What Runner's Settings view shows about the Mac around it, read-only: whether macOS lets Runner
-// notify while Pomade is closed, and whether the agent skill is linked into the agents' skills
-// folders. The scheduler runs on the Mac and sees both (`read-environment.ts`). Pure: the UI shares it.
+// notify while Pomade is closed, and where the agent skill's copy is. The scheduler runs on the Mac
+// and sees both (`read-environment.ts`). Pure: the UI shares it.
 
-/** The agent skill's name: the folder every link is named after. */
+/** The agent skill's name: the folder its copy is in. */
 export const AGENT_SKILL = "pomade-runner-jobs";
 
 /** Whether Needs-you items reach the person as macOS notifications while Pomade is closed.
@@ -12,8 +12,9 @@ export type NotificationState = (typeof NOTIFICATION_STATES)[number];
 
 export interface EnvironmentReport {
   notifications: NotificationState;
-  /** The agent skill: linked into `linked` of `folders` skills folders (the user's and each agent's). */
-  skill: { linked: number; folders: number };
+  /** The agent skill's copy: its folder, workspace-relative (`<skills folder>/pomade-runner-jobs`),
+   *  and why it could not be written there (`null`: it holds the installed version's skill). */
+  skill: { folder: string; problem: string | null };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -27,7 +28,7 @@ export function isEnvironmentReport(value: unknown): value is EnvironmentReport 
   return (
     typeof notifications === "string" &&
     (NOTIFICATION_STATES as readonly string[]).includes(notifications) &&
-    typeof skill.linked === "number" &&
-    typeof skill.folders === "number"
+    typeof skill.folder === "string" &&
+    (skill.problem === null || typeof skill.problem === "string")
   );
 }

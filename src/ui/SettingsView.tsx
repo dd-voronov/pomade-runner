@@ -6,9 +6,9 @@ import { SETTINGS_SET_METHOD } from "../integrations/runner-api";
 import { describeJobError } from "../jobs/format";
 import { JOBS_FOLDER } from "../jobs/model";
 import { AGENT_SKILL, type EnvironmentReport, type NotificationState } from "../scheduler/environment";
-import { isSettingsWriteResult, SETTINGS_FIELDS, type SettingsField, type SettingsReport } from "../scheduler/settings";
+import { isSettingsWriteResult, SETTINGS_FIELDS, type NumberSettingsField, type SettingsReport } from "../scheduler/settings";
 import type { HelpKey } from "./help";
-import { Button, Dot, Help, Icon, Stepper, STEPPER_SETTLED_MS, useToast, type DotTone } from "./kit";
+import { Button, Dot, Help, Icon, Stepper, STEPPER_SETTLED_MS, TextInput, useToast, type DotTone } from "./kit";
 import styles from "./SettingsView.module.css";
 import { useEnvironment, useSettings, type LiveState } from "./useRunnerApi";
 
@@ -37,7 +37,7 @@ const hourStep = (minutes: number, direction: -1 | 1): number => {
   return (direction === 1 ? Math.ceil(minutes / 60) : Math.floor(minutes / 60)) * 60;
 };
 
-const STEPS: Record<SettingsField, StepSpec> = {
+const STEPS: Record<NumberSettingsField, StepSpec> = {
   "max-low-priority-runs": {
     label: "Low-priority runs at once",
     note: "The rest wait as “queued · N ahead”.",
@@ -89,13 +89,13 @@ const NOTIFICATIONS: Record<NotificationState, { tone: DotTone; words: string }>
   unavailable: { tone: "hollow", words: "Not available yet" },
 };
 
-/** The agent skill's links as a status and the line under its name. */
-function skillLook({ linked, folders }: EnvironmentReport["skill"]): { tone: DotTone; words: string; note: React.ReactNode } {
-  const name = <code className={styles.mono}>{AGENT_SKILL}</code>;
-  if (linked === 0) return { tone: "hollow", words: "Not installed", note: <>{name} is not linked into any skill folder.</> };
-  if (linked < folders) return { tone: "warning", words: "Partly installed", note: <>{name} is linked into {linked} of {folders} skill folders.</> };
-  return { tone: "ok", words: "Installed", note: <>{name} is linked into {linked} skill {plural(linked, "folder", "folders")}.</> };
+/** The agent skill's copy as a status: in the skills folder, or not written there. */
+function skillLook({ problem }: EnvironmentReport["skill"]): { tone: DotTone; words: string } {
+  return problem === null ? { tone: "ok", words: "In place" } : { tone: "danger", words: "Not written" };
 }
+
+/** The skill's file, workspace-relative. */
+const skillFile = (skill: EnvironmentReport["skill"]): string => `${skill.folder}/SKILL.md`;
 
 /** A row of a settings card: its name with (i), a line under it, its control at the end. */
 function Row({ label, help, note, error, testId, children }: { label: string; help?: HelpKey | undefined; note: React.ReactNode; error?: string | null; testId?: string; children?: React.ReactNode }): React.JSX.Element {
@@ -131,7 +131,7 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
  *  once the steps stop — even if the person has left the view by then. The scheduler applies it with
  *  no restart, and the value the file then gives takes over. A refusal puts the value back and says
  *  why. */
-function SettingRow({ host, name, value: committed }: { host: HostClient; name: SettingsField; value: number }): React.JSX.Element {
+function SettingRow({ host, name, value: committed }: { host: HostClient; name: NumberSettingsField; value: number }): React.JSX.Element {
   const spec = STEPS[name];
   const [picked, setPicked] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -195,6 +195,62 @@ function SettingRow({ host, name, value: committed }: { host: HostClient; name: 
   );
 }
 
+/** The skills folder: a path typed in the workspace, written field-only when the field is left or
+ *  Enter is pressed; Escape puts the file's value back. Empty writes the default. The typed text
+ *  stays until the file's value arrives; a refusal puts the value back and says why. */
+function SkillsFolderRow({ host, value }: { host: HostClient; value: string }): React.JSX.Element {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [sent, setSent] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // The file caught up with what was written.
+  if (sent !== null && sent === value) {
+    setSent(null);
+    setDraft(null);
+  }
+  const back = (reason: string): void => {
+    setError(reason);
+    setSent(null);
+    setDraft(null);
+  };
+  const commit = (): void => {
+    if (draft === null || sent !== null) return;
+    const next = draft.trim();
+    if (next === value) {
+      setDraft(null);
+      return;
+    }
+    setError(null);
+    host.apps.call(APP_ID, SETTINGS_SET_METHOD, { field: "skills-folder", value: next === "" ? null : next }).then(
+      (result: unknown) => {
+        const written = isSettingsWriteResult(result) ? result : null;
+        if (written === null) back("the scheduler answered something that is not a settings write");
+        else if (!written.ok) back(written.reason);
+        else if (written.settings.settings.skillsFolder === value) setDraft(null);
+        else setSent(written.settings.settings.skillsFolder);
+      },
+      (err: unknown) => back(err instanceof Error ? err.message : String(err)),
+    );
+  };
+  return (
+    <Row label="Skills folder" help="s.folder" note="Where Runner keeps its skill for agents, inside the workspace." error={error} testId="setting-skills-folder">
+      <TextInput
+        mono
+        className={styles.path}
+        value={draft ?? value}
+        aria-label="Skills folder"
+        spellCheck={false}
+        data-testid="setting-skills-folder-input"
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commit();
+          if (event.key === "Escape") setDraft(null);
+        }}
+      />
+    </Row>
+  );
+}
+
 /** A read-only row's status: a dot and words, or nothing while it loads. */
 function status(state: LiveState<EnvironmentReport>, look: (environment: EnvironmentReport) => { tone: DotTone; words: string }, testId: string): React.JSX.Element | null {
   if (state.status === "loading") return null;
@@ -207,8 +263,9 @@ function status(state: LiveState<EnvironmentReport>, look: (environment: Environ
   );
 }
 
-/** The Settings view: the four settings, each a stepper written field-only to the workspace's
- *  `settings.yaml`; what the Mac says about notifications and the agent skill, read-only; the
+/** The Settings view: the four number settings, each a stepper, and the skills folder, a path —
+ *  each written field-only to the workspace's `settings.yaml`; what the Mac says about
+ *  notifications, read-only; where the agent skill is, with Show in Files; the
  *  files — the settings file opens in a tab, the jobs folder shows in Pomade's Files panel. The
  *  file's own problems are listed on top. */
 export function SettingsView({ host }: { host: HostClient }): React.JSX.Element {
@@ -224,20 +281,31 @@ export function SettingsView({ host }: { host: HostClient }): React.JSX.Element 
     );
   }
   const report: SettingsReport = settings.value;
-  const skill = environment.status === "ready" ? skillLook(environment.value.skill) : null;
+  const skill = environment.status === "ready" ? environment.value.skill : null;
   const openFile = (): void => {
     host.tabs.openFile({ path: report.path }).catch((err: unknown) => toast(`Could not open ${report.path}: ${err instanceof Error ? err.message : String(err)}`));
   };
   const showJobs = (): void => {
     host.files.reveal({ path: JOBS_FOLDER }).catch((err: unknown) => toast(`Could not show ${JOBS_FOLDER} in Files: ${err instanceof Error ? err.message : String(err)}`));
   };
+  const showSkill = (): void => {
+    if (skill === null) return;
+    const path = skillFile(skill);
+    host.files.reveal({ path }).catch((err: unknown) => toast(`Could not show ${path} in Files: ${err instanceof Error ? err.message : String(err)}`));
+  };
+  const skillNote = (
+    <>
+      {skill === null ? <code className={styles.mono}>{AGENT_SKILL}</code> : <code className={styles.mono}>{skillFile(skill)}</code>}
+      <div>Runner gives it to no agent — which agents get it is your choice.</div>
+    </>
+  );
   const fileNote = (
     <>
       <code className={styles.mono}>{report.path}</code>
       {!report.exists && <div>No file yet: every setting is its default, and the first change writes it.</div>}
     </>
   );
-  const value = (name: SettingsField): number => report.settings[SETTINGS_FIELDS[name].key];
+  const value = (name: NumberSettingsField): number => report.settings[SETTINGS_FIELDS[name].key];
   return (
     <section className={styles.root} data-testid="settings">
       {report.errors.length > 0 && (
@@ -266,8 +334,12 @@ export function SettingsView({ host }: { host: HostClient }): React.JSX.Element 
         </Row>
       </Card>
       <Card title="Agents">
-        <Row label="Job skill for agents" help="s.skill" note={skill?.note ?? <code className={styles.mono}>{AGENT_SKILL}</code>} testId="setting-skill">
-          {status(environment, ({ skill: links }) => skillLook(links), "skill-status")}
+        <SkillsFolderRow host={host} value={report.settings.skillsFolder} />
+        <Row label="Job skill for agents" help="s.skill" note={skillNote} error={skill?.problem ?? null} testId="setting-skill">
+          {status(environment, ({ skill: place }) => skillLook(place), "skill-status")}
+          <Button disabled={skill === null || skill.problem !== null} onClick={showSkill}>
+            Show in Files
+          </Button>
         </Row>
       </Card>
       <Card title="Files">

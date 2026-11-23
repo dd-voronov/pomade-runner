@@ -30,7 +30,7 @@ import {
   type SwitchPosition,
   type SwitchState,
 } from "../scheduler/model";
-import { isSettingsField, type SettingsField, type SettingsReport, type SettingsValue, type SettingsWriteResult } from "../scheduler/settings";
+import { isSettingsField, SETTINGS_FIELDS, type SettingsField, type SettingsReport, type SettingsValue, type SettingsWriteResult } from "../scheduler/settings";
 import {
   DISMISS_METHOD,
   HISTORY_LIST_METHOD,
@@ -289,11 +289,13 @@ export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise
       [SETTINGS_GET_METHOD]: () => asJson(offer.settings()),
       [ENVIRONMENT_GET_METHOD]: async () => asJson(await offer.environment()),
       [SETTINGS_SET_METHOD]: own(SETTINGS_SET_METHOD, (params) => {
-        const takes = "{ field: <a setting>, value: <a number, or null for its default> }";
+        const takes = "{ field: <a setting>, value: <a number — a folder for skills-folder — or null for its default> }";
         const given = paramsOf(SETTINGS_SET_METHOD, params, takes);
         const { field, value } = given;
-        if (typeof field !== "string" || !isSettingsField(field) || (value !== null && typeof value !== "number")) throw new HostError("invalid-params", `${SETTINGS_SET_METHOD} takes ${takes}`);
-        return offer.setSetting(field, value);
+        if (typeof field !== "string" || !isSettingsField(field)) throw new HostError("invalid-params", `${SETTINGS_SET_METHOD} takes ${takes}`);
+        const path = SETTINGS_FIELDS[field].kind === "path";
+        if (value === null || (path && typeof value === "string") || (!path && typeof value === "number")) return offer.setSetting(field, value);
+        throw new HostError("invalid-params", `${SETTINGS_SET_METHOD} takes ${takes}`);
       }),
       [DELETE_JOB_METHOD]: own(DELETE_JOB_METHOD, (params) => {
         const takes = "{ job: <a job's id or name> }";

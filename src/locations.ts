@@ -98,6 +98,12 @@ export function pomadeStartedRecordPath(state: StateFolder): string {
   return join(state, "pomade-started.json");
 }
 
+/** Where this Mac placed the agent skill's copy last (`src/jobs/skill/place.ts`), so a changed
+ *  skills folder moves it. */
+export function skillRecordPath(state: StateFolder): string {
+  return join(state, "skill.json");
+}
+
 /** The output being written — live runs', services' — and git results, one sub-folder per job:
  *  `output/<encoded job id>/`. */
 export function liveOutputFolder(state: StateFolder): string {

@@ -22,7 +22,7 @@ declare global {
     setSettings(text: string | null): void;
     /** The settings file's text as the stand-in scheduler holds it: what a setting the UI wrote left in it. */
     settingsText(): string | null;
-    /** Set what the stand-in scheduler says of the Mac: the notification permission and the skill's links. */
+    /** Set what the stand-in scheduler says of the Mac: the notification permission and where the skill is. */
     setEnvironment(environment: EnvironmentReport): void;
     /** The actions the UI asked of the stand-in scheduler, in order. */
     runnerCalls: { method: string; params: JsonValue }[];

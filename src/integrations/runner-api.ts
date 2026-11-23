@@ -84,12 +84,12 @@ export const DELETE_JOB_TIMEOUT_MS = 15_000;
 export const SETTINGS_GET_METHOD = "settings.get";
 
 /** `{ field, value }` → `SettingsWriteResult` (`isSettingsWriteResult`): write one field of the
- *  settings file, field-only — a count, a duration in minutes, or `null` for its default. Runner's
+ *  settings file, field-only — a count, a duration in minutes, a folder, or `null` for its default. Runner's
  *  own frames only. */
 export const SETTINGS_SET_METHOD = "settings.set";
 
 /** `environment.get` → `EnvironmentReport` (`isEnvironmentReport`): what the Settings view shows
- *  read-only about the Mac — the notification permission and the agent skill's links. */
+ *  read-only about the Mac — the notification permission and where the agent skill's copy is. */
 export const ENVIRONMENT_GET_METHOD = "environment.get";
 
 /** Published by the scheduler when the settings change, and when it (re)connects to Pomade. */

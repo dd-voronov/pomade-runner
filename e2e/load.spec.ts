@@ -192,7 +192,7 @@ test.describe("missed runs and load", () => {
     await world.writeJob("long.md", scriptFile("Long", "sleep 600", "hook: { event: project-created }\n"));
     const scheduler = world.startScheduler(clock("2026-11-18T10:00:00"));
     await world.ready(scheduler);
-    await expect.poll(() => scheduler.output()).toContain("settings: Apps/pomade-runner/settings.yaml — max low-priority runs 2, warm-up 2 min, long-run warning 1 min, history 30 days\n");
+    await expect.poll(() => scheduler.output()).toContain("settings: Apps/pomade-runner/settings.yaml — max low-priority runs 2, warm-up 2 min, long-run warning 1 min, history 30 days, skills folder Knowledge/_skills/apps/\n");
     expect((await world.command("run", "long")).code).toBe(0);
     await expect.poll(async () => (await world.command("runs")).stdout, { timeout: 15_000 }).toContain("needs you: Long — running 1 min — still expected?\n");
     await expect.poll(() => world.queuedNotices()).toEqual([expect.objectContaining({ title: "Long has been running 1 min — still expected?" })]);

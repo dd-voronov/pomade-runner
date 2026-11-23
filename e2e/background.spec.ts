@@ -151,6 +151,8 @@ test.describe("scheduler and command", () => {
     await pointAt(workspace);
     await expect.poll(() => scheduler.output()).toContain(`jobs: workspace ${workspace}\n`);
     await expect.poll(async () => (await callScheduler(socketPath, "status", null)).status).toBe("ok");
+    // The keeper it starts is up before teardown stops it: one still starting would outlive it.
+    await expect.poll(() => scheduler.output()).toContain("keeper: connected");
   });
 
   test("the scheduler refuses to start outside Pomade", async () => {

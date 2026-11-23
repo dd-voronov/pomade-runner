@@ -2948,7 +2948,7 @@ test.describe("the switch and Settings (T-009)", () => {
     await expect(tip).toHaveText(`${HELP["sw.held"][0]}${HELP["sw.held"][1]}`);
 
     const view = await openSettings(page);
-    for (const key of ["s.heavy", "s.warm", "s.long", "s.keep", "s.native", "s.skill", "f.file"] as const) {
+    for (const key of ["s.heavy", "s.warm", "s.long", "s.keep", "s.native", "s.folder", "s.skill", "f.file"] as const) {
       await view.getByTestId(`help-${key}`).hover();
       await expect(tip).toHaveText(`${HELP[key][0]}${HELP[key][1]}`);
       expect(HELP[key][1]).toMatch(/^Example: /);
@@ -3069,31 +3069,73 @@ test.describe("the switch and Settings (T-009)", () => {
     await shoot(page, "tab-settings-problem");
   });
 
-  test("Settings: the notification permission and the agent skill are read-only rows that follow the Mac", async ({ page }) => {
+  test("Settings: the notification permission follows the Mac; the skill's row says where the skill is, that no agent is given it, and what kept it from being written", async ({ page }) => {
     const view = await openSettings(page);
     const notifications = view.getByTestId("notifications-status");
     const skill = view.getByTestId("skill-status");
+    const row = view.getByTestId("setting-skill");
     await expect(notifications).toHaveText("Not available yet");
-    await expect(skill).toHaveText("Not installed");
-    await expect(view.getByTestId("setting-skill")).toContainText("pomade-runner-jobs is not linked into any skill folder.");
+    await expect(skill).toHaveText("In place");
+    await expect(row).toContainText("Knowledge/_skills/apps/pomade-runner-jobs/SKILL.md");
+    await expect(row).toContainText("Runner gives it to no agent — which agents get it is your choice.");
+    await expect(row).not.toContainText("linked into");
 
     for (const [state, words] of [
       ["allowed", "Allowed"],
       ["denied", "Blocked"],
       ["not-asked", "Not asked yet"],
     ] as const) {
-      await page.evaluate((notification) => window.setEnvironment({ notifications: notification, skill: { linked: 3, folders: 3 } }), state);
+      await page.evaluate((notification) => window.setEnvironment({ notifications: notification, skill: { folder: "Knowledge/_skills/apps/pomade-runner-jobs", problem: null } }), state);
       await expect(notifications).toHaveText(words);
     }
-    await expect(skill).toHaveText("Installed");
-    await expect(view.getByTestId("setting-skill")).toContainText("pomade-runner-jobs is linked into 3 skill folders.");
-    await page.evaluate(() => window.setEnvironment({ notifications: "allowed", skill: { linked: 2, folders: 3 } }));
-    await expect(skill).toHaveText("Partly installed");
-    await expect(view.getByTestId("setting-skill")).toContainText("is linked into 2 of 3 skill folders.");
-    // Read-only: neither row has a control.
+    // Read-only: the notifications row has no control.
     await expect(view.getByTestId("setting-notifications").locator("button:not([data-help])")).toHaveCount(0);
-    await expect(view.getByTestId("setting-skill").locator("button:not([data-help])")).toHaveCount(0);
     await shoot(page, "tab-settings-environment");
+
+    const problem = "cannot write Skills/pomade-runner-jobs/SKILL.md: EACCES: permission denied, mkdir 'Skills/pomade-runner-jobs'";
+    await page.evaluate((reason) => window.setEnvironment({ notifications: "allowed", skill: { folder: "Skills/pomade-runner-jobs", problem: reason } }), problem);
+    await expect(skill).toHaveText("Not written");
+    await expect(view.getByTestId("setting-skill-error")).toHaveText(problem);
+    await expect(row).toContainText("Skills/pomade-runner-jobs/SKILL.md");
+    await expect(row.getByRole("button", { name: "Show in Files" })).toBeDisabled();
+    await shoot(page, "tab-settings-skill-not-written");
+  });
+
+  test("Settings: Show in Files shows the skill's file in Pomade's Files panel", async ({ page }) => {
+    const view = await openSettings(page);
+    await page.evaluate(() => window.fakeHost.writeFile("Knowledge/_skills/apps/pomade-runner-jobs/SKILL.md", "---\nname: pomade-runner-jobs\n---\n"));
+    await view.getByTestId("setting-skill").getByRole("button", { name: "Show in Files" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.reveals)).toEqual([{ projectId: "__workspace__", path: "Knowledge/_skills/apps/pomade-runner-jobs/SKILL.md" }]);
+  });
+
+  test("Settings: the skills folder is a path, written field-only on Enter or when the field is left; Escape puts it back; a refusal says why", async ({ page }) => {
+    const view = await openSettings(page);
+    const input = view.getByTestId("setting-skills-folder-input");
+    await expect(view.getByTestId("setting-skills-folder")).toContainText("Skills folder");
+    await expect(input).toHaveValue("Knowledge/_skills/apps/");
+
+    await input.fill("Apps/pomade-runner/skills-test/");
+    await input.press("Enter");
+    await expect.poll(() => page.evaluate(() => window.settingsText())).toBe("skills-folder: Apps/pomade-runner/skills-test/\n");
+    await expect(input).toHaveValue("Apps/pomade-runner/skills-test/");
+
+    await input.fill("Somewhere/else/");
+    await input.press("Escape");
+    await expect(input).toHaveValue("Apps/pomade-runner/skills-test/");
+
+    await input.fill("../outside/");
+    await input.blur();
+    await expect(view.getByTestId("setting-skills-folder-error")).toHaveText("skills-folder: ../outside/ is not inside the workspace — write a folder relative to the workspace root, e.g. skills-folder: Knowledge/_skills/apps/");
+    await expect(input).toHaveValue("Apps/pomade-runner/skills-test/");
+    expect(await page.evaluate(() => window.settingsText())).toBe("skills-folder: Apps/pomade-runner/skills-test/\n");
+    await shoot(page, "tab-settings-skills-folder-refused");
+
+    // Empty is the default: the field goes from the file.
+    await input.fill("");
+    await input.press("Enter");
+    await expect(view.getByTestId("setting-skills-folder-error")).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.settingsText())).toBe("");
+    await expect(input).toHaveValue("Knowledge/_skills/apps/");
   });
 
   test("Settings: the file locations; Open file opens settings.yaml once there is one", async ({ page }) => {

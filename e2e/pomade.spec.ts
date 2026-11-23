@@ -7,7 +7,7 @@
 // stops the keeper with its sessions. `RUNNER_SHOTS=<dir>` saves screenshots of the panel, the tab
 // and an attached tab.
 
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
@@ -756,15 +756,15 @@ test.describe("Runner in Pomade", () => {
       await expect(tab.getByTestId("setting-warm-up-stepper-value")).toHaveText("1");
       expect((await command("check", file)).stdout).toMatch(/^0 job files and \S*settings\.yaml: no problems\.\n$/);
 
-      // The Mac: no native notifications yet; the skill is linked once its link is in a skills folder.
+      // The Mac: no native notifications yet; the scheduler put its build's skill into the default
+      // skills folder at its start.
       await expect(tab.getByTestId("notifications-status")).toHaveText("Not available yet");
-      await expect(tab.getByTestId("skill-status")).toHaveText("Not installed");
-      const skills = join(tmp, "user/.claude/skills");
-      await mkdir(skills, { recursive: true });
-      await symlink(join(folders.userData, "apps", manifest.id, "skills", "pomade-runner-jobs"), join(skills, "pomade-runner-jobs"));
-      await tab.getByTestId("setting-warm-up-stepper-more").click();
-      await expect(tab.getByTestId("skill-status")).toHaveText("Installed");
-      await expect(tab.getByTestId("setting-skill")).toContainText("pomade-runner-jobs is linked into 1 skill folder.");
+      await expect(tab.getByTestId("skill-status")).toHaveText("In place");
+      await expect(tab.getByTestId("setting-skill")).toContainText("Knowledge/_skills/apps/pomade-runner-jobs/SKILL.md");
+      expect(await readFile(join(folders.workspace, "Knowledge/_skills/apps/pomade-runner-jobs/SKILL.md"), "utf8")).toBe(
+        await readFile(join(DIST, "skills/pomade-runner-jobs/SKILL.md"), "utf8"),
+      );
+      await expect(tab.getByTestId("setting-skills-folder-input")).toHaveValue("Knowledge/_skills/apps/");
       await shoot(page, "pomade-settings");
     } finally {
       runner.close();

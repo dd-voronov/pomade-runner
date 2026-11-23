@@ -52,7 +52,7 @@ export function settingsFile(options: { workspace(): string | null; log: Log; on
     shown = json;
     const { settings } = next;
     options.log(
-      `settings: ${next.exists ? SETTINGS_PATH : "defaults"} — max low-priority runs ${settings.maxLowPriorityRuns}, warm-up ${settings.warmUpMinutes} min, long-run warning ${settings.longRunWarningMinutes} min, history ${settings.historyDays} days`,
+      `settings: ${next.exists ? SETTINGS_PATH : "defaults"} — max low-priority runs ${settings.maxLowPriorityRuns}, warm-up ${settings.warmUpMinutes} min, long-run warning ${settings.longRunWarningMinutes} min, history ${settings.historyDays} days, skills folder ${settings.skillsFolder}`,
     );
     for (const error of next.errors) options.log(`settings: ${formatJobError(error)}`);
     options.onChange(next);

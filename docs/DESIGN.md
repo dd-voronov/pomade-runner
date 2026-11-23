@@ -28,7 +28,7 @@ workspace-level app: one list of every job, filterable to the current project.
 | **Scheduler** | the always-on backend: loads job files; supervises the services; evaluates triggers; applies missed-run, queue and load policies; starts the keeper and starts runs through it as its owner; writes history; posts notices; publishes events; serves Runner's API | a login item (launchd) that keeps running when Pomade quits; updated and restarted freely; reconnects to the keeper and its running sessions on restart |
 | **Keeper** | `pomade-kit/keeper`, run as Runner's own detached process (`backend/keeper.mjs`): holds every service's and run's terminal session (PTY); serves the attach protocol Pomade tabs use; reports exits | started by the scheduler (`startKeeper`), and started again when it dies; does not notice a scheduler restart or update; a keeper update hands the open PTYs to the new keeper process, so sessions keep running |
 | **`pomade-runner` command** | `check [file…]` validates job files and the settings file · `projects` lists the project ids and jobs sub-folders · `list` prints every job with its kind, trigger in words, next run and last result · `run <job>` runs a job now — a script's or git job's run, a service's Start · `history [job]` prints the latest runs · `runs` prints the switch, the runs going with what each queued one waits for, and Needs you · `pause [low\|all]` · `resume` set the switch · `resume-job <job>` lifts the loop guard's pause of a job · `enable <job>` · `disable <job>` · `services` shows every service and where it stands · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions | on `PATH` via `~/.pomade/bin`; reads the job files and the settings and talks to the scheduler directly, so it works with Pomade closed |
-| **Skill** | `pomade-runner-jobs` teaches agents the job format and location | master in `app/skills/pomade-runner-jobs/SKILL.md`, shipped in the build at `skills/pomade-runner-jobs` (the manifest's `skills`); `./install` links the installed copy into agents' skill folders |
+| **Skill** | `pomade-runner-jobs` teaches agents the job format and location | master in `app/skills/pomade-runner-jobs/SKILL.md`, shipped in the build at `skills/pomade-runner-jobs` (the manifest's `skills`); the scheduler keeps a copy in the workspace's skills folder, and gives it to no agent |
 
 **What Runner tracks:** only jobs created in Runner. A terminal opened by hand, inside Pomade or
 outside it, is just a terminal.
@@ -822,6 +822,7 @@ max-low-priority-runs: 2   # low-priority runs at once; the rest wait "queued ·
 warm-up: 2m                # after login or wake, before caught-up runs
 long-run-warning: 3h       # a run going this long asks "still expected?"
 history-days: 30           # run history and output logs kept
+skills-folder: Knowledge/_skills/apps/   # where Runner keeps its agent skill
 ```
 
 | Field | Value | Default |
@@ -830,6 +831,7 @@ history-days: 30           # run history and output logs kept
 | `warm-up` | a duration, `0m`–`1h` | `2m` |
 | `long-run-warning` | a duration, `1m`–`24h` | `3h` |
 | `history-days` | a whole number, 1–365 | 30 |
+| `skills-folder` | a folder inside the workspace, relative to its root (an absolute path, `~` or one that climbs out with `..` is a problem) | `Knowledge/_skills/apps/` |
 
 - A missing file, a field left out or an empty one means its default.
 - **Checked like a job file** (`src/scheduler/settings.ts`, with the job files' YAML reader): every
@@ -839,7 +841,7 @@ history-days: 30           # run history and output logs kept
 - **Followed live:** the scheduler reads it on every tick, so an edit applies within a second, and
   tells Runner's frames (`settings.changed`); `settings.get` answers what applies and the problems.
 - **Written field-only** by the scheduler (`settings.set { field, value }`: a count, a duration in
-  minutes, or `null` for the default): only the field's line changes, comments and the rest stay
+  minutes, a folder, or `null` for the default): only the field's line changes, comments and the rest stay
   byte for byte. A value out of range, or a file that is not readable YAML, is refused with the
   reason. The scheduler is the one writer, with the one validator, Pomade open or closed.
 
@@ -1053,8 +1055,14 @@ to it, light theme only.
     even when the person has left the view meanwhile. The long-run warning steps by whole hours and reads
     in minutes under an hour. A refusal puts the value back and says why under the row. The
     settings file's own problems are listed over the cards.
-  - **Notifications** and **Agents:** read-only rows with a status (`environment.get`) — the
-    macOS notification permission, and the agent skill's links into the skills folders.
+  - **Notifications:** a read-only row with a status (`environment.get`) — the macOS notification
+    permission.
+  - **Agents:** **Skills folder** — the `skills-folder` setting in a one-line text field, written
+    field-only (`settings.set`) on Enter or when the field is left; Escape puts the file's value
+    back, empty writes the default, a refusal puts the value back and says why under the row.
+    **Job skill for agents** — where the skill's file is (`environment.get`), that Runner gives it
+    to no agent, a status ("In place", or "Not written" with the reason under the row) and **Show in
+    Files**, which shows the file in Pomade's Files panel.
   - **Files:** `settings.yaml` with Open file (once it exists), and the jobs folder with Show in
     Files, which shows it in Pomade's Files panel (`files.reveal`).
 
@@ -1277,7 +1285,8 @@ Runner writes in two folders, both named only in `src/locations.ts`, each with i
 | What | Where |
 |---|---|
 | Job files | `<workspace>/Apps/pomade-runner/jobs/` (synced with the workspace) |
-| Workspace settings (max low-priority runs 2, warm-up 2 min, long-run warning 3h, history 30 days) | `<workspace>/Apps/pomade-runner/settings.yaml` |
+| Workspace settings (max low-priority runs 2, warm-up 2 min, long-run warning 3h, history 30 days, skills folder `Knowledge/_skills/apps/`) | `<workspace>/Apps/pomade-runner/settings.yaml` |
+| The agent skill's copy | `<workspace>/<skills-folder>/pomade-runner-jobs/SKILL.md` |
 | Run history (one file per day, JSON Lines) | `<workspace>/Apps/pomade-runner/records/history/YYYY-MM-DD.jsonl` |
 | A finished run's output log, moved in when the run ends | `<workspace>/Apps/pomade-runner/records/output/<encoded job id>/<run id>.log` |
 | Runs going (missed runs waiting for you, queued, running), each job's latest record, the last alive time, the looks the switch holds, the loop guard's firings and pauses | `<workspace>/Apps/pomade-runner/records/runs.json` |
@@ -1291,6 +1300,7 @@ Runner writes in two folders, both named only in `src/locations.ts`, each with i
 | Service supervision on this Mac (crash counts, a restart due, a service given up on, the last start's problem) | `<userData>/app-state/pomade-runner/services.json` |
 | Pomade's projects as last heard (for `POMADE_PROJECT_PATH`, and to tell a project moved) | `<userData>/app-state/pomade-runner/projects.json` |
 | The Pomade start each workspace's Pomade started hooks fired for, and the projects opened in it | `<userData>/app-state/pomade-runner/pomade-started.json` |
+| Where this Mac put the agent skill's copy last | `<userData>/app-state/pomade-runner/skill.json` |
 | The keeper's own state (session records, exit statuses, `keeper.log`) and its stdout and stderr (`keeper.out`) | `<userData>/app-state/pomade-runner/keeper/` |
 | Scheduler log (its stdout and stderr) | `<userData>/app-logs/pomade-runner/backend.log` |
 | Scheduler control socket | `<userData>/app-state/pomade-runner/scheduler.sock` |
@@ -1361,8 +1371,9 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
   **`settings.changed`** tells Runner's frames to ask again. **`environment.get`** →
   `EnvironmentReport` (`isEnvironmentReport`, `src/scheduler/environment.ts`): what the Settings
   view shows read-only about the Mac — `notifications` (`allowed`, `denied`, `not-asked`, or
-  `unavailable`: the scheduler posts no native notification) and `skill` (`linked` of `folders`
-  skills folders — `~/.claude/skills` and each agent's — hold a link to Runner's skill).
+  `unavailable`: the scheduler posts no native notification) and `skill` (`folder`: the skill's
+  copy, workspace-relative, `<skills-folder>/pomade-runner-jobs`; `problem`: why it could not be
+  written there, or `null`).
 - **`jobs.forRepo`** through the broker, to any caller — Pomade's Git panel asks as `pomade`
   (PLATFORM rule 7): the jobs that target a repo (`repoJobs`, `src/scheduler/git-runs.ts`). The
   contract is `pomade-kit/protocol`'s (`REPO_JOBS_METHOD`, `RepoJobsParams`, `RepoJobsResult`,
@@ -1428,14 +1439,26 @@ TypeScript (strict) everywhere, on `pomade-kit` (`github:dd-voronov/pomade-kit#v
 | `cli/pomade-runner.mjs` | the `pomade-runner` command |
 | `skills/pomade-runner-jobs/` | the agent skill, from `app/skills/` (the manifest's `skills`; the build checks each folder has its `SKILL.md`) |
 
-**The agent skill reaches the agents** through `./install`, after `pomade apps install`
-(`src/jobs/skill/link.ts`, run by Node from the repo): it links the skill's folder in the
-installed build into `~/.claude/skills/` and into `skills/` of every agent folder under
-`<workspace>/Agents/` (a folder with a `CLAUDE.md`, as Pomade's roster counts agents), creating
-`skills/` where missing. A link that is there already stays; a link to another Pomade's copy is
-repointed; anything else at that name is left alone. The first link drops a note for the skills
-map into `<workspace>/Knowledge/00-Inbox/` (remembered in Runner's state folder). `./uninstall`
-removes the links to this Pomade's copy, then the app.
+**The agent skill** (`src/jobs/skill/place.ts`). Runner keeps a copy of its build's skill at
+`<workspace>/<skills-folder>/pomade-runner-jobs/SKILL.md` — a real file, not a link, since the
+skills folder may be its own git repository synced to other Macs — and gives it to no agent:
+which agents get it is the person's choice, made by hand or in the Agents app.
+- **When:** the scheduler places it at every start — an install, a bundled install and an update
+  all start or restart it (`restartOnUpdate`) — when `skills-folder` changes, and when Settings asks
+  (`environment.get`). The file is written (a temporary file renamed) only when its text differs
+  from the installed one.
+- **Moving:** where this Mac placed it last is recorded in the state folder (`skill.json`); once the
+  copy is written in a new folder, the old `pomade-runner-jobs/` folder is removed.
+- **Only its own copy:** Runner writes into or removes a `pomade-runner-jobs/` folder only when it
+  is missing, empty, or Runner's copy — a real folder holding just a `SKILL.md` whose frontmatter
+  names `pomade-runner-jobs` (Finder's `.DS_Store` aside). Anything else at that name is left, and
+  said.
+- **A problem** — a skills folder Runner cannot write, the name taken by something else — is one
+  line in the scheduler's log (once, until it changes) and the reason in Settings' skill row,
+  never a crash; the copy placed before stays until a new one is written.
+- **Uninstall:** `./uninstall` removes the app, then the copy recorded in that Pomade's state
+  folder (`node src/jobs/skill/place.ts remove [--stable]`) — an uninstalled app's skill would
+  describe a command that is gone. Links someone made to the copy are theirs and stay.
 
 **Theme.** Light only: `src/ui/tokens.css` carries the approved prototype's light token set —
 Pomade's names and light values — and `color-scheme: light`, whatever the system's colour scheme.

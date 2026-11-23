@@ -44,7 +44,7 @@ describe("the settings file", () => {
     expect(settings.report()).toMatchObject({ exists: true, settings: { ...DEFAULT_SETTINGS, maxLowPriorityRuns: 3 }, errors: [{ line: 2, field: "warm-up" }] });
     expect(changes).toHaveLength(1);
     expect(lines).toEqual([
-      "settings: Apps/pomade-runner/settings.yaml — max low-priority runs 3, warm-up 2 min, long-run warning 180 min, history 30 days",
+      "settings: Apps/pomade-runner/settings.yaml — max low-priority runs 3, warm-up 2 min, long-run warning 180 min, history 30 days, skills folder Knowledge/_skills/apps/",
       'settings: Apps/pomade-runner/settings.yaml:2: warm-up — "soon" is not a duration. Fix: write minutes or hours from 0m to 1h, e.g. warm-up: 2m.',
     ]);
     await settings.refresh();

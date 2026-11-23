@@ -58,6 +58,11 @@
   font-size: var(--fs-sm);
 }
 
+/* The skills folder's path. */
+.path {
+  width: 240px;
+}
+
 .unit {
   width: 44px;
 }

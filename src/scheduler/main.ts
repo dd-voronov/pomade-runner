@@ -27,6 +27,8 @@ declare const KEEPER_VERSION: string;
 
 /** The keeper's entry, next to this one in the build folder. */
 const KEEPER_ENTRY = join(dirname(fileURLToPath(import.meta.url)), "keeper.mjs");
+/** The agent skill in the build folder (`skills/` beside `backend/`). */
+const SKILL_SOURCE = join(dirname(fileURLToPath(import.meta.url)), "..", "skills", "pomade-runner-jobs", "SKILL.md");
 
 const log = createLog(systemClock, (line) => process.stdout.write(line));
 
@@ -73,6 +75,7 @@ if (state === null || socketPath === null || userData === null) {
       probe: probeReadiness,
       postNotice: noticePoster(userData, log),
       pomadeGit: pomadeGitPath(process.env),
+      skillSource: SKILL_SOURCE,
       turns: createAgentTurns({ socketPath: keeperSocket, log }),
       shell: loginShell(process.env),
       pomadeStart: () => pomadeStartOf(process.env),

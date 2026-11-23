@@ -33,7 +33,8 @@ import {
   SETTINGS_CHANGED_EVENT,
 } from "../integrations/runner-api";
 import { formatJobError } from "../jobs/format";
-import { findOutputLog, gitResultPath, recordsFolderOf, type StateFolder } from "../locations";
+import { findOutputLog, gitResultPath, recordsFolderOf, skillRecordPath, type StateFolder } from "../locations";
+import { skillKeeper } from "../jobs/skill/place";
 import { removeJobFile, writeEnabled } from "../jobs/folder";
 import { createJobsLoader } from "../jobs/loader";
 import { entryId, entryPath, type JobsSnapshot, type ProjectRecord } from "../jobs/model";
@@ -95,6 +96,9 @@ export interface SchedulerOptions {
   postNotice: PostNotice;
   /** The `pomade-git` command git jobs run. */
   pomadeGit: string;
+  /** The agent skill's file in the installed build (`skills/pomade-runner-jobs/SKILL.md`): its copy
+   *  is kept in the skills folder the settings name. */
+  skillSource: string;
   /** Following agent runs' turns in their sessions; closed when the scheduler stops. */
   turns: AgentTurns;
   /** The user's login shell: agent runs run their line in it. */
@@ -144,7 +148,21 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     if (host !== null) announce(host, event, log, payload);
   };
   const jobs = createJobsLoader({ workspace, log, onChange: () => publish(JOBS_CHANGED_EVENT) });
-  const settings = settingsFile({ workspace, log, onChange: () => publish(SETTINGS_CHANGED_EVENT) });
+  const skillsFolder = (): string => join(options.workspace, settings.report().settings.skillsFolder);
+  const skill = skillKeeper({ source: options.skillSource, record: skillRecordPath(state), skillsFolder, log });
+  let skillPlacedIn: string | null = null;
+  const settings = settingsFile({
+    workspace,
+    log,
+    onChange: () => {
+      // A changed skills folder moves the skill; Settings hears once it is in place.
+      if (skillPlacedIn !== null && skillsFolder() !== skillPlacedIn) {
+        skillPlacedIn = skillsFolder();
+        void skill.place().finally(() => publish(SETTINGS_CHANGED_EVENT));
+      }
+      publish(SETTINGS_CHANGED_EVENT);
+    },
+  });
   const supervisor = createSupervisor({
     sessions,
     jobs: jobs.snapshot,
@@ -374,6 +392,8 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
   if (control.status !== "listening") return control;
   await jobs.refresh();
   await settings.refresh();
+  skillPlacedIn = skillsFolder();
+  await skill.place();
 
   const unwatchExits = sessions.onExit(({ id, info }) => log(`session ${id}: ended${info.exit === null ? "" : `: ${exitWords(info.exit)}`}`));
   const tabAction = (payload: AttachedTabActionPayload): void => {
@@ -577,7 +597,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         setSwitch: runs.setSwitch,
         resume: runs.resume,
         settings: settings.report,
-        environment: () => readEnvironment(options.workspace),
+        environment: () => readEnvironment(options.workspace, skill),
         setSetting: settings.write,
         deleteJob: removeJob,
         ready: (active) => {
