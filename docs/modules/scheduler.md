@@ -28,7 +28,10 @@ keep true.
 - **Hooks** — one firing path, `hook()` in `runs.ts`, for every event; `hooks.ts` says which jobs an event
   fires and what environment its runs get. Events: Mac login (a scheduler start that finds no keeper
   running), Pomade started, first open of a project, project created, agent session finished, session
-  status changed. Hooks have no missed-run policy: a run the switch held runs late.
+  status changed. Hooks have no missed-run policy: a run the switch held runs late. The projects
+  opened since Pomade started are kept with the start (`integrations/pomade-start.ts`): a first open
+  fires once per Pomade start, a restarted scheduler too, and the supervisor starts a first-open
+  service of an opened project as soon as it exists.
 - **Chains** (`chains.ts`) — a run that ends done or failed fires its followers; a service follows with
   its `action` and never waits for the warm-up or the switch.
 - **Loop guard** (`loop-guard.ts`) — more than 10 firings of a job in 10 minutes by hooks or chains pauses

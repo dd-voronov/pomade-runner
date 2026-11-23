@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID, APP_NAME, APP_VERSION } from "../app";
@@ -57,6 +57,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   const active = useActiveProject(host);
   // The "This project" chip is the tab's: on in Jobs, it is on in Services, and New job starts in the open project.
   const [thisProject, setThisProject] = useState(false);
+  const openedProjects = useMemo(() => new Set(services.status === "ready" ? services.value.openedProjects : []), [services]);
   const view = parseRoute(route);
   const version = (
     <span data-testid="version">
@@ -87,7 +88,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   if (view.view === "new" || view.view === "edit") {
     const target = view.view === "new" ? ({ kind: "new", project: view.project } as const) : ({ kind: "edit", job: view.job } as const);
     const running = view.view === "edit" && serviceStates.some((service) => service.job === view.job && SERVICE_RUNS.includes(service.state));
-    return <JobForm host={host} target={target} jobs={jobs.value} serviceRunning={running} open={open} />;
+    return <JobForm host={host} target={target} jobs={jobs.value} serviceRunning={running} openedProjects={openedProjects} open={open} />;
   }
   switch (view.view) {
     case "jobs": {

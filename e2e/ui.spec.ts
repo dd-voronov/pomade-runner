@@ -4,9 +4,10 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, test, type FrameLocator, type Page } from "@playwright/test";
+import { expect, test, type FrameLocator, type Locator, type Page } from "@playwright/test";
 
 import manifest from "../app/manifest.json" with { type: "json" };
+import type { ServiceStatus } from "../src/keeper/model";
 import type { ActiveRun, NeedsYouItem, RunRecord, RunsReport } from "../src/scheduler/model";
 import { HELP } from "../src/ui/help";
 import { APP_PORT, HARNESS_PORT } from "./support/ports";
@@ -143,6 +144,29 @@ const BROKEN = "---\nkind: script\nname: Weekly report\nfolder: .\ncommand: ./re
 async function writeJob(page: Page, path: string, text: string): Promise<void> {
   await page.evaluate(([p, t]) => window.fakeHost.writeFile(`Apps/pomade-runner/jobs/${p}`, t), [path, text] as const);
 }
+
+/** A service's session in the keeper: running since `ago` ms, or ended at `endedAt`, stopped by you. */
+const serviceSession = (job: string, ago: number, endedAt: number | null = null) => ({
+  id: `svc:${job.replace("/", ".")}`,
+  job,
+  kind: "service" as const,
+  run: null,
+  log: null,
+  info: {
+    id: `svc:${job.replace("/", ".")}`,
+    title: job,
+    command: "",
+    cwd: "/fake/workspace",
+    pid: endedAt === null ? 7 : null,
+    startedAt: Date.now() - ago,
+    cols: 80,
+    rows: 24,
+    state: endedAt === null ? ("running" as const) : ("exited" as const),
+    exit: endedAt === null ? null : { code: 130, signal: null, reason: "stopped-by-you" as const, at: endedAt },
+    clients: 0,
+    actions: [],
+  },
+});
 
 test.describe("the jobs list", () => {
   test.use({ viewport: { width: 1040, height: 700 } });
@@ -1004,6 +1028,12 @@ test.describe("the job form", () => {
     await form.getByRole("combobox", { name: "Project", exact: true }).selectOption("alpha");
     await expect(form.getByTestId("start-project")).toHaveValue("alpha");
     await expect(form.getByRole("alert")).toHaveCount(0);
+    // Alpha not opened since Pomade started: the service waits for its open, and the button promises no start.
+    await expect(app(page).getByTestId("form-save")).toHaveText("Create job");
+    await page.evaluate(() => window.setOpenedProjects(["alpha"]));
+    await expect(app(page).getByTestId("form-save")).toHaveText("Create and start");
+    await page.evaluate(() => window.setOpenedProjects([]));
+    await expect(app(page).getByTestId("form-save")).toHaveText("Create job");
     // A port that is not one, as the checker words it.
     await form.getByRole("button", { name: "Check a port or URL instead" }).click();
     await form.getByRole("button", { name: "A port is open" }).click();
@@ -1226,10 +1256,11 @@ test.describe("the Jobs view", () => {
     for (const key of ["jobs.workspace", "jobs.this", "jobs.last", "jobs.next", "jobs.invalid"]) await expect(app(page).getByTestId(`help-${key}`)).toBeVisible();
     await expect(app(page).getByTestId("job-trigger")).toHaveText(["daily at 13:00", "at Mac login", "daily at 9:00", "always on · starts at login", "daily at 9:00"]);
     await expect(app(page).getByTestId("job-trigger").first()).toHaveAttribute("data-tip", "Daily at 13:00");
-    // A service's row opens its terminal where the others run now; every row has Edit and Delete.
+    // A running service's row stops it where the others run now, its terminal before; every row has Edit and Delete.
+    await page.evaluate((session) => window.setServiceStatus("alpha/coda-web", { state: "running", session }), serviceSession("alpha/coda-web", 60_000));
     const buttons = (job: string) => app(page).locator(`[data-testid="job-row"][data-job="${job}"]`).getByRole("button").evaluateAll((all) => all.map((b) => b.getAttribute("aria-label")));
     expect(await buttons("backup")).toEqual(["Run now", "Edit", "Delete"]);
-    expect(await buttons("alpha/coda-web")).toEqual(["Open terminal", "Edit", "Delete"]);
+    await expect.poll(() => buttons("alpha/coda-web")).toEqual(["Open terminal", "Stop service", "Edit", "Delete"]);
     await shoot(page, "tab-jobs-view");
   });
 
@@ -1336,6 +1367,7 @@ test.describe("the Jobs view", () => {
 
   test("Run now calls Runner and toasts; Open terminal opens a service's attached tab; Edit opens the job's form", async ({ page }) => {
     await start(page);
+    await page.evaluate((session) => window.setServiceStatus("alpha/coda-web", { state: "running", session }), serviceSession("alpha/coda-web", 60_000));
     const row = (job: string) => app(page).locator(`[data-testid="job-row"][data-job="${job}"]`);
     await row("backup").getByRole("button", { name: "Run now" }).click();
     await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerBackup started · trigger “manual”");
@@ -1345,6 +1377,64 @@ test.describe("the Jobs view", () => {
     await row("alpha/coda-web").getByRole("button", { name: "Edit" }).click();
     await expect(app(page).getByTestId("tab-jobs")).toHaveCount(0);
     await expect(app(page).getByTestId("form-title")).toContainText("Coda web");
+  });
+
+  test("a service's row: Start service where a script has Run now while it does not run, Stop service while it does; Open terminal only with a session to show; none of them a no-op", async ({ page }) => {
+    await start(page);
+    const row = app(page).locator('[data-testid="job-row"][data-job="alpha/coda-web"]');
+    const labels = () => row.getByRole("button").evaluateAll((all) => all.map((b) => b.getAttribute("aria-label")));
+    const set = async (status: Partial<ServiceStatus>, words: RegExp, shot: string): Promise<void> => {
+      await page.evaluate((next) => window.setServiceStatus("alpha/coda-web", next), status);
+      await expect(row.getByTestId("job-status")).toHaveText(words);
+      await page.mouse.move(0, 0);
+      await shoot(page, shot);
+    };
+    const ended = serviceSession("alpha/coda-web", 3_600_000, Date.now() - 60_000);
+    const up = serviceSession("alpha/coda-web", 60_000);
+
+    // Stopped by you, its last output in the keeper: Start service, and its terminal.
+    await set({ state: "stopped-by-you", session: ended }, /^stopped by you$/, "tab-jobs-service-stopped");
+    expect.soft(await labels()).toEqual(["Open terminal", "Start service", "Edit", "Delete"]);
+    await set({ state: "running", session: up }, /^running · up /, "tab-jobs-service-running");
+    expect.soft(await labels()).toEqual(["Open terminal", "Stop service", "Edit", "Delete"]);
+    await set({ state: "starting", session: up }, /^starting$/, "tab-jobs-service-starting");
+    expect.soft(await labels()).toEqual(["Open terminal", "Stop service", "Edit", "Delete"]);
+    // Never started — waiting for its project's first open, or given up before a session: nothing to open.
+    await set({ state: "waiting", session: null }, /^waiting for first open$/, "tab-jobs-service-waiting");
+    expect.soft(await labels()).toEqual(["Start service", "Edit", "Delete"]);
+    await set({ state: "failed", session: null, lastCrashAt: Date.now() - 60_000 }, /^failed · gave up$/, "tab-jobs-service-failed");
+    expect.soft(await labels()).toEqual(["Start service", "Edit", "Delete"]);
+    await set({ state: "failed", session: ended }, /^failed · gave up$/, "tab-jobs-service-failed-ended");
+    expect.soft(await labels()).toEqual(["Open terminal", "Start service", "Edit", "Delete"]);
+    // Disabled: Start would be refused, so there is none; the toggle enables it.
+    await set({ state: "disabled", session: null }, /^disabled$/, "tab-jobs-service-disabled");
+    expect.soft(await labels()).toEqual(["Edit", "Delete"]);
+    // Start service sits where a script's Run now does.
+    const right = (locator: Locator): Promise<number> => locator.evaluate((element) => Math.round(element.getBoundingClientRect().right));
+    await set({ state: "stopped-by-you", session: ended }, /^stopped by you$/, "tab-jobs-service-stopped-again");
+    const backup = app(page).locator('[data-testid="job-row"][data-job="backup"]');
+    expect(await right(row.getByRole("button", { name: "Start service" }))).toBe(await right(backup.getByRole("button", { name: "Run now" })));
+    expect(await right(row.getByRole("button", { name: "Edit" }))).toBe(await right(backup.getByRole("button", { name: "Edit" })));
+
+    // Start service and Stop service call Runner's service actions and toast what they did.
+    await row.getByRole("button", { name: "Start service" }).click();
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCoda web started");
+    await set({ state: "running", session: up }, /^running · up /, "tab-jobs-service-started");
+    await row.getByRole("button", { name: "Stop service" }).click();
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCoda web stopped by you — it stays stopped until Start");
+    await page.evaluate(() => {
+      window.refuse["services.start"] = "the keeper is not connected";
+    });
+    await set({ state: "stopped-by-you", session: ended }, /^stopped by you$/, "tab-jobs-service-refused");
+    await row.getByRole("button", { name: "Start service" }).click();
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCould not start Coda web: the keeper is not connected");
+    await row.getByRole("button", { name: "Open terminal" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: "svc:alpha.coda-web" }, title: "Coda web" }]);
+    expect(await page.evaluate(() => window.runnerCalls)).toEqual([
+      { method: "services.start", params: { job: "alpha/coda-web" } },
+      { method: "services.stop", params: { job: "alpha/coda-web" } },
+      { method: "services.start", params: { job: "alpha/coda-web" } },
+    ]);
   });
 
   test("Delete turns red under the pointer and on focus, confirms with the file's name — a running service is stopped first — and can be cancelled or refused", async ({ page }) => {
@@ -1441,28 +1531,6 @@ test.describe("services: Running now and the Services view", () => {
     return when.getTime() - daysAgo * 86_400_000;
   };
   /** A service's session as the keeper reports it: started `ago` ms before now, ended at `endedAt`. */
-  const session = (job: string, ago: number, endedAt: number | null = null) => ({
-    id: `svc:${job.replace("/", ".")}`,
-    job,
-    kind: "service" as const,
-    run: null,
-    log: null,
-    info: {
-      id: `svc:${job.replace("/", ".")}`,
-      title: job,
-      command: "",
-      cwd: "/fake/workspace",
-      pid: endedAt === null ? 7 : null,
-      startedAt: Date.now() - ago,
-      cols: 80,
-      rows: 24,
-      state: endedAt === null ? ("running" as const) : ("exited" as const),
-      exit: endedAt === null ? null : { code: 130, signal: null, reason: "stopped-by-you" as const, at: endedAt },
-      clients: 0,
-      actions: [],
-    },
-  });
-
   async function services(page: Page, query: Record<string, string>): Promise<void> {
     await page.goto(harness(query));
     await page.waitForFunction(() => typeof window.setServiceStatus === "function");
@@ -1478,7 +1546,7 @@ test.describe("services: Running now and the Services view", () => {
         window.setServiceStatus("alpha/graph-viewer", { state: "starting", session: graph });
         window.setServiceStatus("docs-preview", { state: "stopped-by-you", session: docs });
       },
-      [session("alpha/coda-web", (3 * 24 + 4) * 3_600_000 + 60_000), session("alpha/graph-viewer", 2000), session("docs-preview", 3_600_000, stopped), crash] as const,
+      [serviceSession("alpha/coda-web", (3 * 24 + 4) * 3_600_000 + 60_000), serviceSession("alpha/graph-viewer", 2000), serviceSession("docs-preview", 3_600_000, stopped), crash] as const,
     );
   }
 
@@ -1510,6 +1578,23 @@ test.describe("services: Running now and the Services view", () => {
 
   test.describe("in the Runner tab", () => {
     test.use({ viewport: { width: 1040, height: 700 } });
+
+    test("the Services view: a service never started has no Open terminal, its place kept; a disabled one no Start", async ({ page }) => {
+      await services(page, { route: "services" });
+      const rows = app(page).getByTestId("service-row");
+      const edge = (row: Locator, name: string): Promise<number> => row.getByRole("button", { name, exact: true }).evaluate((element) => Math.round(element.getBoundingClientRect().right));
+      const before = await edge(rows.nth(0), "Start");
+      await page.evaluate(() => window.setServiceStatus("docs-preview", { state: "waiting", session: null }));
+      await expect(rows.nth(0).getByTestId("service-status")).toHaveText("waiting for first open");
+      await expect(rows.nth(0).getByRole("button")).toHaveText(["Start", "", ""]);
+      await expect(rows.nth(0).getByRole("button", { name: "Open terminal" })).toHaveCount(0);
+      expect(await edge(rows.nth(0), "Start")).toBe(before);
+      expect(await edge(rows.nth(0), "Edit")).toBe(await edge(rows.nth(1), "Edit"));
+      await page.evaluate(() => window.setServiceStatus("docs-preview", { state: "disabled", session: null }));
+      await expect(rows.nth(0).getByTestId("service-status")).toHaveText("disabled");
+      await expect(rows.nth(0).getByRole("button")).toHaveText(["", ""]);
+      await shoot(page, "tab-services-no-session");
+    });
 
     test("the Services view: each service where it stands, its actions by state, an invalid file with its error; Start, Stop and Restart call Runner and toast", async ({ page }) => {
       await services(page, { route: "services" });

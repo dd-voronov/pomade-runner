@@ -1,6 +1,6 @@
 /* kind · job and trigger · last result · next run · actions · the Disable toggle */
 .cols {
-  grid-template-columns: 16px minmax(0, 1.5fr) minmax(0, 1.1fr) 104px 78px 28px;
+  grid-template-columns: 16px minmax(0, 1.5fr) minmax(0, 1.1fr) 104px 102px 28px;
 }
 
 /* Under a row's Next run: nothing is scheduled. */

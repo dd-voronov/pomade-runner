@@ -146,12 +146,18 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     log,
     store: options.supervision,
     probe: options.probe,
+    openedProjects: () => opened,
     onChange: () => publish(SERVICES_CHANGED_EVENT),
   });
   const projects = projectsMemory(state, log);
   const starts = pomadeStarts(state, log);
-  /** The projects whose first open fired since this Pomade start, as this scheduler heard them. */
-  let openedThisStart = new Set<string>();
+  /** The projects opened since this Pomade start, kept with the start so a scheduler restarted while
+   *  the same Pomade runs knows them. */
+  let opened = new Set<string>();
+  /** The Pomade start this connection's ready named: `undefined` until then, `null` when it cannot
+   *  be told (what is opened is then this scheduler's alone). Opens heard before are held till then. */
+  let thisStart: string | null | undefined;
+  let heldOpens: ProjectRecord[] = [];
   const history = createHistory(records, state, log);
   const renamed = renamedJobs(records, log);
   /** A page of history: a job's takes in the ids it had before its project moved. */
@@ -414,28 +420,51 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     if (host !== client) return;
     if (start === null) {
       log("Pomade ready: cannot tell which Pomade start this is — its socket is not found; the Pomade started hooks do not fire");
+      startKnown(null, null);
       return;
     }
     if (!(await starts.firstReady(workspace(), start))) {
+      const kept = await starts.opened(workspace(), start);
+      if (host !== client) return;
       log("Pomade ready: the Pomade started hooks fired for this Pomade start already");
+      startKnown(start, kept);
       return;
     }
-    openedThisStart = new Set();
     log("Pomade started");
     await runs.hook(POMADE_STARTED);
-    if (active !== null && host === client) projectOpened(active);
+    if (host !== client) return;
+    startKnown(start, []);
+    if (active !== null) projectOpened(active);
+  };
+
+  /** The connection's Pomade start is known, and what was kept as opened in it (`null`: only what
+   *  this scheduler heard): the services follow it, and the opens held till now count. A ready
+   *  heard again for the start already known adds to what is opened. */
+  const startKnown = (start: string | null, kept: readonly string[] | null): void => {
+    if (kept !== null) opened = thisStart === start ? new Set([...opened, ...kept]) : new Set(kept);
+    thisStart = start;
+    void supervisor.tick();
+    const held = heldOpens;
+    heldOpens = [];
+    for (const project of held) projectOpened(project);
   };
 
   /** A project's first open since Pomade started: its first-open services start, its hooks fire —
    *  once per project and Pomade start. A project this workspace does not have (Pomade switched
-   *  to another workspace, and this scheduler has yet to follow it) is not this workspace's. */
+   *  to another workspace, and this scheduler has yet to follow it) is not this workspace's. An
+   *  open heard before the connection's ready named the Pomade start waits for it. */
   const projectOpened = (project: ProjectRecord): void => {
-    if (openedThisStart.has(project.id)) return;
+    if (thisStart === undefined) {
+      heldOpens.push(project);
+      return;
+    }
+    if (opened.has(project.id)) return;
     if (projects.root(project.id) === null) {
       log(`project ${project.name} (${project.id}) opened: not a project of this workspace`);
       return;
     }
-    openedThisStart.add(project.id);
+    opened.add(project.id);
+    if (thisStart !== null) void starts.open(workspace(), thisStart, project.id);
     log(`project ${project.name} (${project.id}) opened for the first time since Pomade started`);
     void supervisor.firstOpen(project.id);
     void runs.hook(projectFiring("project-first-open", project, workspace()));
@@ -455,6 +484,8 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     connected(client) {
       host = client;
       ready = false;
+      thisStart = undefined;
+      heldOpens = [];
       pomade = "connected";
       badged = null;
       log("connected to Pomade");

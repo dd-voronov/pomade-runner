@@ -59,7 +59,7 @@ const service = (job: string, extra: Partial<ServiceStatus> = {}): ServiceStatus
   ...extra,
 });
 
-const report = (...services: ServiceStatus[]): ServicesReport => ({ keeper: { state: "connected", version: "v", pid: 1 }, services });
+const report = (...services: ServiceStatus[]): ServicesReport => ({ keeper: { state: "connected", version: "v", pid: 1 }, services, openedProjects: [] });
 
 describe("runNotice", () => {
   const route = "run/backup/20261117-120000-abcdef";

@@ -37,6 +37,7 @@ import {
   projectRecords,
   setFolder,
   setValue,
+  startsOnCreate,
   switchKind,
   wouldBe,
   type ErrorPlace,
@@ -89,6 +90,7 @@ export function JobForm({
   target,
   jobs,
   serviceRunning,
+  openedProjects,
   open,
 }: {
   host: HostClient;
@@ -96,6 +98,8 @@ export function JobForm({
   jobs: JobsSnapshot;
   /** Whether the edited job's service runs now: Delete says it stops it first. */
   serviceRunning: boolean;
+  /** The projects opened since Pomade started (ids): a new first-open service of one starts at once. */
+  openedProjects: ReadonlySet<string>;
   /** Navigates the tab to a route. */
   open: (route: string) => void;
 }): React.JSX.Element {
@@ -122,7 +126,7 @@ export function JobForm({
       </FormFrame>
     );
   }
-  return <FormBody key={path ?? "new"} host={host} path={path} preset={target.kind === "new" ? target.project : null} jobs={jobs} projects={projects} serviceRunning={serviceRunning} open={open} />;
+  return <FormBody key={path ?? "new"} host={host} path={path} preset={target.kind === "new" ? target.project : null} jobs={jobs} projects={projects} serviceRunning={serviceRunning} openedProjects={openedProjects} open={open} />;
 }
 
 /** The form's head and page around what it shows. */
@@ -151,6 +155,7 @@ function FormBody({
   jobs,
   projects,
   serviceRunning,
+  openedProjects,
   open,
 }: {
   host: HostClient;
@@ -161,6 +166,7 @@ function FormBody({
   jobs: JobsSnapshot;
   projects: ProjectChoices;
   serviceRunning: boolean;
+  openedProjects: ReadonlySet<string>;
   open: (route: string) => void;
 }): React.JSX.Element {
   const toast = useToast();
@@ -308,7 +314,7 @@ function FormBody({
         const project = values.project === null ? undefined : projects.records.find((record) => record.id === values.project);
         const fields = Object.fromEntries(Object.entries(FORM_KINDS[values.kind].fields(values)).filter(([, value]) => value !== undefined));
         const created = await createJobFile(host, { folder: project === undefined ? null : projectJobsFolder(project), fields: { ...fields, name: values.name.trim() }, body: newBody(values) });
-        const started = values.kind === "service" && values.enabled && values.start === "login";
+        const started = startsOnCreate(values, openedProjects);
         toast(
           <>
             Created <span className={styles.mono}>{created}</span>
@@ -389,7 +395,7 @@ function FormBody({
           </div>
           <Button onClick={back}>Cancel</Button>
           <Button variant="primary" onClick={() => void save()} disabled={saving || gone || (path !== null && !changed)} data-testid="form-save">
-            {saving ? "Saving…" : path === null ? build.createLabel(values) : changed ? "Save" : "Saved"}
+            {saving ? "Saving…" : path === null ? build.createLabel(startsOnCreate(values, openedProjects)) : changed ? "Save" : "Saved"}
           </Button>
         </footer>
       }

@@ -172,6 +172,8 @@ describe("service supervision", () => {
   let reports: ServicesReport[];
   /** Pending network checks, answered by the test. */
   let probes: { ready: NetworkReadiness; answer: (ok: boolean) => void }[];
+  /** The projects opened since Pomade started, as the scheduler holds them. */
+  let opened: Set<string>;
   let supervisor: Supervisor;
 
   function load(): void {
@@ -190,11 +192,18 @@ describe("service supervision", () => {
       log: (line) => lines.push(line),
       store,
       probe: (ready) => new Promise((resolve) => probes.push({ ready, answer: resolve })),
+      openedProjects: () => opened,
       onChange: (report) => reports.push(report),
     });
     await created.load();
     supervisor = created;
     return created;
+  }
+
+  /** A project's first open since Pomade started, as the scheduler tells it. */
+  async function firstOpen(project: string): Promise<void> {
+    opened.add(project);
+    await supervisor.firstOpen(project);
   }
 
   /** A tick as the scheduler runs it: follow the keeper, then supervise. */
@@ -227,6 +236,7 @@ describe("service supervision", () => {
     lines = [];
     reports = [];
     probes = [];
+    opened = new Set();
     load();
     await open();
   });
@@ -354,25 +364,100 @@ describe("service supervision", () => {
       expect(states()).toEqual({ docs: "waiting", "p/app": "waiting", "p/held": "stopped-by-you", "p/off": "disabled" });
 
       // Another project's first open starts nothing of p's.
-      await supervisor.firstOpen("other");
+      await firstOpen("other");
       expect(sessions.spawned.map((spawn) => spawn.job)).toEqual(["p/held"]);
-      await supervisor.firstOpen("p");
+      await firstOpen("p");
       expect(sessions.spawned.map((spawn) => spawn.job)).toEqual(["p/held", "p/app"]);
       expect(states()).toEqual({ docs: "waiting", "p/app": "starting", "p/held": "stopped-by-you", "p/off": "disabled" });
       expect(lines).toContain("service p/held: its project's first open; it stays stopped until Start");
       // A workspace service on another project's first open waits its turn in the staged start.
-      await supervisor.firstOpen("q");
+      await firstOpen("q");
       expect(status("docs").state).toBe("queued");
       await at(7000);
       expect(sessions.spawned.map((spawn) => spawn.job)).toEqual(["p/held", "p/app", "docs"]);
       // Started, it is kept up like any service; a later first open (the next Pomade start) leaves it be.
       await at(20_000);
-      await supervisor.firstOpen("p");
+      await firstOpen("p");
       expect(sessions.starts("p/app")).toBe(1);
       sessions.end("p/app", "crashed");
       await at(20_500);
       await at(21_100);
       expect(sessions.starts("p/app")).toBe(2);
+    });
+
+    it("a first-open service of a project opened already starts as soon as it exists — made, enabled, changed to that start or that project; a stopped or failed one stays so", async () => {
+      await firstOpen("p");
+      await at(0);
+      // Made after the open: it starts within a tick, through the staged start.
+      files = { "p/app.md": service("App", "project: p\nstart: project-first-open\n") };
+      load();
+      expect(states()).toEqual({ "p/app": "queued" });
+      await at(1000);
+      expect(sessions.spawned.map((spawn) => spawn.job)).toEqual(["p/app"]);
+
+      // Enabled after the open.
+      files["p/off.md"] = service("Off", "project: p\nstart: project-first-open\nenabled: false\n");
+      load();
+      await at(8000);
+      expect(status("p/off").state).toBe("disabled");
+      files["p/off.md"] = service("Off", "project: p\nstart: project-first-open\n");
+      load();
+      await at(16_000);
+      expect(sessions.spawned.map((spawn) => spawn.job)).toEqual(["p/app", "p/off"]);
+
+      // Changed from a login start, or to a start project opened; one not opened waits.
+      files["docs.md"] = service("Docs", "start: project-first-open\nstart-project: q\n");
+      files["p/web.md"] = service("Web", "project: p\nenabled: false\n");
+      load();
+      await at(24_000);
+      expect(states()).toMatchObject({ docs: "waiting", "p/web": "disabled" });
+      files["docs.md"] = service("Docs", "start: project-first-open\nstart-project: p\n");
+      files["p/web.md"] = service("Web", "project: p\nstart: project-first-open\n");
+      load();
+      await at(32_000);
+      await at(40_000);
+      expect(sessions.spawned.map((spawn) => spawn.job)).toEqual(["p/app", "p/off", "docs", "p/web"]);
+
+      // Stopped by the person, then edited and saved: it stays stopped.
+      expect(await supervisor.stop("p/app")).toMatchObject({ ok: true });
+      await at(41_000);
+      files["p/app.md"] = service("App", "project: p\nstart: project-first-open\n").replace("./app.sh", "./app2.sh");
+      load();
+      await at(48_000);
+      await firstOpen("p");
+      expect(status("p/app").state).toBe("stopped-by-you");
+      expect(sessions.starts("p/app")).toBe(1);
+      // Failed stays failed.
+      let t = 49_000;
+      for (let crash = 1; crash <= 5; crash++) {
+        now = T0 + t;
+        sessions.end("p/off", "crashed");
+        await at(t);
+        if (crash < 5) {
+          t = (status("p/off").retryAt ?? 0) - T0;
+          await at(t);
+        }
+      }
+      expect(status("p/off").state).toBe("failed");
+      const starts = sessions.starts("p/off");
+      await firstOpen("p");
+      await at(t + 60_000);
+      expect([status("p/off").state, sessions.starts("p/off")]).toEqual(["failed", starts]);
+      expect(supervisor.report().openedProjects).toEqual(["p"]);
+    });
+
+    it("the opened projects forgotten (a new Pomade start): a first-open service that does not run waits again; a running one is left be", async () => {
+      files = { "p/app.md": service("App", "project: p\nstart: project-first-open\n"), "p/later.md": service("Later", "project: p\nstart: project-first-open\nenabled: false\n") };
+      load();
+      await firstOpen("p");
+      await at(0);
+      expect(status("p/app").state).toBe("starting");
+      opened = new Set();
+      files["p/later.md"] = service("Later", "project: p\nstart: project-first-open\n");
+      load();
+      await at(10_000);
+      expect(states()).toEqual({ "p/app": "running", "p/later": "waiting" });
+      expect(sessions.spawned.map((spawn) => spawn.job)).toEqual(["p/app"]);
     });
 
     it("does nothing while the sessions do not follow the keeper, or with no workspace", async () => {

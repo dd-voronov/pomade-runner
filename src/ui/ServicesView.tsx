@@ -1,19 +1,19 @@
 import { WORKSPACE_PROJECT_ID } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
-import { APP_ID } from "../app";
-import { editRoute, SERVICE_ACTION_TIMEOUT_MS, SERVICE_METHODS, type ServiceVerb } from "../integrations/runner-api";
+import { editRoute } from "../integrations/runner-api";
 import { describeJobError } from "../jobs/format";
 import { JOBS_FOLDER, type InvalidJob, type JobEntry, type ServiceJob } from "../jobs/model";
-import { isServiceActionResult, type ServiceStatus } from "../keeper/model";
+import type { ServiceStatus } from "../keeper/model";
 import { Button, Chip, EmptyBlock, Help, Icon, IconButton, KindCell, RowCell, RowMain, Status, TableHead, TableRow, useToast } from "./kit";
 import { fallbackService } from "./jobWords";
 import { useOpenServiceTab } from "./RunningNow";
-import { serviceLook } from "./serviceWords";
+import { serviceActions, serviceLook } from "./serviceWords";
 import styles from "./ServicesView.module.css";
 import { ViewFilters } from "./shell/TabShell";
 import { useNow } from "./useNow";
 import { useActiveProject, useProjectNames } from "./useRunnerApi";
+import { useServiceAction } from "./useServiceAction";
 
 /** A service file: valid, or invalid with its error. */
 type ServiceEntry = { valid: true; job: ServiceJob } | { valid: false; invalid: InvalidJob };
@@ -29,10 +29,8 @@ function serviceEntries(jobs: readonly JobEntry[]): ServiceEntry[] {
     .sort((a, b) => startOrder(idOf(a), idOf(b)));
 }
 
-const DONE: Record<ServiceVerb, string> = { start: "started", restart: "restarted", stop: "stopped by you — it stays stopped until Start" };
-
 /** The Services view: every service with its project, folder and command, where it stands, Start or
- *  Restart · Stop, and its terminal, form and file; an invalid service file with its error. The
+ *  Restart · Stop, and its terminal (once it has a session), form and file; an invalid service file with its error. The
  *  "This project" chip keeps the services of the project Pomade has open. */
 export function ServicesView({
   host,
@@ -59,6 +57,7 @@ export function ServicesView({
   const now = useNow();
   const toast = useToast();
   const openTab = useOpenServiceTab(host);
+  const act = useServiceAction(host);
   const all = serviceEntries(jobs);
 
   if (all.length === 0) {
@@ -74,22 +73,6 @@ export function ServicesView({
   const openFile = (path: string): void => {
     host.tabs.openFile({ path }).catch((err: unknown) => toast(`Could not open ${path}: ${err instanceof Error ? err.message : String(err)}`));
   };
-  const act = (verb: ServiceVerb, job: ServiceJob): void => {
-    host.apps.call(APP_ID, SERVICE_METHODS[verb], { job: job.id }, { timeoutMs: SERVICE_ACTION_TIMEOUT_MS }).then(
-      (answer: unknown) => {
-        if (!isServiceActionResult(answer)) toast(`Could not ${verb} ${job.name}: the scheduler answered something else`);
-        else if (answer.ok)
-          toast(
-            <>
-              <b>{job.name}</b> {DONE[verb]}
-            </>,
-          );
-        else toast(`Could not ${verb} ${job.name}: ${answer.reason}`);
-      },
-      (err: unknown) => toast(`Could not ${verb} ${job.name}: ${err instanceof Error ? err.message : String(err)}`),
-    );
-  };
-
   return (
     <section data-testid="services">
       <ViewFilters summary="Services keep running when Pomade quits · the switch never pauses them">
@@ -139,6 +122,7 @@ export function ServicesView({
           const { job } = entry;
           const status = services.find((candidate) => candidate.job === job.id) ?? fallbackService(job);
           const look = serviceLook(status, job.ready, now, job.startProject === null ? null : projectName(job.startProject));
+          const offered = serviceActions(status);
           return (
             <TableRow key={job.id} columns={styles.cols} className={styles.row} data-testid="service-row" data-job={job.id} data-state={status.state}>
               <KindCell icon="service" label="Service" />
@@ -162,7 +146,7 @@ export function ServicesView({
                 </Status>
               </RowCell>
               <div className={styles.actions}>
-                {look.on ? (
+                {offered.toggle === "stop" && (
                   <>
                     <Button size="row" icon="restart" onClick={() => act("restart", job)}>
                       Restart
@@ -171,13 +155,14 @@ export function ServicesView({
                       Stop
                     </Button>
                   </>
-                ) : (
+                )}
+                {offered.toggle === "start" && (
                   <Button size="row" variant="primary" icon="play" onClick={() => act("start", job)}>
                     Start
                   </Button>
                 )}
                 <span className={styles.gap} />
-                <IconButton icon="terminal" label="Open terminal" onClick={() => openTab(status)} />
+                {offered.terminal ? <IconButton icon="terminal" label="Open terminal" onClick={() => openTab(status)} /> : <span className={styles.slot} />}
                 <IconButton icon="edit" label="Edit" onClick={() => open(editRoute(job.id))} />
                 <IconButton icon="file" label="Open file" onClick={() => openFile(job.path)} />
               </div>

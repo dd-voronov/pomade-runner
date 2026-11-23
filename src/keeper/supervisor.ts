@@ -181,6 +181,9 @@ export interface SupervisorOptions {
   store: SupervisionStore;
   /** Whether a port or URL check passes now. */
   probe(ready: NetworkReadiness): Promise<boolean>;
+  /** The projects opened since Pomade started (ids): a first-open service whose start project is
+   *  one of them is due to start, as a login service is. */
+  openedProjects(): ReadonlySet<string>;
   /** The report changed. */
   onChange(report: ServicesReport): void;
 }
@@ -199,8 +202,9 @@ export interface Supervisor {
   start(ref: string): Promise<ServiceActionResult>;
   /** Stop it as stopped by you: it stays stopped until Start. */
   stop(ref: string): Promise<ServiceActionResult>;
-  /** A project's first open since Pomade started: every valid, enabled service that starts on it
-   *  and is not running joins the staged start — unless the Owner stopped it or it gave up. */
+  /** A project's first open since Pomade started, now among `openedProjects`: every valid, enabled
+   *  service that starts on it and is not running joins the staged start — unless the Owner stopped
+   *  it or it gave up. */
   firstOpen(project: string): Promise<void>;
   /** Its project moved and the jobs' ids change (`ids`, old → new) once `work` moves their files:
    *  each running service of them is stopped and its session forgotten first, then `work` runs;
@@ -250,8 +254,8 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
   const stopping = new Map<string, number>();
   /** When each service's file was first seen gone. */
   const goneSince = new Map<string, number>();
-  /** First-open services whose project was opened, due to start until they do. */
-  const opened = new Set<string>();
+  /** Services that ran before their project moved, due to start under their new id until they do. */
+  const owed = new Set<string>();
   let lane: Promise<unknown> = Promise.resolve();
   let tickQueued = false;
   let published = "";
@@ -270,6 +274,10 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     return at;
   };
   const save = (): void => store.save(records);
+  /** Whether a service is due to start when it does not run and nothing holds it: at login, on its
+   *  start project's open — at once when that project was opened already — or owed a start. */
+  const startsNow = (job: string, service: ServiceJob): boolean =>
+    service.start === "login" || (service.startProject !== null && options.openedProjects().has(service.startProject)) || owed.has(job);
   const recordOf = (job: string): SupervisionRecord => {
     let record = records.get(job);
     if (record === undefined) {
@@ -328,7 +336,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     if (record?.hold != null) return record.hold;
     if (live(entry.session) !== null) return isUp(entry) ? "running" : "starting";
     if (record?.retryAt != null && record.retryAt > at) return "restarting";
-    return entry.service.start === "login" || opened.has(entry.job) || record?.retryAt != null ? "queued" : "waiting";
+    return startsNow(entry.job, entry.service) || record?.retryAt != null ? "queued" : "waiting";
   }
 
   function statusOf(entry: Entry, at: number): ServiceStatus {
@@ -354,7 +362,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
 
   function report(): ServicesReport {
     const at = now();
-    return { keeper: sessions.keeper(), services: entries().map((entry) => statusOf(entry, at)) };
+    return { keeper: sessions.keeper(), services: entries().map((entry) => statusOf(entry, at)), openedProjects: [...options.openedProjects()] };
   }
 
   function publish(): void {
@@ -435,7 +443,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     } else {
       if (restart) record.restarts++;
       record.retryAt = null;
-      opened.delete(entry.job);
+      owed.delete(entry.job);
       startOf(entry.job, started);
       current = { job: entry.job, startedAt: started.info.startedAt, since: at };
       log(`service ${entry.job}: ${restart ? `restarted (${record.restarts}×)` : "starting"}`);
@@ -540,7 +548,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
       const record = records.get(job);
       if (record?.hold != null) continue;
       if (record?.retryAt != null && record.retryAt > at) continue;
-      if (service.start === "login" || opened.has(job) || record?.retryAt != null) due.push({ entry, service });
+      if (startsNow(job, service) || record?.retryAt != null) due.push({ entry, service });
     }
     // A record outlives its file for the grace period, so a hold survives a save by delete and write.
     const listed = new Set(list.filter((entry) => entry.file !== "gone").map((entry) => entry.job));
@@ -600,7 +608,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
       if (fresh) Object.assign(record, { restarts: 0, lastCrashAt: null, crashes: [] });
       record.hold = null;
       record.retryAt = null;
-      opened.delete(service.id);
+      owed.delete(service.id);
     }
     save();
     if (typeof started === "string") return { ok: false, reason: started };
@@ -695,12 +703,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
           const { service } = entry;
           if (service?.start !== "project-first-open" || service.startProject !== project || !service.enabled || live(entry.session) !== null) continue;
           const hold = records.get(entry.job)?.hold ?? null;
-          if (hold !== null) {
-            log(`service ${entry.job}: its project's first open; it stays ${hold === "failed" ? "failed" : "stopped"} until Start`);
-            continue;
-          }
-          opened.add(entry.job);
-          log(`service ${entry.job}: its project's first open; it starts`);
+          log(`service ${entry.job}: its project's first open; ${hold === null ? "it starts" : `it stays ${hold === "failed" ? "failed" : "stopped"} until Start`}`);
         }
         await reconcile();
         publish();
@@ -742,7 +745,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
             records.set(to, record);
           }
           for (const map of [up, starts, stopping, goneSince]) map.delete(from);
-          if (opened.delete(from) || ran.has(from)) opened.add(job);
+          if (owed.delete(from) || ran.has(from)) owed.add(job);
           if (current?.job === from) current = null;
         }
         save();

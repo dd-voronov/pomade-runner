@@ -13,6 +13,8 @@ declare global {
     mounted: MountedApp;
     /** Set what the stand-in scheduler says of a service (`harness/scheduler.ts`). */
     setServiceStatus(job: string, status: Partial<ServiceStatus>): void;
+    /** Set the projects (ids) the stand-in scheduler says were opened since Pomade started; none at first. */
+    setOpenedProjects(projects: string[]): void;
     /** Set what the stand-in scheduler says of the runs: the report, the history, any run's output,
      *  and whether that output is not on this Mac. */
     setRuns(runs: Partial<{ report: RunsReport; history: RunRecord[]; output: string; outputMissing: boolean }>): void;

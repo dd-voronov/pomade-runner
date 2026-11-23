@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { checkJobs } from "../../jobs/check";
 import { describeJobError } from "../../jobs/format";
 import type { JobsSnapshot, ProjectRecord } from "../../jobs/model";
+import { KIND_UI } from "./kinds";
 import {
   blocksSave,
   bodyChange,
@@ -18,6 +19,7 @@ import {
   projectOfFolder,
   setFolder,
   setValue,
+  startsOnCreate,
   switchKind,
   valuesFromText,
   wouldBe,
@@ -119,6 +121,21 @@ describe("a new service", () => {
     const edited = editForm("Apps/pomade-runner/jobs/coda-helper/web.md", "---\nkind: service\nname: Web\nproject: p-coda\nfolder: .\ncommand: x\nstart: project-first-open\nstart-project: p-hunt # its scraper\n---\n");
     expect(edited?.values).toMatchObject({ start: "project-first-open", startProject: "p-hunt" });
     expect(edited === null ? null : fieldChanges(setValue(edited, "command", "y"))).toEqual({ command: "y" });
+  });
+
+  it("a new job starts as it is created only as an enabled service at login, or on the first open of a project opened already", () => {
+    const login = fill(newForm("service"), { name: "Web", folder: "Projects/coda-helper", command: "x" });
+    const own = setValue(login, "start", "project-first-open");
+    const opened = new Set(["p-coda"]);
+    expect(startsOnCreate(login.values, new Set())).toBe(true);
+    expect(startsOnCreate(setValue(login, "enabled", false).values, new Set())).toBe(false);
+    expect([startsOnCreate(own.values, new Set()), startsOnCreate(own.values, opened)]).toEqual([false, true]);
+    // The start project picked, not the job's own, is the one that must have been opened.
+    expect(startsOnCreate(setValue(own, "startProject", "p-hunt").values, opened)).toBe(false);
+    expect(startsOnCreate(setValue(own, "startProject", "p-hunt").values, new Set(["p-hunt"]))).toBe(true);
+    expect(startsOnCreate(setValue(own, "enabled", false).values, opened)).toBe(false);
+    expect(startsOnCreate(fill(newForm("script"), { name: "S", folder: ".", command: "x" }).values, opened)).toBe(false);
+    expect([KIND_UI.service.build.createLabel(true), KIND_UI.service.build.createLabel(false)]).toEqual(["Create and start", "Create job"]);
   });
 
   it("shows an empty field's error only once Save was pressed; a filled-in field's at once", () => {

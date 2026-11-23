@@ -15,10 +15,11 @@ import { fallbackService, gitDetail, lastLook, nextLook } from "./jobWords";
 import styles from "./JobsView.module.css";
 import { Button, Chip, EmptyBlock, GroupHead, Help, Icon, IconButton, KindCell, RowActions, RowCell, RowMain, Status, TableHead, TableRow, Tag, Toggle, useToast } from "./kit";
 import { useOpenServiceTab } from "./RunningNow";
-import { SERVICE_RUNS } from "./serviceWords";
+import { SERVICE_RUNS, serviceActions } from "./serviceWords";
 import { ViewFilters } from "./shell/TabShell";
 import { useNow } from "./useNow";
 import { useProjectList, useRepos } from "./useRunnerApi";
+import { useServiceAction } from "./useServiceAction";
 
 const KIND_LABEL: Record<JobKind, string> = { service: "Service", script: "Script", agent: "Agent", git: "Git" };
 
@@ -168,12 +169,14 @@ function JobRow({
     if (marked) row.current?.scrollIntoView({ block: "nearest" });
   }, [marked]);
   const openTab = useOpenServiceTab(host);
+  const act = useServiceAction(host);
   const runs = report?.jobs.find((info) => info.job === job.id);
   const last = lastLook(job, { runs, active, service, pausedAt: paused }, now);
   const next = nextLook(job, runs, paused !== null, now);
   const trigger = jobTriggerWords(job, names, new Date(now));
   const git = job.kind === "git" ? gitDetail(job, repos) : null;
   const status = job.kind === "service" ? (service ?? fallbackService(job)) : null;
+  const offered = status === null ? null : serviceActions(status);
   return (
     <TableRow
       ref={row}
@@ -222,11 +225,10 @@ function JobRow({
         {next.words}
       </RowCell>
       <RowActions>
-        {status !== null ? (
-          <IconButton icon="terminal" label="Open terminal" onClick={() => openTab(status)} />
-        ) : (
-          <IconButton icon="play" label="Run now" onClick={() => actions.runNow(job)} />
-        )}
+        {status !== null && offered?.terminal === true && <IconButton icon="terminal" label="Open terminal" onClick={() => openTab(status)} />}
+        {offered === null && <IconButton icon="play" label="Run now" onClick={() => actions.runNow(job)} />}
+        {offered?.toggle === "start" && <IconButton icon="play" label="Start service" onClick={() => act("start", job)} />}
+        {offered?.toggle === "stop" && <IconButton icon="stop" label="Stop service" onClick={() => act("stop", job)} />}
         <IconButton icon="edit" label="Edit" onClick={() => open(editRoute(job.id))} />
         <IconButton icon="trash" label="Delete" className={styles.delete} onClick={() => onDelete(job, status !== null && SERVICE_RUNS.includes(status.state))} />
       </RowActions>
@@ -236,8 +238,9 @@ function JobRow({
 }
 
 /** The Jobs view: every job file grouped by project — workspace jobs first — each row with its kind,
- *  name and trigger in words, last result, next run, its actions (Run now or Open terminal · Edit ·
- *  Delete) and the Disable toggle; an invalid file a red row with its error and Open file. The "This
+ *  name and trigger in words, last result, next run, its actions (Run now · Edit · Delete; a service:
+ *  Open terminal once it has a session, and Start service or Stop service in Run now's place) and the
+ *  Disable toggle; an invalid file a red row with its error and Open file. The "This
  *  project" chip keeps the jobs of the project Pomade has open. `marked` is the job the route opens:
  *  its row is marked and scrolled to. */
 export function JobsView({

@@ -233,7 +233,11 @@ disk.
     project (not the Workspace project). The project in front at the first ready of a Pomade start
     counts as opened then — its own `project.opened` came right after `pomade.ready`, possibly
     before the scheduler listened; heard as well, it fires nothing twice. A project this workspace
-    does not have is ignored: Pomade switched workspace and this scheduler has yet to follow. It
+    does not have is ignored: Pomade switched workspace and this scheduler has yet to follow. The
+    projects opened are kept with the start in `pomade-started.json`: a scheduler restarted while
+    the same Pomade runs fires no first open again, and a new Pomade start forgets them. An open
+    heard on a connection before its ready named the Pomade start waits for it. A hook job made
+    after its project's open does not fire for it — it fires on the next Pomade start's. The open
     also starts the services that start on that project ("Services").
   - **Project created** fires on `project.created`, with the new project; it is this workspace's
     from then on.
@@ -441,12 +445,15 @@ the keeper reports updates the service's record.
   enabled again, starts the same way within a tick.
 - **`start: project-first-open`** services start on the first open of their start project since
   Pomade started ("Firing hooks"), never at login. Until then they are `waiting` ("waiting for
-  first open · starts on first open of job-hunt"), and Start runs them. The open puts each valid,
-  enabled one that is not running into the staged start; one the Owner stopped stays stopped, one
-  that gave up stays `failed`. Once started it is kept up like any service — a crash restarts it,
-  it keeps running when Pomade quits, and a later first open (the next Pomade start) leaves a
-  running one be. An end that is not its own fault (`lost-in-keeper-crash`) leaves it waiting
-  again.
+  first open · starts on first open of job-hunt"), and Start runs them. Once its start project is
+  among the projects opened since Pomade started (the supervisor's `openedProjects`, the
+  scheduler's), a valid, enabled one that is not running is due as an `At login` one is: it joins
+  the staged start at the open, and one made, enabled, or changed to that start or that project
+  afterwards joins it within a tick. One the Owner stopped stays stopped — through an edit too —
+  and one that gave up stays `failed`, until Start. Once started it is kept up like any service — a
+  crash restarts it, it keeps running when Pomade quits, and a later first open (the next Pomade
+  start) leaves a running one be. An end that is not its own fault (`lost-in-keeper-crash`) starts
+  it again when its project was opened, and leaves it waiting otherwise.
 - **Staged start.** Services start one at a time, in a stable order: workspace jobs first, then
   each project's (by sub-folder), each by id. The next starts when the current one is up, or after
   30 s; one not up by then stays `starting` and keeps being checked. Restarts after a crash take
@@ -929,10 +936,16 @@ to it, light theme only.
     event" (a hook or a chain), "finished" (a schedule with nothing ahead), else the next time —
     "Today 13:00", "Tomorrow 7:00", "Wed 7:00", "Wed 25 Nov 7:00" — with "in N min" under it within the
     hour.
-  - **Actions**, always visible icon buttons: **Run now** (a service: **Open terminal**, its attached
-    tab), **Edit** (`edit/<encoded job id>`), **Delete** — the bin in the row's icon colour, red under
-    the pointer and on focus — which opens the confirm of "Deleting a job". Run now, a refused Run now
-    or toggle and Delete report as toasts — Run now's "<job> started · trigger “manual”". The toggle writes `enabled:` (`jobs.setEnabled`).
+  - **Actions**, always visible icon buttons, right-aligned: **Run now**, **Edit**
+    (`edit/<encoded job id>`), **Delete** — the bin in the row's icon colour, red under the pointer
+    and on focus — which opens the confirm of "Deleting a job". A service's row has in Run now's place
+    **Stop service** (the stop square) while it is running or starting, **Start service** (the play
+    triangle) while it does not run and Start would start it, and neither while it is disabled,
+    invalid or gone (`serviceActions`, `src/ui/serviceWords.ts`); before it, **Open terminal** (its
+    attached tab) once it has a session — the running one, or the last that ended with its output.
+    Start and Stop call `services.start` and `services.stop` as the Services view does
+    (`useServiceAction`). Run now, Start, Stop, a refused one or toggle and Delete report as toasts —
+    Run now's "<job> started · trigger “manual”". The toggle writes `enabled:` (`jobs.setEnabled`).
   - **An invalid file** is a red row with its file name, its help, its first error and **Open file**.
   - **The route `jobs/<job>`** marks that job's row — the accent bar and wash — and scrolls to it.
 - **History** (`src/ui/HistoryView.tsx`): the runs going (`runs.list`'s `active`: running — an
@@ -961,8 +974,9 @@ to it, light theme only.
   when, "queued" over "starts when the one before it is up", "restarting" over its crashes or
   "again at 14:03", "waiting for first open" over "starts on first open of job-hunt", "disabled",
   "stopping" over "its file is gone" — each with its help; **Restart · Stop** while it is up or
-  starting, **Start** otherwise; then the icon buttons **Open terminal** (its attached tab),
-  **Edit** (the `edit/<encoded job id>` route) and **Open file**. Each action toasts its outcome or
+  starting, **Start** while Start would start it (not disabled, invalid or gone); then the icon
+  buttons **Open terminal** (its attached tab, once it has a session; its place kept empty
+  otherwise), **Edit** (the `edit/<encoded job id>` route) and **Open file**. Each action toasts its outcome or
   why it was refused. An invalid service file is a red row with its file name, its help, "Invalid:
   line N: …" and **Open file**. The chip keeps the open project's services ("No services in this
   project." when none); with no service files, the view says what a service is and offers **New
@@ -1023,8 +1037,10 @@ chrome around them (the panel's header with its title and collapse, the tab bar)
 **Job form** (`src/ui/form/`). Creating and editing a job happens in a form, never by hand-editing
 md. A full page in the Runner tab: its head (back to Jobs, "Jobs / <name>", **Enabled**, and —
 editing — **Open file** and **Delete**), the sections, and the Save bar ("Saves to <path>",
-**Cancel**, **Create and start** for a service / **Create job** / **Save**, **Saved** while nothing
-changed). Order: kind → trigger → folder and project (agent: agent → folder → mode; git: operation →
+**Cancel**, **Create and start** for a service that starts as it is created (`startsOnCreate` in
+`state.ts`: enabled, and `At login` or on the first open of a project in `ServicesReport`'s
+`openedProjects`) / **Create job** / **Save**, **Saved** while nothing changed; the toast after a
+create says "· started" on the same test). Order: kind → trigger → folder and project (agent: agent → folder → mode; git: operation →
 repositories → project) → policies; the
 policies show as one sentence, non-defaults in bold, until **Change**.
 - **State** (`state.ts`, pure): the values the form shows, the fields the person set (`touched`),
@@ -1206,7 +1222,7 @@ Runner writes in two folders, both named only in `src/locations.ts`, each with i
 | Session records (job, run, output log, end) | `<userData>/app-state/pomade-runner/sessions.json` |
 | Service supervision on this Mac (crash counts, a restart due, a service given up on, the last start's problem) | `<userData>/app-state/pomade-runner/services.json` |
 | Pomade's projects as last heard (for `POMADE_PROJECT_PATH`, and to tell a project moved) | `<userData>/app-state/pomade-runner/projects.json` |
-| The Pomade start each workspace's Pomade started hooks fired for | `<userData>/app-state/pomade-runner/pomade-started.json` |
+| The Pomade start each workspace's Pomade started hooks fired for, and the projects opened in it | `<userData>/app-state/pomade-runner/pomade-started.json` |
 | The keeper's own state (session records, exit statuses, `keeper.log`) and its stdout and stderr (`keeper.out`) | `<userData>/app-state/pomade-runner/keeper/` |
 | Scheduler log (its stdout and stderr) | `<userData>/app-logs/pomade-runner/backend.log` |
 | Scheduler control socket | `<userData>/app-state/pomade-runner/scheduler.sock` |
@@ -1248,8 +1264,8 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
 - **`jobs.list`** through the broker, to Runner's own frames: the checked jobs (see "Job files").
   **`jobs.changed`** on the platform bus tells them to ask again.
 - **`services.list`** through the broker, to Runner's own frames: every service and where it
-  stands (`ServicesReport`, check `isServicesReport`); **`services.changed`** tells them to ask
-  again. **`services.start`**, **`services.stop`**, **`services.restart`** with `{ job }` (its id or
+  stands, and the projects opened since Pomade started (`ServicesReport`, check
+  `isServicesReport`); **`services.changed`** tells them to ask again. **`services.start`**, **`services.stop`**, **`services.restart`** with `{ job }` (its id or
   name), from Runner's own frames only, answer `ServiceActionResult` — the service's status after,
   or why it was refused. A start or restart may wait for a running session to end: callers give it
   `SERVICE_ACTION_TIMEOUT_MS` (`src/integrations/runner-api.ts`).

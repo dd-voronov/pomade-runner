@@ -4,18 +4,26 @@
 // project created runs its hook with the project in the environment; Pomade started fires once per
 // Pomade start — a restart of Pomade fires it again, a restart of the scheduler does not; the first
 // open of a project runs its job and starts its service, a second open does nothing; a project
-// moved keeps its jobs listed and firing, its sub-folder and folders following it. Projects are
-// made, opened and moved through Pomade's workspace store, as its Projects panel does.
+// moved keeps its jobs listed and firing, its sub-folder and folders following it. A first-open
+// service made in the job form after its project's open starts at once, one of a project not opened
+// yet waits for the open, a stopped one stays stopped through an edit, a restarted scheduler knows
+// the opens, a first-open hook made late fires for no earlier open, and after a Pomade restart a new
+// one waits again (T-019). Projects are made, opened and moved through Pomade's workspace store, as
+// its Projects panel does. A service's Jobs row starts and stops it, and opens its terminal once it
+// has run (T-020).
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { connectSocket } from "pomade-kit/node";
 import { WORKSPACE_PROJECT_ID } from "pomade-kit/protocol";
+import type { HostClient } from "pomade-kit/sdk";
 
 import manifest from "../app/manifest.json" with { type: "json" };
 import { callScheduler } from "../src/scheduler/control/client";
 import type { RunRecord } from "../src/scheduler/model";
+import { newRoute } from "../src/integrations/runner-api";
 import type { ServicesReport } from "../src/keeper/model";
 import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
 import { expectNothingLeft, stopKeeper } from "./support/keeper";
@@ -86,6 +94,52 @@ test.describe("Pomade's hooks in Pomade", () => {
   async function services(): Promise<ServicesReport["services"]> {
     const result = await callScheduler(schedulerSocket(), "services", null);
     return result.status === "ok" ? result.value.services : [];
+  }
+
+  async function service(job: string): Promise<ServicesReport["services"][number] | undefined> {
+    return (await services()).find((candidate) => candidate.job === job);
+  }
+
+  /** Runner's own connection to Pomade, as its scheduler has it: it opens Runner's tab at a route. */
+  async function connectAsRunner(): Promise<HostClient> {
+    const host = JSON.parse(await readFile(join(folders.home, "host.json"), "utf8")) as { socket: string };
+    const result = await connectSocket({ socketPath: host.socket, appId: manifest.id, keyFile: join(folders.userData, "app-keys", manifest.id), role: "backend" });
+    if (result.status !== "connected") throw new Error(`Runner's connection to Pomade: ${result.status}`);
+    return result.host;
+  }
+
+  /** In the job form (in the Workspace's Runner tab) of a new service in `project`, made to start on its project's first open: the
+   *  create button's words; then created, the toast's. */
+  async function createFirstOpenService(project: string, name: string, folder: string): Promise<{ button: string; toast: string }> {
+    // The Runner tab in the Workspace, in front: opening a tab in the project would open the project.
+    const tab = page.locator(`[data-testid="app-frame-${manifest.id}"]:visible`).contentFrame();
+    const runner = await connectAsRunner();
+    try {
+      await runner.tabs.openApp({ route: newRoute(project), projectId: WORKSPACE_PROJECT_ID });
+      const form = tab.getByTestId("form-service");
+      await form.getByRole("textbox", { name: "Name", exact: true }).fill(name);
+      await form.getByRole("textbox", { name: "Command", exact: true }).fill(`echo ${name.toLowerCase()}; while :; do sleep 1; done`);
+      await form.getByRole("textbox", { name: "Folder", exact: true }).fill(folder);
+      await form.getByRole("button", { name: "On first open of a project" }).click();
+      await expect(form.getByTestId("start-project")).toHaveValue(project);
+      await expect(form.getByRole("alert")).toHaveCount(0);
+      const button = (await tab.getByTestId("form-save").textContent()) ?? "";
+      await tab.getByTestId("form-save").click();
+      await expect(tab.getByTestId("toast")).toBeVisible();
+      const toast = (await tab.getByTestId("toast").textContent()) ?? "";
+      await expect(tab.getByTestId("tab-jobs")).toBeVisible();
+      return { button, toast };
+    } finally {
+      runner.close();
+    }
+  }
+
+  /** The attached tabs in the Workspace scope, by id. */
+  function attachedTabIds(): Promise<string[]> {
+    return page.evaluate((project) => {
+      const stores = (window as unknown as { __pomadeStores: { useTabsStore: { getState(): { tabsByProject: Record<string, { id: string; kind: string }[] | undefined> } } } }).__pomadeStores;
+      return (stores.useTabsStore.getState().tabsByProject[project] ?? []).filter((tab) => tab.kind === "attached").map((tab) => tab.id);
+    }, WORKSPACE_PROJECT_ID);
   }
 
   /** Pomade's workspace store, as its Projects panel uses it. */
@@ -168,6 +222,8 @@ test.describe("Pomade's hooks in Pomade", () => {
     expect(await printed("scrape")).toHaveLength(1);
     expect((await services()).find((service) => service.job === "hunt/dash")?.session?.info.pid).toBe(dash?.session?.info.pid);
     expect(scheduler?.output().match(/project Hunt \(proj-hunt\) opened for the first time since Pomade started/g)).toHaveLength(1);
+    // Seen's creation ran Hunt's Greet in Hunt's folder: done before the next test moves that folder.
+    await expect.poll(() => printed("hunt/greet")).toEqual([`greet proj-seen from ${path}`]);
   });
 
   test("E-007 #6 · after a project is moved, its jobs are still listed — in the renamed sub-folder, in the new folder — and still fire", async () => {
@@ -195,6 +251,105 @@ test.describe("Pomade's hooks in Pomade", () => {
     expect((await printed("hunt-2/greet"))[1]).toBe(`greet proj-other from ${path}`);
   });
 
+  test("T-019 · a first-open service made after its project's open starts at once; one of a project not opened yet waits for the open; stopped, it stays stopped through an edit", async () => {
+    // Hunt was opened in this Pomade start (E-007 #3), and moved to Projects/hunt-2 since (E-007 #6). Acceptance 1.
+    const made = await createFirstOpenService(HUNT, "Board", "Projects/hunt-2");
+    expect(made).toEqual({ button: "Create and start", toast: "RunnerCreated Apps/pomade-runner/jobs/hunt-2/board.md · started" });
+    await expect.poll(async () => (await service("hunt-2/board"))?.state, { timeout: 15_000 }).toBe("running");
+    pids.push((await service("hunt-2/board"))?.session?.info.pid ?? 0);
+
+    // Acceptance 3: stopped, then edited and saved, it stays stopped.
+    expect((await command("stop", "hunt-2/board")).code).toBe(0);
+    await expect.poll(async () => (await service("hunt-2/board"))?.state).toBe("stopped-by-you");
+    const file = join(jobs, "hunt-2/board.md");
+    await writeFile(file, (await readFile(file, "utf8")).replace("echo board;", "echo board edited;"));
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    expect((await service("hunt-2/board"))?.state).toBe("stopped-by-you");
+
+    // Acceptance 2: a project not opened yet — the button promises no start; it waits, and the open starts it.
+    await mkdir(join(folders.workspace, "Projects/later"), { recursive: true });
+    await store("addProject", { id: "proj-later", name: "Later", rootPath: "Projects/later", visibleAgents: ["*"], order: 3 });
+    await expect.poll(() => scheduler?.output() ?? "").toContain("project Later (proj-later) created");
+    const waiting = await createFirstOpenService("proj-later", "Feed", "Projects/later");
+    expect(waiting).toEqual({ button: "Create job", toast: "RunnerCreated Apps/pomade-runner/jobs/later/feed.md" });
+    await expect.poll(async () => (await service("later/feed"))?.state).toBe("waiting");
+    await store("setActiveProject", "proj-later");
+    await expect.poll(async () => (await service("later/feed"))?.state, { timeout: 15_000 }).toBe("running");
+    pids.push((await service("later/feed"))?.session?.info.pid ?? 0);
+    await store("setActiveProject", WORKSPACE_PROJECT_ID);
+  });
+
+  test("T-019 · a first-open hook made after its project's open fires for no earlier open; a restarted scheduler knows the opens", async () => {
+    await writeFile(join(jobs, "late-scrape.md"), script("Late scrape", "echo late", `hook: { event: project-first-open, project: ${HUNT} }\n`));
+    await expect.poll(async () => (await command("list")).stdout).toContain("late-scrape  Late scrape");
+    await store("setActiveProject", HUNT);
+    await store("setActiveProject", WORKSPACE_PROJECT_ID);
+
+    // The scheduler restarted (an update) while the same Pomade runs.
+    const running = scheduler;
+    running?.child.kill("SIGTERM");
+    expect(await running?.exited).toBe(0);
+    const again = await startTheScheduler();
+    await expect.poll(() => again.output()).toContain("Pomade ready: the Pomade started hooks fired for this Pomade start already");
+    // A first-open service of Hunt made now starts; Hunt opened again fires nothing.
+    await writeFile(join(jobs, "hunt-2/tail.md"), `---\nkind: service\nname: Tail\nproject: ${HUNT}\nfolder: Projects/hunt-2\ncommand: "echo tail; while :; do sleep 1; done"\nstart: project-first-open\n---\n`);
+    await expect.poll(async () => (await service("hunt-2/tail"))?.state, { timeout: 15_000 }).toBe("running");
+    pids.push((await service("hunt-2/tail"))?.session?.info.pid ?? 0);
+    await store("setActiveProject", HUNT);
+    await store("addProject", { id: "proj-next", name: "Next", rootPath: "Projects/next", visibleAgents: ["*"], order: 4 });
+    await store("setActiveProject", "proj-next");
+    await expect.poll(() => again.output()).toContain("project Next (proj-next) opened for the first time since Pomade started");
+    expect(again.output()).not.toContain("project Hunt (proj-hunt) opened for the first time since Pomade started");
+    expect(await history("late-scrape")).toEqual([]);
+    expect(await printed("scrape")).toHaveLength(1);
+    await store("setActiveProject", WORKSPACE_PROJECT_ID);
+  });
+
+  test("T-020 · a service's Jobs row: Start service starts it, Stop service stops it, Open terminal shows its last output; a service that never ran has no Open terminal", async () => {
+    const tab = page.locator(`[data-testid="app-frame-${manifest.id}"]:visible`).contentFrame();
+    const runner = await connectAsRunner();
+    try {
+      await runner.tabs.openApp({ route: "", projectId: WORKSPACE_PROJECT_ID });
+      const row = (job: string) => tab.locator(`[data-testid="job-row"][data-job="${job}"]`);
+      const labels = (job: string) => row(job).getByRole("button").evaluateAll((all) => all.map((b) => b.getAttribute("aria-label")));
+      // Board was stopped by you (T-019 above): its last output is in the keeper.
+      await expect(row("hunt-2/board").getByTestId("job-status")).toHaveText("stopped by you");
+      expect(await labels("hunt-2/board")).toEqual(["Open terminal", "Start service", "Edit", "Delete"]);
+      await row("hunt-2/board").getByRole("button", { name: "Start service" }).click();
+      await expect(tab.getByTestId("toast").last()).toHaveText("RunnerBoard started");
+      await expect(row("hunt-2/board").getByTestId("job-status")).toHaveText(/^(starting|running · up )/);
+      pids.push((await service("hunt-2/board"))?.session?.info.pid ?? 0);
+      await expect.poll(() => labels("hunt-2/board")).toEqual(["Open terminal", "Stop service", "Edit", "Delete"]);
+      await row("hunt-2/board").getByRole("button", { name: "Stop service" }).click();
+      await expect(row("hunt-2/board").getByTestId("job-status")).toHaveText("stopped by you");
+      await expect.poll(async () => (await service("hunt-2/board"))?.state).toBe("stopped-by-you");
+      await expect.poll(() => labels("hunt-2/board")).toEqual(["Open terminal", "Start service", "Edit", "Delete"]);
+
+      // Its terminal opens on its last output, with Start in the header.
+      await row("hunt-2/board").getByRole("button", { name: "Open terminal" }).click();
+      await expect.poll(() => attachedTabIds()).toHaveLength(1);
+      const [id = ""] = await attachedTabIds();
+      await expect(page.getByTestId(`attached-status-${id}`)).toHaveText("Stopped by you");
+      await expect(page.getByTestId(`attached-${id}`).getByTestId("attached-action-start")).toBeVisible();
+      await page.getByTestId(`close-${id}`).click();
+      await expect.poll(() => attachedTabIds()).toHaveLength(0);
+
+      // A service that never ran — Other is not opened — has Start service and no terminal; Start runs it.
+      await mkdir(join(folders.workspace, "Projects/other"), { recursive: true });
+      await mkdir(join(jobs, "other"), { recursive: true });
+      await writeFile(join(jobs, "other/site.md"), `---\nkind: service\nname: Site\nproject: proj-other\nfolder: Projects/other\ncommand: "echo site; while :; do sleep 1; done"\nstart: project-first-open\n---\n`);
+      await runner.tabs.openApp({ route: "", projectId: WORKSPACE_PROJECT_ID });
+      await expect(row("other/site").getByTestId("job-status")).toHaveText("waiting for first open");
+      expect(await labels("other/site")).toEqual(["Start service", "Edit", "Delete"]);
+      await row("other/site").getByRole("button", { name: "Start service" }).click();
+      await expect.poll(async () => (await service("other/site"))?.state, { timeout: 15_000 }).toBe("running");
+      pids.push((await service("other/site"))?.session?.info.pid ?? 0);
+      await expect.poll(() => labels("other/site")).toEqual(["Open terminal", "Stop service", "Edit", "Delete"]);
+    } finally {
+      runner.close();
+    }
+  });
+
   test("E-007 #2 · restarting Pomade runs the Pomade started job once more, after its tabs are restored; the next first open fires again", async () => {
     const running = scheduler;
     await app?.close();
@@ -208,7 +363,13 @@ test.describe("Pomade's hooks in Pomade", () => {
     await expect.poll(() => printed("scrape")).toHaveLength(2);
     expect((await printed("scrape"))[1]).toBe(`scrape ${HUNT} ${join(folders.workspace, "Projects/hunt-2")}`);
     expect((await services()).find((service) => service.job === "hunt-2/dash")?.session?.info.pid).toBe(dash?.session?.info.pid);
-    // Once per Pomade start, still.
+    // Once per Pomade start, still. The late hook fires on this start's first open.
     expect(await printed("updates")).toHaveLength(2);
+    await expect.poll(() => printed("late-scrape")).toEqual(["late"]);
+    // T-019 acceptance 4: a first-open service of a project opened in the last Pomade start, made now, waits for its open again.
+    await writeFile(join(jobs, "later/news.md"), `---\nkind: service\nname: News\nproject: proj-later\nfolder: Projects/later\ncommand: "echo news; while :; do sleep 1; done"\nstart: project-first-open\n---\n`);
+    await expect.poll(async () => (await service("later/news"))?.state).toBe("waiting");
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    expect((await service("later/news"))?.state).toBe("waiting");
   });
 });

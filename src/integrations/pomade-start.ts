@@ -1,10 +1,11 @@
-// Which Pomade start this is, and whether a workspace's "Pomade started" hooks fired for it
-// (docs/DESIGN.md "Firing hooks"). `pomade.ready` is sticky — a scheduler that connects, or
-// connects again, while the same Pomade runs hears it at once — so the event alone does not say
-// Pomade just started. A Pomade start is named by its socket: Pomade creates it at every start and
-// removes it when it quits, so the file's inode and birth time differ from one start to the next.
-// The start each workspace fired for is kept in `pomade-started.json` in Runner's state folder:
-// a scheduler restarted while Pomade runs fires nothing again.
+// Which Pomade start this is, whether a workspace's "Pomade started" hooks fired for it, and which of
+// its projects were opened since (docs/DESIGN.md "Firing hooks"). `pomade.ready` is sticky — a
+// scheduler that connects, or connects again, while the same Pomade runs hears it at once — so the
+// event alone does not say Pomade just started. A Pomade start is named by its socket: Pomade
+// creates it at every start and removes it when it quits, so the file's inode and birth time differ
+// from one start to the next. The start each workspace fired for, and the projects opened in it, are
+// kept in `pomade-started.json` in Runner's state folder: a scheduler restarted while Pomade runs
+// fires nothing again, and knows which projects were opened.
 
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -28,39 +29,75 @@ export async function pomadeStartOf(env: Env): Promise<string | null> {
 }
 
 export interface PomadeStarts {
-  /** Whether `start` is new for `workspace`: `true` once, then it is kept as fired. */
+  /** Whether `start` is new for `workspace`: `true` once, then it is kept as fired — with no project
+   *  opened in it yet. */
   firstReady(workspace: string, start: string): Promise<boolean>;
+  /** The projects opened in `workspace` since `start`, as kept; none for a start not kept. */
+  opened(workspace: string, start: string): Promise<string[]>;
+  /** Keep `project` as opened in `workspace` since `start`, the start kept for it. */
+  open(workspace: string, start: string, project: string): Promise<void>;
   flush(): Promise<void>;
 }
 
+/** What `pomade-started.json` keeps: each workspace's start, and the projects opened in it. */
+interface Kept {
+  fired: Record<string, string>;
+  opened: Record<string, string[]>;
+}
+
+const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
+const section = (data: unknown, key: string): Record<string, unknown> => {
+  const value = typeof data === "object" && data !== null ? (data as Record<string, unknown>)[key] : null;
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+};
+
 export function pomadeStarts(state: StateFolder, log: Log): PomadeStarts {
   const file = pomadeStartedRecordPath(state);
-  let fired: Record<string, string> | null = null;
+  let loading: Promise<Kept> | null = null;
   let writing: Promise<void> = Promise.resolve();
-  const load = async (): Promise<Record<string, string>> => {
+  const read = async (): Promise<Kept> => {
     try {
       const data: unknown = JSON.parse(await readFile(file, "utf8"));
-      const list = typeof data === "object" && data !== null ? (data as Record<string, unknown>).fired : null;
-      if (typeof list === "object" && list !== null) return Object.fromEntries(Object.entries(list).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+      return {
+        fired: Object.fromEntries(Object.entries(section(data, "fired")).filter((entry): entry is [string, string] => typeof entry[1] === "string")),
+        opened: Object.fromEntries(Object.entries(section(data, "opened")).filter((entry): entry is [string, string[]] => strings(entry[1]))),
+      };
     } catch {
       // None fired yet, or unreadable: the next ready is a start.
+      return { fired: {}, opened: {} };
     }
-    return {};
+  };
+  /** The record, read once: every caller works on the same one. */
+  const load = (): Promise<Kept> => (loading ??= read());
+  const save = (next: Kept): void => {
+    const data = `${JSON.stringify(next, null, 2)}\n`;
+    writing = writing
+      .then(async () => {
+        await mkdir(dirname(file), { recursive: true });
+        await writeFile(`${file}.tmp`, data);
+        await rename(`${file}.tmp`, file);
+      })
+      .catch((err: unknown) => log(`pomade started: cannot write ${file}: ${err instanceof Error ? err.message : String(err)}`));
   };
   return {
     async firstReady(workspace, start) {
-      fired ??= await load();
-      if (fired[workspace] === start) return false;
-      fired[workspace] = start;
-      const data = `${JSON.stringify({ fired }, null, 2)}\n`;
-      writing = writing
-        .then(async () => {
-          await mkdir(dirname(file), { recursive: true });
-          await writeFile(`${file}.tmp`, data);
-          await rename(`${file}.tmp`, file);
-        })
-        .catch((err: unknown) => log(`pomade started: cannot write ${file}: ${err instanceof Error ? err.message : String(err)}`));
+      const kept = await load();
+      if (kept.fired[workspace] === start) return false;
+      kept.fired[workspace] = start;
+      kept.opened[workspace] = [];
+      save(kept);
       return true;
+    },
+    async opened(workspace, start) {
+      const kept = await load();
+      return kept.fired[workspace] === start ? [...(kept.opened[workspace] ?? [])] : [];
+    },
+    async open(workspace, start, project) {
+      const kept = await load();
+      const list = kept.opened[workspace] ?? [];
+      if (kept.fired[workspace] !== start || list.includes(project)) return;
+      kept.opened[workspace] = [...list, project];
+      save(kept);
     },
     flush: () => writing,
   };

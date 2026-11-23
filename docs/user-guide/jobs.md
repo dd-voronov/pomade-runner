@@ -69,8 +69,11 @@ reads "N jobs", plus "· N invalid" when a file has errors. Columns:
 - **Next run** — "disabled", "paused" (the loop guard's), "always on" (a service), "on event" (a hook or
   a chain), "finished" (a schedule with nothing ahead), else the next time ("Today 13:00", "Wed 7:00"),
   with "in N min" under it within the hour.
-- **Row actions** — `Run now` (a service: `Open terminal`), `Edit`, `Delete`, and the `Enabled` toggle.
-  A refused action reports as a toast ("Could not run <job>: <why>"). A disabled row is dimmed.
+- **Row actions** — `Run now`, `Edit`, `Delete`, and the `Enabled` toggle. A service has, in Run
+  now's place, `Stop service` while it runs or starts and `Start service` while it does not (none
+  while it is disabled — the toggle enables it); before it, `Open terminal` once the service has run
+  — its tab shows its output, the last output once it ended. A refused action reports as a toast
+  ("Could not run <job>: <why>", "Could not start <service>: <why>"). A disabled row is dimmed.
 
 An **invalid file** is a red row: its file name, its first error ("Invalid: line 4: …", "· N more") and
 **Open file**. `pomade-runner check` prints the same errors.

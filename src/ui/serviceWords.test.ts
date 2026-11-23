@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ServiceStatus } from "../keeper/model";
-import { serviceLook, serviceWords, upWords, whenWords } from "./serviceWords";
+import { serviceActions, serviceLook, serviceWords, upWords, whenWords } from "./serviceWords";
 
 const base: ServiceStatus = { job: "web", name: "Web", project: null, state: "running", session: null, restarts: 0, lastCrashAt: null, retryAt: null, needsRestart: false, problem: null };
 
@@ -17,6 +17,26 @@ describe("a service in words", () => {
     expect(serviceWords({ ...base, restarts: 3, lastCrashAt: crash })).toBe("Running · restarted 3× · last crash 14:02");
     expect(serviceWords({ ...base, state: "failed", restarts: 4, lastCrashAt: crash })).toBe("Failed: crashed 5 times in a minute · restarted 4× · last crash 14:02");
     expect(serviceWords({ ...base, needsRestart: true })).toBe("Running · restart to apply its file");
+  });
+});
+
+describe("a service row's actions", () => {
+  it("offers Stop while it runs, Start when Start would start it, and Open terminal only with a session to show", () => {
+    const ended = { id: "svc:web", job: "web", kind: "service", run: null, log: null, info: { id: "svc:web", title: "Web", command: "./web.sh", cwd: "/ws", pid: null, startedAt: 1, cols: 80, rows: 24, state: "exited", exit: { at: 2, code: 130, signal: null, reason: "stopped-by-you" }, clients: 0, actions: [] } } as unknown as NonNullable<ServiceStatus["session"]>;
+    const offered = (state: ServiceStatus["state"], session: ServiceStatus["session"] = null): [string | null, boolean] => {
+      const { toggle, terminal } = serviceActions({ ...base, state, session });
+      return [toggle, terminal];
+    };
+    expect(offered("running", ended)).toEqual(["stop", true]);
+    expect(offered("starting", ended)).toEqual(["stop", true]);
+    // Never started: Start, and no terminal — there is nothing to show.
+    for (const state of ["waiting", "queued", "stopped-by-you", "failed", "restarting"] as const) expect(offered(state)).toEqual(["start", false]);
+    // Ended: its tab keeps its last output.
+    expect(offered("stopped-by-you", ended)).toEqual(["start", true]);
+    expect(offered("failed", ended)).toEqual(["start", true]);
+    // Start would be refused: none.
+    for (const state of ["disabled", "invalid", "removed"] as const) expect(offered(state)).toEqual([null, false]);
+    expect(offered("disabled", ended)).toEqual([null, true]);
   });
 });
 

@@ -35,11 +35,11 @@ export interface KindUi {
   /** The Name field's placeholder. */
   namePlaceholder: string;
   /** Its sections between Kind and Policies, its policy rows and the primary button's words for a
-   *  new job. */
+   *  new job — `startsNow`: it starts as it is created (`startsOnCreate`). */
   build: {
     sections(props: FormProps): ReactNode;
     policies: readonly PolicyRow[];
-    createLabel(values: FormValues): string;
+    createLabel(startsNow: boolean): string;
   };
 }
 
@@ -504,7 +504,7 @@ export const KIND_UI: Record<JobKind, KindUi> = {
     build: {
       sections: (props) => <ServiceSections {...props} />,
       policies: [LOW_PRIORITY, NOTIFY],
-      createLabel: (values) => (values.enabled ? "Create and start" : "Create job"),
+      createLabel: (startsNow) => (startsNow ? "Create and start" : "Create job"),
     },
   },
   script: {

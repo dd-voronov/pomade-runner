@@ -68,4 +68,37 @@ describe("pomade start", () => {
     expect(await again.firstReady("/ws", "a")).toBe(false);
     expect(await again.firstReady("/ws", "b")).toBe(true);
   });
+
+  it("keeps the projects opened in a workspace's start across schedulers, and forgets them at the next start", async () => {
+    const state = stateFolderOf(join(dir, "ud"));
+    const starts = pomadeStarts(state, () => undefined);
+    expect(await starts.firstReady("/ws", "a")).toBe(true);
+    await starts.open("/ws", "a", "p1");
+    await starts.open("/ws", "a", "p1");
+    await starts.open("/ws", "a", "p2");
+    // A start not kept for the workspace keeps nothing.
+    await starts.open("/ws", "z", "p3");
+    await starts.open("/other", "a", "p4");
+    expect(await starts.opened("/ws", "a")).toEqual(["p1", "p2"]);
+    expect(await starts.opened("/ws", "z")).toEqual([]);
+    await starts.flush();
+
+    const again = pomadeStarts(state, () => undefined);
+    expect(await again.opened("/ws", "a")).toEqual(["p1", "p2"]);
+    expect(await again.opened("/other", "a")).toEqual([]);
+    expect(await again.firstReady("/ws", "b")).toBe(true);
+    expect(await again.opened("/ws", "b")).toEqual([]);
+    expect(await again.opened("/ws", "a")).toEqual([]);
+  });
+
+  it("reads a record without a list of opened projects as none opened", async () => {
+    const state = stateFolderOf(join(dir, "ud"));
+    const starts = pomadeStarts(state, () => undefined);
+    await starts.firstReady("/ws", "a");
+    await starts.flush();
+    await writeFile(join(dir, "ud/app-state/pomade-runner/pomade-started.json"), JSON.stringify({ fired: { "/ws": "a" }, opened: { "/ws": "not a list" } }));
+    const again = pomadeStarts(state, () => undefined);
+    expect(await again.opened("/ws", "a")).toEqual([]);
+    expect(await again.firstReady("/ws", "a")).toBe(false);
+  });
 });

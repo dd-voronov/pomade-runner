@@ -27,6 +27,12 @@
   width: var(--space-1);
 }
 
+/* Open terminal's place while the service has no session to show: the buttons keep their columns. */
+.slot {
+  flex: none;
+  width: var(--icon-btn);
+}
+
 /* An invalid service file: the warning, then its name and error across the middle columns. */
 .warn {
   color: var(--danger-text);

@@ -101,7 +101,8 @@ export function isSessionsReport(value: unknown): value is SessionsReport {
  *  - `restarting`: ended on its own; starts again after its back-off (`retryAt`);
  *  - `failed`: 5 crashes within a minute; no restarts until Start;
  *  - `stopped-by-you`: Ctrl+C in its tab, or Stop; stays stopped until Start;
- *  - `waiting`: `start: project-first-open`, not started — Start runs it;
+ *  - `waiting`: `start: project-first-open`, its start project not opened since Pomade started —
+ *    the open starts it, Start runs it now;
  *  - `disabled`: `enabled: false` in its file;
  *  - `invalid`: its file has errors — nothing starts or stops it until the file is fixed;
  *  - `removed`: its file is gone; its session is stopped, and the service leaves the list once it ends. */
@@ -136,6 +137,9 @@ export interface ServicesReport {
   keeper: KeeperLink;
   /** In start order: workspace jobs first, then by project, each by id. */
   services: ServiceStatus[];
+  /** The projects opened since Pomade started (ids), as Runner heard them: a first-open service of
+   *  one of them starts at once. */
+  openedProjects: string[];
 }
 
 const STATES: readonly string[] = SERVICE_STATES;
@@ -172,5 +176,12 @@ export function isServiceActionResult(value: unknown): value is ServiceActionRes
 }
 
 export function isServicesReport(value: unknown): value is ServicesReport {
-  return isRecord(value) && isKeeperLink(value.keeper) && Array.isArray(value.services) && value.services.every(isServiceStatus);
+  return (
+    isRecord(value) &&
+    isKeeperLink(value.keeper) &&
+    Array.isArray(value.services) &&
+    value.services.every(isServiceStatus) &&
+    Array.isArray(value.openedProjects) &&
+    value.openedProjects.every((project) => typeof project === "string")
+  );
 }

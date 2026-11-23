@@ -17,7 +17,7 @@ choose `When something happens`, then pick from the **Event** list.
 |---|---|---|
 | `Mac login` | once after you log in to the Mac, after the warm-up | none |
 | `Pomade started` | when Pomade is ready (tabs restored), once per Pomade start | none |
-| `First open of a project since Pomade started` | the first time you open the project after Pomade starts; later opens do not | **Project**: `Any project`, or one of Pomade's projects |
+| `First open of a project since Pomade started` | the first time you open the project after Pomade starts; later opens do not. A job made after that open waits for the next Pomade start | **Project**: `Any project`, or one of Pomade's projects |
 | `Project created` | when you create a project in Pomade | none |
 | `Agent session finished` | when an agent session you ran ends. A session Runner started never fires it | **Only in project**, **Only agent** |
 | `Session status changed to…` | when you change a session's status in the Agents app | **Status** — `Active` · `On hold` · `Done` · `Done–skip/Failed` — **Only in project**, **Only agent** |

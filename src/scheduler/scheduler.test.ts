@@ -935,7 +935,7 @@ describe("scheduler and Pomade's hooks", () => {
     link?.disconnected();
     await connect();
     await vi.waitFor(() => expect(started().map((run) => run.job)).toEqual(["updates", "updates"]));
-    expect(await readFile(join(dir, "ud/app-state/pomade-runner/pomade-started.json"), "utf8")).toBe(`${JSON.stringify({ fired: { [workspace]: "start-2" } }, null, 2)}\n`);
+    expect(await readFile(join(dir, "ud/app-state/pomade-runner/pomade-started.json"), "utf8")).toBe(`${JSON.stringify({ fired: { [workspace]: "start-2" }, opened: { [workspace]: [] } }, null, 2)}\n`);
 
     // A Pomade start that cannot be told fires nothing and says why.
     pomadeStart = null;
@@ -1081,7 +1081,55 @@ describe("scheduler and Pomade's hooks", () => {
     await vi.waitFor(() => expect(sessions.spawned.filter((spawn) => spawn.command.env?.POMADE_TRIGGER === undefined).map((spawn) => spawn.job)).toEqual(["docs"]));
     // Beta's first open is not Alpha's.
     const ui = await frame(fake);
-    expect(await ui.apps.call("pomade-runner", SERVICES_LIST_METHOD)).toMatchObject({ services: [{ job: "docs", state: "starting" }, { job: "alpha/web", state: "waiting" }] });
+    expect(await ui.apps.call("pomade-runner", SERVICES_LIST_METHOD)).toMatchObject({ services: [{ job: "docs", state: "starting" }, { job: "alpha/web", state: "waiting" }], openedProjects: ["beta"] });
+  });
+
+  it("after its project's open, a first-open service made starts at once, and a first-open hook made fires for no open before it — across a scheduler restarted while the same Pomade runs; a new Pomade start forgets the opens", async () => {
+    const services = (): string[] => sessions.spawned.filter((spawn) => spawn.command.env?.POMADE_TRIGGER === undefined).map((spawn) => spawn.job);
+    const hookRuns = (job: string): number => started().filter((run) => run.job === job).length;
+    const scheduler = await start();
+    await connect();
+    fake.ready();
+    await vi.waitFor(() => expect(lines).toContain("Pomade started"));
+    fake.emitEvent("project.opened", { id: "alpha", kind: "project", name: "Alpha", root: "Projects/alpha" });
+    await vi.waitFor(() => expect(hookRuns("alpha-open")).toBe(1));
+
+    await mkdir(join(jobs, "alpha"));
+    await writeFile(join(jobs, "alpha/web.md"), "---\nkind: service\nname: Web\nproject: alpha\nfolder: .\ncommand: ./web.sh\nstart: project-first-open\n---\n");
+    await writeFile(join(jobs, "late-open.md"), script("Late open", "{ event: project-first-open, project: alpha }"));
+    await vi.waitFor(() => expect(services()).toEqual(["alpha/web"]), { timeout: 5000 });
+    // Alpha opened again: no first open — nothing fires, the late hook neither.
+    fake.emitEvent("project.opened", { id: "beta", kind: "project", name: "Beta", root: "Projects/beta" });
+    fake.emitEvent("project.opened", { id: "alpha", kind: "project", name: "Alpha", root: "Projects/alpha" });
+    await vi.waitFor(() => expect(hookRuns("any-open")).toBe(2));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect([hookRuns("alpha-open"), hookRuns("late-open")]).toEqual([1, 0]);
+
+    // A scheduler restarted (an update) while the same Pomade runs knows what was opened; an open
+    // heard before its ready waits for it, and fires nothing twice.
+    await scheduler.stop();
+    running.splice(0);
+    await start();
+    await connect();
+    await vi.waitFor(() => expect(lines).toContain("Pomade ready: the Pomade started hooks fired for this Pomade start already"));
+    await writeFile(join(jobs, "docs.md"), "---\nkind: service\nname: Docs\nfolder: .\ncommand: ./docs.sh\nstart: project-first-open\nstart-project: beta\n---\n");
+    await vi.waitFor(() => expect(services()).toEqual(["alpha/web", "docs"]), { timeout: 5000 });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect([hookRuns("any-open"), hookRuns("alpha-open"), hookRuns("late-open")]).toEqual([2, 1, 0]);
+
+    // Pomade started anew: what was opened is forgotten — a new first-open service waits, Alpha's
+    // open fires its hooks, the late one too.
+    pomadeStart = "start-2";
+    link?.disconnected();
+    await connect();
+    await vi.waitFor(() => expect(lines.filter((line) => line === "Pomade started")).toHaveLength(2));
+    await mkdir(join(jobs, "beta"));
+    await writeFile(join(jobs, "beta/api.md"), "---\nkind: service\nname: Api\nproject: beta\nfolder: .\ncommand: ./api.sh\nstart: project-first-open\n---\n");
+    const ui = await frame(fake);
+    await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", SERVICES_LIST_METHOD)).toMatchObject({ services: expect.arrayContaining([expect.objectContaining({ job: "beta/api", state: "waiting" })]), openedProjects: [] }), { timeout: 5000 });
+    fake.emitEvent("project.opened", { id: "alpha", kind: "project", name: "Alpha", root: "Projects/alpha" });
+    await vi.waitFor(() => expect([hookRuns("alpha-open"), hookRuns("late-open")]).toEqual([2, 1]));
+    expect(services()).toEqual(["alpha/web", "docs"]);
   });
 
   it("a project moved: its jobs follow it — sub-folder, folders, ids — keep their history and latest run, and its running service starts again in its new folder", async () => {

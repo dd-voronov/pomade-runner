@@ -23,6 +23,14 @@ const STATE_WORDS: Record<ServiceState, string> = {
 /** The states of a service with a session going or about to: what Delete stops first. */
 export const SERVICE_RUNS: readonly ServiceState[] = ["starting", "running", "restarting"];
 
+/** What a service's row offers, so that no action is a no-op: **Stop** while it runs or starts,
+ *  **Start** while it does not and Start would start it (not disabled, invalid or gone), and **Open
+ *  terminal** once it has a session — the running one, or the last that ended with its output. */
+export function serviceActions(status: ServiceStatus): { toggle: "start" | "stop" | null; terminal: boolean } {
+  const toggle = status.state === "running" || status.state === "starting" ? "stop" : status.state === "disabled" || status.state === "invalid" || status.state === "removed" ? null : "start";
+  return { toggle, terminal: status.session !== null };
+}
+
 export function serviceWords(status: ServiceStatus): string {
   return [
     STATE_WORDS[status.state],

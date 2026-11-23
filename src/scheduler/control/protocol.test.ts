@@ -104,8 +104,10 @@ describe("control protocol", () => {
     const info = { id: "svc:web", title: "Web", command: "./w", cwd: "/ws", pid: 3, startedAt: 1, cols: 80, rows: 24, state: "running", exit: null, clients: 0, actions: [] };
     const session = { id: "svc:web", job: "web", kind: "service", run: null, log: null, info };
     const service = { job: "web", name: "Web", project: null, state: "running", session, restarts: 2, lastCrashAt: 5, retryAt: null, needsRestart: false, problem: null };
-    const report = { keeper: { state: "connected", version: "v", pid: 1 }, services: [service, { ...service, job: "b", state: "waiting", session: null, project: "p", lastCrashAt: null }] };
+    const report = { keeper: { state: "connected", version: "v", pid: 1 }, services: [service, { ...service, job: "b", state: "waiting", session: null, project: "p", lastCrashAt: null }], openedProjects: ["p"] };
     expect(RESULT_GUARDS.services(report)).toBe(true);
+    expect(RESULT_GUARDS.services({ ...report, openedProjects: undefined })).toBe(false);
+    expect(RESULT_GUARDS.services({ ...report, openedProjects: [1] })).toBe(false);
     for (const method of ["stop", "restart"] as const) expect(RESULT_GUARDS[method](service)).toBe(true);
     expect(RESULT_GUARDS.run({ service })).toBe(true);
     for (const bad of [

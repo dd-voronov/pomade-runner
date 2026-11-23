@@ -291,7 +291,7 @@ describe("pomade-runner", () => {
         { ...base, job: "i", name: "i", state: "invalid", session: null },
         { ...base, job: "j", name: "J", state: "removed" },
       ];
-      const r = await run(["services"], undefined, { services: { status: "ok", value: { keeper: { state: "connected", version: "v9", pid: 77 }, services } } });
+      const r = await run(["services"], undefined, { services: { status: "ok", value: { keeper: { state: "connected", version: "v9", pid: 77 }, services, openedProjects: [] } } });
       expect(r.code).toBe(0);
       expect(r.out.split("\n")).toEqual([
         "keeper: running — version v9, pid 77",
@@ -308,7 +308,7 @@ describe("pomade-runner", () => {
         "j  J  its job file is gone; stopping",
         "",
       ]);
-      expect((await run(["services"], undefined, { services: { status: "ok", value: { keeper: { state: "connecting" }, services: [] } } })).out).toBe("keeper: connecting\nNo services.\n");
+      expect((await run(["services"], undefined, { services: { status: "ok", value: { keeper: { state: "connecting" }, services: [], openedProjects: [] } } })).out).toBe("keeper: connecting\nNo services.\n");
     });
 
     it("needs the scheduler: exit 1 when it is not running or does not answer; exit 2 on an argument", async () => {
