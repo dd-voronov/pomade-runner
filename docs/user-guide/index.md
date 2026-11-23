@@ -25,7 +25,8 @@ result card. This guide describes how to use it. How it is built is in
 - **[Hooks and chains](hooks-and-chains.md)** — every event a job can start on and its filters, chains
   that start a job when another finishes, the environment a run gets, and the loop guard with Resume.
 - **[Services](services.md)** — commands Runner keeps running: when they start, when they count as up,
-  crashes and restarts, Start, Stop and Restart, services that wait for a project to open.
+  crashes and restarts, Start, Stop and Restart, services that wait for a project to open or for Pomade,
+and what happens to them when Pomade quits.
 - **[Agent jobs](agent-jobs.md)** — running an agent with a prompt unattended: agent, folder, mode, Full
   autonomy, the prompt, a run that waits for you, Open session, Pomade opened for a run, and what needs
   the Agents app.

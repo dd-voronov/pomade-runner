@@ -130,7 +130,9 @@ stops a run.
 
 **Settings** in the Runner tab edits the workspace settings in
 `<workspace>/Apps/pomade-runner/settings.yaml`. Each number has a stepper (− number +, its unit beside
-it); a change applies at once and is written when the steps stop.
+it); a change applies at once and is written when the steps stop. The skills folder is a text field:
+a change is written when you leave the field or press Enter, Esc puts the saved value back, and empty
+means the default.
 
 | Card | Row | Range | Default |
 |---|---|---|---|
@@ -139,7 +141,8 @@ it); a change applies at once and is written when the steps stop.
 | Load | **Long-run warning** | steps by hour: 1–24 hours | 3 hours |
 | History | **Keep history and output** | 1–365 days | 30 |
 | Notifications | **macOS notifications while Pomade is closed** | read-only: `Allowed` · `Blocked` · `Not asked yet` · `Not available yet` | — |
-| Agents | **Job skill for agents** | read-only: `Installed` · `Partly installed` · `Not installed` | — |
+| Agents | **Skills folder** | a folder inside the workspace, relative to its root; changing it moves Runner's skill there | `Knowledge/_skills/apps/` |
+| Agents | **Job skill for agents** | read-only: `In place` · `Not written`, with where the skill's file is and **Show in Files**; Runner gives it to no agent — which agents get it is your choice | — |
 | Files | **Workspace settings** · **Job files** | **Open file** (once the file exists) · **Show in Files** | — |
 
 A missing file, a field left out or an empty one means the default. A problem in the file is listed

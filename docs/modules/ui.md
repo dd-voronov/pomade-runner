@@ -51,16 +51,17 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
 | `NeedsYou.tsx` | Needs you's cards and their actions (a gave-up service without a session has no View output; its name opens the job in Jobs; a missed run that stands for more than one: Run once · Run all N · Run at… · Skip) |
 | `RunAllConfirm.tsx` | the confirm before Run all or Run the other N runs more than 20, naming the number; shared by Needs you and the result card |
 | `RunningNow.tsx`, `ActiveRunsList.tsx` | Running now: services and runs going; a row opens its tab, terminal or card |
-| `NextUp.tsx`, `runWords.ts` | Next up and "in 40 min" |
+| `NextUp.tsx`, `runWords.ts` | Next up; the one countdown to a run (`soonWords`: "in 56 s", "in 2 min", "in 40 min"), the Jobs view's Next run reads it too |
 | `panelWords.ts` | the panel's words: a Needs-you card's look, a moment ahead or past, a run's age |
 | `RunnerTab.tsx`, `shell/TabShell.tsx` | the Runner tab and its frame: the four views, the route, the "This project" chip, New job |
 | `JobsView.tsx`, `jobWords.ts`, `JobsProblem.tsx` | the Jobs view; its Last result and Next run cells (a held job's with Next up's `held` tag); the scheduler-not-running and unreadable-jobs messages |
 | `DeleteJobDialog.tsx` | the Delete confirm, shared by the row and the form |
-| `ServicesView.tsx`, `serviceWords.ts` | the Services view; a service's state in words |
+| `ServicesView.tsx`, `serviceWords.ts`, `useServiceAction.tsx` | the Services view; a service's state in words (waiting for Pomade included); Start, Stop and Restart through the scheduler, shared with the Jobs view |
+| `CommandColumn.tsx`, `commandWidth.ts` | the Services view's Command column: its head with the drag grip, its cell cut with "…" and a tooltip when cut; the width limits, the clamp and the width kept on this Mac (pure) |
 | `HistoryView.tsx`, `useHistoryPages.ts`, `runLook.ts` | History: filters, day heads, pages of 100; a run's look (dot, words, pill, filter, duration) |
 | `RunCard.tsx`, `MessageText.tsx`, `RunAtField.tsx` | the result card for every run state; an agent's message drawn as text, never as HTML; Run at…'s field |
 | `OutputPage.tsx`, `useRunOutput.ts` | a run's output tab; a run's output, followed while it runs |
-| `SettingsView.tsx` | Settings: the four steppers, the read-only rows, the files |
+| `SettingsView.tsx` | Settings: the four steppers, the skills folder's field, the read-only rows (notifications, where the agent skill is), the files |
 | `form/JobForm.tsx` | the form's page: head, Kind, kind sections, Policies, the Save bar, following the file |
 | `form/state.ts` | the form's state (pure): values, what the person set, the file as last read, the fields each kind writes (`FORM_KINDS`) |
 | `form/kinds.tsx` | each kind's card, sections, policy rows and Create button (`KIND_UI`) |
@@ -72,7 +73,7 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
 | `jobFiles.ts` | the form's job-file writes through the Host API: create under a free slug, field-only changes, follow the file |
 | `useRunnerApi.ts` | Runner's API, live; Pomade's projects, repos (`git.read`), the open project, the tab's route |
 | `useAgents.ts` | the Agents app through the broker: the roster, the projects connected to an agent, a session's last message |
-| `useAction.ts`, `useNow.ts` | the latest failure of a click; the Mac's clock, read again |
+| `useAction.ts`, `useNow.ts` | the latest failure of a click; the Mac's clock, read again (`useNow`), and read again the moment a countdown reads differently (`useCountdownNow`) |
 | `help.ts` | every help text |
 | `EmptyState.tsx` | a centred message for a surface with nothing to list |
 | `tokens.css`, `base.css`, `*.module.css` | the design tokens (light only), base styles, each component's styles |
@@ -82,7 +83,7 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
 
 The kit gives these keyboard behaviours: Esc closes a dialog, a menu and a tooltip (a dialog traps
 Tab and Shift+Tab); Run at…'s field closes on Esc without closing the dialog around it; a menu moves
-with the arrow keys, Home and End; a stepper changes by arrow up and down; a History row and a
+with the arrow keys, Home and End; a stepper changes by arrow up and down; the Services view's Command grip by arrow left and right (Shift: a larger step); a History row and a
 clickable table cell open on Enter or Space. There are no app-wide shortcuts.
 
 ## Invariants
@@ -97,7 +98,7 @@ clickable table cell open on Enter or Space. There are no app-wide shortcuts.
 
 ## Tests
 
-Unit (vitest) for the pure parts: `form/policies`, `form/schedule`, `form/state`, `form/triggers`,
+Unit (vitest) for the pure parts: `commandWidth`, `form/policies`, `form/schedule`, `form/state`, `form/triggers`,
 `help`, `jobFiles`, `jobWords`, `panelWords`, `runLook`, `runWords`, `serviceWords`. E2E: `ui.spec.ts` drives
 the built page in pomade-kit's fake host (`e2e/harness/`) and in a plain browser, `RUNNER_SHOTS=<dir>`
 saves a screenshot of every state; `pomade.spec.ts`, `pomade-git.spec.ts`, `pomade-hooks.spec.ts`

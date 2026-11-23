@@ -332,8 +332,8 @@ disk.
 - The pause and the firings within the window are kept in `runs.json`: a restart neither forgets
   a pause nor starts the count over. A paused job's item shows while its file is there; the pause
   lasts until Resume.
-- Every firing passes the guard, Pomade's hooks included. A first-open service's start is a
-  service's own start, as at login, and is no firing.
+- Every firing passes the guard, Pomade's hooks included. A service's start — at login, with
+  Pomade, on a project's first open — is the service's own, and is no firing.
 
 ## Runs
 

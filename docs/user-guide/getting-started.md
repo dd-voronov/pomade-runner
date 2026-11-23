@@ -12,7 +12,8 @@ kind: reference
 Runner has three parts. The **side panel** and the **Runner tab** are what you see in Pomade. The
 **scheduler** is Runner's always-on background part: a login item that keeps running when Pomade
 quits. It reads your job files, fires schedules, hooks and chains, runs the jobs and keeps the
-history. With Pomade closed, services, scripts and git jobs still run; an agent job needs Pomade, so
+history. With Pomade closed, services that start on Mac startup, scripts and git jobs still run (a
+service that runs only while Pomade does stops with it, [Services](services.md)); an agent job needs Pomade, so
 Runner opens it for the run ([Agent jobs](agent-jobs.md)).
 
 Every run and every service is a terminal session held by Runner's own keeper. Closing a tab only
@@ -20,10 +21,12 @@ detaches from it; the process keeps running.
 
 ## Install
 
-In Runner's repository, run `./install`. It builds Runner, installs it into the dev Pomade, and links
-Runner's job skill into your agents' skill folders so an agent can write jobs for you. `./install` is
-also the update step. `./install --stable` installs into the stable Pomade. `./uninstall` removes the
-skill links and the app.
+In Runner's repository, run `./install`. It builds Runner and installs it into the dev Pomade; Runner's
+scheduler then keeps a copy of its job skill in your workspace's skills folder (`Knowledge/_skills/apps/`
+unless you change it in Settings), so an agent can write jobs for you once you give it the skill.
+Runner gives the skill to no agent: link or copy it into the skills of the agents you choose, by hand or
+in the Agents app. `./install` is also the update step. `./install --stable` installs into the stable
+Pomade. `./uninstall` removes the app and the skill copy.
 
 Runner finds your workspace through Pomade. With no workspace recorded the scheduler waits and writes
 nothing; open Pomade once.
@@ -42,8 +45,9 @@ The **Runner** icon on Pomade's left strip opens the panel. Top to bottom:
   you." when empty and a red count while anything waits. See [Results](results.md).
 - **Running now** — services that are up or starting, then the runs going. A service's row opens its
   terminal tab, a running run's row its terminal, a queued run's row its result card.
-- **Next up** — the next five runs, soonest first. A run the switch holds carries a `held` tag. A row
-  opens the job in the Jobs view.
+- **Next up** — the next five runs, soonest first, as a countdown within the hour ("in 56 s", "in 2
+  min", "in 40 min") and a time after it. A run the switch holds carries a `held` tag. A row opens the
+  job in the Jobs view.
 - **Open Runner** — opens the Runner tab.
 
 With no jobs yet the panel shows "No jobs yet" and a **New job** button.
@@ -59,7 +63,8 @@ Settings**. **New job** is at the right end of the header.
 - **Jobs** — every job file, grouped by project. [Jobs and the job form](jobs.md).
 - **History** — every run, newest first, with the runs going on top. [Results](results.md).
 - **Services** — the services and where each stands. [Services](services.md).
-- **Settings** — the four workspace settings and the Mac's notification and skill status.
+- **Settings** — the workspace settings (four numbers and the skills folder), the Mac's notification
+  permission and where the agent skill is.
   [Missed runs and load](missed-runs-and-load.md).
 
 The **This project** chip in Jobs, History and Services keeps only the project Pomade has open; in Jobs

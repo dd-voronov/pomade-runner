@@ -8,8 +8,8 @@ kind: reference
 # Known limits
 
 - **Only jobs made in Runner.** A terminal you open by hand, in Pomade or outside it, is just a terminal.
-- **Events are not caught up.** `Pomade started`, `First open of a project…`, `Project created`, `Agent
-  session finished` and `Session status changed to…` fire only while Pomade runs and Runner's scheduler
+- **Events are not caught up.** `Pomade started`, `First open of a project…`, `Project opened`, `Project
+  created`, `Agent session finished` and `Session status changed to…` fire only while Pomade runs and Runner's scheduler
   is connected to it. One that happens while either is not listening is lost. A `Mac login` hook does
   not need Pomade.
 - **One Mac per workspace.** Two Macs running the same workspace at once both fire the jobs.

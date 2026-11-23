@@ -43,11 +43,22 @@ keep true.
   to the job's policy.
 - **Hooks** — one firing path, `hook()` in `runs.ts`, for every event; `hooks.ts` says which jobs an event
   fires and what environment its runs get. Events: Mac login (a scheduler start that finds no keeper
-  running), Pomade started, first open of a project, project created, agent session finished, session
-  status changed. Hooks have no missed-run policy: a run the switch held runs late. The projects
+  running), Pomade started, first open of a project, project opened (every open), project created,
+  agent session finished, session status changed. Hooks have no missed-run policy: a run the switch held runs late. The projects
   opened since Pomade started are kept with the start (`integrations/pomade-start.ts`): a first open
-  fires once per Pomade start, a restarted scheduler too, and the supervisor starts a first-open
-  service of an opened project as soon as it exists.
+  fires once per Pomade start, a restarted scheduler too, while project opened fires at every open;
+  the supervisor starts a first-open service of an opened project as soon as it exists.
+- **Service lifetimes** — a service's `start` (`login`, `pomade-started`, `project-first-open`) is both
+  when it starts and how long it lives. The scheduler tells the supervisor where Pomade stands
+  (`PomadeState`: running · closed · unsure); the two Pomade-bound starts (`pomadeBound`) run only while
+  it is running. Pomade has quit when the link is down and no Pomade start is found for the quit grace
+  (`QUIT_GRACE_MS`, 15 s; `POMADE_RUNNER_QUIT_GRACE_MS` in tests): `pomadeEnded()` then stops every
+  bound service and clears their stopped-by-you, failed and crash-count records. A scheduler started
+  while Pomade is closed stops the bound services it finds running. Start is refused for a bound
+  service while Pomade is closed (`NOT_WITH_POMADE`).
+- **The agent skill** (`jobs/skill/place.ts`) — the scheduler keeps a copy of the installed skill in the
+  workspace's skills folder (the `skills-folder` setting): placed at every start, moved when the
+  setting changes, linked to no agent.
 - **Chains** (`chains.ts`) — a run that ends done or failed fires its followers; a service follows with
   its `action` and never waits for the warm-up or the switch.
 - **Loop guard** (`loop-guard.ts`) — more than 10 firings of a job in 10 minutes by hooks or chains pauses
@@ -87,8 +98,8 @@ keep true.
 | `projects.ts` | Pomade's projects as last heard, in `projects.json` |
 | `needs-you.ts` | Needs-you items and the notices runs make |
 | `delete.ts` | `jobs.delete`: stop a running service, refuse while a run is going, remove the file |
-| `settings.ts`, `settings-file.ts` | the four workspace settings: validation (pure); the file read and written |
-| `environment.ts`, `read-environment.ts` | what Settings shows about the Mac (notification permission, the skill's links): the shared type and check (pure); reading it from the Mac |
+| `settings.ts`, `settings-file.ts` | the five workspace settings: validation (pure); the file read and written |
+| `environment.ts`, `read-environment.ts` | what Settings shows about the Mac (notification permission, where the skill's copy is): the shared type and check (pure); reading it from the Mac |
 | `workspace-follow.ts` | waiting for a workspace, starting again on another |
 | `run-events.ts` | the payloads of `run.started` and `run.finished`, agent fields included |
 | `model.ts` | the shared model of runs, history records, Needs you, the switch, and their words (`runTriggerWords`, `hookCauseWords`, `waitsWords`, `missedRunsWords`, `heldRunsWords`) |
@@ -116,7 +127,8 @@ keep true.
 - The state folder and the records folder are two types (`src/locations.ts`); a path in one is never
   taken for the other, and nothing under the workspace grows with a live run's output.
 - An invalid or half-written job file never stops or starts a running service.
-- Every firing passes the loop guard, Pomade's hooks included; a first-open service's start is no firing.
+- Every firing passes the loop guard, Pomade's hooks included; a service's start is no firing.
+- A Pomade-bound service never runs while Pomade is closed, and a `login` service is untouched by a Pomade quit.
 
 ## Tests
 
@@ -125,7 +137,7 @@ Unit (vitest), beside the files: `agent-runs`, `chains`, `clock`, `control/proto
 `needs-you`, `project-moves`, `queue`, `records-move`, `renamed`, `runs`, `scheduler`, `settings`,
 `settings-file`, `triggers`, `workspace-follow`. E2E: `background`, `runs`, `load`, `chains`, `git`,
 `services` (processes, Pomade closed); `pomade`, `pomade-hooks`, `pomade-agent-hooks`, `pomade-agents`,
-`pomade-agents-real`, `pomade-open`, `pomade-load`, `pomade-git` (a real Pomade).
+`pomade-agents-real`, `pomade-open`, `pomade-load`, `pomade-git`, `pomade-lifetimes` (a real Pomade).
 
 ## Known limits
 
