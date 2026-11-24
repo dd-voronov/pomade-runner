@@ -3,8 +3,9 @@ import type { HostClient } from "pomade-kit/sdk";
 import { runRoute } from "../integrations/runner-api";
 import { runWords, waitingAt, type ActiveRun } from "../scheduler/model";
 import { PanelEmpty, PanelRow, useToast } from "./kit";
+import { runningSince } from "./runLook";
 import { upWords } from "./serviceWords";
-import { useNow } from "./useNow";
+import { useRunningNow } from "./useNow";
 import { useProjectNames } from "./useRunnerApi";
 
 /** Where a row's job works, as Running now says it: "Alpha · Projects/alpha", "workspace · my-workspace"
@@ -61,7 +62,7 @@ export function ActiveRunsList({
   workspace?: string | null | undefined;
 }): React.JSX.Element {
   const going = goingRuns(runs);
-  const now = useNow();
+  const now = useRunningNow(runningSince(going));
   const projectName = useProjectNames(host);
   const toast = useToast();
   const show = (run: ActiveRun): void => {

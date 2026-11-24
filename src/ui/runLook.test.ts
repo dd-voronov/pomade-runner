@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ActiveRun, RunRecord, RunView } from "../scheduler/model";
-import { promptLines, byDay, dayWords, filterCounts, keeps, runDuration, runLook, runTime, shortDuration, slotHolders, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
+import { promptLines, byDay, dayWords, filterCounts, keeps, runDuration, runLook, runningSince, runTime, shortDuration, slotHolders, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
 
 /** Tue 17 Nov 2026, 12:48 — the prototype's "now". */
 const NOW = new Date(2026, 10, 17, 12, 48).getTime();
@@ -175,6 +175,10 @@ describe("History's days and times", () => {
     expect(runDuration(record({ durationMs: null }), NOW)).toBeNull();
     expect(runDuration(active({ startedAt: NOW - 180_000 }), NOW)).toBe(180_000);
     expect(runDuration(active({ state: "queued", startedAt: null }), NOW)).toBeNull();
+  });
+
+  it("counts a time from the start of the runs that are going, and no other", () => {
+    expect(runningSince([active({ startedAt: 5000 }), active({ state: "queued", startedAt: null }), record({ durationMs: 8000 }), active({ state: "missed-waiting", startedAt: null }), active({ startedAt: 9000 })])).toEqual([5000, 9000]);
   });
 });
 

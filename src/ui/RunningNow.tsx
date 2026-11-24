@@ -8,8 +8,9 @@ import type { ServiceStatus } from "../keeper/model";
 import type { ActiveRun } from "../scheduler/model";
 import { ActiveRunRow, goingRuns, placeWords } from "./ActiveRunsList";
 import { PanelEmpty, PanelRow, useToast } from "./kit";
+import { runningSince } from "./runLook";
 import { serviceLook } from "./serviceWords";
-import { useNow } from "./useNow";
+import { useRunningNow } from "./useNow";
 import { useProjectNames } from "./useRunnerApi";
 
 /** The services that run now — up or starting — in start order. */
@@ -62,7 +63,7 @@ export function RunningNow({
   workspace: string | null;
   runs: readonly ActiveRun[];
 }): React.JSX.Element {
-  const now = useNow();
+  const now = useRunningNow(runningSince(runs));
   const projectName = useProjectNames(host);
   const openTab = useOpenServiceTab(host);
   const openRun = useOpenRun(host);

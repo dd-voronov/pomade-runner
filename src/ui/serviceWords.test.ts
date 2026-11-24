@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ServiceStatus } from "../keeper/model";
-import { serviceActions, serviceLook, serviceWords, upWords, whenWords } from "./serviceWords";
+import { serviceActions, serviceLook, serviceWords, upChangeIn, upWords, whenWords } from "./serviceWords";
 
 const base: ServiceStatus = { job: "web", name: "Web", project: null, state: "running", session: null, restarts: 0, lastCrashAt: null, retryAt: null, needsRestart: false, problem: null };
 
@@ -118,5 +118,33 @@ describe("times in words", () => {
 
   it("how long, in its two largest units", () => {
     expect([0, 59_999, 180_000, 3_600_000 * 3 + 120_000, 86_400_000 * 3 + 3_600_000 * 4 + 59_000].map(upWords)).toEqual(["0s", "59s", "3m", "3h 02m", "3d 4h"]);
+  });
+});
+
+describe("when a run's time next reads differently", () => {
+  const START = 1_000_000;
+  const wait = (elapsed: number): number => upChangeIn(START, START + elapsed);
+
+  it("waits for the run's next whole second under a minute, then for the next 10 s of its time", () => {
+    expect([wait(0), wait(1), wait(500), wait(999), wait(1000), wait(23_400), wait(59_900), wait(60_000), wait(61_000), wait(65_500), wait(119_999), wait(3_600_000)]).toEqual([
+      1000, 999, 500, 1, 1000, 600, 100, 10_000, 9000, 4500, 1, 10_000,
+    ]);
+  });
+
+  it("reads a start still ahead of the clock as just started", () => {
+    expect(upChangeIn(START, START - 5000)).toBe(1000);
+  });
+
+  it("changes its words exactly when it says so, and never waits longer than 10 s", () => {
+    for (const elapsed of [0, 0.5, 17.3, 59, 59.999, 60, 61, 100, 119.9, 120, 600]) {
+      const ms = elapsed * 1000;
+      const before = upWords(ms);
+      const after = upChangeIn(START, START + ms);
+      expect(after).toBeLessThanOrEqual(ms < 60_000 ? 1000 : 10_000);
+      if (ms < 60_000) {
+        expect(upWords(ms + after - 1)).toBe(before);
+        expect(upWords(ms + after)).not.toBe(before);
+      }
+    }
   });
 });

@@ -75,6 +75,15 @@ export function upWords(ms: number): string {
   return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
+/** Milliseconds until a run started at `startedAt` is next read again: its next whole second while it
+ *  has run under a minute (`upWords` counts seconds), then the next multiple of 10 s of its time.
+ *  Both are the run's own moments, so every view of the run redraws together. */
+export function upChangeIn(startedAt: number, now: number): number {
+  const elapsed = Math.max(0, now - startedAt);
+  const step = elapsed < 60_000 ? 1000 : 10_000;
+  return step - (elapsed % step);
+}
+
 /** How a service looks in the Services view's Status column and in the panel's Running now. */
 export interface ServiceLook {
   /** Running or starting: its actions are Restart · Stop; otherwise Start. In Running now. */

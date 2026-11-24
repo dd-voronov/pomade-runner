@@ -152,6 +152,11 @@ export function runDuration(view: RunView, now: number): number | null {
   return view.state === "running" && view.startedAt !== null ? Math.max(0, now - view.startedAt) : null;
 }
 
+/** When the runs going among `views` started: what `useRunningNow` counts their time from. */
+export function runningSince(views: readonly RunView[]): number[] {
+  return views.flatMap((view) => (!isRecord(view) && view.state === "running" && view.startedAt !== null ? view.startedAt : []));
+}
+
 /** The help of what started a run: `tr.scheduled`, `tr.caught up`… */
 export const TRIGGER_HELP: Record<RunTrigger, HelpKey> = { scheduled: "tr.scheduled", "caught-up": "tr.caught up", manual: "tr.manual", hook: "tr.hook", chain: "tr.chain" };
 

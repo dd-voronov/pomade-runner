@@ -4086,3 +4086,128 @@ test.describe("the countdown to the next run", () => {
     }
   });
 });
+
+test.describe("the time a run has been going", () => {
+  const SCRIPT = "---\nkind: script\nname: Backup\nfolder: .\ncommand: ./backup.sh\nschedule:\n  daily: { at: 13:00 }\n---\n";
+  const SECOND = 1000;
+  const RUN_ID = "20261117-174850-aaaaaa";
+  // The clocks stop at 17:49:10; the run started 20 s before.
+  const STOP = new Date(2026, 10, 17, 17, 49, 10).getTime();
+
+  const going = (startedAt: number): ActiveRun => ({
+    job: "backup",
+    name: "Backup",
+    kind: "script",
+    project: null,
+    folder: "",
+    run: RUN_ID,
+    trigger: "scheduled",
+    cause: null,
+    dueAt: startedAt,
+    agent: null,
+    missed: null,
+    series: null,
+    state: "running",
+    lowPriority: true,
+    runAt: null,
+    deadline: null,
+    waits: null,
+    startedAt,
+    session: `run:backup:${RUN_ID}`,
+    log: null,
+    limitHit: null,
+    warnedAt: null,
+    warningDismissed: false,
+  });
+
+  type Places = { panel: Page; history: Page; card: Page };
+
+  /** The panel, History and the run's card, each in a page of its own on the same clock, all showing
+   *  a run that started 20 s before the clocks stop at 17:49:10. */
+  async function surfaces(browser: Browser, active: ActiveRun[]): Promise<Places> {
+    const open = async (query: Record<string, string>, size: { width: number; height: number }, ready: string): Promise<Page> => {
+      const page = await browser.newPage({ viewport: size });
+      await page.clock.install({ time: new Date(STOP - 10 * SECOND) });
+      await page.goto(harness(query));
+      await page.waitForFunction(() => typeof window.setServiceStatus === "function");
+      await writeJob(page, "backup.md", SCRIPT);
+      const report: RunsReport = { active, nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null }, heldRuns: 0 };
+      await page.evaluate((r) => window.setRuns({ report: r, history: [] }), report);
+      await expect(app(page).getByTestId(ready)).toBeVisible();
+      await page.clock.pauseAt(new Date(STOP));
+      return page;
+    };
+    return {
+      panel: await open({ surface: "panel" }, { width: 240, height: 640 }, "active-run"),
+      history: await open({ route: "history" }, { width: 1040, height: 760 }, "history-row"),
+      card: await open({ route: `run/backup/${RUN_ID}` }, { width: 1040, height: 760 }, "run-card"),
+    };
+  }
+
+  const close = async (pages: Places): Promise<void> => {
+    for (const page of Object.values(pages)) await page.close();
+  };
+
+  /** What each place says of the run's time. */
+  async function says(pages: Places): Promise<string[]> {
+    const text = (page: Page, testId: string): Promise<string> => app(page).getByTestId(testId).first().innerText();
+    return [(await text(pages.panel, "active-run")).replace(/^[\s\S]*running\s+(\S+)[\s\S]*$/, "$1"), (await text(pages.history, "history-duration")).trim(), (await text(pages.card, "run-duration")).trim()];
+  }
+
+  /** After `ms` more on every clock, a second at a time as the pages schedule their next redraw after drawing. */
+  async function after(pages: Places, ms: number): Promise<void> {
+    for (let done = 0; done < ms; done += SECOND) {
+      for (const page of Object.values(pages)) await page.clock.runFor(Math.min(SECOND, ms - done));
+      await pages.panel.waitForTimeout(25);
+    }
+  }
+
+  test("a run going 20 s reads 20s, 21s, 22s… in the panel, History and its card alike, without leaving the tab", async ({ browser }) => {
+    const pages = await surfaces(browser, [going(STOP - 20 * SECOND)]);
+    try {
+      await expect.poll(() => says(pages)).toEqual(["20s", "20s", "20s"]);
+      await shoot(pages.panel, "t031-panel-20s");
+      await shoot(pages.history, "t031-history-20s");
+      await shoot(pages.card, "t031-card-20s");
+      for (let seconds = 21; seconds <= 26; seconds++) {
+        await after(pages, SECOND);
+        await expect.poll(() => says(pages)).toEqual(Array(3).fill(`${seconds}s`));
+      }
+    } finally {
+      await close(pages);
+    }
+  });
+
+  test("past a minute the three still agree: 59s, then 1m on to the minutes", async ({ browser }) => {
+    const pages = await surfaces(browser, [going(STOP - 57 * SECOND)]);
+    try {
+      await expect.poll(() => says(pages)).toEqual(["57s", "57s", "57s"]);
+      await after(pages, 2 * SECOND);
+      await expect.poll(() => says(pages)).toEqual(["59s", "59s", "59s"]);
+      await after(pages, SECOND);
+      await expect.poll(() => says(pages)).toEqual(["1m", "1m", "1m"]);
+      await after(pages, 130 * SECOND);
+      await expect.poll(() => says(pages)).toEqual(["3m", "3m", "3m"]);
+    } finally {
+      await close(pages);
+    }
+  });
+
+  test("the digits do not shift the row: the panel's status, History's duration and the card's meta keep their places from 20s to 26s", async ({ browser }) => {
+    const pages = await surfaces(browser, [going(STOP - 20 * SECOND)]);
+    try {
+      const places = async (): Promise<number[]> => {
+        const status = await app(pages.panel).getByTestId("active-run").locator("span").last().boundingBox();
+        const cells = await app(pages.history).getByTestId("history-row").first().locator("> *").evaluateAll((all) => all.map((cell) => cell.getBoundingClientRect().x));
+        const trigger = await app(pages.card).getByTestId("run-trigger").boundingBox();
+        return [status!.x, ...cells, trigger!.x];
+      };
+      const before = await places();
+      await after(pages, 6 * SECOND);
+      await expect.poll(() => says(pages)).toEqual(["26s", "26s", "26s"]);
+      expect(await places()).toEqual(before);
+    } finally {
+      await close(pages);
+    }
+  });
+});

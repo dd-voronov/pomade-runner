@@ -27,13 +27,13 @@ import {
 import { MessageText } from "./MessageText";
 import { Button, Dialog, DialogBody, DialogFoot, DialogHead, Help, Icon, LinkButton, Pill, useToast } from "./kit";
 import styles from "./RunCard.module.css";
-import { dayWords, isRecord, KIND_WORDS, promptLines, runDuration, runLook, runTime, shortDuration, slotHolders, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
+import { dayWords, isRecord, KIND_WORDS, promptLines, runDuration, runLook, runningSince, runTime, shortDuration, slotHolders, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
 import { shortClock, upWords } from "./serviceWords";
 import { aheadMoment } from "./panelWords";
 import { RunAllConfirm } from "./RunAllConfirm";
 import { RunAtField } from "./RunAtField";
 import { useLastMessage } from "./useAgents";
-import { useNow } from "./useNow";
+import { useRunningNow } from "./useNow";
 import { useRunOutput } from "./useRunOutput";
 import { useRun } from "./useRunnerApi";
 
@@ -114,7 +114,7 @@ function RunCard({
   open: (route: string) => void;
   close: () => void;
 }): React.JSX.Element {
-  const now = useNow(10_000);
+  const now = useRunningNow(runningSince([view]), 10_000);
   const toast = useToast();
   const [runAt, setRunAt] = useState<string | null>(null);
   /** The Run all waiting for the confirm above `RUN_ALL_CONFIRM_ABOVE` runs: how many it runs. */
@@ -138,7 +138,7 @@ function RunCard({
     <span key="when" data-testid="run-when">
       {whenWords(runTime(view), now)}
     </span>,
-    ...(duration === null ? [] : [<span key="duration">{view.state === "running" ? upWords(duration) : shortDuration(duration)}</span>]),
+    ...(duration === null ? [] : [<span key="duration" data-testid="run-duration">{view.state === "running" ? upWords(duration) : shortDuration(duration)}</span>]),
     <span key="trigger" className={styles.helped} data-help={TRIGGER_HELP[view.trigger]} data-testid="run-trigger">
       {TRIGGER_WORDS[view.trigger]}
     </span>,

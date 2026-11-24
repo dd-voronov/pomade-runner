@@ -6,11 +6,11 @@ import { runRoute } from "../integrations/runner-api";
 import { runTriggerWords, type ActiveRun, type RunView } from "../scheduler/model";
 import styles from "./HistoryView.module.css";
 import { Chip, EmptyBlock, GroupHead, Help, KindCell, Status, TableHead, TableRow } from "./kit";
-import { byDay, FILTER_WORDS, filterCounts, HISTORY_FILTERS, keeps, KIND_WORDS, runDuration, runLook, runTime, shortDuration, TRIGGER_HELP, type HistoryFilter } from "./runLook";
+import { byDay, FILTER_WORDS, filterCounts, HISTORY_FILTERS, keeps, KIND_WORDS, runDuration, runLook, runningSince, runTime, shortDuration, TRIGGER_HELP, type HistoryFilter } from "./runLook";
 import { shortClock, upWords } from "./serviceWords";
 import { ViewFilters } from "./shell/TabShell";
 import { useHistoryPages } from "./useHistoryPages";
-import { useNow } from "./useNow";
+import { useRunningNow } from "./useNow";
 import { useActiveProject, useSettings } from "./useRunnerApi";
 
 /** History: the runs going and every run that ended or never started, newest first, in their days
@@ -37,7 +37,7 @@ export function HistoryView({
   const history = useHistoryPages(host);
   const settings = useSettings(host);
   const project = useActiveProject(host);
-  const now = useNow(10_000);
+  const now = useRunningNow(runningSince(active), 10_000);
   const [filter, setFilter] = useState<HistoryFilter>("all");
   const end = useRef<HTMLDivElement>(null);
   const ready = history.status === "ready" ? history : null;
@@ -152,7 +152,7 @@ function HistoryRow({ view, now, onOpen }: { view: RunView; now: number; onOpen:
           {look.words}
         </Status>
       </span>
-      <span className={styles.duration}>{duration === null ? "—" : view.state === "running" ? upWords(duration) : shortDuration(duration)}</span>
+      <span className={styles.duration} data-testid="history-duration">{duration === null ? "—" : view.state === "running" ? upWords(duration) : shortDuration(duration)}</span>
       <span className={styles.trigger} data-help={TRIGGER_HELP[view.trigger]} data-testid="history-trigger">
         {runTriggerWords(view)}
       </span>
