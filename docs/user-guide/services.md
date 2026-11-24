@@ -108,9 +108,15 @@ waiting for Pomade); `Open terminal` once it has run, `Edit` and `Open file`. A 
 action's outcome or refusal.
 
 The Command column is in the monospace type. A command too long for it ends in "…" and shows whole in a
-tooltip on hover and on keyboard focus; one that fits has none. Drag the column's edge in the header —
-or focus it and press Left or Right, Shift for bigger steps — to change its width; Runner remembers the
-width on this Mac.
+tooltip on hover and on keyboard focus; one that fits has none.
+
+**Service**, **Command** and **Status** each have a grip on the right edge of their header. Drag one —
+or focus it and press Left or Right, Shift for bigger steps — to change that column's width and no
+other's; none goes under 120 px. A double click on a grip puts the table back to its default layout.
+When the columns together are wider than the tab, the table scrolls sideways, header and rows together.
+Runner remembers the widths on this Mac, for the next time the tab opens. In a tab narrower than 800 px
+there is no Command column: each command sits under its service's name, and nothing is resized or
+scrolled (the widths you set return in a wider tab).
 
 | Status | Under it |
 |---|---|

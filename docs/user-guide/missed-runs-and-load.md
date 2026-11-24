@@ -107,7 +107,12 @@ warm-up. A wake is any gap of more than a minute between two ticks of the schedu
 `Running` · `Pause low-priority` · `Pause all` ([Getting started](getting-started.md)). While held, a
 job's schedule stays where the switch caught it, and nothing is decided for it: no record, no Needs-you
 item. Its **Next run** in Jobs carries the amber `held` tag, as Next up does, and the note under the
-switch counts the runs held so far: "Low-priority jobs are held · 4 runs so far". On release every
+switch counts the runs held so far: "Low-priority jobs are held · 4 runs so far". The count is a link:
+it opens the Runner tab on History with **Skipped & missed** on, where each held job has one **held**
+row — "held · 3 runs so far, 17:40–17:44" (`held · 1 run so far, 17:40` for one; `Tue 23:40–Wed 00:20`
+across days), counting up as runs come due; the rows' counts add up to the count under the switch.
+`pomade-runner history` prints the held rows first. A held row is no record, Needs-you item or notice.
+On release the held row is gone and the job's record takes its place; every
 run the switch held is missed — the latest too, however recent — and the job gets one decision by its
 policy, counted: "missed 3 runs, 17:40–17:44 · caught up once". A queued run the switch held that is
 more than 5 minutes late, or a caught-up one, follows the policy too. A release is no wake: no

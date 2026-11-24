@@ -18,13 +18,32 @@ the **Time**, the kind icon, the **Job**, the **Result**, the **Duration** and t
 (`scheduled` · `caught up` · `missed 4 runs, 17:40–17:46 · caught up once` · `caught up 2 of 4` (a run of
 a Run all) · `manual` · `hook: Mac
 login` · `chain: after Pull`). Time queued does not
-count toward a duration; time waiting for you does. Click a row, or press Enter or Space on it, to
+count toward a duration; time waiting for you does. A run going shows how long so far, counted each
+second for the first minute and then every 10 seconds ("23s", "3m"); Running now and the run's
+result card show the same time at the same moment. Click a row, or press Enter or Space on it, to
 open its result card.
+
+While the switch holds a job, History has a row for it: the job's name, `held · 2 runs so far,
+17:40–17:42` in amber as its result, `scheduled` as its trigger and no duration, counting up as runs
+come due. Click it to open the job in Jobs. It is not a run: it has no card. When the switch is
+released the row becomes the record of the miss (`missed 2 runs, 17:40–17:42 · caught up once`,
+`· skipped`, or the waiting run's row), and a Run all or Run the other N shows its runs as
+`caught up 2 of 3`. A held row makes no Needs-you item and no notice.
+
+Every column with text can be resized: **Job**, **Result**, **Duration** and **Trigger** each have a
+grip on the right edge of their header (the time and the kind icon have none). Drag one, or focus it
+and press Left or Right (Shift for bigger steps), to change that column's width and no other's; a
+double click puts the table back to its default layout. When the columns are wider than the tab, the
+table scrolls sideways with its header and rows, the day heads keeping their titles at the left. A
+Job, Result or Trigger too long for its column ends in "…" and shows whole in a tooltip. Runner
+remembers the widths on this Mac.
 
 With no run yet, History shows "Nothing here yet" with **New job**.
 
 Chips filter the list: `All` · `Active` (running, waiting for you, queued) · `Failed` · `Skipped &
-missed`, each but All with its count. A run you stopped shows under All only. `This project` keeps the
+missed`, each but All with its count; held rows count under `Skipped & missed`. The "N runs so far"
+under the switch in the side panel is a link that opens History with `Skipped & missed` on. A run you
+stopped shows under All only. `This project` keeps the
 open project's runs. The summary says "kept 30 days": History keeps as many days as the settings say
 ([Missed runs and load](missed-runs-and-load.md)). It loads 100 records at a time and the next older
 page when you scroll to the end; while older pages remain a count is of the runs loaded and says so

@@ -69,7 +69,7 @@ reads "N jobs", plus "· N invalid" when a file has errors. Columns:
   or the latest finished one ("done", "failed · exit 1", "stopped: time limit, 45 min", "skipped · …",
   "missed · …", "stopped by you") over when it started and how long it took, with "· caught up" or
   "· manual" where that is how it started ("today 8:32 · 4m 12s · caught up") — a done git run shows
-  its commit instead. A run going shows how long so far; a queued run reads "queued · 1 ahead" over
+  its commit instead. A run going shows how long so far, counted each second for the first minute; a queued run reads "queued · 1 ahead" over
   "since 12:46"; a job the loop guard paused reads amber "paused · looks like a loop" over when and
   "10× in 10 min". "never ran" for none. Click it to open the run's result card. A service shows its
   state as the Services view does.
@@ -80,9 +80,10 @@ reads "N jobs", plus "· N invalid" when a file has errors. Columns:
   words as the panel's Next up). While the switch holds the job, the time is faint and an amber `held`
   tag sits under it ([Missed runs and load](missed-runs-and-load.md)).
 - **Row actions** — `Run now`, `Edit`, `Delete`, and the `Enabled` toggle. While a script, agent or
-  git job has a run going, `Open terminal` and `Stop run` come before `Run now` and act on the
-  latest run — the same two as on the run's card; for an agent run waiting for you the first reads
-  `Open at the prompt`. They leave when the run ends; the other icons do not move. A service has, in Run
+  git job has a run going (a queued run does not count), `Open terminal` and `Stop run` come before
+  `Run now` and act on the latest run — the same two as on the run's card; for an agent run waiting for
+  you the first reads `Open at the prompt`. `Stop run` toasts "<job> stopped by you". They leave when
+  the run ends; the other icons do not move. `Run now` stays while the job runs. A service has, in Run
   now's place, `Stop service` while it runs or starts and `Start service` while it does not (none
   while it is disabled — the toggle enables it — or while it waits for Pomade); before it, `Open terminal` once the service has run
   — its tab shows its output, the last output once it ended. A refused action reports as a toast

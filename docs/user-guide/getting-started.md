@@ -39,7 +39,7 @@ The **Runner** icon on Pomade's left strip opens the panel. Top to bottom:
   middle one reads `Pause low`. A pause says what it holds under the control: "Low-priority jobs are
   held. Services keep running." / "Every scheduled job is held. Services keep running." — with how
   many runs it has held so far once it has held one: "Low-priority jobs are held · 4 runs so far.
-  Services keep running." See
+  Services keep running." The count is a link: it opens History with `Skipped & missed` on. See
   [Missed runs and load](missed-runs-and-load.md).
 - **Needs you** — what waits for you, a card per item with its actions inline. It shows "Nothing needs
   you." when empty and a red count while anything waits. See [Results](results.md).

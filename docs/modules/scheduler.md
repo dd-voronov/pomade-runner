@@ -37,10 +37,22 @@ keep true.
   lives in `runs.json`. A run stopped by you, one that never started, or a job gone drops the rest with
   one skipped record, its id made from the run it follows so a restart never writes it twice. The
   switch's release leaves a series run queued; an on-time run never covers it.
-- **The switch** — a job it holds keeps its look in `held`; nothing is decided for it while held — no
-  record, no Needs-you item — and the report counts its occurrences (`heldRuns`) and marks it
-  (`JobRuns.held`). On release every occurrence it held is missed, however recent, and goes, counted,
-  to the job's policy.
+- **The switch** — a job it holds keeps its look in `held` (in `runs.json`); nothing is decided for
+  it while held — no record, no Needs-you item, no notice — and the report marks it (`JobRuns.held`).
+  Its held runs are counted on each ask, never stored: `heldRows()` takes every occurrence of the job's
+  schedule since its `held` look up to the clock (`passedOccurrences`), one `HeldRun` per job with at
+  least one, by job id; `heldRuns` is the sum of their counts. On release every occurrence it held is
+  missed, however recent, and goes, counted, to the job's policy.
+- **Held rows** — History's row for a job the switch holds: "held · 3 runs so far, 17:40–17:44" (one
+  run: "held · 1 run so far, 17:40"; across days "Tue 23:40–Wed 00:20"; `heldRowWords`, `model.ts`).
+  They travel as `HistoryPage.held`, never in the history day files: `historyPage` (`scheduler.ts`)
+  fills them on the newest page (no `before`), only the asked job's when one is asked (by id; the control answer resolves a name first),
+  and leaves them `[]` on older pages; the control `history` answer is always the newest page. They
+  sit outside the page's `limit`. On release the held row is gone and the record the policy writes
+  takes its place; a held row makes no Needs-you item or notice. `onChange` fires when the count of
+  held runs goes up, so a view reads the rows again. The route `history/missed`
+  (`HISTORY_MISSED_ROUTE`, `integrations/runner-api.ts`) opens History with Skipped & missed on; the
+  count under the switch links to it.
 - **Hooks** — one firing path, `hook()` in `runs.ts`, for every event; `hooks.ts` says which jobs an event
   fires and what environment its runs get. Events: Mac login (a scheduler start that finds no keeper
   running), Pomade started, first open of a project, project opened (every open), project created,
@@ -81,7 +93,7 @@ keep true.
 |---|---|
 | `main.ts` | the entry: reads the app key and keeper socket from the environment, runs the scheduler on the workspace Pomade records |
 | `scheduler.ts` | the wiring: the control socket, the Pomade connection and its events, the tick, the loaded jobs and settings, notices and the badge, the broker API |
-| `runs.ts` | the run lifecycle: the look, wake, overlap, the staged start, the login hook, firing hooks and chains, starting and ending sessions, time limits, long-run warnings, agent launch, waiting for you |
+| `runs.ts` | the run lifecycle: the look, wake, overlap, the switch and its held rows (`heldRows`, `heldRuns`), the staged start, the login hook, firing hooks and chains, starting and ending sessions, time limits, long-run warnings, agent launch, waiting for you |
 | `triggers.ts` | which of a schedule's occurrences fell since the previous look, every one counted (pure; `pomade-kit`'s engine) |
 | `missed.ts` | what a missed-run policy makes of missed occurrences, their count kept with the decision; adding two counts; Run at…'s time (Run all is in `runs.ts`: it is the person's choice, no policy's) |
 | `queue.ts` | which queued runs start now, what each other waits for (time, switch, warm-up, previous run, Pomade, slot) |
@@ -91,7 +103,7 @@ keep true.
 | `loop-guard.ts` | the firing count per job, the pause, Resume |
 | `agent-runs.ts` | an agent run's rules (pure): what its session runs, how its end reads, which session the lookup by folder and start time picks |
 | `git-runs.ts` | a git run's command line, its end read with `pomade-git`'s result, its lines per repo, the `jobs.forRepo` answer |
-| `history.ts` | history records and the output logs: appending, reading a page, retention, moving a log into the records folder |
+| `history.ts` | history records and the output logs: appending, reading a page of records (`HistoryRecords`: a `HistoryPage` without its held rows, which `runs.ts` knows), retention, moving a log into the records folder |
 | `records-move.ts` | the one-time move of the records from the state folder into the workspace |
 | `renamed.ts` | `renamed.json`: old job id → new id after a project move; a job's history takes in every id it had |
 | `project-moves.ts` | following a project renamed or moved: job files' `folder:`, the jobs sub-folder, the jobs' state |
@@ -102,7 +114,7 @@ keep true.
 | `environment.ts`, `read-environment.ts` | what Settings shows about the Mac (notification permission, where the skill's copy is): the shared type and check (pure); reading it from the Mac |
 | `workspace-follow.ts` | waiting for a workspace, starting again on another |
 | `run-events.ts` | the payloads of `run.started` and `run.finished`, agent fields included |
-| `model.ts` | the shared model of runs, history records, Needs you, the switch, and their words (`runTriggerWords`, `hookCauseWords`, `waitsWords`, `missedRunsWords`, `heldRunsWords`) |
+| `model.ts` | the shared model of runs, history records, Needs you, the switch, and their words (`runTriggerWords`, `hookCauseWords`, `waitsWords`, `missedRunsWords`, `heldRunsWords`, `heldRowWords`), `HeldRun` and `HistoryPage.held` |
 | `clock.ts` | the `Clock`, the tick length, the test overrides `POMADE_RUNNER_TICK_MS`, `POMADE_RUNNER_CLOCK`, `POMADE_RUNNER_CLOCK_RATE` |
 | `log.ts` | one timestamped line per event on stdout (`<userData>/app-logs/pomade-runner/backend.log`) |
 | `control/protocol.ts` | the control protocol both sides import: methods, versions, shapes |
@@ -122,6 +134,8 @@ keep true.
 - A service is never held by the switch or the warm-up and never followed by a chain's run.
 - A job the switch holds gets no record, Needs-you item or notice until the switch lets it go; then
   one decision, whose run or record counts every occurrence it held.
+- A held row is derived on each ask from `held`, the job's schedule and the clock, and never written
+  to history; the rows' counts add up to `heldRuns`; a job released has no held row beside its record.
 - A job has at most one run of a Run all active; its runs never run at once, and each ended run either
   queues the next or is followed by the one record that drops the rest.
 - The state folder and the records folder are two types (`src/locations.ts`); a path in one is never
