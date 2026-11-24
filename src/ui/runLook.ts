@@ -233,6 +233,8 @@ export function waitsSentence(waits: Waits | null, now: number, going: readonly 
       return "The job's previous run is still going. This one starts when it finishes.";
     case "pomade":
       return "An agent run needs Pomade, so Runner is opening it. The run starts once Pomade and the Agents app are ready.";
+    case "keeper":
+      return "The keeper cannot reach the macOS keychain, so an agent started there would have no login. Runner starts a fresh keeper once the runs going have finished, then this run.";
     case "slot": {
       const starts = waits.ahead === 1 ? "This one starts when one of them finishes." : `This one starts once ${waits.ahead} runs ahead of it have finished.`;
       if (going.length === 0) return `Low-priority runs are going in every free slot — ${waits.ahead} ${waits.ahead === 1 ? "run" : "runs"} ahead. ${starts}`;

@@ -38,7 +38,7 @@ function run(job: string, state: "queued" | "running", extra: Partial<ActiveRun>
 
 function state(extra: Partial<QueueState> & { overlaps?: Record<string, OverlapPolicy> } = {}): QueueState {
   const { overlaps = {}, ...rest } = extra;
-  return { now: 1000, maxLowPriority: 2, position: "running", warmUp: { over: true }, overlap: (job) => overlaps[job] ?? "skip", pomadeUp: true, ...rest };
+  return { now: 1000, maxLowPriority: 2, position: "running", warmUp: { over: true }, overlap: (job) => overlaps[job] ?? "skip", pomadeUp: true, keeperLost: false, ...rest };
 }
 
 /** Each queued run's fate: `start`, or what it waits for. */
@@ -59,6 +59,18 @@ describe("the queue", () => {
     // The switch and the previous run hold first.
     expect(fates([agent("a")], state({ pomadeUp: false, position: "pause-all" }))).toEqual({ a: { kind: "switch", position: "pause-all" } });
     expect(fates([run("p", "running", { kind: "agent" }), agent("p")], state({ pomadeUp: false }))).toEqual({ p: { kind: "previous-run" } });
+  });
+
+  it("while the keeper waits to be replaced, agent runs wait for a fresh keeper as long as a run is going, holding no slot; other runs go on", () => {
+    const agent = (job: string): ActiveRun => run(job, "queued", { kind: "agent" });
+    const lost = state({ keeperLost: true, maxLowPriority: 1 });
+    expect(fates([run("r", "running"), agent("a"), agent("b"), run("s", "queued", { lowPriority: false })], lost)).toEqual({ a: { kind: "keeper" }, b: { kind: "keeper" }, s: "start" });
+    // Nothing going: the first agent run starts — its start replaces the keeper.
+    expect(fates([agent("a"), agent("b")], lost)).toEqual({ a: "start", b: { kind: "slot", ahead: 1 } });
+    // Pomade not up holds first.
+    expect(fates([run("r", "running"), agent("a")], state({ keeperLost: true, pomadeUp: false }))).toEqual({ a: { kind: "pomade" } });
+    // A keeper that reaches the keychain holds nothing.
+    expect(fates([run("r", "running", { lowPriority: false }), agent("a")])).toEqual({ a: "start" });
   });
 
   it("an agent run waiting for you at a prompt holds no slot; answered, it counts again", () => {

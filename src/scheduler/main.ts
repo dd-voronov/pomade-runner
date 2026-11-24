@@ -13,6 +13,7 @@ import { noticePoster } from "../integrations/notices";
 import { pomadeStartOf } from "../integrations/pomade-start";
 import { linkPomade } from "../integrations/pomade";
 import { createAgentTurns, loginShell } from "../keeper/agent-turns";
+import { keychainCheckArgv } from "../keeper/keychain";
 import { probeReadiness } from "../keeper/readiness";
 import { createSessions } from "../keeper/sessions";
 import { fileStore } from "../keeper/supervisor";
@@ -70,7 +71,7 @@ if (state === null || socketPath === null || userData === null) {
       log,
       linkPomade,
       launchPomade: () => launchPomade({ role: "backend" }),
-      sessions: createSessions({ socketPath: keeperSocket, key, keeper: { entry: KEEPER_ENTRY, version: KEEPER_VERSION }, state, clock, log }),
+      sessions: createSessions({ socketPath: keeperSocket, key, keeper: { entry: KEEPER_ENTRY, version: KEEPER_VERSION }, state, clock, log, keychainCheck: keychainCheckArgv(process.env) }),
       supervision: fileStore(state, records, log),
       probe: probeReadiness,
       postNotice: noticePoster(userData, log),

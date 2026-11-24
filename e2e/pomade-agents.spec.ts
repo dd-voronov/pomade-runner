@@ -12,8 +12,11 @@
 // resumes it in a Pomade agent tab. An agent that asks for permission waits for you — a notice, a
 // Needs-you card, the badge — and its notice, card and Running now row open its terminal tab at the
 // prompt; answered there, the run is done; a prompt that comes while the scheduler is down is read
-// from the session's screen when it is back. `RUNNER_SHOTS=<dir>` saves screenshots of the form,
-// the rows and the cards.
+// from the session's screen when it is back. A keeper that cannot reach the macOS keychain — the
+// check's command a script that fails as many times as the test says — is replaced before an agent
+// run, after the runs going, its services started again with no crash counted; a fresh keeper that
+// fails it too fails the run. `RUNNER_SHOTS=<dir>` saves screenshots of the form, the rows and the
+// cards.
 
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -31,8 +34,9 @@ import type { ActiveRun, RunRecord } from "../src/scheduler/model";
 import { AGENTS_APP, fakeAgents, type FakeAgents } from "./support/agents";
 import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
 import { drawn } from "./support/frames";
-import { expectNothingLeft, stopKeeper } from "./support/keeper";
+import { alive, expectNothingLeft, keeperAt, stopKeeper } from "./support/keeper";
 import { pomadeCheckout, pomadeEnv, type PomadeFolders } from "./support/pomade";
+import { serviceFile } from "./support/runner";
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
 
 const SHOTS = process.env.RUNNER_SHOTS;
@@ -81,7 +85,7 @@ test.describe("agent runs in Pomade", () => {
   });
 
   /** The scheduler, started the way the login item starts it, connected to Pomade. */
-  async function startScheduler(): Promise<SchedulerProcess> {
+  async function startScheduler(extra: Record<string, string> = {}): Promise<SchedulerProcess> {
     const host = JSON.parse(await readFile(join(folders.home, "host.json"), "utf8")) as { socket: string };
     const started = startSchedulerProcess(
       pomade.runtime,
@@ -97,6 +101,7 @@ test.describe("agent runs in Pomade", () => {
         POMADE_RUNNER_TICK_MS: "50",
         HOME: user,
         SHELL: "/bin/sh",
+        ...extra,
       }),
     );
     scheduler = started;
@@ -357,5 +362,108 @@ test.describe("agent runs in Pomade", () => {
     await expect(dialog.getByTestId("run-last-lines")).toContainText("Not logged in · Please run /login");
     await expect(dialog.getByTestId("run-agent-note")).toHaveCount(0);
     await shoot(page, "pomade-agent-no-answer");
+  });
+
+  test.describe("T-038 · the keeper's reach to the macOS keychain", () => {
+    /** The check fails this many more times; every check adds a line to `checks`. */
+    let fails: string;
+    let checks: string;
+    let schedulerSince = 0;
+    const jobs = (): string => join(folders.workspace, "Apps/pomade-runner/jobs");
+    /** The scheduler's output since this group's scheduler started. */
+    const output = (): string => scheduler?.output().slice(schedulerSince) ?? "";
+    const checksRun = async (): Promise<number> => (await readFile(checks, "utf8").catch(() => "")).split("\n").filter((line) => line !== "").length;
+
+    async function ticker(): Promise<{ pid: number | null; startedAt: number } | undefined> {
+      const result = await callScheduler(socket(), "sessions", null);
+      return result.status === "ok" ? result.value.sessions.find((session) => session.id === "svc:ticker" && session.info.state === "running")?.info : undefined;
+    }
+
+    async function tickerService(): Promise<{ restarts: number; lastCrashAt: number | null } | undefined> {
+      const result = await callScheduler(socket(), "services", null);
+      return result.status === "ok" ? result.value.services.find((service) => service.job === "ticker") : undefined;
+    }
+
+    test.beforeAll(async () => {
+      fails = join(tmp, "keychain-fails");
+      checks = join(tmp, "keychain-checks");
+      await writeFile(fails, "0\n");
+      const check = `echo check >> '${checks}'; n=$(cat '${fails}'); if [ "$n" -gt 0 ]; then echo $((n - 1)) > '${fails}'; echo 'SecKeychainCopySearchList: One or more parameters passed to a function were not valid' >&2; exit 50; fi`;
+      await scheduler?.kill();
+      schedulerSince = 0;
+      await startScheduler({ POMADE_RUNNER_KEYCHAIN_CHECK: check });
+      await writeFile(join(jobs(), "ticker.md"), serviceFile("Ticker", "exec sleep 600"));
+      await expect.poll(() => ticker(), { timeout: 15_000 }).toBeDefined();
+      await writeFile(join(jobs(), "keychain.md"), agentJob("Keychain digest", "claude", "Write the keychain digest."));
+    });
+
+    test("a healthy keeper: one check, no replacement, the run starts", async () => {
+      const keeper = await keeperAt(keeperSocket);
+      const before = { runs: (await history("keychain")).length, checks: await checksRun() };
+      const record = await runToEnd("keychain", before.runs + 1);
+      expect(record).toMatchObject({ state: "done" });
+      expect(await checksRun()).toBe(before.checks + 1);
+      expect(output()).not.toContain("keychain check failed");
+      expect(output()).not.toContain("keeper: replacing");
+      expect(await keeperAt(keeperSocket)).toEqual(keeper);
+    });
+
+    test("1 · a keeper whose check fails, nothing running: it is replaced, the services come back with no crash counted, and the run starts", async () => {
+      const old = await keeperAt(keeperSocket);
+      const service = await ticker();
+      await writeFile(fails, "1\n");
+      const before = { runs: (await history("keychain")).length, checks: await checksRun() };
+      const record = await runToEnd("keychain", before.runs + 1);
+      expect(record).toMatchObject({ state: "done" });
+      expect(await checksRun()).toBe(before.checks + 2);
+      const pid = old?.pid ?? 0;
+      expect(output()).toMatch(new RegExp(`keeper: the keychain check failed in keeper pid ${pid}, started \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.000Z — exit 50\n`));
+      expect(output()).toMatch(new RegExp(`keeper: replacing pid ${pid}, started \\S+ — it cannot reach the macOS keychain\n`));
+      const fresh = await keeperAt(keeperSocket);
+      expect(fresh?.pid).not.toBe(pid);
+      expect(alive(pid)).toBe(false);
+      expect(output()).toContain(`keeper: replaced pid ${pid} with pid ${fresh?.pid ?? ""}, started `);
+      expect(output()).toContain("session svc:ticker: ended: lost-in-keeper-crash");
+      await expect.poll(async () => (await ticker())?.pid, { timeout: 15_000 }).not.toBe(service?.pid);
+      expect(await tickerService()).toMatchObject({ restarts: 0, lastCrashAt: null });
+    });
+
+    test("2 · with a script run going, the agent run waits queued for a fresh keeper; once the script ends, the keeper is replaced and the run starts", async () => {
+      const gate = join(tmp, "keychain-gate");
+      await writeFile(join(jobs(), "slow.md"), `---\nkind: script\nname: Slow\nfolder: .\ncommand: "while [ ! -f '${gate}' ]; do sleep 0.1; done"\nschedule:\n  once: 2099-01-01 7:00\n---\n`);
+      const cli = join(folders.home, "bin", "pomade-runner");
+      expect((await run(cli, ["run", "slow"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+      await expect.poll(async () => (await going("slow"))?.state, { timeout: 15_000 }).toBe("running");
+      const old = await keeperAt(keeperSocket);
+      // The check fails when the run is due, and again once the script has ended.
+      await writeFile(fails, "2\n");
+      const before = { runs: (await history("keychain")).length, checks: await checksRun() };
+      expect((await run(cli, ["run", "keychain"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+      await expect.poll(async () => (await going("keychain"))?.waits, { timeout: 15_000 }).toEqual({ kind: "keeper" });
+      expect(output()).toMatch(/run keychain \S+: queued · a fresh keeper, after the runs going\n/);
+      expect((await run(cli, ["runs"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stdout).toContain("queued · a fresh keeper, after the runs going");
+      expect(output()).not.toContain(`keeper: replacing pid ${old?.pid ?? ""}`);
+      expect(await keeperAt(keeperSocket)).toEqual(old);
+
+      await writeFile(gate, "");
+      await expect.poll(async () => (await history("keychain")).length, { timeout: 30_000 }).toBe(before.runs + 1);
+      expect((await history("slow"))[0]).toMatchObject({ state: "done" });
+      expect((await history("keychain"))[0]).toMatchObject({ state: "done" });
+      expect(output()).toContain(`keeper: replacing pid ${old?.pid ?? ""}`);
+      expect((await keeperAt(keeperSocket))?.pid).not.toBe(old?.pid);
+      expect(await checksRun()).toBe(before.checks + 3);
+      expect(await tickerService()).toMatchObject({ restarts: 0, lastCrashAt: null });
+    });
+
+    test("3 · a check that fails in the fresh keeper too: the run fails with why", async () => {
+      await writeFile(fails, "2\n");
+      const before = (await history("keychain")).length;
+      const ran = await run(join(folders.home, "bin", "pomade-runner"), ["run", "keychain"], { env: cleanEnv({ HOME: user }), cwd: tmp });
+      expect(ran.stderr).toContain("cannot start — the keeper cannot reach the macOS keychain, so the agent would have no login");
+      await expect.poll(async () => (await history("keychain")).length, { timeout: 30_000 }).toBe(before + 1);
+      const [record] = await history("keychain");
+      expect(record).toMatchObject({ state: "failed", startedAt: null, reason: "cannot start — the keeper cannot reach the macOS keychain, so the agent would have no login" });
+      expect(await readFile(fails, "utf8")).toBe("0\n");
+    });
   });
 });

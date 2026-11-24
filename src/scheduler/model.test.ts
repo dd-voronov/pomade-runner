@@ -31,6 +31,7 @@ describe("runs in words", () => {
     expect(runWords(active)).toBe("running");
     expect(runWords({ ...active, kind: "agent", agent: { ...AGENT, waiting: { prompt: "permission", since: 2 } } })).toBe("waiting for you");
     expect(runWords({ ...queued, waits: { kind: "previous-run" } })).toBe("queued · after the previous run");
+    expect(runWords({ ...queued, waits: { kind: "keeper" } })).toBe("queued · a fresh keeper, after the runs going");
     expect(runWords({ ...queued, waits: { kind: "pomade" } })).toBe("queued · opening Pomade");
     expect(runWords({ ...queued, waits: { kind: "slot", ahead: 1 } })).toBe("queued · 1 ahead");
     expect(runWords({ ...queued, waits: { kind: "switch", position: "pause-low" } })).toBe("queued · held · Pause low-priority");

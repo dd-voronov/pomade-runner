@@ -32,6 +32,11 @@
 //   the switch, the warm-up, the job's previous run, Pomade (an agent run), or a low-priority slot.
 //   An agent run that waits for Pomade has Runner open it (`pomade-open.ts`), one opening for every
 //   run that waits; when Pomade cannot be opened, those runs fail with why.
+// - **The keychain check.** An agent run starts only in a keeper that reaches the macOS login
+//   keychain (`Sessions.checkKeychain`): one that fails the check is replaced — a fresh keeper, its
+//   services started again — and checked again; while runs are going it waits for them to end,
+//   queued for a fresh keeper, since replacing the keeper ends them. A fresh keeper that fails it
+//   too fails the run (`KEYCHAIN_LOST`). A check that cannot run does not hold the run back.
 // - **Overlap**, when the job has a run going: `skip` records a skipped run ("previous run still
 //   going") · `parallel` queues another · `queue` holds one queued run; while one is held, a further
 //   one is skipped ("a run is already queued"). An on-time run covers a caught-up one still queued.
@@ -76,7 +81,7 @@ import type { ChainActionOutcome, RunnerSession } from "../keeper/model";
 import { jobIdOf } from "../keeper/services";
 import type { Sessions } from "../keeper/sessions";
 import { liveOutputLogPath, runsRecordPath, type RecordsFolder, type StateFolder } from "../locations";
-import { AGENT_EXIT_WAIT_MS, agentArgv, agentEnd, answeredEnd, lookupWindow, pickSession, SESSION_LOOKUP_EVERY_MS, type TurnAnswer } from "./agent-runs";
+import { AGENT_EXIT_WAIT_MS, agentArgv, agentEnd, answeredEnd, KEYCHAIN_LOST, lookupWindow, pickSession, SESSION_LOOKUP_EVERY_MS, type TurnAnswer } from "./agent-runs";
 import { chainCause, followers, parentResult } from "./chains";
 import type { Clock } from "./clock";
 import { gitCommandLine, gitRunEnd, type SessionEnd } from "./git-runs";
@@ -447,6 +452,9 @@ export function createRuns(options: RunsOptions): Runs {
   let opening = false;
   /** Set by `close()`: an opening that ends later changes nothing. */
   let closed = false;
+  /** The pid of the keeper that failed the keychain check while runs were going: agent runs wait
+   *  until they end, then it is replaced. `null` when no keeper waits to be replaced. */
+  let lostKeeper: number | null = null;
 
   const now = (): Date => clock.now();
   const key = (job: string, run: string): string => `${job}\n${run}`;
@@ -708,12 +716,43 @@ export function createRuns(options: RunsOptions): Runs {
     }
   }
 
+  /** Whether the keeper may start an agent run: it reaches the keychain (`go`); it does not and
+   *  runs are going (`wait`: the run stays queued, the keeper is replaced once they have ended); or
+   *  why the run cannot start. A keeper that fails the check with no run going is replaced and
+   *  checked again. */
+  async function keeperForAgent(run: ActiveRun): Promise<"go" | "wait" | string> {
+    const check = await sessions.checkKeychain();
+    if (check.status !== "unreachable") return "go";
+    const link = sessions.keeper();
+    if (active.some((candidate) => candidate !== run && candidate.state === "running")) {
+      lostKeeper = link.state === "connected" ? link.pid : null;
+      return lostKeeper === null ? "go" : "wait";
+    }
+    lostKeeper = null;
+    try {
+      await sessions.replaceKeeper("it cannot reach the macOS keychain");
+    } catch (err) {
+      return `cannot start — the keeper cannot reach the macOS keychain, and replacing it failed: ${errorText(err)}`;
+    }
+    const again = await sessions.checkKeychain();
+    return again.status === "unreachable" ? KEYCHAIN_LOST : "go";
+  }
+
   /** Start a queued run's session. */
   async function start(run: ActiveRun): Promise<void> {
     const found = runnable(run.job, run.kind);
     if (typeof found === "string") {
       await skip(run, found);
       return;
+    }
+    if (run.kind === "agent") {
+      const keeper = await keeperForAgent(run);
+      if (keeper === "wait") return;
+      if (keeper !== "go") {
+        log(`run ${run.job} ${run.run}: ${keeper}`);
+        await record(notStarted(run, "failed", keeper));
+        return;
+      }
     }
     const { job, workspace } = found;
     const session = sessionIdOf({ kind: "run", job: run.job, run: run.run });
@@ -823,6 +862,9 @@ export function createRuns(options: RunsOptions): Runs {
       const entry = snapshot.jobs.find((candidate) => entryId(candidate) === job);
       return entry?.valid === true && entry.job.kind !== "service" ? entry.job.overlap : undefined;
     };
+    // A keeper replaced or ended meanwhile is no longer the one that failed the check.
+    const link = sessions.keeper();
+    if (lostKeeper !== null && (link.state !== "connected" || link.pid !== lostKeeper)) lostKeeper = null;
     for (;;) {
       const plan = planQueue(active, {
         now: at,
@@ -831,6 +873,7 @@ export function createRuns(options: RunsOptions): Runs {
         warmUp: warmUp(at),
         overlap,
         pomadeUp: options.pomade.up(),
+        keeperLost: lostKeeper !== null,
       });
       if (plan.start.length === 0) {
         let changed = false;

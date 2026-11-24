@@ -51,7 +51,8 @@ export interface SwitchState {
 
 /** What a queued run waits for, the first that holds it: Run at…'s time · the switch · the warm-up
  *  after login or wake (a caught-up or hook run; `until` is `null` while the services still start) · the
- *  job's previous run (overlap `queue`) · Pomade, for an agent run while Runner opens it · a free
+ *  job's previous run (overlap `queue`) · Pomade, for an agent run while Runner opens it · a fresh
+ *  keeper, for an agent run while the keeper cannot reach the macOS keychain and runs are going · a free
  *  low-priority slot, with how many runs have to end before it starts: the slot-waiting runs ahead
  *  of it and the one whose slot it takes. */
 export type Waits =
@@ -60,6 +61,7 @@ export type Waits =
   | { kind: "warm-up"; until: number | null }
   | { kind: "previous-run" }
   | { kind: "pomade" }
+  | { kind: "keeper" }
   | { kind: "slot"; ahead: number };
 
 export type RunState = ActiveState | RunResult;
@@ -541,6 +543,7 @@ function isWaits(value: unknown): value is Waits {
       return nullableNumber(value.until);
     case "previous-run":
     case "pomade":
+    case "keeper":
       return true;
     case "slot":
       return typeof value.ahead === "number" && Number.isSafeInteger(value.ahead) && value.ahead >= 1;
@@ -830,6 +833,8 @@ export function waitsWords(waits: Waits | null): string {
       return "after the previous run";
     case "pomade":
       return "opening Pomade";
+    case "keeper":
+      return "a fresh keeper, after the runs going";
     case "slot":
       return `${waits.ahead} ahead`;
   }

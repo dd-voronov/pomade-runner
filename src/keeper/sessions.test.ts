@@ -28,6 +28,8 @@ describe("sessions", () => {
   let socketPath: string;
   let state: StateFolder;
   let lines: string[];
+  /** What the keychain check runs: a stand-in for `security list-keychains` the test sets. */
+  let keychainCheck: string[];
   const opened: Sessions[] = [];
 
   function open(key = KEY): { sessions: Sessions; ended: RunnerSession[] } {
@@ -35,6 +37,7 @@ describe("sessions", () => {
       socketPath,
       key,
       keeper: { entry: join(dir, "keeper.mjs"), version: VERSION },
+      keychainCheck,
       state,
       clock: { now: () => new Date("2026-11-17T08:00:00.000Z") },
       log: (line) => lines.push(line),
@@ -75,6 +78,7 @@ describe("sessions", () => {
     socketPath = join(dir, "k.sock");
     state = stateFolderOf(join(dir, "ud"));
     lines = [];
+    keychainCheck = ["/bin/sh", "-c", "exit 0"];
     keeper = await runKeeper({
       app: APP_ID,
       socketPath,
@@ -220,6 +224,35 @@ describe("sessions", () => {
     const lines = (await readFile(loud.log ?? "", "utf8")).split(/\r?\n/).filter((line) => line.startsWith("line "));
     expect(lines).toHaveLength(3000);
     expect(lines.at(-1)).toBe("line 3000");
+  });
+
+  it("runs the keychain check as a short keeper session read by its exit status, forgets it, and logs a failure with the keeper's pid and start time", async () => {
+    const { sessions, ended } = await connected();
+    await expect(sessions.checkKeychain()).resolves.toEqual({ status: "reachable" });
+    expect(lines.some((line) => line.includes("keychain"))).toBe(false);
+
+    keychainCheck = ["/bin/sh", "-c", "echo 'SecKeychainCopySearchList: One or more parameters passed to a function were not valid' >&2; exit 50"];
+    const failing = await connected();
+    await expect(failing.sessions.checkKeychain()).resolves.toEqual({ status: "unreachable", detail: "exit 50" });
+    expect(lines).toContainEqual(expect.stringMatching(new RegExp(`^keeper: the keychain check failed in keeper pid ${process.pid}, started \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.000Z — exit 50$`)));
+
+    // The check's sessions are gone from the keeper and never in Runner's view or records.
+    await vi.waitFor(() => expect(keeper.sessions().filter((info) => info.id.startsWith("check:"))).toEqual([]));
+    await sessions.refresh();
+    expect(sessions.list()).toEqual([]);
+    expect(ended).toEqual([]);
+  });
+
+  it("a keychain check whose program cannot run fails; with no keeper connected it could not run, and says so", async () => {
+    keychainCheck = [join(dir, "no-such-program")];
+    const { sessions } = await connected();
+    // The keeper starts the session and the program it names cannot run: an end with a status, a
+    // failed check, as `security` failing is.
+    expect((await sessions.checkKeychain()).status).toBe("unreachable");
+    await keeper.close();
+    await vi.waitFor(() => expect(lines).toContain("keeper: connection closed; reconnecting"));
+    await expect(sessions.checkKeychain()).resolves.toEqual({ status: "unknown", detail: "the keeper is not connected (connecting)" });
+    expect(lines).toContain("keeper: the keychain check could not run — the keeper is not connected (connecting)");
   });
 
   it("is refused by a keeper that does not take its key, and says so", async () => {

@@ -8,6 +8,11 @@
 //
 // The view follows the keeper on every `refresh()` (the scheduler's tick): a session that ended
 // since is reported to `onExit` with the keeper's exit reason.
+//
+// Before an agent run starts, `checkKeychain` runs the keychain check (`keychain.ts`) as a short
+// session in the keeper; `replaceKeeper` ends a keeper that failed it and starts a fresh one the way
+// a tick starts a keeper that died — never the keeper's own update hand-off, whose successor the
+// old keeper spawns and which would inherit the fault.
 
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -21,6 +26,7 @@ import { keeperOutPath, liveOutputLogPath, sessionsRecordPath, type StateFolder 
 import type { Clock } from "../scheduler/clock";
 import type { Log } from "../scheduler/log";
 import { newRunId, sessionIdOf, sessionOwner, type SessionOwner } from "./ids";
+import { KEYCHAIN_CHECK_TIMEOUT_MS, keychainVerdict, processStartedAt, type KeychainCheck } from "./keychain";
 import type { KeeperLink, RunnerSession, SessionsReport } from "./model";
 import { keeperNeedsUpdate } from "./version";
 
@@ -57,6 +63,8 @@ export interface SessionsOptions {
   state: StateFolder;
   clock: Clock;
   log: Log;
+  /** What the keychain check runs (`keychainCheckArgv`). */
+  keychainCheck: string[];
 }
 
 export interface Sessions {
@@ -88,6 +96,15 @@ export interface Sessions {
   setActions(id: string, actions: SessionAction[]): Promise<void>;
   /** Called once for each session's end. */
   onExit(listener: (session: RunnerSession) => void): () => void;
+  /** Run the keychain check in the keeper: a short session, read by its exit status, then
+   *  forgotten. A failed check and one that could not run — the keeper not connected, the session
+   *  refused or not ending within `KEYCHAIN_CHECK_TIMEOUT_MS` — are logged with the keeper's pid and
+   *  start time. Never throws. */
+  checkKeychain(): Promise<KeychainCheck>;
+  /** End the keeper (SIGTERM to the pid it reported, SIGKILL after `KEEPER_END_WAIT_MS`) and start
+   *  a fresh one; resolves once the fresh one is followed. The sessions the old one held end
+   *  `lost-in-keeper-crash`. Throws when it cannot. */
+  replaceKeeper(why: string): Promise<void>;
   /** Close the connection, once the records are written; the keeper and its sessions keep running. */
   close(): Promise<void>;
 }
@@ -109,6 +126,41 @@ const HANDOFF_MS = 20_000;
 /** How long `restartService` waits for the stopped session to end, past its grace period. */
 const RESTART_WAIT_MS = 6_000;
 const POLL_MS = 50;
+/** How long a replaced keeper has to end after SIGTERM, and again after SIGKILL. */
+const KEEPER_END_WAIT_MS = 5_000;
+/** How long the fresh keeper has to answer once the old one ended. */
+const KEEPER_START_WAIT_MS = 15_000;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Whether process `pid` still runs. */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Send `pid` a signal; one already gone is no error. */
+function signal(pid: number, name: NodeJS.Signals): void {
+  try {
+    process.kill(pid, name);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ESRCH") throw err;
+  }
+}
+
+/** Wait until process `pid` is gone; whether it went within `ms`. */
+async function ended(pid: number, ms: number): Promise<boolean> {
+  const deadline = performance.now() + ms;
+  while (alive(pid)) {
+    if (performance.now() > deadline) return false;
+    await sleep(POLL_MS);
+  }
+  return true;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -338,6 +390,48 @@ export function createSessions(options: SessionsOptions): Sessions {
     following = true;
   }
 
+  /** Run the check's session to its end, or to the timeout, and forget it. Its id is one Runner
+   *  does not make for a job (`sessionOwner` gives `null`), so no view or record ever holds it. */
+  async function runCheck(keeper: KeeperClient): Promise<KeychainCheck> {
+    const id = `check:keychain-${randomBytes(3).toString("hex")}`;
+    try {
+      await keeper.spawn({ id, title: "Keychain check", argv: options.keychainCheck, cwd: "/", background: false });
+    } catch (err) {
+      return { status: "unknown", detail: `the keeper did not start it: ${errorText(err)}` };
+    }
+    try {
+      const deadline = performance.now() + KEYCHAIN_CHECK_TIMEOUT_MS;
+      for (;;) {
+        const exit = (await keeper.list()).find((info) => info.id === id)?.exit;
+        if (exit === undefined) return { status: "unknown", detail: "its session is gone" };
+        if (exit !== null) return keychainVerdict(exit);
+        if (performance.now() > deadline) {
+          await keeper.stop(id, { reason: "stopped", graceMs: 0 });
+          return { status: "unknown", detail: `it did not end within ${KEYCHAIN_CHECK_TIMEOUT_MS / 1000} s` };
+        }
+        await sleep(POLL_MS);
+      }
+    } catch (err) {
+      return { status: "unknown", detail: errorText(err) };
+    } finally {
+      await forgetCheck(keeper, id);
+    }
+  }
+
+  /** Drop the check's session once it ended; a session still ending is forgotten when it has. */
+  async function forgetCheck(keeper: KeeperClient, id: string): Promise<void> {
+    const deadline = performance.now() + RESTART_WAIT_MS;
+    try {
+      while ((await keeper.list()).some((info) => info.id === id && info.exit === null)) {
+        if (performance.now() > deadline) return;
+        await sleep(POLL_MS);
+      }
+      await keeper.forget(id);
+    } catch {
+      // The keeper went away: it took the check's session with it.
+    }
+  }
+
   function connected(): KeeperClient {
     if (client !== null) return client;
     const why = link.state === "unreachable" || link.state === "rejected" ? link.reason : "connecting";
@@ -433,6 +527,44 @@ export function createSessions(options: SessionsOptions): Sessions {
     onExit(listener) {
       exitListeners.add(listener);
       return () => exitListeners.delete(listener);
+    },
+
+    async checkKeychain() {
+      const keeper = client;
+      if (keeper === null) {
+        let why = "connecting";
+        if (link.state === "unreachable" || link.state === "rejected") why = link.reason;
+        log(`keeper: the keychain check could not run — the keeper is not connected (${why})`);
+        return { status: "unknown", detail: `the keeper is not connected (${why})` };
+      }
+      const { pid } = keeper.keeper;
+      const verdict = await runCheck(keeper);
+      if (verdict.status === "reachable") return verdict;
+      const since = await processStartedAt(pid);
+      if (verdict.status === "unreachable") log(`keeper: the keychain check failed in keeper pid ${pid}, started ${since} — ${verdict.detail}`);
+      else log(`keeper: the keychain check could not run in keeper pid ${pid}, started ${since} — ${verdict.detail}`);
+      return verdict;
+    },
+
+    async replaceKeeper(why) {
+      const old = connected().keeper.pid;
+      log(`keeper: replacing pid ${old}, started ${await processStartedAt(old)} — ${why}`);
+      signal(old, "SIGTERM");
+      if (!(await ended(old, KEEPER_END_WAIT_MS))) {
+        signal(old, "SIGKILL");
+        if (!(await ended(old, KEEPER_END_WAIT_MS))) throw new Error(`the keeper (pid ${old}) did not end`);
+      }
+      const deadline = performance.now() + KEEPER_START_WAIT_MS;
+      for (;;) {
+        await sessions.refresh();
+        const fresh = client?.keeper.pid;
+        if (fresh !== undefined && fresh !== old && following) {
+          log(`keeper: replaced pid ${old} with pid ${fresh}, started ${await processStartedAt(fresh)}`);
+          return;
+        }
+        if (performance.now() > deadline) throw new Error(`no fresh keeper answered after pid ${old} ended`);
+        await sleep(POLL_MS);
+      }
     },
 
     async close() {

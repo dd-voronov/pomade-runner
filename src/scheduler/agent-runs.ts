@@ -12,6 +12,9 @@ import type { SessionEnd } from "./git-runs";
  *  session — the turn was done, so the run is done all the same. */
 export const AGENT_EXIT_WAIT_MS = 15_000;
 
+/** Why an agent run fails when even a fresh keeper fails the keychain check. */
+export const KEYCHAIN_LOST = "cannot start — the keeper cannot reach the macOS keychain, so the agent would have no login";
+
 /** How often the session of a run whose provider cannot pre-assign one is looked up while it runs. */
 export const SESSION_LOOKUP_EVERY_MS = 5_000;
 

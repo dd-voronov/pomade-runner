@@ -12,6 +12,7 @@ import { checkJobs } from "../jobs/check";
 import type { JobsSnapshot } from "../jobs/model";
 import { recordsFolderOf, stateFolderOf, type RecordsFolder, type StateFolder } from "../locations";
 import { sessionIdOf } from "./ids";
+import type { KeychainCheck } from "./keychain";
 import type { KeeperLink, RunnerSession, ServicesReport, ServiceStatus } from "./model";
 import type { NetworkReadiness } from "./readiness";
 import type { SessionCommand, Sessions, StopReason } from "./sessions";
@@ -105,6 +106,14 @@ class FakeSessions implements Sessions {
     this.forgotten.push(id);
     this.sessions.delete(id);
     return Promise.resolve();
+  }
+
+  checkKeychain(): Promise<KeychainCheck> {
+    return Promise.resolve({ status: "reachable" });
+  }
+
+  replaceKeeper(): Promise<void> {
+    return Promise.reject(new Error("runs only"));
   }
 
   setActions(id: string, actions: SessionAction[]): Promise<void> {

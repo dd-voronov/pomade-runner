@@ -433,6 +433,79 @@ describe("agent runs", () => {
     });
   });
 
+  describe("the keeper's reach to the keychain", () => {
+    const LOST = { status: "unreachable", detail: "exit 50" } as const;
+
+    it("a healthy keeper: one check, no replacement, the run starts; script and git runs are not checked", async () => {
+      files = { ...files, "backup.md": script("Backup").replace("folder: Projects/x", "folder: .") };
+      load();
+      await runs.runNow("backup");
+      expect(sessions.checks).toEqual([]);
+      await runNow();
+      expect(sessions.checks).toEqual([1]);
+      expect(sessions.replaced).toEqual([]);
+      expect(sessions.spawned.map((spawn) => spawn.owner.job)).toEqual(["backup", "summary"]);
+    });
+
+    it("a keeper that fails the check with nothing going is replaced, checked again, and the run starts", async () => {
+      sessions.keychain.push(LOST);
+      const run = await runNow();
+      expect(sessions.replaced).toEqual(["it cannot reach the macOS keychain"]);
+      expect(sessions.checks).toEqual([1, 2]);
+      expect(run.state).toBe("running");
+      expect(sessions.spawned.map((spawn) => spawn.owner.job)).toEqual(["summary"]);
+    });
+
+    it("with a run going, the agent run waits queued for a fresh keeper; once the run ends the keeper is replaced and it starts", async () => {
+      files = { ...files, "backup.md": script("Backup").replace("folder: Projects/x", "folder: .") };
+      load();
+      await runs.runNow("backup");
+      sessions.keychain.push(LOST);
+      const result = await runs.runNow("summary");
+      expect(result).toMatchObject({ ok: true, run: { state: "queued", waits: { kind: "keeper" } } });
+      expect(lines).toContainEqual(expect.stringMatching(/^run summary \S+: queued · a fresh keeper, after the runs going$/));
+      expect(sessions.replaced).toEqual([]);
+      // Ticks while the run goes check nothing more.
+      await runs.tick();
+      expect(sessions.checks).toEqual([1]);
+      expect(runs.active().find((run) => run.job === "summary")).toMatchObject({ state: "queued", waits: { kind: "keeper" } });
+
+      sessions.keychain.push(LOST);
+      sessions.end(sessions.latest("backup"), "exited", 0);
+      await runs.tick();
+      expect(sessions.replaced).toEqual(["it cannot reach the macOS keychain"]);
+      expect(sessions.checks).toEqual([1, 1, 2]);
+      expect(runs.active().find((run) => run.job === "summary")).toMatchObject({ state: "running" });
+      expect(finished.map((record) => [record.job, record.state])).toEqual([["backup", "done"]]);
+    });
+
+    it("a keeper replaced meanwhile — it crashed — is checked afresh: no second replacement", async () => {
+      files = { ...files, "backup.md": script("Backup").replace("folder: Projects/x", "folder: .") };
+      load();
+      await runs.runNow("backup");
+      sessions.keychain.push(LOST);
+      await runs.runNow("summary");
+      sessions.link = { state: "connected", version: "v1", pid: 7 };
+      await runs.tick();
+      expect(sessions.checks).toEqual([1, 7]);
+      expect(sessions.replaced).toEqual([]);
+      expect(runs.active().find((run) => run.job === "summary")).toMatchObject({ state: "running" });
+    });
+
+    it("a fresh keeper that fails the check too fails the run, with why; a check that could not run holds nothing back", async () => {
+      sessions.keychain.push(LOST, LOST);
+      expect(await runs.runNow("summary")).toEqual({ ok: false, reason: "cannot start — the keeper cannot reach the macOS keychain, so the agent would have no login" });
+      expect(sessions.checks).toEqual([1, 2]);
+      expect(finished.map((record) => [record.state, record.reason, record.startedAt])).toEqual([["failed", "cannot start — the keeper cannot reach the macOS keychain, so the agent would have no login", null]]);
+      expect(sessions.spawned).toEqual([]);
+
+      sessions.keychain.push({ status: "unknown", detail: "it did not end within 5 s" });
+      await runNow();
+      expect(sessions.replaced).toHaveLength(1);
+      expect(sessions.spawned.map((spawn) => spawn.owner.job)).toEqual(["summary"]);
+    });
+  });
+
   it("waits for you at a permission prompt — a Needs-you item and one notice that opens it at the prompt — and goes on once answered", async () => {
     const run = await runNow();
     const session = run.session ?? "";

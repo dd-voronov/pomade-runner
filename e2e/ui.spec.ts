@@ -2424,6 +2424,17 @@ test.describe("History and result cards", () => {
     await expect(tip).toHaveText(HELP["tr.scheduled"].join(""));
   });
 
+  test("T-038 · an agent run queued for a fresh keeper says why on its card", async ({ page }) => {
+    const waiting: ActiveRun = { ...queued, kind: "agent", job: "digest", name: "Morning digest", run: "20261117-000700-hhhhhh", waits: { kind: "keeper" } };
+    await show(page, `run/digest/${waiting.run}`, { active: [running, waiting] });
+    const dialog = app(page).getByTestId("run-dialog");
+    await expect(app(page).getByTestId("run-result")).toHaveText("Queued");
+    await expect(dialog.getByTestId("run-waits")).toHaveText(
+      "The keeper cannot reach the macOS keychain, so an agent started there would have no login. Runner starts a fresh keeper once the runs going have finished, then this run.",
+    );
+    await shoot(page, "tab-run-queued-keeper");
+  });
+
   test("a running run's card: its latest output, Open terminal opens its attached tab, Stop run stops it", async ({ page }) => {
     await show(page, `run/lint/${running.run}`, { active: [running], output: "$ ./lint.sh\r\nchecking 12 files\r\n" });
     const dialog = app(page).getByTestId("run-dialog");

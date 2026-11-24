@@ -140,6 +140,8 @@ function stubSessions(): StubSessions {
       held.delete(id);
       return Promise.resolve();
     },
+    checkKeychain: () => Promise.resolve({ status: "reachable" }),
+    replaceKeeper: () => Promise.reject(new Error("not in these tests")),
     setActions(id, actions) {
       const known = held.get(id);
       if (known !== undefined) held.set(id, { ...known, info: { ...known.info, actions } });

@@ -10,7 +10,9 @@
 //    for it whatever the overlap, so its runs go one after another;
 // 5. **Pomade** — an agent run starts only while Pomade is up for it (connected, ready, and no
 //    launch of it under way); until then it waits while Runner opens Pomade, holding no slot;
-// 6. **a slot** — at most `maxLowPriority` low-priority runs go at once. A low-priority run that finds
+// 6. **a fresh keeper** — an agent run waits while the keeper failed the keychain check and runs are
+//    going: replacing the keeper ends them, so it is replaced once they have ended; holding no slot;
+// 7. **a slot** — at most `maxLowPriority` low-priority runs go at once. A low-priority run that finds
 //    them taken waits, first come first served, as "N ahead": the slot-waiting runs ahead of it, and
 //    the run whose slot it takes. Runs of jobs that are not low-priority (git, by default) never
 //    take or wait for a slot; nor does an agent run waiting for you at a prompt — it is idle, and a
@@ -41,6 +43,8 @@ export interface QueueState {
   overlap(job: string): OverlapPolicy | undefined;
   /** Whether an agent run can start now: Pomade is up for it. */
   pomadeUp: boolean;
+  /** Whether the keeper failed the keychain check and waits to be replaced. */
+  keeperLost: boolean;
 }
 
 export interface QueuePlan {
@@ -69,6 +73,8 @@ export function planQueue(active: readonly ActiveRun[], state: QueueState): Queu
       waits.set(run, { kind: "previous-run" });
     } else if (run.kind === "agent" && !state.pomadeUp) {
       waits.set(run, { kind: "pomade" });
+    } else if (run.kind === "agent" && state.keeperLost && running.length > 0) {
+      waits.set(run, { kind: "keeper" });
     } else if (run.lowPriority && taken >= state.maxLowPriority) {
       ahead++;
       waits.set(run, { kind: "slot", ahead });

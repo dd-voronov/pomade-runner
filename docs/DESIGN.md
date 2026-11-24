@@ -429,6 +429,27 @@ stays connected to it as the owner (`connectKeeper`, with the app's key), at
   (20 s) the scheduler only reconnects and never starts a keeper, which would take the socket from
   the one holding the sessions. A hand-off that fails leaves the old keeper running, and the
   scheduler works with it.
+- **Keychain check** (`src/keeper/keychain.ts`, `checkKeychain` and `replaceKeeper` in
+  `sessions.ts`). A keeper can lose its reach to the macOS login keychain while it runs: every
+  process it starts then fails `security list-keychains`, and an agent started there has no login.
+  Before an agent run starts, the scheduler runs `/usr/bin/security list-keychains` as a short
+  session in the keeper (`check:keychain-<6 hex>`, an id Runner makes for no job, so it is in no
+  view or record), reads it by its exit status — 0 reachable, any other end not — and forgets it.
+  It knows no provider and no credential's name. A check that cannot run — no keeper connected, the
+  session refused, no end within 5 s — counts as passed: the run goes on and says for itself what it
+  lacks. Each failed check and each one that could not run is a line in the scheduler's log with the
+  keeper's pid and start time (`keeper: the keychain check failed in keeper pid 16722, started
+  2026-11-23T12:46:05.000Z — exit 50`). `POMADE_RUNNER_KEYCHAIN_CHECK` names a command line that runs
+  by `/bin/sh -c` in its place: the e2e's stand-in for a keeper that lost the keychain.
+- **Keeper replacement.** A keeper that failed the check is replaced: the scheduler sends SIGTERM
+  to the pid the keeper reported in its hello (the kit has no request to end a keeper), SIGKILL
+  after 5 s, waits for the process to be gone, and then starts a fresh keeper the way a tick starts
+  one that died (`startKeeper`) — never by the keeper's own update hand-off, whose successor the
+  old keeper spawns and which would inherit the fault. The fresh keeper reports what the old one
+  held as `lost-in-keeper-crash`, so the services start again with no crash counted ("Services").
+  The scheduler logs the replacement with both keepers' pids and start times
+  (`keeper: replacing pid …, started … — it cannot reach the macOS keychain`, `keeper: replaced pid …
+  with pid …, started …`).
 
 **Attached tabs.** Any session opens as a Pomade terminal tab attached to the keeper
 (`pomade:E-034`), with `tabs.openAttached({ session: { app: "pomade-runner", session } })`. Pomade
@@ -576,6 +597,16 @@ hooks, chains, History, notices and Needs you.
   queue while it is not connected, shown at its next start. The next agent run due opens Pomade
   again. Runner leaves the Pomade it opened running. A scheduler restarted while a run waits finds
   it queued in `runs.json` and opens Pomade again.
+- **The keeper's reach to the keychain.** Before the launch the run's keeper passes the keychain
+  check ("Sessions", **Keychain check**); script, git and service runs are not checked. A keeper
+  that fails it with no run going is replaced ("Sessions", **Keeper replacement**) and checked
+  again, and the run starts. With runs going — replacing the keeper would end them — the agent run
+  stays **queued · a fresh keeper, after the runs going** (the queue's wait `keeper`), and so does
+  every agent run due meanwhile; scripts and git runs go on. Once no run is going, the next agent
+  run checks again and, still failing, replaces the keeper. A fresh keeper that fails the check too
+  fails the run without starting: "cannot start — the keeper cannot reach the macOS keychain, so the
+  agent would have no login". A keeper replaced meanwhile some other way (it crashed) is checked
+  afresh.
 - **Launch.** With Pomade up: the agent from `roster.list` (its name, provider and
   modes; none listed are the provider's — Normal, Full autonomy), the job's mode among them, then
   `roster.launchSpec({ agent, mode, sessionId, prompt })` — `mode` always, a UUID Runner makes as
@@ -824,7 +855,9 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
   4. the job's **previous run**, unless its overlap is `parallel` — a run of a Run all waits for it whatever the overlap;
   5. **Pomade**, for an agent run, while Pomade is not up for it — Runner opens it ("Agent runs",
      **Pomade opened for a run**); such a run holds no slot;
-  6. a **slot**: at most `max-low-priority-runs` (default 2) low-priority runs run at once.
+  6. a **fresh keeper**, for an agent run, while the keeper failed the keychain check and runs are
+     going ("Agent runs", **The keeper's reach to the keychain**); such a run holds no slot;
+  7. a **slot**: at most `max-low-priority-runs` (default 2) low-priority runs run at once.
   - **What takes a slot:** a running run of a low-priority job. A job with `low-priority: false` —
     git, by default — neither takes nor waits for one; neither does a missed run waiting for you.
     An agent run waiting for you at a permission prompt holds no slot: it is idle, and a
@@ -834,7 +867,7 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
     and the one whose slot it takes. Three low-priority runs due at once: two run, the third is
     "queued · 1 ahead", a fourth would be "2 ahead". The others: "queued · at Wed 23:00", "queued ·
     held · Pause all", "queued · warm-up until 08:32", "queued · after the previous run", "queued ·
-    opening Pomade".
+    opening Pomade", "queued · a fresh keeper, after the runs going".
   - Run now joins the queue too: the switch never holds it, a slot may.
 - **Staged start after login or wake.** A login — a scheduler start that finds no keeper running
   ("Firing hooks") — and every wake begin a staged start; a scheduler restarted with its keeper

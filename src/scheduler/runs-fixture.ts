@@ -10,6 +10,7 @@ import type { PomadeForRuns } from "../integrations/pomade-open";
 import type { AgentTurns, TurnHandlers } from "../keeper/agent-turns";
 import { sessionIdOf, type SessionOwner } from "../keeper/ids";
 import type { KeeperLink, RunnerSession } from "../keeper/model";
+import type { KeychainCheck } from "../keeper/keychain";
 import type { SessionCommand, Sessions, StopReason } from "../keeper/sessions";
 import { liveOutputLogPath, stateFolderOf } from "../locations";
 import type { SwitchState } from "./model";
@@ -77,6 +78,26 @@ export class FakeSessions implements Sessions {
   forget(id: string): Promise<void> {
     this.forgotten.push(id);
     this.sessions.delete(id);
+    return Promise.resolve();
+  }
+
+  /** What the keychain checks answer, in turn; once they run out, `reachable`. */
+  readonly keychain: KeychainCheck[] = [];
+  /** How many keychain checks ran, and in which keeper (its pid). */
+  readonly checks: number[] = [];
+  /** Every keeper replacement asked for: why. */
+  readonly replaced: string[] = [];
+
+  checkKeychain(): Promise<KeychainCheck> {
+    this.checks.push(this.link.state === "connected" ? this.link.pid : 0);
+    return Promise.resolve(this.keychain.shift() ?? { status: "reachable" });
+  }
+
+  /** A fresh keeper: the next pid; what the old one ran ends `lost-in-keeper-crash`. */
+  replaceKeeper(why: string): Promise<void> {
+    this.replaced.push(why);
+    for (const session of this.list()) if (session.info.exit === null) this.end(session.id, "lost-in-keeper-crash", null, 0);
+    this.link = { state: "connected", version: "v1", pid: (this.link.state === "connected" ? this.link.pid : 0) + 1 };
     return Promise.resolve();
   }
 
