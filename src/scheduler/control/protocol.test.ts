@@ -77,8 +77,8 @@ describe("control protocol", () => {
     expect(RESULT_GUARDS.run({ run: active })).toBe(true);
     expect(RESULT_GUARDS.run({ run: { ...active, state: "queued", startedAt: null, session: null, log: null } })).toBe(true);
     for (const bad of [{}, { run: { ...active, state: "done" } }, { run: { ...active, trigger: "cron" } }, { run: { ...active, dueAt: null } }]) expect(RESULT_GUARDS.run(bad)).toBe(false);
-    expect(RESULT_GUARDS.history({ records: [record, { ...record, state: "skipped", reason: "previous run still going", startedAt: null, durationMs: null, exitCode: null, log: null, lastLines: [] }], next: "2026-11-17:3" })).toBe(true);
-    for (const bad of [{ records: [] }, { records: [{ ...record, lastLines: [1] }], next: null }, { records: [{ ...record, state: "queued" }], next: null }]) expect(RESULT_GUARDS.history(bad)).toBe(false);
+    expect(RESULT_GUARDS.history({ held: [], records: [record, { ...record, state: "skipped", reason: "previous run still going", startedAt: null, durationMs: null, exitCode: null, log: null, lastLines: [] }], next: "2026-11-17:3" })).toBe(true);
+    for (const bad of [{ records: [] }, { held: [], records: [{ ...record, lastLines: [1] }], next: null }, { held: [], records: [{ ...record, state: "queued" }], next: null }]) expect(RESULT_GUARDS.history(bad)).toBe(false);
     const listing = { job: "backup", name: "Backup", kind: "script", enabled: true, trigger: "daily at 13:00", problem: null, next: 5, finished: false, last: record, service: null };
     expect(RESULT_GUARDS.list([listing, { ...listing, kind: null, trigger: null, problem: "x", last: null }])).toBe(true);
     for (const bad of [{}, [{ ...listing, kind: "cron" }], [{ ...listing, last: {} }]]) expect(RESULT_GUARDS.list(bad)).toBe(false);

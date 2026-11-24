@@ -4,7 +4,7 @@ import type { JsonValue } from "pomade-kit/protocol";
 
 import type { ServiceStatus } from "../../src/keeper/model";
 import type { EnvironmentReport } from "../../src/scheduler/environment";
-import type { RunRecord, RunsReport } from "../../src/scheduler/model";
+import type { HeldRun, RunRecord, RunsReport } from "../../src/scheduler/model";
 
 declare global {
   interface Window {
@@ -17,7 +17,7 @@ declare global {
     setOpenedProjects(projects: string[]): void;
     /** Set what the stand-in scheduler says of the runs: the report, the history, any run's output,
      *  and whether that output is not on this Mac. */
-    setRuns(runs: Partial<{ report: RunsReport; history: RunRecord[]; output: string; outputMissing: boolean }>): void;
+    setRuns(runs: Partial<{ report: RunsReport; held: HeldRun[]; history: RunRecord[]; output: string; outputMissing: boolean }>): void;
     /** Set what the stand-in scheduler says of the settings: the settings file's text, `null` for none. */
     setSettings(text: string | null): void;
     /** The settings file's text as the stand-in scheduler holds it: what a setting the UI wrote left in it. */

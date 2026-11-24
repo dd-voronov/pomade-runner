@@ -16,7 +16,7 @@ import { checkJobs } from "../jobs/check";
 import { recordsFolderOf, stateFolderOf } from "../locations";
 import type { JobsSnapshot } from "../jobs/model";
 import { createHistory, type History } from "./history";
-import { runTriggerWords, runWords, type ActiveRun, type RunRecord } from "./model";
+import { heldRowWords, runTriggerWords, runWords, type ActiveRun, type RunRecord } from "./model";
 import { ALIVE_EVERY_MS, createRuns, WAKE_GAP_MS, type Runs } from "./runs";
 import { FakeSessions, FakeTurns, memoryStore, memorySwitch, script } from "./runs-fixture";
 import { DEFAULT_SETTINGS, type Settings } from "./settings";
@@ -666,6 +666,45 @@ describe("missed runs and load", () => {
         // Skip: the record keeps the count.
         expect((await runs.missed("wait", { kind: "skip" })).ok).toBe(true);
         expect((await records()).find((record) => record.job === "wait")).toMatchObject({ state: "missed", reason: "skipped by you", missed: { count: 8 } });
+      });
+
+      it("each held job is one held row, counting up to the note's count, kept over a restart, and gone on release when its record lands", async () => {
+        const row = (job: string, count: number, last: string): object => ({ state: "held", job, name: job.charAt(0).toUpperCase() + job.slice(1), kind: "script", project: null, folder: "Projects/x", missed: { count, first: ms("2026-11-18T17:40:00"), last: ms(last) } });
+        await runs.setSwitch("pause-low");
+        expect(runs.heldRows()).toEqual([]);
+        await awake("2026-11-18T17:42:30", 10_000);
+        expect(runs.heldRows()).toEqual([row("low", 2, "2026-11-18T17:42:00"), row("skip", 2, "2026-11-18T17:42:00"), row("wait", 2, "2026-11-18T17:42:00")]);
+        expect(heldRowWords(runs.heldRows()[0]?.missed ?? { count: 0, first: 0, last: 0 })).toBe("held · 2 runs so far, 17:40–17:42");
+        expect(runs.heldRows().reduce((sum, one) => sum + one.missed.count, 0)).toBe(runs.heldRuns());
+        // A restart reads the same rows from the records: nothing about them lives only in memory.
+        await runs.close();
+        await open();
+        await awake("2026-11-18T17:44:30");
+        expect(runs.heldRows()).toEqual([row("low", 3, "2026-11-18T17:44:00"), row("skip", 3, "2026-11-18T17:44:00"), row("wait", 3, "2026-11-18T17:44:00")]);
+        expect(runs.needsYou()).toEqual([]);
+        expect(notices).toEqual([]);
+        // Released: no held row is left; each job's record (or its waiting run) stands for the span.
+        await runs.setSwitch("running");
+        expect(runs.heldRows()).toEqual([]);
+        await awake("2026-11-18T17:44:31");
+        expect(runs.heldRows()).toEqual([]);
+        const three = { count: 3, first: ms("2026-11-18T17:40:00"), last: ms("2026-11-18T17:44:00") };
+        expect((await records()).find((record) => record.job === "skip")).toMatchObject({ state: "missed", missed: three });
+        expect(going("wait")[0]).toMatchObject({ state: "missed-waiting", missed: three });
+        // Run all 3 on the waiting job: three runs, each "caught up N of 3", and no missed record of the span.
+        expect(await runs.missed("wait", { kind: "run-all" })).toEqual({ ok: true, at: expect.any(Number) as number, runs: 3 });
+        for (let n = 1; n <= 3; n++) {
+          await awake(new Date(now.getTime() + 2_000).toISOString());
+          expect(going("wait")).toEqual([expect.objectContaining({ state: "running", series: { n, of: 3 } })]);
+          sessions.end(sessions.latest("wait"), "exited", 0);
+          await awake(new Date(now.getTime() + 2_000).toISOString());
+        }
+        const wait = (await records()).filter((record) => record.job === "wait").reverse();
+        expect(wait.map((record) => [record.state, runTriggerWords(record)])).toEqual([
+          ["done", "caught up 1 of 3"],
+          ["done", "caught up 2 of 3"],
+          ["done", "caught up 3 of 3"],
+        ]);
       });
 
       it("a caught-up run still queued takes in what the switch holds after it", async () => {

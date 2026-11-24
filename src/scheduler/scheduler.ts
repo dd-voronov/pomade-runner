@@ -54,7 +54,7 @@ import { ControlRefused, serveControl } from "./control/server";
 import { deleteJob } from "./delete";
 import { createHistory, keepOutputLog, readOutput } from "./history";
 import type { Log } from "./log";
-import type { DeleteResult, EnableResult, JobListing, RunActionResult, RunsReport } from "./model";
+import type { DeleteResult, EnableResult, HistoryPage, JobListing, RunActionResult, RunsReport } from "./model";
 import { runFinishedPayload, runStartedPayload } from "./run-events";
 import { createNeedsYou, fileNeedsYouStore } from "./needs-you";
 import { POMADE_STARTED, projectFiring, sessionFiring } from "./hooks";
@@ -193,9 +193,13 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
   let inFront: string | null | undefined;
   const history = createHistory(records, state, log);
   const renamed = renamedJobs(records, log);
-  /** A page of history: a job's takes in the ids it had before its project moved. */
-  const historyPage = (query: { job: string | null; before: string | null; limit: number }): ReturnType<typeof history.page> =>
-    history.page(query.job === null ? query : { ...query, formerly: renamed.formerIds(query.job, new Set(jobs.snapshot().jobs.map(entryId))) });
+  /** A page of history: a job's takes in the ids it had before its project moved; the newest page
+   *  leads with the held rows — the job's, when one is asked for. */
+  const historyPage = async (query: { job: string | null; before: string | null; limit: number }): Promise<HistoryPage> => {
+    const page = await history.page(query.job === null ? query : { ...query, formerly: renamed.formerIds(query.job, new Set(jobs.snapshot().jobs.map(entryId))) });
+    const held = query.before === null ? runs.heldRows().filter((row) => query.job === null || row.job === query.job) : [];
+    return { held, ...page };
+  };
 
   const post = (notice: Parameters<PostNotice>[0]): void => {
     options.postNotice(notice, host).then(

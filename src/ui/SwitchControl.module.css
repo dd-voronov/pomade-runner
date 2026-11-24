@@ -22,6 +22,12 @@
   min-width: 0;
 }
 
+/* The count of held runs: a link to History's Skipped & missed. */
+.count {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .error {
   margin: 6px 0 0;
   color: var(--danger-text);

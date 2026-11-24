@@ -8,7 +8,7 @@ import { expect, test, type Browser, type FrameLocator, type Locator, type Page 
 
 import manifest from "../app/manifest.json" with { type: "json" };
 import type { ServiceStatus } from "../src/keeper/model";
-import type { ActiveRun, NeedsYouItem, RunRecord, RunsReport } from "../src/scheduler/model";
+import type { ActiveRun, HeldRun, NeedsYouItem, RunRecord, RunsReport } from "../src/scheduler/model";
 import { HELP } from "../src/ui/help";
 import { APP_PORT, HARNESS_PORT } from "./support/ports";
 
@@ -708,6 +708,52 @@ test.describe("missed runs and load", () => {
     await set({ switch: { position: "pause-low", since: 1 }, heldRuns: 4, active: [{ ...weekly, missed: three }], needsYou: [{ ...missed, missed: three, detail: "missed 3 runs, 02:56–03:00" }] });
     await expect(app(page).locator('[data-testid="needs-you-item"][data-kind="missed"]').getByTestId("needs-you-words")).toHaveText("Missed 3 runs, 02:56–03:00 — it waits for you to pick a time.");
     await shoot(page, "panel-missed-runs");
+  });
+
+  test("T-033 · the switch's count opens History on Skipped & missed, where each held job has its row", async ({ page }) => {
+    await open(page, { surface: "panel" });
+    const lint: HeldRun = { state: "held", job: "lint", name: "Lint", kind: "script", project: null, folder: "", missed: { count: 2, first: at(8, 40), last: at(8, 42) } };
+    const backup: HeldRun = { ...lint, job: "backup", name: "Backup", missed: { count: 1, first: at(8, 42), last: at(8, 42) } };
+    const holding: RunsReport = { ...report, switch: { position: "pause-low", since: 1 }, heldRuns: 3 };
+    await page.evaluate((r) => window.setRuns({ report: r, held: [] }), holding);
+    const count = app(page).getByTestId("switch-held-runs");
+    await expect(count).toHaveRole("button");
+    await expect(count).toHaveText("3 runs so far");
+    // A held row never makes a Needs-you card: the panel's are the report's own.
+    await expect(app(page).getByTestId("needs-you-item")).toHaveCount(2);
+    await shoot(page, "panel-switch-held-link");
+    await count.click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "app", projectId: "alpha", route: "history/missed" }]);
+
+    // The Runner tab at that route: Skipped & missed is on, a row per held job; the route goes back to History.
+    await page.setViewportSize({ width: 1040, height: 700 });
+    await page.goto(harness({ route: "history/missed" }));
+    await page.waitForFunction(() => typeof window.setRuns === "function");
+    await page.evaluate(([r, h]) => window.setRuns({ report: r, held: [...h], history: [] }), [holding, [backup, lint]] as const);
+    await expect(app(page).getByTestId("history-filter-missed")).toHaveAttribute("aria-pressed", "true");
+    const held = app(page).locator('[data-testid="history-row"][data-state="held"]');
+    await expect(held).toHaveCount(2);
+    await expect(held.filter({ hasText: "Lint" }).getByTestId("history-result")).toHaveText("held · 2 runs so far, 08:40–08:42");
+    await expect(held.filter({ hasText: "Backup" }).getByTestId("history-result")).toHaveText("held · 1 run so far, 08:42");
+    await expect(held.first().getByTestId("history-trigger")).toHaveText("scheduled");
+    // The chip counts them with the missed run that waits for you; Active does not.
+    await expect(app(page).getByTestId("history-filter-missed")).toContainText("3");
+    await expect(app(page).getByTestId("history-filter-active")).toContainText("3");
+    await expect.poll(() => page.evaluate(() => window.fakeHost.appTabs.map((tab) => tab.route))).toEqual(["history"]);
+    await shoot(page, "tab-history-held");
+    // The chip changed, then the count clicked again: Skipped & missed is on again.
+    await app(page).getByTestId("history-filter-all").click();
+    await expect(app(page).getByTestId("history-filter-missed")).toHaveAttribute("aria-pressed", "false");
+    await page.evaluate((route) => window.fakeHost.openAppTab({ route }), "history/missed");
+    await expect(app(page).getByTestId("history-filter-missed")).toHaveAttribute("aria-pressed", "true");
+    // A held row opens its job.
+    await held.filter({ hasText: "Lint" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.appTabs.map((tab) => tab.route))).toEqual(["jobs/lint"]);
+    // Released: the held rows are gone, the records take their place.
+    await page.evaluate(() => window.setRuns({ held: [] }));
+    await app(page).getByTestId("nav-history").click();
+    await expect(app(page).getByTestId("history-row")).toHaveCount(4);
+    await expect(held).toHaveCount(0);
   });
 
   test("a missed run waits for you: Run now · Run at… · Skip", async ({ page }) => {

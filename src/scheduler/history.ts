@@ -37,6 +37,9 @@ import {
 import type { Log } from "./log";
 import { LAST_LINES, parseRunRecord, plainLines, type HistoryPage, type RunOutput, type RunRecord } from "./model";
 
+/** A page of the history's records: a `HistoryPage` but its held rows, which the runs know. */
+export type HistoryRecords = Omit<HistoryPage, "held">;
+
 /** The most a page holds. */
 export const PAGE_MAX = 200;
 /** How much of a log `output` reads: its end. */
@@ -57,7 +60,7 @@ export interface History {
   append(record: RunRecord): Promise<void>;
   /** Records newest first, of every job or of `job` — and of the ids it had before (`formerly`) —
    *  starting before the cursor `before`. */
-  page(options: { job: string | null; formerly?: readonly string[]; before: string | null; limit: number }): Promise<HistoryPage>;
+  page(options: { job: string | null; formerly?: readonly string[]; before: string | null; limit: number }): Promise<HistoryRecords>;
   /** A run's record; `null` when there is none (yet, or any more). */
   find(job: string, run: string): Promise<RunRecord | null>;
   /** Remove the days `keepDays` behind `now`, with their runs' output logs, kept or in the state

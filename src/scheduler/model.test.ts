@@ -4,7 +4,7 @@ import { APP_TAB_KEY_RE } from "pomade-kit/protocol";
 
 import { editRoute, jobsRoute, newRoute, outputRoute, outputTab, outputTabKey, parseRoute, promptRoute, runRoute } from "../integrations/runner-api";
 import { MAX_ENCODED_JOB_ID } from "../keeper/ids";
-import { clockTime, dayTime, durationWords, hookCauseWords, isActiveRun, isMissedChoiceResult, isRunsReport, otherMissedRuns, parseRunRecord, runTriggerWords, runWords, type ActiveRun, type RunRecord } from "./model";
+import { clockTime, dayTime, durationWords, heldRowWords, hookCauseWords, isActiveRun, isHistoryPage, isMissedChoiceResult, isRunsReport, otherMissedRuns, parseRunRecord, runTriggerWords, runWords, type ActiveRun, type RunRecord } from "./model";
 
 const base = { job: "blog/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/blog", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1, agent: null, missed: null, series: null };
 const active: ActiveRun = {
@@ -137,7 +137,9 @@ describe("routes", () => {
     expect(parseRoute(outputRoute("Café", "r1"))).toEqual({ view: "output", job: "Café", run: "r1" });
     expect(promptRoute("blog/web", "r1")).toBe("prompt/blog.web/r1");
     expect(parseRoute(promptRoute("blog/web", "r1"))).toEqual({ view: "prompt", job: "blog/web", run: "r1" });
-    expect(parseRoute("history")).toEqual({ view: "history" });
+    expect(parseRoute("history")).toEqual({ view: "history", filter: null });
+    expect(parseRoute("history/missed")).toEqual({ view: "history", filter: "missed" });
+    expect(parseRoute("history/failed")).toEqual({ view: "jobs", job: null });
     expect(parseRoute("services")).toEqual({ view: "services" });
     expect(parseRoute("settings")).toEqual({ view: "settings" });
     for (const route of ["", "jobs", "run/x", "run/a_zz/r", "run//r", "nope/a/b", "jobs/a/b"]) expect(parseRoute(route)).toEqual({ view: "jobs", job: null });
@@ -175,6 +177,16 @@ describe("routes", () => {
 });
 
 describe("isRunsReport", () => {
+  it("checks a history page's shape: its held rows, then its records", () => {
+    const held = { state: "held", job: "lint", name: "Lint", kind: "script", project: null, folder: "", missed: { count: 2, first: 1, last: 7 } };
+    expect(isHistoryPage({ held: [held], records: [record], next: null })).toBe(true);
+    expect(isHistoryPage({ held: [], records: [], next: "2026-11-17:3" })).toBe(true);
+    for (const bad of [{ records: [], next: null }, { held: [{ ...held, state: "missed" }], records: [], next: null }, { held: [{ ...held, kind: "other" }], records: [], next: null }, { held: [{ ...held, missed: null }], records: [], next: null }]) {
+      expect(isHistoryPage(bad)).toBe(false);
+    }
+    expect(heldRowWords({ count: 4, first: new Date(2026, 10, 17, 17, 40).getTime(), last: new Date(2026, 10, 17, 17, 46).getTime() })).toBe("held · 4 runs so far, 17:40–17:46");
+  });
+
   it("checks a runs report's shape", () => {
     const report = {
       active: [active, { ...active, kind: "agent", agent: { ...AGENT, waiting: { prompt: "trust", since: 2 }, waitedMs: 5 } }],

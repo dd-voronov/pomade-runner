@@ -1,14 +1,14 @@
 // History, a page at a time (`history.list` with `before` and `limit`): the newest page, asked again
 // whenever the scheduler announces `runs.changed`, and the older pages the person scrolls to, each
 // asked once — a record is written once and never changes, and a page's cursor stays valid while
-// new runs land.
+// new runs land. The held rows come with the newest page, so they are as fresh as it is.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HostError, type HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
 import { HISTORY_LIST_METHOD, RUNS_CHANGED_EVENT } from "../integrations/runner-api";
-import { isHistoryPage, type HistoryPage, type RunRecord } from "../scheduler/model";
+import { isHistoryPage, type HeldRun, type HistoryPage, type RunRecord } from "../scheduler/model";
 
 /** How many records a page asks for. */
 export const HISTORY_PAGE = 100;
@@ -19,6 +19,8 @@ export type HistoryPages =
   | { status: "failed"; message: string }
   | {
       status: "ready";
+      /** The jobs the switch holds now, one row each, as the newest page brought them. */
+      held: HeldRun[];
       /** Every record loaded, newest first. */
       records: RunRecord[];
       /** Older records remain to load. */
@@ -32,6 +34,7 @@ export type HistoryPages =
 const keyOf = (record: RunRecord): string => `${record.job}/${record.run}`;
 
 interface Loaded {
+  held: HeldRun[];
   records: RunRecord[];
   /** Where the next older page starts; `null` at the oldest record. */
   next: string | null;
@@ -42,9 +45,9 @@ interface Loaded {
 /** The newest page merged into what is loaded: alone, it is the whole list; with older pages
  *  loaded, it adds the records that landed since. */
 function withHead(loaded: Loaded | null, head: HistoryPage): Loaded {
-  if (loaded === null || !loaded.older) return { records: head.records, next: head.next, older: false };
+  if (loaded === null || !loaded.older) return { held: head.held, records: head.records, next: head.next, older: false };
   const known = new Set(loaded.records.map(keyOf));
-  return { ...loaded, records: [...head.records.filter((record) => !known.has(keyOf(record))), ...loaded.records] };
+  return { ...loaded, held: head.held, records: [...head.records.filter((record) => !known.has(keyOf(record))), ...loaded.records] };
 }
 
 export function useHistoryPages(host: HostClient): HistoryPages {
@@ -104,7 +107,7 @@ export function useHistoryPages(host: HostClient): HistoryPages {
         setLoaded((now) => {
           if (now === null || now.next !== known.next) return now;
           const have = new Set(now.records.map(keyOf));
-          return { records: [...now.records, ...page.records.filter((record) => !have.has(keyOf(record)))], next: page.next, older: true };
+          return { held: now.held, records: [...now.records, ...page.records.filter((record) => !have.has(keyOf(record)))], next: page.next, older: true };
         });
       },
       (err: unknown) => {
@@ -116,5 +119,5 @@ export function useHistoryPages(host: HostClient): HistoryPages {
 
   if (problem !== null) return problem;
   if (loaded === null) return { status: "loading" };
-  return { status: "ready", records: loaded.records, more: loaded.next !== null, loading, loadOlder };
+  return { status: "ready", held: loaded.held, records: loaded.records, more: loaded.next !== null, loading, loadOlder };
 }

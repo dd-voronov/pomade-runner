@@ -43,7 +43,7 @@ import { checkJobs } from "../../src/jobs/check";
 import { entryId, entryPath, JOBS_FOLDER, type JobKind, type JobsSnapshot } from "../../src/jobs/model";
 import type { ServicesReport, ServiceStatus } from "../../src/keeper/model";
 import { parseRunAt } from "../../src/scheduler/missed";
-import type { ActiveRun, RunRecord, RunsReport, RunView, SwitchPosition } from "../../src/scheduler/model";
+import type { ActiveRun, HeldRun, HistoryPage, RunRecord, RunsReport, RunView, SwitchPosition } from "../../src/scheduler/model";
 import type { EnvironmentReport } from "../../src/scheduler/environment";
 import { checkSettings, setSettingsField, SETTINGS_PATH, settingsValueProblem, type SettingsField, type SettingsReport, type SettingsValue } from "../../src/scheduler/settings";
 
@@ -77,8 +77,9 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
   });
 
   let snapshot = await read();
-  let runs: { report: RunsReport; history: RunRecord[]; output: string; outputMissing: boolean } = {
+  let runs: { report: RunsReport; held: HeldRun[]; history: RunRecord[]; output: string; outputMissing: boolean } = {
     report: { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null }, heldRuns: 0 },
+    held: [],
     history: [],
     output: "",
     outputMissing: false,
@@ -114,12 +115,13 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     const service = services(snapshot).services.find((status) => status.job === job);
     return service === undefined ? { ok: false, reason: `no service "${job}"` } : { ok: true, service };
   };
-  /** A page of the history as set, newest first: `limit` records from the cursor `before` (an index). */
-  const historyPage = (params: JsonValue): { records: RunRecord[]; next: string | null } => {
+  /** A page of the history as set, newest first: `limit` records from the cursor `before` (an index);
+   *  the newest page leads with the held rows as set. */
+  const historyPage = (params: JsonValue): HistoryPage => {
     const { before = null, limit = 50 } = (params ?? {}) as { before?: string | null; limit?: number };
     const from = before === null ? 0 : Number(before);
     const records = runs.history.slice(from, from + limit);
-    return { records, next: from + limit < runs.history.length ? String(from + limit) : null };
+    return { held: before === null ? runs.held : [], records, next: from + limit < runs.history.length ? String(from + limit) : null };
   };
   /** The run Run now starts, as the scheduler answers it. */
   const startedRun = (job: string, name: string, kind: JobKind, project: string | null): ActiveRun => ({

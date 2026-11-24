@@ -7,7 +7,7 @@ import { exitWords, type KeeperLink, type RunnerSession, type ServiceStatus } fr
 import type { ControlCallResult } from "../../scheduler/control/client";
 import type { ControlMethod, ControlMethods, ControlParams } from "../../scheduler/control/protocol";
 import { gitRepoLine } from "../../scheduler/git-runs";
-import { dayTime, durationWords, heldRunsWords, runTriggerWords, runWords, SWITCH_WORDS, type ActiveRun, type JobListing, type NeedsYouItem, type RunRecord, type SwitchPosition, type SwitchState } from "../../scheduler/model";
+import { dayTime, durationWords, heldRowWords, heldRunsWords, runTriggerWords, runWords, SWITCH_WORDS, TRIGGER_WORDS, type ActiveRun, type JobListing, type NeedsYouItem, type RunRecord, type SwitchPosition, type SwitchState } from "../../scheduler/model";
 import { checkSettings, SETTINGS_PATH } from "../../scheduler/settings";
 import { checkJobs, projectJobsFolder } from "../check";
 import { formatJobError } from "../format";
@@ -63,7 +63,8 @@ Usage:
   ${COMMAND} run <job>            run a job now, by its id or name: a script or git job runs (or
                                  queues behind its run going, as its overlap says); a service
                                  starts — one stopped by you or failed too
-  ${COMMAND} history [job]        the latest ${HISTORY_LIMIT} finished runs, newest first: of every job, or one
+  ${COMMAND} history [job]        the latest ${HISTORY_LIMIT} finished runs, newest first: of every job, or one;
+                                 first, each job the switch holds: held · N runs so far
   ${COMMAND} runs                 the runs going — running, queued and what each waits for — the
                                  switch, and what needs you
   ${COMMAND} pause [low|all]      hold scheduled runs: of low-priority jobs, or all (the default);
@@ -301,8 +302,10 @@ async function history(job: string | null, deps: CliDeps): Promise<number> {
     deps.err(`${COMMAND} history: ${answer.why}.\n`);
     return EXIT_PROBLEMS;
   }
-  const { records } = answer.value;
-  if (records.length === 0) deps.out(job === null ? "No runs yet.\n" : `No runs of ${job} yet.\n`);
+  const { held, records } = answer.value;
+  if (held.length === 0 && records.length === 0) deps.out(job === null ? "No runs yet.\n" : `No runs of ${job} yet.\n`);
+  // The jobs the switch holds lead: a held row is the record their release writes, shown till then.
+  for (const row of held) deps.out(`${row.job}  ${row.name}  ${TRIGGER_WORDS.scheduled}  ${heldRowWords(row.missed)}\n`);
   for (const record of records) {
     const output = record.log === null ? "" : deps.exists(record.log) ? `  output ${record.log}` : `  ${OUTPUT_NOT_HERE}`;
     deps.out(`${record.job}  ${record.name}  ${runTriggerWords(record)}  ${runLine(record)}${output}\n`);

@@ -351,8 +351,27 @@ export interface RunsReport {
   heldRuns: number;
 }
 
+/** The runs the switch has held of one job so far — History's held row, from the first held run
+ *  until the switch lets the job go, when the record its missed-run policy writes takes its place.
+ *  Derived from the look the job's schedule waits at, never stored. */
+export interface HeldRun {
+  state: "held";
+  job: string;
+  /** The job's name now. */
+  name: string;
+  kind: JobKind;
+  project: string | null;
+  /** The working folder, workspace-relative (`""` is the root). */
+  folder: string;
+  /** How many runs it held so far, the first and the latest (epoch ms). */
+  missed: MissedRuns;
+}
+
 /** A page of history, newest first. */
 export interface HistoryPage {
+  /** On the newest page (no `before`): the jobs the switch holds now, one row each — of the job
+   *  asked for, when one is; `[]` on every older page. */
+  held: HeldRun[];
   records: RunRecord[];
   /** Where the next, older page starts: pass it as `before`; `null` at the oldest record. */
   next: string | null;
@@ -641,8 +660,22 @@ export function isRunsReport(value: unknown): value is RunsReport {
   );
 }
 
+function isHeldRun(value: unknown): value is HeldRun {
+  return (
+    isRecord(value) &&
+    value.state === "held" &&
+    typeof value.job === "string" &&
+    typeof value.name === "string" &&
+    typeof value.kind === "string" &&
+    KINDS.includes(value.kind) &&
+    nullableString(value.project) &&
+    typeof value.folder === "string" &&
+    isMissedRuns(value.missed)
+  );
+}
+
 export function isHistoryPage(value: unknown): value is HistoryPage {
-  return isRecord(value) && Array.isArray(value.records) && value.records.every(isRunRecord) && nullableString(value.next);
+  return isRecord(value) && Array.isArray(value.held) && value.held.every(isHeldRun) && Array.isArray(value.records) && value.records.every(isRunRecord) && nullableString(value.next);
 }
 
 export function isRunOutput(value: unknown): value is RunOutput {
@@ -728,9 +761,21 @@ export function hookCauseWords(cause: Extract<RunCause, { kind: "hook" }>): stri
  *  it with these words. */
 export function missedRunsWords(missed: MissedRuns | null): string | null {
   if (missed === null || missed.count <= 1) return null;
-  const sameDay = new Date(missed.first).toDateString() === new Date(missed.last).toDateString();
-  const span = sameDay ? `${clockTime(missed.first)}–${clockTime(missed.last)}` : `${dayTime(missed.first)}–${dayTime(missed.last)}`;
-  return `missed ${missed.count} runs, ${span}`;
+  return `missed ${missed.count} runs, ${spanWords(missed)}`;
+}
+
+/** When a job's missed or held runs fell: "17:40–17:46", across days "Tue 23:40–Wed 00:20"; one
+ *  run's time alone. */
+function spanWords(runs: MissedRuns): string {
+  if (runs.count <= 1) return clockTime(runs.last);
+  const sameDay = new Date(runs.first).toDateString() === new Date(runs.last).toDateString();
+  return sameDay ? `${clockTime(runs.first)}–${clockTime(runs.last)}` : `${dayTime(runs.first)}–${dayTime(runs.last)}`;
+}
+
+/** A held row's words: "held · 2 runs so far, 17:40–17:42", "held · 1 run so far, 17:40". History
+ *  and `pomade-runner history` say it. */
+export function heldRowWords(held: MissedRuns): string {
+  return `held · ${heldRunsWords(held.count) ?? "no runs so far"}, ${spanWords(held)}`;
 }
 
 /** How many scheduled runs the switch has held, in words: "4 runs so far", "1 run so far"; `null`

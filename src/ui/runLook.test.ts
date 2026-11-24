@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { ActiveRun, RunRecord, RunView } from "../scheduler/model";
-import { promptLines, byDay, dayWords, filterCounts, keeps, runDuration, runLook, runningSince, runTime, shortDuration, slotHolders, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
+import type { ActiveRun, HeldRun, RunRecord, RunView } from "../scheduler/model";
+import { promptLines, byDay, dayWords, filterCounts, itemKey, keeps, runDuration, runLook, runningSince, runTime, shortDuration, slotHolders, TRIGGER_HELP, waitsSentence, whenWords, whyWords, type HistoryItem } from "./runLook";
 
 /** Tue 17 Nov 2026, 12:48 — the prototype's "now". */
 const NOW = new Date(2026, 10, 17, 12, 48).getTime();
@@ -136,6 +136,27 @@ describe("History's result chips", () => {
     expect(views.filter((view) => keeps("active", view)).map((view) => view.state)).toEqual(["running", "queued"]);
     expect(views.filter((view) => keeps("failed", view)).map((view) => view.state)).toEqual(["failed", "failed"]);
     expect(views.filter((view) => keeps("missed", view)).map((view) => view.state)).toEqual(["missed-waiting", "skipped", "missed"]);
+  });
+});
+
+describe("a held row: a job's runs the switch holds so far", () => {
+  const held: HeldRun = { state: "held", job: "lint", name: "Lint", kind: "script", project: null, folder: "", missed: { count: 2, first: at(17, 12, 40), last: at(17, 12, 42) } };
+
+  it("reads held, amber, and keeps to Skipped & missed — never Active or Failed", () => {
+    expect(runLook(held, NOW)).toMatchObject({ tone: "warning", live: false, words: "held · 2 runs so far, 12:40–12:42", help: "sw.held", label: "Held", filter: "missed" });
+    expect(runLook({ ...held, missed: { count: 1, first: at(17, 12, 42), last: at(17, 12, 42) } }).words).toBe("held · 1 run so far, 12:42");
+    expect(runLook({ ...held, missed: { count: 3, first: at(16, 23, 58), last: at(17, 0, 2) } }).words).toBe("held · 3 runs so far, Mon 23:58–Tue 00:02");
+    const items: HistoryItem[] = [held, record({ state: "missed", startedAt: null }), active()];
+    expect(filterCounts(items)).toEqual({ active: 1, failed: 0, missed: 2 });
+    expect(items.filter((item) => keeps("missed", item)).map((item) => item.state)).toEqual(["held", "missed"]);
+  });
+
+  it("shows at its latest held run, among the runs by time, with no duration and a key of its own", () => {
+    expect(runTime(held)).toBe(at(17, 12, 42));
+    expect(runDuration(held, NOW)).toBeNull();
+    expect(itemKey(held)).toBe("lint/held");
+    const days = byDay<HistoryItem>([record({ run: "a", startedAt: at(17, 12, 30) }), held, active({ run: "b", startedAt: at(17, 12, 45) })], NOW);
+    expect(days.map((day) => day.runs.map(itemKey))).toEqual([["lint/b", "lint/held", "backup/a"]]);
   });
 });
 

@@ -1,10 +1,10 @@
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
-import { SWITCH_METHOD } from "../integrations/runner-api";
+import { HISTORY_MISSED_ROUTE, SWITCH_METHOD } from "../integrations/runner-api";
 import { heldRunsWords, SWITCH_POSITIONS, SWITCH_WORDS, type SwitchPosition, type SwitchState } from "../scheduler/model";
 import type { HelpKey } from "./help";
-import { Help, Segmented, type DotTone } from "./kit";
+import { Help, LinkButton, Segmented, type DotTone } from "./kit";
 import styles from "./SwitchControl.module.css";
 import { useAction } from "./useAction";
 
@@ -17,8 +17,9 @@ const POSITION: Record<SwitchPosition, { short: string; tone: DotTone; help: Hel
 
 /** The global switch, pinned above the panel's scroll: Running · Pause low-priority · Pause all, on
  *  the panel's three-position control; below 268 px the middle one reads "Pause low". A position that
- *  holds runs says so — with how many scheduled runs it has held so far (`heldRuns`) — and that
- *  services keep running; the (i) tells what becomes of a held run. */
+ *  holds runs says so — with how many scheduled runs it has held so far (`heldRuns`), a link to
+ *  History's Skipped & missed, where each held job has its row — and that services keep running;
+ *  the (i) tells what becomes of a held run. */
 export function SwitchControl({ host, state, heldRuns }: { host: HostClient; state: SwitchState; heldRuns: number }): React.JSX.Element {
   const action = useAction();
   const { held } = POSITION[state.position];
@@ -44,7 +45,15 @@ export function SwitchControl({ host, state, heldRuns }: { host: HostClient; sta
         <div className={styles.note} data-testid="switch-note">
           <span className={styles.words}>
             {held}
-            {count !== null && <span data-testid="switch-held-runs"> · {count}</span>}. Services keep running.
+            {count !== null && (
+              <>
+                {" · "}
+                <LinkButton className={styles.count} onClick={() => action.run(() => host.tabs.openApp({ route: HISTORY_MISSED_ROUTE }))} data-testid="switch-held-runs">
+                  {count}
+                </LinkButton>
+              </>
+            )}
+            . Services keep running.
           </span>
           <Help k="sw.held" />
         </div>

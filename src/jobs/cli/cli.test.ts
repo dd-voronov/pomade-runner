@@ -448,7 +448,7 @@ describe("pomade-runner", () => {
         { ...chained, job: "mount", name: "Mount", kind: "script" as const, trigger: "hook" as const, cause: { kind: "hook" as const, event: "login" as const, context: {} }, action: null },
         { ...failed, job: "copied", name: "Copied", log: "/elsewhere/output/copied/r.log" },
       ];
-      const r = await run(["history"], undefined, { history: { status: "ok", value: { records, next: null } }, calls });
+      const r = await run(["history"], undefined, { history: { status: "ok", value: { held: [], records, next: null } }, calls });
       expect(r.out).toBe(
         "backup  Backup  scheduled  failed · exit 1, 2026-11-17T12:00:03.000Z, took 3 s  output /ud/output/backup/r.log\n" +
           "x  X  manual  done, 2026-11-17T12:00:03.000Z, took 3 s\n" +
@@ -457,17 +457,25 @@ describe("pomade-runner", () => {
           "copied  Copied  scheduled  failed · exit 1, 2026-11-17T12:00:03.000Z, took 3 s  output not on this Mac\n",
       );
       expect(calls).toEqual([{ method: "history", params: { job: null, limit: 20 } }]);
-      expect((await run(["history", "backup"], undefined, { history: { status: "ok", value: { records: [], next: null } }, calls })).out).toBe("No runs of backup yet.\n");
+      expect((await run(["history", "backup"], undefined, { history: { status: "ok", value: { held: [], records: [], next: null } }, calls })).out).toBe("No runs of backup yet.\n");
       expect(calls.at(-1)).toEqual({ method: "history", params: { job: "backup", limit: 20 } });
-      expect((await run(["history"], undefined, { history: { status: "ok", value: { records: [], next: null } } })).out).toBe("No runs yet.\n");
+      expect((await run(["history"], undefined, { history: { status: "ok", value: { held: [], records: [], next: null } } })).out).toBe("No runs yet.\n");
       const steps = [{ step: "commit" as const, outcome: "done" as const, detail: "committed a1b2c3d (1 file)" }, { step: "push" as const, outcome: "done" as const, detail: "pushed 1 commit" }];
       const results = [
         { repo: "notes", path: "/ws/notes", op: "commit-push" as const, status: "done" as const, reason: null, steps, commit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
         { repo: "blog", path: "/ws/Projects/blog", op: "commit-push" as const, status: "skipped" as const, reason: "agent working", steps: [], commit: null },
       ];
       const git = { ...failed, job: "notes", name: "notes", kind: "git" as const, state: "done" as const, exitCode: 0, log: null, git: { op: "commit-push" as const, job: "notes", at: "2026-11-17T12:00:00.000Z", results } };
-      expect((await run(["history"], undefined, { history: { status: "ok", value: { records: [git], next: null } } })).out).toBe(
+      expect((await run(["history"], undefined, { history: { status: "ok", value: { held: [], records: [git], next: null } } })).out).toBe(
         "notes  notes  scheduled  done, 2026-11-17T12:00:03.000Z, took 3 s\n    notes · committed a1b2c3d · pushed\n    blog · skipped · agent working\n",
+      );
+      // A job the switch holds leads, with its runs held so far; it alone is not "No runs yet".
+      const held = { state: "held" as const, job: "lint", name: "Lint", kind: "script" as const, project: null, folder: "", missed: { count: 2, first: new Date(2026, 10, 17, 17, 40).getTime(), last: new Date(2026, 10, 17, 17, 42).getTime() } };
+      expect((await run(["history"], undefined, { history: { status: "ok", value: { held: [held], records: [git], next: null } } })).out).toBe(
+        "lint  Lint  scheduled  held · 2 runs so far, 17:40–17:42\nnotes  notes  scheduled  done, 2026-11-17T12:00:03.000Z, took 3 s\n    notes · committed a1b2c3d · pushed\n    blog · skipped · agent working\n",
+      );
+      expect((await run(["history", "lint"], undefined, { history: { status: "ok", value: { held: [{ ...held, missed: { ...held.missed, count: 1, first: held.missed.last } }], records: [], next: null } } })).out).toBe(
+        "lint  Lint  scheduled  held · 1 run so far, 17:42\n",
       );
       expect(await run(["history", "a", "b"])).toMatchObject({ code: 2, err: expect.stringContaining('unexpected "b"') as string });
       expect(await run(["history"])).toMatchObject({ code: 1, err: expect.stringContaining("it keeps the history") as string });

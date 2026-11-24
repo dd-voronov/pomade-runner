@@ -673,7 +673,7 @@ describe("scheduler and runs", () => {
     await vi.waitFor(() => expect(fake.badges).toEqual({ runner: { count: 1, urgent: true } }));
     const history = await ui.apps.call("pomade-runner", HISTORY_LIST_METHOD, { job: "backup", limit: 10 });
     expect(isHistoryPage(history)).toBe(true);
-    expect(history).toMatchObject({ records: [{ job: "backup", run: run.run, state: "failed", exitCode: 1 }], next: null });
+    expect(history).toMatchObject({ held: [], records: [{ job: "backup", run: run.run, state: "failed", exitCode: 1 }], next: null });
     expect(await ui.apps.call("pomade-runner", HISTORY_LIST_METHOD)).toMatchObject({ records: [{ run: run.run }] });
     expect(await ui.apps.call("pomade-runner", RUN_OUTPUT_METHOD, { job: "backup", run: run.run })).toEqual({ text: "", truncated: false, missing: true });
     expect(await ui.apps.call("pomade-runner", RUNS_LIST_METHOD)).toMatchObject({ needsYou: [{ id: "run-failed:backup", run: run.run, count: 1 }], jobs: [{ last: { state: "failed" } }] });
@@ -727,7 +727,7 @@ describe("scheduler and runs", () => {
     sessions.exit(lastRun().id, 2);
     await vi.waitFor(async () => expect(await callScheduler(socketPath(), "history", { job: null, limit: 5 })).toMatchObject({ status: "ok", value: { records: [{ job: "backup", state: "failed" }] } }));
     expect(await callScheduler(socketPath(), "history", { job: "Backup", limit: 5 })).toMatchObject({ status: "ok", value: { records: [{ job: "backup" }] } });
-    expect(await callScheduler(socketPath(), "history", { job: "web", limit: 5 })).toEqual({ status: "ok", value: { records: [], next: null } });
+    expect(await callScheduler(socketPath(), "history", { job: "web", limit: 5 })).toEqual({ status: "ok", value: { held: [], records: [], next: null } });
     await vi.waitFor(async () => expect(await readdir(join(dir, "ud/notices/queue"))).toHaveLength(1));
     const [queued] = await readdir(join(dir, "ud/notices/queue"));
     expect(JSON.parse(await readFile(join(dir, "ud/notices/queue", queued ?? ""), "utf8"))).toMatchObject({ source: "pomade-runner", title: "Backup failed", action: { kind: "openApp", route: expect.stringMatching(/^run\/backup\//) as string } });

@@ -197,11 +197,16 @@ test.describe("missed runs and load", () => {
     expect(await world.history("low")).toEqual([]);
     expect(await world.history("wait")).toEqual([]);
     expect(await world.history("high")).not.toEqual([]);
+    // T-033 · History has one held row per held job, adding up to the switch's count; the command lists them first.
+    expect((await world.command("history", "low")).stdout).toMatch(/^low {2}Low {2}scheduled {2}held · 3 runs so far, \d\d:40–\d\d:44\n$/);
+    expect((await world.command("history")).stdout).toMatch(/^low {2}Low {2}scheduled {2}held · 3 runs so far, \d\d:40–\d\d:44\nwait {2}Wait {2}scheduled {2}held · 3 runs so far, \d\d:40–\d\d:44\nhigh {2}High {2}scheduled {2}done, /);
 
     expect((await world.command("resume")).code).toBe(0);
     const three = { count: 3, first: madrid("2026-11-18T17:40:00"), last: madrid("2026-11-18T17:44:00") };
     await expect.poll(() => world.history("low"), { timeout: 15_000 }).toEqual([expect.objectContaining({ trigger: "caught-up", state: "done", dueAt: three.last, missed: three }) as RunRecord]);
     expect((await world.command("history", "low")).stdout).toMatch(/^low {2}Low {2}missed 3 runs, \d\d:40–\d\d:44 · caught up once {2}done, /);
+    // The held row became that record: none is left beside it.
+    expect((await world.command("history")).stdout).not.toContain("held ·");
     // The wait-for-me job waits for you only now, for all three.
     const after = await runsReport(world);
     expect(after.needsYou).toEqual([expect.objectContaining({ id: "missed:wait", missed: three })]);

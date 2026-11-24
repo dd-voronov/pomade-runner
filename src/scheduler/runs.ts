@@ -102,6 +102,7 @@ import {
   type ActiveRun,
   type AgentRun,
   type AgentWait,
+  type HeldRun,
   type JobRuns,
   type MissedChoice,
   type MissedChoiceResult,
@@ -339,8 +340,10 @@ export interface Runs {
   dismissWarning(job: string, run: string): boolean;
   switch(): SwitchState;
   /** The scheduled runs the switch has held so far: every occurrence of the jobs it holds since it
-   *  caught each. */
+   *  caught each — the held rows' counts added up. */
   heldRuns(): number;
+  /** History's held rows: one per job the switch holds that has a run held so far, by job id. */
+  heldRows(): HeldRun[];
   /** Set the switch, once it is written: held runs wait; on release, held runs that are late go to
    *  their policy. */
   setSwitch(position: SwitchPosition): Promise<SwitchState>;
@@ -971,17 +974,24 @@ export function createRuns(options: RunsOptions): Runs {
     if (heldMore) options.onChange();
   }
 
-  /** The scheduled runs the switch has held so far: every occurrence of a held job since the switch
-   *  caught it. */
-  function heldRuns(): number {
+  /** The held rows: each job the switch holds now, with every occurrence of it since the switch
+   *  caught it — derived from the look its schedule waits at, so a restarted scheduler, or one on
+   *  another Mac reading the same records, shows the same rows. */
+  function heldRows(): HeldRun[] {
     const at = now();
-    let count = 0;
+    const rows: HeldRun[] = [];
     for (const job of scheduledRuns(options.jobs())) {
       const since = held.get(job.id);
       if (since === undefined || job.trigger.kind !== "schedule" || !holds(switchState.position, { trigger: "scheduled", lowPriority: job.lowPriority })) continue;
-      count += passedOccurrences(job.trigger.schedule, new Date(since), at)?.count ?? 0;
+      const missed = passedOccurrences(job.trigger.schedule, new Date(since), at);
+      if (missed !== null) rows.push({ state: "held", job: job.id, name: job.name, kind: job.kind, project: job.project, folder: runFolder(job), missed });
     }
-    return count;
+    return rows.sort((a, b) => a.job.localeCompare(b.job));
+  }
+
+  /** The scheduled runs the switch has held so far: the held rows' counts added up. */
+  function heldRuns(): number {
+    return heldRows().reduce((sum, row) => sum + row.missed.count, 0);
   }
 
   /** Stop a run past its job's time limit; warn of a run going longer than the long-run warning. */
@@ -1389,6 +1399,8 @@ export function createRuns(options: RunsOptions): Runs {
     switch: () => switchState,
 
     heldRuns,
+
+    heldRows,
 
     setSwitch: (position) =>
       inLane(async () => {

@@ -27,7 +27,7 @@ workspace-level app: one list of every job, filterable to the current project.
 | **UI** | the Runner side panel and the Runner tab, in Pomade (`pomade-app://pomade-runner/`) | hidden-not-unmounted, like every pane |
 | **Scheduler** | the always-on backend: loads job files; supervises the services; evaluates triggers; applies missed-run, queue and load policies; starts the keeper and starts runs through it as its owner; writes history; posts notices; publishes events; serves Runner's API | a login item (launchd) that keeps running when Pomade quits; updated and restarted freely; reconnects to the keeper and its running sessions on restart |
 | **Keeper** | `pomade-kit/keeper`, run as Runner's own detached process (`backend/keeper.mjs`): holds every service's and run's terminal session (PTY); serves the attach protocol Pomade tabs use; reports exits | started by the scheduler (`startKeeper`), and started again when it dies; does not notice a scheduler restart or update; a keeper update hands the open PTYs to the new keeper process, so sessions keep running |
-| **`pomade-runner` command** | `check [file…]` validates job files and the settings file · `projects` lists the project ids and jobs sub-folders · `list` prints every job with its kind, trigger in words, next run and last result · `run <job>` runs a job now — a script's or git job's run, a service's Start · `history [job]` prints the latest runs · `runs` prints the switch, the runs going with what each queued one waits for, and Needs you · `pause [low\|all]` · `resume` set the switch · `resume-job <job>` lifts the loop guard's pause of a job · `missed <job> run-once|run-all|run-at <time>|skip` settles a job's missed runs · `enable <job>` · `disable <job>` · `services` shows every service and where it stands · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions | on `PATH` via `~/.pomade/bin`; reads the job files and the settings and talks to the scheduler directly, so it works with Pomade closed |
+| **`pomade-runner` command** | `check [file…]` validates job files and the settings file · `projects` lists the project ids and jobs sub-folders · `list` prints every job with its kind, trigger in words, next run and last result · `run <job>` runs a job now — a script's or git job's run, a service's Start · `history [job]` prints the jobs the switch holds and the latest runs · `runs` prints the switch, the runs going with what each queued one waits for, and Needs you · `pause [low\|all]` · `resume` set the switch · `resume-job <job>` lifts the loop guard's pause of a job · `missed <job> run-once|run-all|run-at <time>|skip` settles a job's missed runs · `enable <job>` · `disable <job>` · `services` shows every service and where it stands · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions | on `PATH` via `~/.pomade/bin`; reads the job files and the settings and talks to the scheduler directly, so it works with Pomade closed |
 | **Skill** | `pomade-runner-jobs` teaches agents the job format and location | master in `app/skills/pomade-runner-jobs/SKILL.md`, shipped in the build at `skills/pomade-runner-jobs` (the manifest's `skills`); the scheduler keeps a copy in the workspace's skills folder, and gives it to no agent |
 
 **What Runner tracks:** only jobs created in Runner. A terminal opened by hand, inside Pomade or
@@ -843,7 +843,15 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
   - A held job's look stays where the switch caught it (`held` in `runs.json`). While it holds a
     job, nothing is decided for it — no record, no Needs-you item, no notice — and the report counts
     its occurrences since then (`RunsReport.heldRuns`: the note under the switch, `pomade-runner
-    runs`) and marks it held (`JobRuns.held`: the Jobs view). On release every occurrence it held is
+    runs`) and marks it held (`JobRuns.held`: the Jobs view). History shows each held job with a
+    run held so far as one **held row** (`HeldRun`: "held · 2 runs so far, 17:40–17:42"; the rows'
+    counts add up to `heldRuns`), under **Skipped & missed** and in `pomade-runner history`. A held
+    row is derived — from the job's look in `runs.json`, its schedule and the clock — never
+    written to the history, so a restarted scheduler, or one on another Mac reading the same
+    records folder, shows the same row; it makes no Needs-you item and no notice. On release it is
+    gone, and what the job's policy makes takes its place: the record ("missed 3 runs, … · caught
+    up once", "… · skipped") or the missed run that waits for you — and, run with Run all or Run
+    the other N, the runs they became ("caught up 2 of 3"). On release every occurrence it held is
     missed, the latest too however recent, and goes, counted, to the job's policy: one decision. A
     queued run the switch held goes to its job's policy on release when it is more than 5 minutes
     late, or a caught-up one: a `run-on-wake` job keeps it while it is worth it, a `wait-for-me` one
@@ -962,7 +970,9 @@ to it, light theme only.
    than 268 px, the middle one reading "Pause low". A pause says what it holds under the control —
    "Low-priority jobs are held. Services keep running." / "Every scheduled job is held. Services
    keep running." — and, once it has held a run, how many so far ("Low-priority jobs are held · 4
-   runs so far. Services keep running.", `heldRunsWords`), with the (i) of what becomes of a held run;
+   runs so far. Services keep running.", `heldRunsWords`), with the (i) of what becomes of a held run.
+   The count is a link: it opens the Runner tab on History with **Skipped & missed** on
+   (`history/missed`), where each held job has its held row;
 2. **Needs you** (`src/ui/NeedsYou.tsx`): a card per item (`PanelCard`) — the status dot (red: a failed
    run, a service that gave up · amber: a missed run, a run waiting for you, a paused job · accent: a long run), the
    job's name, the (i) help of that kind, the time at the card's end, one line of text, and the
@@ -1062,7 +1072,9 @@ to it, light theme only.
   - **The route `jobs/<job>`** marks that job's row — the accent bar and wash — and scrolls to it.
 - **History** (`src/ui/HistoryView.tsx`): the runs going (`runs.list`'s `active`: running — an
   agent run at a prompt amber, "waiting for you" — queued with what they wait for, missed and
-  waiting for you) and every record, one list newest
+  waiting for you), the held rows (`history.list`'s `held`: amber, "held · 2 runs so far,
+  17:40–17:42", at the latest held run, no duration, trigger "scheduled", kept by **Skipped &
+  missed**; one opens its job in Jobs) and every record, one list newest
   first by when each started — or, one that has not, was due — under day heads (Today, Yesterday,
   "Sun 15 Nov"). Each row: the time, the kind icon, the job, the result (`runLook`: dot and words
   — "failed · exit 1", "done · restarted", "queued · 1 ahead", "running · 3h — still expected?",
@@ -1075,7 +1087,8 @@ to it, light theme only.
   page of 100 records, the newest page again on every `runs.changed`, and the next older page
   each time the list's end comes into sight (`useHistoryPages`); while older pages remain, a
   count is of the runs loaded and says so ("3+"). A row — click, Enter or Space — opens the run's
-  result card. With no runs at all, the view says "Nothing here yet" with **New job**.
+  result card. The route `history/missed` turns **Skipped & missed** on, then goes back to
+  `history`, so the next ask turns it on again. With no runs at all, the view says "Nothing here yet" with **New job**.
 - **Services** (`src/ui/ServicesView.tsx`): the "This project" chip (the tab's, as in Jobs) with
   the open project's name, and the summary "Services on Mac startup outlive Pomade · the switch
   never pauses them"; the table head **Service · project · folder**, **Command** and **Status**; then
@@ -1131,7 +1144,8 @@ to it, light theme only.
 
 **Routes of the Runner tab** (`parseRoute`, `src/integrations/runner-api.ts`): `""` Jobs ·
 `jobs/<encoded job id>` Jobs at one job, its row marked and scrolled to (what a repo row's Scheduled
-line opens) · `history` · `services` · `settings` · `run/<encoded job id>/<run id>` a run's result
+line opens) · `history` · `history/missed` History with **Skipped & missed** on (what the count
+under the switch opens; `HISTORY_MISSED_ROUTE`) · `services` · `settings` · `run/<encoded job id>/<run id>` a run's result
 card, a dialog over History (what a run's notice opens) · `prompt/<encoded job id>/<run id>` a
 waiting run's notice: the run's terminal tab opens at the prompt, and the Runner tab goes to its
 card · `output/<encoded job id>/<run id>` its
@@ -1422,7 +1436,9 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
     held so far (`heldRuns`); every run and record carries the missed runs it stands for (`missed`);
     **`runs.changed`** tells Runner's frames to ask again — on every change, and when the scheduler
     connects.
-  - **`history.list`** `{ job?, before?, limit? }` → `HistoryPage`; **`runs.get`** `{ job, run }` →
+  - **`history.list`** `{ job?, before?, limit? }` → `HistoryPage` (`isHistoryPage`): the records,
+    newest first, and the cursor of the next older page; the newest page (no `before`) leads with
+    the held rows (`held: HeldRun[]` — of `job` when one is asked for; `[]` on older pages); **`runs.get`** `{ job, run }` →
     `RunView` or `null`; **`runs.output`** `{ job, run }` → `RunOutput`: the end of its log, at
     most 1 MiB.
   - From Runner's own frames only: **`jobs.run`** `{ job }` → `RunActionResult` (Run now) ·

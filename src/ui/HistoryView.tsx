@@ -2,24 +2,43 @@ import { useEffect, useRef, useState } from "react";
 import { WORKSPACE_PROJECT_ID } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
-import { runRoute } from "../integrations/runner-api";
-import { runTriggerWords, type ActiveRun, type RunView } from "../scheduler/model";
+import { jobsRoute, runRoute } from "../integrations/runner-api";
+import { runTriggerWords, type ActiveRun } from "../scheduler/model";
 import styles from "./HistoryView.module.css";
 import { Chip, EmptyBlock, GroupHead, Help, KindCell, Status, TableHead, TableRow } from "./kit";
-import { byDay, FILTER_WORDS, filterCounts, HISTORY_FILTERS, keeps, KIND_WORDS, runDuration, runLook, runningSince, runTime, shortDuration, TRIGGER_HELP, type HistoryFilter } from "./runLook";
+import {
+  byDay,
+  FILTER_WORDS,
+  filterCounts,
+  HISTORY_FILTERS,
+  isHeld,
+  itemKey,
+  keeps,
+  KIND_WORDS,
+  runDuration,
+  runLook,
+  runningSince,
+  runTime,
+  shortDuration,
+  TRIGGER_HELP,
+  type HistoryFilter,
+  type HistoryItem,
+} from "./runLook";
 import { shortClock, upWords } from "./serviceWords";
 import { ViewFilters } from "./shell/TabShell";
 import { useHistoryPages } from "./useHistoryPages";
 import { useRunningNow } from "./useNow";
 import { useActiveProject, useSettings } from "./useRunnerApi";
 
-/** History: the runs going and every run that ended or never started, newest first, in their days
- *  — each row its time, job, result, duration and what started it; a row opens its result card.
+/** History: the runs going, the jobs the switch holds — a row each, with the runs held so far — and
+ *  every run that ended or never started, newest first, in their days — each row its time, job,
+ *  result, duration and what started it; a row opens its result card, a held row its job.
  *  The result chips keep the runs going, the failed ones or the ones that never started; "This
  *  project" those of the project Pomade has open. Older pages load as the list scrolls to its end. */
 export function HistoryView({
   host,
   active,
+  asked,
   open,
   thisProject,
   onThisProject,
@@ -27,6 +46,8 @@ export function HistoryView({
 }: {
   host: HostClient;
   active: readonly ActiveRun[];
+  /** The result chip the route asks for (`history/missed`): it turns on as the view opens. */
+  asked: HistoryFilter | null;
   open: (route: string) => void;
   /** The "This project" chip, kept by the tab: it holds across the Jobs, History and Services views. */
   thisProject: boolean;
@@ -38,7 +59,14 @@ export function HistoryView({
   const settings = useSettings(host);
   const project = useActiveProject(host);
   const now = useRunningNow(runningSince(active), 10_000);
-  const [filter, setFilter] = useState<HistoryFilter>("all");
+  const [filter, setFilter] = useState<HistoryFilter>(asked ?? "all");
+  // The chip the route asked for turns on; the route goes back to plain History, so the next ask
+  // is heard even when the person changed the chip meanwhile.
+  useEffect(() => {
+    if (asked === null) return;
+    setFilter(asked);
+    open("history");
+  }, [asked, open]);
   const end = useRef<HTMLDivElement>(null);
   const ready = history.status === "ready" ? history : null;
 
@@ -63,7 +91,7 @@ export function HistoryView({
     );
   }
 
-  const all: RunView[] = [...active, ...ready.records];
+  const all: HistoryItem[] = [...ready.held, ...active, ...ready.records];
   if (all.length === 0) {
     return (
       <EmptyBlock title="Nothing here yet" testId="history-empty" action={newJob("history-empty-new-job")}>
@@ -108,7 +136,7 @@ export function HistoryView({
       <div className={styles.list}>
         {days.map(({ day, key, runs }) => [
           <GroupHead key={`day:${key}`} title={day} testId="history-day" />,
-          ...runs.map((view) => <HistoryRow key={`${view.job}/${view.run}`} view={view} now={now} onOpen={() => open(runRoute(view.job, view.run))} />),
+          ...runs.map((view) => <HistoryRow key={itemKey(view)} view={view} now={now} onOpen={() => open(isHeld(view) ? jobsRoute(view.job) : runRoute(view.job, view.run))} />),
         ])}
         {days.length === 0 && !ready.more && (
           <div className={styles.none} data-testid="history-none">
@@ -125,7 +153,7 @@ export function HistoryView({
 
 /** One run: its time, kind, job, result — the status explains itself on hover — duration and
  *  trigger; a click, Enter or Space opens its result card. */
-function HistoryRow({ view, now, onOpen }: { view: RunView; now: number; onOpen: () => void }): React.JSX.Element {
+function HistoryRow({ view, now, onOpen }: { view: HistoryItem; now: number; onOpen: () => void }): React.JSX.Element {
   const look = runLook(view, now);
   const duration = runDuration(view, now);
   return (
@@ -153,8 +181,8 @@ function HistoryRow({ view, now, onOpen }: { view: RunView; now: number; onOpen:
         </Status>
       </span>
       <span className={styles.duration} data-testid="history-duration">{duration === null ? "—" : view.state === "running" ? upWords(duration) : shortDuration(duration)}</span>
-      <span className={styles.trigger} data-help={TRIGGER_HELP[view.trigger]} data-testid="history-trigger">
-        {runTriggerWords(view)}
+      <span className={styles.trigger} data-help={TRIGGER_HELP[isHeld(view) ? "scheduled" : view.trigger]} data-testid="history-trigger">
+        {runTriggerWords(isHeld(view) ? { trigger: "scheduled", cause: null } : view)}
       </span>
     </TableRow>
   );

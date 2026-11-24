@@ -139,7 +139,8 @@ export interface RunFinishedPayload extends RunStartedPayload {
 export type RunnerRoute =
   /** Every job; `job` is the one the route opens (a repo row's Scheduled line), `null` for none. */
   | { view: "jobs"; job: string | null }
-  | { view: "history" }
+  /** History; `filter` the result chip the route turns on (`history/missed`), `null` for none. */
+  | { view: "history"; filter: "missed" | null }
   | { view: "services" }
   | { view: "settings" }
   /** A run's result card. */
@@ -157,6 +158,10 @@ export type RunnerRoute =
 export function jobsRoute(job: string): string {
   return `jobs/${encodeJobId(job)}`;
 }
+
+/** History with its **Skipped & missed** chip on: `history/missed` — what the count under the
+ *  switch opens. */
+export const HISTORY_MISSED_ROUTE = "history/missed";
 
 /** A run's result card: `run/<encoded job id>/<run id>` — what a run's notice opens. */
 export function runRoute(job: string, run: string): string {
@@ -214,7 +219,8 @@ export function parseRoute(route: string): RunnerRoute {
   const edit = /^edit\/([^/]+)$/.exec(route);
   const editing = edit === null ? null : decodeJobId(edit[1] ?? "");
   if (editing !== null) return { view: "edit", job: editing };
-  if (route === "history") return { view: "history" };
+  if (route === "history") return { view: "history", filter: null };
+  if (route === HISTORY_MISSED_ROUTE) return { view: "history", filter: "missed" };
   if (route === "services") return { view: "services" };
   if (route === "settings") return { view: "settings" };
   const at = /^jobs\/([^/]+)$/.exec(route);

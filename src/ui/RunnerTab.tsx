@@ -82,7 +82,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
     </TabShell>
   );
 
-  const history = <HistoryView host={host} active={report?.active ?? []} open={open} thisProject={thisProject} onThisProject={setThisProject} newJob={newJob} />;
+  const history = <HistoryView host={host} active={report?.active ?? []} asked={view.view === "history" ? view.filter : null} open={open} thisProject={thisProject} onThisProject={setThisProject} newJob={newJob} />;
 
   if (jobs.status === "loading") return shell("tab-loading", null);
   if (view.view === "new" || view.view === "edit") {

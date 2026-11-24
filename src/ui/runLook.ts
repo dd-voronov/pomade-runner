@@ -3,7 +3,21 @@
 // duration, and what started it. Pure.
 
 import type { JobKind } from "../jobs/model";
-import { ACTION_DONE_WORDS, caughtUpWords, hookCauseWords, missedRunsWords, runWords, SWITCH_WORDS, waitingAt, type RunRecord, type RunTrigger, type RunView, type Waits } from "../scheduler/model";
+import {
+  ACTION_DONE_WORDS,
+  caughtUpWords,
+  heldRowWords,
+  hookCauseWords,
+  missedRunsWords,
+  runWords,
+  SWITCH_WORDS,
+  waitingAt,
+  type HeldRun,
+  type RunRecord,
+  type RunTrigger,
+  type RunView,
+  type Waits,
+} from "../scheduler/model";
 import type { HelpKey } from "./help";
 import type { DotTone, PillTone } from "./kit";
 import { shortClock } from "./serviceWords";
@@ -34,6 +48,17 @@ export function isRecord(view: RunView): view is RunRecord {
   return "endedAt" in view;
 }
 
+/** A History row: a run going or ended, or a job's runs the switch holds so far. */
+export type HistoryItem = RunView | HeldRun;
+
+export function isHeld(item: HistoryItem): item is HeldRun {
+  return item.state === "held";
+}
+
+/** What a held row looks like: amber, as the held tag is; it keeps to Skipped & missed, where the
+ *  record that takes its place on release lands. */
+const HELD_LOOK = { tone: "warning", live: false, help: "sw.held", label: "Held", pill: "warning", cardTone: undefined, filter: "missed" } as const;
+
 /** A done run's words: a chain's action on a service ("done · restarted"), a git run's commit
  *  ("done · a1b2c3d"), else "done". */
 function doneWords(view: RunRecord): string {
@@ -44,7 +69,8 @@ function doneWords(view: RunRecord): string {
 
 /** A run's look; with `now`, a running run that has become a long-run warning says so: "running ·
  *  3h — still expected?". An agent run at a prompt waits for you: amber, "waiting for you". */
-export function runLook(view: RunView, now?: number): RunLook {
+export function runLook(view: HistoryItem, now?: number): RunLook {
+  if (isHeld(view)) return { ...HELD_LOOK, words: heldRowWords(view.missed) };
   if (view.state === "running" && waitingAt(view) !== null) {
     return { tone: "warning", live: false, words: "waiting for you", help: "st.waiting", label: "Waiting for you", pill: "warning", cardTone: "warning", filter: "active" };
   }
@@ -86,12 +112,12 @@ function runningWords(view: RunView, now: number): string {
 }
 
 /** Whether the chip `filter` keeps the run. */
-export function keeps(filter: HistoryFilter, view: RunView): boolean {
+export function keeps(filter: HistoryFilter, view: HistoryItem): boolean {
   return filter === "all" || runLook(view).filter === filter;
 }
 
 /** How many runs each chip but All keeps. */
-export function filterCounts(views: readonly RunView[]): Record<Exclude<HistoryFilter, "all">, number> {
+export function filterCounts(views: readonly HistoryItem[]): Record<Exclude<HistoryFilter, "all">, number> {
   const counts = { active: 0, failed: 0, missed: 0 };
   for (const view of views) {
     const filter = runLook(view).filter;
@@ -100,9 +126,15 @@ export function filterCounts(views: readonly RunView[]): Record<Exclude<HistoryF
   return counts;
 }
 
-/** When a run shows in History: when it started, or — one that has not — when it was due. */
-export function runTime(view: RunView): number {
-  return view.startedAt ?? view.dueAt;
+/** When a run shows in History: when it started, or — one that has not — when it was due; a held
+ *  row, at its latest held run, as the record that takes its place does. */
+export function runTime(view: HistoryItem): number {
+  return isHeld(view) ? view.missed.last : (view.startedAt ?? view.dueAt);
+}
+
+/** A History row's key among the rows: a run's job and run id; a held row's job, once. */
+export function itemKey(view: HistoryItem): string {
+  return `${view.job}/${isHeld(view) ? "held" : view.run}`;
 }
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -125,9 +157,10 @@ export function whenWords(epochMs: number, now: number): string {
 }
 
 /** The runs in History's order — newest first by `runTime` — in their days. */
-export function byDay<T extends RunView>(views: readonly T[], now: number): { day: string; key: number; runs: T[] }[] {
+export function byDay<T extends HistoryItem>(views: readonly T[], now: number): { day: string; key: number; runs: T[] }[] {
   const days: { day: string; key: number; runs: T[] }[] = [];
-  for (const view of [...views].sort((a, b) => runTime(b) - runTime(a) || (b.run < a.run ? -1 : b.run > a.run ? 1 : 0))) {
+  const order = (view: HistoryItem): string => (isHeld(view) ? "~" : view.run);
+  for (const view of [...views].sort((a, b) => runTime(b) - runTime(a) || (order(b) < order(a) ? -1 : order(b) > order(a) ? 1 : 0))) {
     const key = midnight(runTime(view));
     const last = days[days.length - 1];
     if (last !== undefined && last.key === key) last.runs.push(view);
@@ -147,7 +180,8 @@ export function shortDuration(ms: number): string {
 
 /** A run's duration: a finished one's run time, a running one's so far; `null` for one that never
  *  started or has not yet. */
-export function runDuration(view: RunView, now: number): number | null {
+export function runDuration(view: HistoryItem, now: number): number | null {
+  if (isHeld(view)) return null;
   if (isRecord(view)) return view.durationMs;
   return view.state === "running" && view.startedAt !== null ? Math.max(0, now - view.startedAt) : null;
 }
