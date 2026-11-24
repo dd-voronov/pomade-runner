@@ -4,7 +4,9 @@
 // as the roster's Claude and Codex. The scheduler is started the way the login item starts it
 // (`pomade.spec.ts`). A run starts the agent in the job's folder through the launch spec, its turn
 // completes, Runner types `/exit`, and the run is done with its session; Full autonomy passes the
-// agent's autonomy argument; an agent that ends before its turn is done fails; a Codex run's session
+// agent's autonomy argument; an agent that ends before its turn is done fails, and so does one
+// whose turn ends without an answer (an API error) — noticed, a Needs-you item, its screen on the
+// card; a Codex run's session
 // is found by folder and start time; the fixture app hears `run.started` and `run.finished` with the
 // session and the started-by-Runner flag; the done card shows the last message, and Open session
 // resumes it in a Pomade agent tab. An agent that asks for permission waits for you — a notice, a
@@ -336,5 +338,24 @@ test.describe("agent runs in Pomade", () => {
     }
     await expect(page.locator(".xterm-rows").filter({ hasText: `resumed session ${record?.agent?.sessionId ?? ""}` })).toBeVisible({ timeout: 15_000 });
     await shoot(page, "pomade-agent-resumed");
+  });
+
+  test("T-037 · a turn that ends without an answer — an API error — still gets /exit, and the run fails with why: a notice, a Needs-you item, the agent's screen on its card", async () => {
+    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/unanswered.md"), agentJob("Unanswered", "claude", "Write the digest. [no-answer]"));
+    const record = await runToEnd("unanswered");
+    expect(record).toMatchObject({ state: "failed", reason: "the agent's turn ended without an answer", exitCode: 0 });
+    expect(record.agent?.exitSentAt).toEqual(expect.any(Number));
+    expect(record.lastLines.join("\n")).toContain("Not logged in · Please run /login");
+    expect(record.lastLines.join("\n")).toContain("Bye.");
+    expect((await agents.session(record.agent?.sessionId ?? "")).lastMessage).toBeNull();
+    await expect.poll(() => needsYou()).toContain("run-failed:unanswered");
+    await expect.poll(() => runnerNotices()).toContain("Unanswered failed");
+    await openRunnerTab(runRoute("unanswered", record.run));
+    const dialog = tab().getByTestId("run-dialog");
+    await expect(tab().getByTestId("run-result")).toHaveText("Failed");
+    await expect(dialog.getByTestId("run-why")).toHaveText("The agent's turn ended without an answer");
+    await expect(dialog.getByTestId("run-last-lines")).toContainText("Not logged in · Please run /login");
+    await expect(dialog.getByTestId("run-agent-note")).toHaveCount(0);
+    await shoot(page, "pomade-agent-no-answer");
   });
 });

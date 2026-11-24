@@ -167,7 +167,8 @@ export class FakeTurns implements AgentTurns {
 }
 
 /** The Agents app as a test scripts it: a roster, the launch specs it answers (recorded in
- *  `launches`), the sessions `findSessions` finds; `fail` makes every call reject with it. */
+ *  `launches`), the sessions `findSessions` finds, the last message; `fail` makes every call reject
+ *  with it. */
 export class FakeAgents implements AgentsApi {
   agents: RosterAgent[] = [{ id: "claude", name: "Claude", command: "claude", provider: "claude" }];
   readonly launches: LaunchSpecParams[] = [];
@@ -175,6 +176,10 @@ export class FakeAgents implements AgentsApi {
   /** Pre-assign the session id the launch asks for, as Claude Code does; `false` as Codex does. */
   preassigns = true;
   fail: AgentsError | null = null;
+  /** What `lastMessage` answers for every session; `null`: the agent never answered. */
+  message: LastMessage | null = { text: "Done.", at: null };
+  /** The sessions `lastMessage` was asked about, in order. */
+  readonly asked: string[] = [];
 
   private check(): void {
     if (this.fail !== null) throw this.fail;
@@ -203,9 +208,10 @@ export class FakeAgents implements AgentsApi {
     return Promise.resolve(this.found);
   }
 
-  lastMessage(): Promise<LastMessage | null> {
+  lastMessage(session: string): Promise<LastMessage | null> {
+    this.asked.push(session);
     this.check();
-    return Promise.resolve(null);
+    return Promise.resolve(this.message);
   }
 }
 

@@ -603,6 +603,16 @@ hooks, chains, History, notices and Needs you.
   the exit was typed is **failed**, "the agent exited before its turn was done", a status 0
   included; a crash after it **failed** with its exit code; Stop, the time limit and a lost session
   read as a script's. A permission or trust prompt is no finished turn: the run waits for you.
+- **A turn without an answer.** A turn can end with no answer: an API error ("Not logged in ·
+  Please run /login") ends it as any turn, and the Agents app leaves the error out of the session's
+  messages. So a run read **done** is checked as it is recorded — the agent has exited by then, its
+  transcript whole: Runner asks `sessions.lastMessage` for the run's session, and no message makes
+  the run **failed**, "the agent's turn ended without an answer" (`answeredEnd`, `agent-runs.ts`).
+  The agent got its exit command and ended as any agent; its last lines keep its screen, which shows
+  the error; notices, Needs you, chains and hooks take it as any failed run. When the Agents app
+  cannot be asked — not answering, Pomade gone — or the run has no session id, the answer is unknown,
+  not missing: the run is recorded **done**, the reason in the scheduler's log. The result card of
+  such a run shows the reason and the last lines in place of the last message.
 - **Waiting for you.** A permission or trust prompt on the agent's screen (the scanner's
   `waiting`) makes the running run wait for you: `waiting` on its `AgentRun` — the prompt and since
   when — a Needs-you item and a notice. It holds no low-priority slot and its time limit pauses:
@@ -668,7 +678,7 @@ head is red, a run that waits for you amber. Its body, by what the run left:
 |---|---|---|
 | Script, ended | exit code (red when failed) or the reason it failed — a time limit as "Stopped: Time limit, 45 min — the job's time limit" — and the last lines | **View output** · **Run again**; a caught-up run that ran for more than one missed run, while it is its job's latest and no Run all of the job goes (`otherMissedRuns`), **Run the other N** between them — on every ended run's card |
 | Git, ended | each repo: its commit hash and its steps (✓ done, ✗ failed, faint skipped), and a reason a step does not say | **View output** · **Run again** |
-| Agent, ended | a failed run's reason in red; the agent's last message (`sessions.lastMessage` by the run's session, its Markdown drawn as text: paragraphs, lists, bold, emphasis, code), or why it cannot be read — no session known, none written yet, the Agents app not running | **Open session** (a Pomade agent tab resuming the session — `agentTabs.resume` in the job's project and folder — or the live tab already on it) · **View output** · **Run again** |
+| Agent, ended | a failed run's reason in red; the agent's last message (`sessions.lastMessage` by the run's session, its Markdown drawn as text: paragraphs, lists, bold, emphasis, code), or why it cannot be read — no session known, none written yet, the Agents app not running; a run whose turn ended without an answer: the last lines in its place | **Open session** (a Pomade agent tab resuming the session — `agentTabs.resume` in the job's project and folder — or the live tab already on it) · **View output** · **Run again** |
 | Running | the latest output, followed while it runs | **Open terminal** · **Stop run** |
 | Agent, waiting for you | what it waits at ("The agent stopped at a permission prompt and waits for your answer."), **Waiting at**: the end of its output from the step that asks (`promptLines`), and that the time limit is paused | **Open at the prompt** (its terminal tab) · **Stop run** |
 | Queued | what it waits for, in a sentence — waiting for a slot, the low-priority runs holding the slots by name ("Two low-priority runs are going (Wiki lint, Photo backup). This one starts when one of them finishes.") | **Run now** |

@@ -1,5 +1,6 @@
 // An agent run's own rules (docs/DESIGN.md "Agent runs"), pure: what its session runs, how its end
-// reads, and which session the lookup by folder and start time picks.
+// reads — a turn that ended without an answer included — and which session the lookup by folder and
+// start time picks.
 // The launch itself — the roster, the launch spec, the keeper session — is in `runs.ts`; following
 // the agent's turns in `src/keeper/agent-turns.ts`.
 
@@ -57,4 +58,20 @@ export function agentEnd(end: SessionEnd, agent: AgentRun, exitReason: string | 
   }
   if (exitReason === "exited") return { ...end, state: "failed", reason: "the agent exited before its turn was done" };
   return end;
+}
+
+/** Whether the agent answered in the session whose turn ended, as the Agents app's
+ *  `sessions.lastMessage` says: a message (`answered`), none (`none` — an API error such as "Not
+ *  logged in" ends a turn with none), or it could not be asked (`unknown`: the app not answering,
+ *  Pomade gone, no session id). */
+export type TurnAnswer = "answered" | "none" | "unknown";
+
+/** Why an agent run whose turn ended without an answer failed. */
+export const NO_ANSWER_REASON = "the agent's turn ended without an answer";
+
+/** An agent run's end once its answer is known: a run `agentEnd` read as done whose agent never
+ *  answered is **failed**, `NO_ANSWER_REASON`; an unknown answer leaves it as it was. */
+export function answeredEnd(end: SessionEnd, answer: TurnAnswer): SessionEnd {
+  if (end.state !== "done" || answer !== "none") return end;
+  return { ...end, state: "failed", reason: NO_ANSWER_REASON };
 }

@@ -4074,6 +4074,21 @@ test.describe("agent jobs", () => {
     await expect(dialog.getByRole("button", { name: "Run again" })).toBeVisible();
     await shoot(page, "agent-card-failed");
   });
+
+  test("T-037 · a run whose turn ended without an answer is red with the reason and shows the agent's screen, not a missing message", async ({ page }) => {
+    const screen = ["● Write my morning summary.", "  ⎿  API Error: Not logged in · Please run /login", "> /exit", "Bye."];
+    const unanswered: RunRecord = { ...done, state: "failed", reason: "the agent's turn ended without an answer", lastLines: screen };
+    await start(page, { route: `run/morning-summary/${RUN}` });
+    await setHistory(page, [unanswered], { [SESSION]: null });
+    const dialog = app(page).getByTestId("run-dialog");
+    await expect(dialog).toHaveAttribute("data-tone", "danger");
+    await expect(app(page).getByTestId("run-result")).toHaveText("Failed");
+    await expect(dialog.getByTestId("run-why")).toHaveText("The agent's turn ended without an answer");
+    await expect(dialog.getByTestId("run-last-lines")).toHaveText(screen.join("\n"));
+    await expect(dialog.getByTestId("run-agent-note")).toHaveCount(0);
+    await expect(dialog.getByTestId("run-agent-message")).toHaveCount(0);
+    await shoot(page, "agent-card-no-answer");
+  });
 });
 
 test.describe("T-022 · T-030 · the Services table's columns", () => {

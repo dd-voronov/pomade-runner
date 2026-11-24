@@ -23,6 +23,7 @@ import {
   type RunRecord,
   type RunView,
 } from "../scheduler/model";
+import { NO_ANSWER_REASON } from "../scheduler/agent-runs";
 import { MessageText } from "./MessageText";
 import { Button, Dialog, DialogBody, DialogFoot, DialogHead, Help, Icon, LinkButton, Pill, useToast } from "./kit";
 import styles from "./RunCard.module.css";
@@ -397,11 +398,25 @@ function EndedBody({ record }: { record: RunRecord }): React.JSX.Element {
 }
 
 /** An agent run that ended: why it failed, when it did — its time limit, its reason, its exit — and
- *  the agent's last message in the session, from the Agents app. */
+ *  the agent's last message in the session, from the Agents app. A turn that ended without an
+ *  answer has none to read: its last lines show instead, the agent's screen with what went wrong. */
 function AgentBody({ host, record }: { host: HostClient; record: RunRecord }): React.JSX.Element {
+  const unanswered = record.state === "failed" && record.reason === NO_ANSWER_REASON;
   const session = record.agent?.sessionId ?? null;
-  const message = useLastMessage(host, session);
+  const message = useLastMessage(host, unanswered ? null : session);
   const failed = record.state === "failed";
+  if (unanswered)
+    return (
+      <>
+        <dl className={styles.kv}>
+          <dt>Reason</dt>
+          <dd className={styles.bad} data-testid="run-why">
+            {capital(NO_ANSWER_REASON)}
+          </dd>
+        </dl>
+        <Lines lines={record.lastLines} title="Last lines" testId="run-last-lines" />
+      </>
+    );
   return (
     <>
       {failed && (

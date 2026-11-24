@@ -5,7 +5,9 @@
 // status 0 while it works; `[slow]` makes the turn last 4 s, `[long]` 15 s; `[ask]` puts up a permission prompt
 // midway — the provider's dialog, as the kit's scanner reads it — and waits for the answer: `1` or
 // Enter allows it and the turn goes on, Esc (or the provider's "No") denies it and the turn ends
-// there; `[ask-late]` puts it up 5 s into the turn.
+// there; `[ask-late]` puts it up 5 s into the turn; `[no-answer]` ends the turn on an API error
+// ("Not logged in · Please run /login") with no answer — the record's last message stays `null`,
+// and the transcript's assistant record is the error one Claude Code writes (`isApiErrorMessage`).
 // `--provider claude|codex` picks the titles and the dialog the kit's scanner reads
 // (`pomade-kit/scanners`). It keeps, under `$HOME/.fake-agents/`,
 // each session's record — the id (`--session-id`'s, else one of its own, as Codex), the agent, the
@@ -131,6 +133,18 @@ if (resume !== null) {
     process.stdout.write(`● Working on: ${prompt}\r\n`);
     if (prompt.includes("[exit-early]")) {
       setTimeout(() => process.exit(0), 400);
+      return;
+    }
+    if (prompt.includes("[no-answer]")) {
+      setTimeout(() => {
+        clearInterval(spin);
+        const error = "API Error: Not logged in · Please run /login";
+        if (provider === "claude") {
+          appendFileSync(transcript, `${JSON.stringify({ type: "assistant", sessionId: id, cwd, timestamp: new Date().toISOString(), isApiErrorMessage: true, message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text: error }] } })}\n`);
+        }
+        process.stdout.write(`  ⎿  ${error}\r\n> `);
+        title(IDLE);
+      }, 1200);
       return;
     }
     const late = prompt.includes("[ask-late]");

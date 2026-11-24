@@ -18,7 +18,7 @@ import type { RunFinishedPayload, RunStartedPayload } from "../integrations/runn
 import { checkJobs } from "../jobs/check";
 import type { JobsSnapshot } from "../jobs/model";
 import { recordsFolderOf, runsRecordPath, stateFolderOf } from "../locations";
-import { AGENT_EXIT_WAIT_MS, agentArgv, agentEnd, lookupWindow, pickSession } from "./agent-runs";
+import { AGENT_EXIT_WAIT_MS, agentArgv, agentEnd, answeredEnd, lookupWindow, pickSession } from "./agent-runs";
 import { createHistory, keepOutputLog } from "./history";
 import { parseRunRecord, type ActiveRun, type AgentRun, type RunRecord } from "./model";
 import { runFinishedPayload, runStartedPayload } from "./run-events";
@@ -181,6 +181,66 @@ describe("agent runs", () => {
     expect(turns.watched()).toEqual([]);
     if (record === undefined || started[0] === undefined) throw new Error("no run");
     expect(contractProblems(runStartedPayload(started[0]), runFinishedPayload(record))).toEqual([]);
+  });
+
+  it("fails a run whose turn ended without an answer: the agent still gets its exit command, its last lines keep its screen", async () => {
+    agents.message = null;
+    const run = await runNow();
+    const session = run.session ?? "";
+    const log = sessions.sessions.get(session)?.log ?? "";
+    await mkdir(dirname(log), { recursive: true });
+    await writeFile(log, "⎿ API Error: Not logged in · Please run /login\n> /exit\nBye.\n");
+    turns.done(session);
+    await runs.tick();
+    expect(turns.typed).toEqual([{ session, text: "/exit" }]);
+    expect(agents.asked).toEqual([]);
+    sessions.end(session, "exited", 0);
+    await runs.tick();
+    expect(agents.asked).toEqual([run.agent?.sessionId]);
+    const record = finished[0];
+    expect(record).toMatchObject({ state: "failed", reason: "the agent's turn ended without an answer", exitCode: 0 });
+    expect(record?.lastLines).toContain("⎿ API Error: Not logged in · Please run /login");
+    if (record === undefined) throw new Error("no run");
+    expect(runFinishedPayload(record)).toMatchObject({ result: "failed" });
+  });
+
+  it("records a turn as done when the Agents app cannot say whether the agent answered: not answering, Pomade gone, no session id", async () => {
+    agents.message = null;
+    const turnDone = async (): Promise<void> => {
+      const run = await runNow();
+      turns.done(run.session ?? "");
+      await runs.tick();
+      sessions.end(run.session ?? "", "exited", 0);
+    };
+    await turnDone();
+    agents.fail = new AgentsError("absent", "the Agents app (pomade-agents) is not answering");
+    await runs.tick();
+    expect(finished.at(-1)).toMatchObject({ state: "done", reason: null });
+    expect(lines).toContainEqual(expect.stringContaining("cannot ask whether the agent answered — the Agents app (pomade-agents) is not answering"));
+    agents.fail = null;
+    await turnDone();
+    connected = false;
+    await runs.tick();
+    expect(finished.at(-1)).toMatchObject({ state: "done", reason: null });
+    connected = true;
+    files = { "summary.md": agentFile().replace("agent: claude", "agent: codex") };
+    load();
+    agents.preassigns = false;
+    const asked = agents.asked.length;
+    await turnDone();
+    await runs.tick();
+    expect(finished.at(-1)).toMatchObject({ state: "done", reason: null, agent: { sessionId: null } });
+    expect(agents.asked).toHaveLength(asked);
+    expect(finished).toHaveLength(3);
+  });
+
+  it("asks nothing of a run that did not end on its exit command", async () => {
+    agents.message = null;
+    const run = await runNow();
+    sessions.end(run.session ?? "", "exited", 0);
+    await runs.tick();
+    expect(finished.at(-1)).toMatchObject({ state: "failed", reason: "the agent exited before its turn was done" });
+    expect(agents.asked).toEqual([]);
   });
 
   it("reads an exit before the turn was done, or a crash after the exit command, as failed", async () => {
@@ -506,6 +566,16 @@ describe("agent run rules", () => {
     expect(agentEnd(limit, agent, "time-limit")).toEqual(limit);
     const gone = { ...end, state: "failed" as const, reason: "its session is gone", exitCode: null };
     expect(agentEnd(gone, { ...agent, exitSentAt: 1 }, null)).toEqual(gone);
+  });
+
+  it("fails a done run whose agent never answered; an unknown answer or any other end stays as it was", () => {
+    expect(answeredEnd(end, "none")).toEqual({ ...end, state: "failed", reason: "the agent's turn ended without an answer" });
+    expect(answeredEnd(end, "answered")).toEqual(end);
+    expect(answeredEnd(end, "unknown")).toEqual(end);
+    const crashed = { ...end, state: "failed" as const, exitCode: 2 };
+    expect(answeredEnd(crashed, "none")).toEqual(crashed);
+    const byYou = { ...end, state: "stopped-by-you" as const };
+    expect(answeredEnd(byYou, "none")).toEqual(byYou);
   });
 
   it("looks around the start, and picks the session that started nearest it", () => {

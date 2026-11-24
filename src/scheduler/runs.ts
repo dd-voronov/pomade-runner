@@ -76,7 +76,7 @@ import type { ChainActionOutcome, RunnerSession } from "../keeper/model";
 import { jobIdOf } from "../keeper/services";
 import type { Sessions } from "../keeper/sessions";
 import { liveOutputLogPath, runsRecordPath, type RecordsFolder, type StateFolder } from "../locations";
-import { AGENT_EXIT_WAIT_MS, agentArgv, agentEnd, lookupWindow, pickSession, SESSION_LOOKUP_EVERY_MS } from "./agent-runs";
+import { AGENT_EXIT_WAIT_MS, agentArgv, agentEnd, answeredEnd, lookupWindow, pickSession, SESSION_LOOKUP_EVERY_MS, type TurnAnswer } from "./agent-runs";
 import { chainCause, followers, parentResult } from "./chains";
 import type { Clock } from "./clock";
 import { gitCommandLine, gitRunEnd, type SessionEnd } from "./git-runs";
@@ -1088,6 +1088,19 @@ export function createRuns(options: RunsOptions): Runs {
     }
   }
 
+  /** Whether the agent of a run whose turn ended answered in its session, asked of the Agents app
+   *  as the run is recorded: its transcript is whole once the agent has exited. */
+  async function answerOf(run: ActiveRun, agent: AgentRun): Promise<TurnAnswer> {
+    const api = options.agents();
+    if (api === null || agent.sessionId === null) return "unknown";
+    try {
+      return (await api.lastMessage(agent.sessionId)) === null ? "none" : "answered";
+    } catch (err) {
+      log(`run ${run.job} ${run.run}: cannot ask whether the agent answered — ${errorText(err)}`);
+      return "unknown";
+    }
+  }
+
   /** The agent runs going: follow their turns — after a restart too — look up a session not known
    *  yet, and stop one that did not end after its exit command. */
   async function agentRuns(): Promise<void> {
@@ -1127,7 +1140,8 @@ export function createRuns(options: RunsOptions): Runs {
         run.agent.waiting = null;
       }
       const scriptEnd = endOf(session, run);
-      const end = run.agent === null ? scriptEnd : agentEnd(scriptEnd, run.agent, session?.info.exit?.reason ?? null);
+      const turnEnd = run.agent === null ? scriptEnd : agentEnd(scriptEnd, run.agent, session?.info.exit?.reason ?? null);
+      const end = run.agent !== null && turnEnd.state === "done" ? answeredEnd(turnEnd, await answerOf(run, run.agent)) : turnEnd;
       const durationMs = session?.info.exit == null ? null : Math.max(0, session.info.exit.at - session.info.startedAt);
       const endedAt = durationMs !== null && run.startedAt !== null ? run.startedAt + durationMs : now().getTime();
       const output = run.log ?? session?.log ?? null;
