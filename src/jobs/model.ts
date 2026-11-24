@@ -104,6 +104,8 @@ interface JobCommon {
   /** The file, workspace-relative. */
   path: string;
   name: string;
+  /** What the job is for, in the person's words: free text, line breaks kept, trimmed; `null` for none. */
+  description: string | null;
   /** The stable project id; `null` for a workspace job. */
   project: string | null;
   enabled: boolean;

@@ -16,6 +16,8 @@
   font-size: var(--fs-sm);
   line-height: 1.35;
   overflow-wrap: anywhere;
+  /* A line break in a text (a job's description) starts a new line. */
+  white-space: pre-line;
   pointer-events: none;
 }
 

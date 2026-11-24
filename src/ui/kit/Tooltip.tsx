@@ -1,6 +1,6 @@
 // The one tooltip of a Runner surface, as the prototype's: any element with `data-tip` (a plain
-// line) or `data-help` (a key of `help.ts`: the text and its example) shows it on hover, and on
-// keyboard focus. It sits above the element, centred, kept inside the frame, below when there is no
+// text, its line breaks kept) or `data-help` (a key of `help.ts`: the text and its example) shows it
+// on hover, and on keyboard focus. It sits above the element, centred, kept inside the frame, below when there is no
 // room above; scrolling, Esc, leaving or blurring hides it. `data-tip-code` sets a `data-tip` line in
 // the mono type and wraps it, for a command shown whole. `data-tip-cut` on an element whose text may
 // be cut with "…": while it is cut, its whole text leads the tip (above the element's own help or

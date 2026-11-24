@@ -1884,6 +1884,85 @@ test.describe("the Jobs view", () => {
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/weekly-report.md" }]);
   });
 
+  test("T-041 · a job's description: one line in the form until a click opens its box; saved, the file holds it, Edit shows it, and the name's tooltip shows it on as many lines — the trigger's own tooltip never over the name", async ({ page }) => {
+    const THREE = "Backs up the notes folder to the NAS.\nNeeds the drive mounted (Mount drive).\nAsk Daniil before changing the target.";
+    const ONE = "Mounts the backup drive at login.";
+    await start(page, {}, { "backup.md": BACKUP, "mount.md": file("script", "Mount drive", `description: ${ONE}\nfolder: .\ncommand: ./mount.sh\nhook: { event: login }\n`) });
+    const tip = app(page).getByTestId("tooltip");
+    const row = (id: string): Locator => app(page).locator(`[data-testid="job-row"][data-job="${id}"]`);
+
+    // A job without one: its name has no tooltip — not even the trigger's, from right under it.
+    await row("backup").getByTestId("job-trigger").hover();
+    await expect(tip).toHaveText("Daily at 13:00");
+    await row("backup").getByTestId("job-name").hover();
+    await expect(tip).toHaveCount(0);
+    await shoot(page, "t041-jobs-no-description");
+
+    // The form of every kind: the one line under Name, no box.
+    await app(page).getByTestId("new-job").click();
+    for (const kind of ["service", "script", "agent", "git"]) {
+      await app(page).getByTestId(`kind-${kind}`).click();
+      const form = app(page).getByTestId(`form-${kind}`);
+      await expect(form.getByTestId("description-add")).toHaveText("Add a description (optional)");
+      await expect(form.getByRole("textbox", { name: "Description" })).toHaveCount(0);
+      await shoot(page, `t041-form-${kind}-collapsed`);
+    }
+    await app(page).getByTestId("description-add").click();
+    await expect(app(page).getByRole("textbox", { name: "Description" })).toBeFocused();
+    await shoot(page, "t041-form-git-open");
+
+    // Edit a job that has none: a click opens the box; three lines saved go into its file.
+    await page.evaluate(() => window.mounted.navigate(""));
+    await row("backup").getByRole("button", { name: "Edit" }).click();
+    const form = app(page).getByTestId("form-script");
+    await expect(form.getByTestId("description-add")).toBeVisible();
+    await shoot(page, "t041-form-script-collapsed-edit");
+    await form.getByTestId("description-add").click();
+    const box = form.getByRole("textbox", { name: "Description" });
+    await expect(box).toBeFocused();
+    await shoot(page, "t041-form-script-open");
+    await box.fill(THREE);
+    await shoot(page, "t041-form-script-filled");
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+    expect(await page.evaluate(() => window.fakeHost.readFile("Apps/pomade-runner/jobs/backup.md"))).toBe(
+      BACKUP.replace(/---\n$/, "description: |-\n  Backs up the notes folder to the NAS.\n  Needs the drive mounted (Mount drive).\n  Ask Daniil before changing the target.\n---\n"),
+    );
+
+    // Its name shows the three lines; the trigger under it keeps its own tooltip.
+    await expect(row("backup").getByTestId("job-name")).toHaveAttribute("data-tip", THREE);
+    await row("backup").getByTestId("job-trigger").hover();
+    await expect(tip).toHaveText("Daily at 13:00");
+    await row("backup").getByTestId("job-name").hover();
+    await expect(tip).toHaveCount(1);
+    expect(await tip.evaluate((el) => (el as HTMLElement).innerText)).toBe(THREE);
+    const lineHeight = await tip.locator("span").first().evaluate((el) => parseFloat(getComputedStyle(el).lineHeight));
+    expect((await tip.locator("span").first().boundingBox())!.height).toBeGreaterThanOrEqual(lineHeight * 3 - 1);
+    await shoot(page, "t041-jobs-tooltip-three-lines");
+    // One line: a tip of one line.
+    await row("mount").getByTestId("job-name").hover();
+    await expect(tip).toHaveText(ONE);
+    await shoot(page, "t041-jobs-tooltip-one-line");
+
+    // Edit shows it in its box, filled; emptied and saved, the field leaves the file.
+    await row("backup").getByRole("button", { name: "Edit" }).click();
+    await expect(form.getByRole("textbox", { name: "Description" })).toHaveValue(THREE);
+    await expect(form.getByTestId("description-add")).toHaveCount(0);
+    await shoot(page, "t041-form-script-edit-filled");
+    await form.getByRole("textbox", { name: "Description" }).fill("");
+    await expect(form.getByRole("textbox", { name: "Description" })).toBeVisible();
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+    expect(await page.evaluate(() => window.fakeHost.readFile("Apps/pomade-runner/jobs/backup.md"))).toBe(BACKUP);
+    await expect(row("backup").getByTestId("job-name")).not.toHaveAttribute("data-tip");
+
+    // An agent job's form shows its description the same way.
+    await writeJob(page, "summary.md", file("agent", "Summary", `description: |-\n  Summarizes the day.\n  Reads notes and mail.\nfolder: .\nagent: claude\nhook: { event: login }\n`).replace(/---\n$/, "---\nSummarize today.\n"));
+    await row("summary").getByRole("button", { name: "Edit" }).click();
+    await expect(app(page).getByTestId("form-agent").getByRole("textbox", { name: "Description" })).toHaveValue("Summarizes the day.\nReads notes and mail.");
+    await shoot(page, "t041-form-agent-filled");
+  });
+
   test("T-042 · a tooltip whose text is wider than its largest width wraps onto further lines: the text stays inside the tip, and the tip inside the tab", async ({ page }) => {
     const HUNT = "Job Hunt";
     const LONG = "Job Hunt for a very long season of applications and interviews";

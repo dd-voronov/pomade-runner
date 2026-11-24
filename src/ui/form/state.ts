@@ -53,6 +53,8 @@ export type WorthUntil = "next-run" | "time";
 export interface FormValues {
   kind: JobKind;
   name: string;
+  /** What the job is for, as typed: any text, line breaks kept; empty leaves `description` out. */
+  description: string;
   /** The stable project id; `null` for the Workspace (no project). */
   project: string | null;
   /** Workspace-relative, as typed; `.` is the root. */
@@ -135,6 +137,7 @@ function commonFields(values: FormValues): Record<string, FieldInput | undefined
   return {
     kind: values.kind,
     name: values.name.trim(),
+    description: values.description.trim() === "" ? undefined : values.description.trim(),
     project: values.project ?? undefined,
     folder: values.folder.trim(),
     enabled: values.enabled,
@@ -146,6 +149,7 @@ function commonFields(values: FormValues): Record<string, FieldInput | undefined
 const COMMON_ERROR_FIELDS: Readonly<Record<string, FormField>> = {
   kind: "kind",
   name: "name",
+  description: "description",
   project: "project",
   folder: "folder",
   enabled: "enabled",
@@ -264,7 +268,7 @@ export interface FormState {
 }
 
 export function blankValues(kind: JobKind): FormValues {
-  return { kind, name: "", project: null, folder: "", enabled: true, command: "", start: "login", startProject: "", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), hookEvent: "login", hookProject: "", hookAgent: "", hookStatus: "done", serviceChain: false, chainJob: "", chainResult: "done", chainAction: "restart", worth: "next-run", worthAt: "12:00", timeLimit: "", operation: "commit-push", repos: [], agent: "claude", mode: "normal", prompt: "", ...kindDefaults(kind) };
+  return { kind, name: "", description: "", project: null, folder: "", enabled: true, command: "", start: "login", startProject: "", ready: "alive", port: "", url: "", trigger: "schedule", schedule: blankSchedule(), hookEvent: "login", hookProject: "", hookAgent: "", hookStatus: "done", serviceChain: false, chainJob: "", chainResult: "done", chainAction: "restart", worth: "next-run", worthAt: "12:00", timeLimit: "", operation: "commit-push", repos: [], agent: "claude", mode: "normal", prompt: "", ...kindDefaults(kind) };
 }
 
 /** A new job's form. */
@@ -303,6 +307,7 @@ export function valuesFromText(text: string): FormValues | null {
   return {
     ...values,
     name: asText(fields.name),
+    description: asText(fields.description),
     project: typeof fields.project === "string" && fields.project.trim() !== "" ? fields.project.trim() : null,
     folder: asText(fields.folder),
     enabled: typeof fields.enabled === "boolean" ? fields.enabled : true,

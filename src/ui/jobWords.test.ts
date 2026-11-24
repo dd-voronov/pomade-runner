@@ -14,6 +14,7 @@ const script: ScriptJob = {
   id: "backup",
   path: "Apps/pomade-runner/jobs/backup.md",
   name: "Backup",
+  description: null,
   project: null,
   enabled: true,
   notify: "on-failure",

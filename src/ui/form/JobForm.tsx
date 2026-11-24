@@ -14,7 +14,7 @@ import { describeJobError } from "../../jobs/format";
 import type { JobError, JobKind, JobsSnapshot } from "../../jobs/model";
 import { createJobFile, followJobFile, updateJobFile } from "../jobFiles";
 import { DeleteJobDialog } from "../DeleteJobDialog";
-import { Button, EmptyBlock, Field, Help, Icon, IconButton, TextInput, Toggle, useToast } from "../kit";
+import { Button, EmptyBlock, Field, Help, Icon, IconButton, LinkButton, TextArea, TextInput, Toggle, useToast } from "../kit";
 import type { FormProps, ProjectChoices } from "./FolderField";
 import styles from "./JobForm.module.css";
 import { FormSection } from "./FormSection";
@@ -456,6 +456,7 @@ function FormBody({
           </div>
           {error("kind")}
           <NameField {...props} placeholder={ui.namePlaceholder} focus={path === null} />
+          <DescriptionField {...props} />
         </FormSection>
         {build.sections(props)}
         <FormSection title="Policies" sub={sentence.customised ? "customised" : `defaults for ${ui.label}`} testId="form-policies">
@@ -480,6 +481,7 @@ function FormBody({
 const FIELD_WORDS: Record<FormField, string> = {
   kind: "kind",
   name: "name",
+  description: "description",
   project: "project",
   folder: "folder",
   enabled: "enabled",
@@ -518,6 +520,36 @@ function NameField({ state, set, error, placeholder, focus }: FormProps & { plac
   return (
     <Field label="Name" help="f.name" error={error("name")}>
       {(id) => <TextInput id={id} value={state.values.name} bad={error("name") !== undefined} placeholder={placeholder} autoFocus={focus} data-field="name" onChange={(event) => set("name", event.target.value)} />}
+    </Field>
+  );
+}
+
+/** The job's description: the one line "Add a description (optional)" until a click opens the text
+ *  box; a job that has one shows the box, filled. The box stays open while the person empties it. */
+function DescriptionField({ state, set, error }: FormProps): React.JSX.Element {
+  const [opened, setOpened] = useState(false);
+  if (!opened && state.values.description === "" && state.base.description === "") {
+    return (
+      <div className={styles.inline}>
+        <LinkButton onClick={() => setOpened(true)} data-testid="description-add">
+          Add a description (optional)
+        </LinkButton>
+      </div>
+    );
+  }
+  return (
+    <Field label="Description" optional error={error("description")}>
+      {(id) => (
+        <TextArea
+          id={id}
+          value={state.values.description}
+          bad={error("description") !== undefined}
+          placeholder="What this job is for — shown when you hover its name in Jobs"
+          autoFocus={opened}
+          data-field="description"
+          onChange={(event) => set("description", event.target.value)}
+        />
+      )}
     </Field>
   );
 }

@@ -191,6 +191,7 @@ describe("editing a job file", () => {
     expect(edit().values).toEqual({
       kind: "service",
       name: "Dev server",
+      description: "",
       project: "p-blog",
       folder: "Projects/blog",
       enabled: true,
@@ -242,6 +243,19 @@ describe("editing a job file", () => {
     });
     // Back to what the file says: nothing to write.
     expect(hasChanges(setValue(setValue(state, "command", "./start.sh"), "notify", "on-failure"))).toBe(false);
+  });
+
+  it("writes a description trimmed, its line breaks kept; reads it back; an emptied one leaves the file", () => {
+    const state = setValue(edit(), "description", "  Serves the blog.\nRestart it after a pull.\n\n");
+    expect(fieldChanges(state)).toEqual({ description: "Serves the blog.\nRestart it after a pull." });
+    const text = wouldBe(state, WITH_WEB, PROJECTS).text;
+    expect(text).toBe(HAND.replace("owner: daniil\n", "owner: daniil\ndescription: |-\n  Serves the blog.\n  Restart it after a pull.\n"));
+    const saved = editForm(PATH, text);
+    expect(saved?.values.description).toBe("Serves the blog.\nRestart it after a pull.");
+    if (saved === null) throw new Error("not editable");
+    const emptied = setValue(saved, "description", " \n ");
+    expect(fieldChanges(emptied)).toEqual({ description: undefined });
+    expect(wouldBe(emptied, WITH_WEB, PROJECTS).text).toBe(HAND);
   });
 
   it("removes a field set back to its default, and readiness switched to alive", () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { checkJobs } from "./check";
+import { readJobDocument } from "./document";
 import { jobFileCandidates, jobFilePath, newJobText, setJobFields, slugify } from "./edit";
 
 function written(text: string, changes: Parameters<typeof setJobFields>[1]): string {
@@ -62,6 +63,23 @@ describe("field-only writes", () => {
     const next = written("", { git: { operation: "pull", repos: ["notes", "a, b", "true", "x: y"] }, name: "true" });
     expect(next).toContain('git: { operation: pull, repos: [notes, "a, b", "true", "x: y"] }');
     expect(next).toContain('name: "true"');
+  });
+
+  it("writes a description of several lines as a literal block that reads back exactly, and removes it", () => {
+    const text = "Copies the notes folder.\n\nRuns after login: a script.";
+    const next = written(HAND_WRITTEN, { description: text });
+    expect(next).toBe(HAND_WRITTEN.replace("---\nNotes", "description: |-\n  Copies the notes folder.\n  \n  Runs after login: a script.\n---\nNotes"));
+    expect(readJobDocument(next)).toMatchObject({ ok: true, doc: { fields: { description: text } } });
+    expect(written(next, { description: "One line" })).toBe(HAND_WRITTEN.replace("---\nNotes", "description: One line\n---\nNotes"));
+    expect(written(next, { description: undefined })).toBe(HAND_WRITTEN);
+  });
+
+  it("writes a text a literal block cannot hold exactly double-quoted, on one line", () => {
+    for (const text of ["  indented first line\nsecond", "ends in a break\n", "a\r\nb"]) {
+      const next = written(HAND_WRITTEN, { description: text });
+      expect(next).toContain(`description: ${JSON.stringify(text)}\n`);
+      expect(readJobDocument(next)).toMatchObject({ ok: true, doc: { fields: { description: text } } });
+    }
   });
 
   it("keeps CRLF line endings", () => {

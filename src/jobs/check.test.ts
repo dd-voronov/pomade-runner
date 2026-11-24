@@ -46,6 +46,7 @@ describe("valid job files", () => {
       path: "Apps/pomade-runner/jobs/blog/dev-server.md",
       kind: "service",
       name: "Dev server",
+      description: null,
       project: "p7Kx2_blog",
       enabled: true,
       notify: "on-failure",
@@ -58,6 +59,14 @@ describe("valid job files", () => {
       ready: { kind: "alive" },
       after: null,
     });
+  });
+
+  it("reads a description on every kind: free text, line breaks kept, trimmed", () => {
+    expect(valid("backup.md", file(`${SCRIPT}\ndescription: Copies the notes folder`)).description).toBe("Copies the notes folder");
+    const multi = "kind: agent\nname: Summary\nfolder: .\nagent: claude\ndescription: |\n  Summarizes the day.\n\n  Reads: notes, mail.\nhook: { event: login }";
+    expect(valid("summary.md", file(multi, "Summarize.\n")).description).toBe("Summarizes the day.\n\nReads: notes, mail.");
+    expect(valid("blog/dev-server.md", file(`${SERVICE}\ndescription: "  Line one\\nline two  "`)).description).toBe("Line one\nline two");
+    expect(valid("pull.md", file("kind: git\nname: Pull\ngit: { operation: pull, repos: [notes] }\nhook: { event: login }\ndescription:")).description).toBeNull();
   });
 
   it("reads a service's readiness, start and chain", () => {
@@ -179,6 +188,8 @@ describe("one file's problems: each names its line, its field and the fix", () =
     ["a bad kind", file("kind: scirpt\nname: Backup"), { line: 2, field: "kind", problem: '"scirpt" is not allowed', fix: "write script" }],
     ["no name", file("kind: script\nfolder: .\ncommand: ./x.sh\nhook: { event: login }"), { line: 2, field: "name", problem: "the job has no name", fix: /name: Dev server/ }],
     ["an empty name", file('kind: script\nname: " "\nfolder: .\ncommand: ./x.sh\nhook: { event: login }'), { line: 3, field: "name", problem: "is empty" }],
+    ["a description that is a number", file("kind: script\nname: N\nfolder: .\ncommand: ./x.sh\nhook: { event: login }\ndescription: 42"), { line: 7, field: "description", problem: "42 reads as a number, not text", fix: 'put it in quotes: description: "42"' }],
+    ["a description that is a list", file("kind: script\nname: N\nfolder: .\ncommand: ./x.sh\nhook: { event: login }\ndescription: [a, b]"), { line: 7, field: "description", problem: '["a","b"] is not text', fix: "write text, e.g. description: Backs up the notes folder every night" }],
     ["a name that is a number", file("kind: script\nname: 2024\nfolder: .\ncommand: ./x.sh\nhook: { event: login }"), { line: 3, problem: "2024 reads as a number, not text", fix: 'put it in quotes: name: "2024"' }],
     ["an unknown field", file(`${SCRIPT}\ncolor: red`), { line: 8, field: "color", problem: "color is not a job field", fix: /remove it/ }],
     ["a misspelled field", file(`${SCRIPT}\nlow_priority: true`), { line: 8, field: "low_priority", problem: /not a job field/, fix: "rename it to low-priority" }],

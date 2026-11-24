@@ -35,6 +35,7 @@ Every job:
 |---|---|---|
 | `kind` | `service` · `script` · `agent` · `git` | required |
 | `name` | what Runner shows; unique across the workspace | required |
+| `description` | what the job is for, in a sentence or a few lines; Runner shows it when the user hovers the job's name. Several lines as a literal block, each line indented — an empty one too: `description: \|-` then `  First line.` `  Second line.` | none |
 | `project` | the project's id (`pomade-runner projects`); only in a project's sub-folder | none = workspace job |
 | `enabled` | `true` · `false` | `true` |
 | `notify` | `always` · `on-failure` · `never` | `always` for agent, else `on-failure` |

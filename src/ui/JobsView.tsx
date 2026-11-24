@@ -197,7 +197,11 @@ function JobRow({
     >
       <KindCell icon={job.kind} label={KIND_LABEL[job.kind]} />
       <RowMain
-        name={<span data-testid="job-name">{job.name}</span>}
+        name={
+          <span data-tip={job.description ?? undefined} data-testid="job-name">
+            {job.name}
+          </span>
+        }
         tags={
           job.kind === "agent" && job.mode === FULL_AUTONOMY_MODE ? (
             <Tag tone="warn" help="jobs.fullauto" data-testid="job-full-autonomy">

@@ -47,6 +47,7 @@ const RUN_KINDS: readonly JobKind[] = ["script", "agent", "git"];
 export const FIELD_KINDS: Readonly<Record<string, readonly JobKind[]>> = {
   kind: ALL_KINDS,
   name: ALL_KINDS,
+  description: ALL_KINDS,
   project: ALL_KINDS,
   enabled: ALL_KINDS,
   notify: ALL_KINDS,
@@ -593,6 +594,9 @@ export function parseJobFile(input: JobFileInput): ParsedJobFile {
   if (nameValue === undefined) c.add(["name"], "the job has no name", "add name: — what Runner shows, e.g. name: Dev server");
   if (name !== null) parsed.name = { value: name, line: c.doc.line(["name"]) };
 
+  const descriptionValue = c.get("description");
+  const description = descriptionValue === undefined ? null : c.text(["description"], descriptionValue, "Backs up the notes folder every night");
+
   const projectValue = c.get("project");
   const project = projectValue === undefined ? null : c.text(["project"], projectValue, "<project id>", { oneLine: true });
   if (project !== null) parsed.project = { value: project, line: c.doc.line(["project"]) };
@@ -619,7 +623,7 @@ export function parseJobFile(input: JobFileInput): ParsedJobFile {
     return parsed;
   }
 
-  const common = { id: parsed.id, path, name: name ?? "", project, enabled, notify, lowPriority, body: read.doc.body };
+  const common = { id: parsed.id, path, name: name ?? "", description, project, enabled, notify, lowPriority, body: read.doc.body };
   let job: Job | null = null;
   if (kind === "service") {
     const folder = checkFolder(c, kind);

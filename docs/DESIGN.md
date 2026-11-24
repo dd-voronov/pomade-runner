@@ -89,6 +89,9 @@ writes field-only changes, so comments and the body survive. The file on disk is
 ---
 kind: service                    # service | script | agent | git
 name: Dev server
+description: |-                  # optional: what the job is for; Jobs shows it on the name
+  Serves the blog on :5173.
+  Restarted after each pull.
 project: <stable project id>     # omit for a workspace job
 folder: Projects/blog     # working folder, workspace-relative
 enabled: true
@@ -107,6 +110,7 @@ Notes for humans and agents.
 |---|---|---|
 | `kind` | all | `service` · `script` · `agent` · `git`; required |
 | `name` | all | required; unique across the workspace, ignoring case — History, notices, `pomade-runner run` and git's commit wording name jobs by it; a git job's at most 100 characters, as `pomade-git --job` takes it |
+| `description` | all | optional: free text saying what the job is for, any length, line breaks kept (a literal block `\|-`, each line indented — an empty one too), trimmed; empty is none. The Jobs view shows it as the tooltip on the job's name |
 | `project` | all | the stable project id; required in a project's sub-folder, absent at the top level |
 | `enabled` | all | `true` · `false` |
 | `folder` | service · script · agent | required; workspace-relative, `.` is the root; never outside the workspace or in `.pomade` |
@@ -1066,7 +1070,9 @@ to it, light theme only.
   and **New job** when none), and **New job** then starts in that project (`new/<encoded project
   id>`, `newJobRoute`).
   - **A row:** the kind icon (the kind as its tooltip), the name — an agent job in Full autonomy with
-    the amber **Full autonomy** tag and its help beside it — over the trigger in words
+    the amber **Full autonomy** tag and its help beside it; a job with a `description` shows it as
+    the name's tooltip, its line breaks kept, and over the name only the description shows (no
+    description: no tooltip on the name) — over the trigger in words
     (`jobTriggerWords`, a chain's job and a hook's project by name, "manual" for a manual job; the tooltip is the full text, and
     a git job's adds its operation and repos — a repo the workspace lacks is said in red), **Last
     result**, **Next run**, the actions, and the **Disable** toggle. A disabled row is dimmed.
@@ -1254,7 +1260,7 @@ chrome around them (the panel's header with its title and collapse, the tab bar)
   the toggle, the segmented control and the switch, inputs and fields with inline errors, the
   tooltip, the (i) Help, dialogs and the confirm, menus, toasts, panel sections, cards and Running now's rows, group
   heads, the empty block, the view table. A view extends one rather than forking it.
-- **Tooltips:** one per surface (`TooltipLayer`): any element with `data-tip` (a plain line) or
+- **Tooltips:** one per surface (`TooltipLayer`): any element with `data-tip` (a plain text, its line breaks kept) or
   `data-help` (a key of `src/ui/help.ts`) shows it on hover and on keyboard focus; `data-tip-cut`
   adds an element's whole text to its tip while a column cuts it ("Resizable tables"). A tip is as wide
   as its text up to 280 px (480 px for a command); a text wider wraps onto further lines, and a word
@@ -1269,6 +1275,11 @@ Pomade — or on the first open of a project in `ServicesReport`'s `openedProjec
 create says "· started" on the same test). Order: kind → trigger → folder and project (agent: agent → folder → mode; git: operation →
 repositories → project) → policies; the
 policies show as one sentence, non-defaults in bold, until **Change**.
+- **Description** (every kind, under Name): the one line **Add a description (optional)**, a link
+  button, until a click opens the **Description** box (· optional, any text, line breaks kept). A
+  job that has one opens with the box filled; the box stays while the person empties it, and an
+  empty box leaves `description` out of the file. It is written trimmed, a text of several lines as a
+  literal block (`edit.ts`).
 - **State** (`state.ts`, pure): the values the form shows, the fields the person set (`touched`),
   and the file as last read (`base`). Switching kind keeps what the person set and resets the
   kind-dependent defaults they left alone (missed-run policy, overlap, low priority, notify). A folder inside a project

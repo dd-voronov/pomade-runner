@@ -3,7 +3,7 @@
 // file in the right folder under a free slug. Pure: the caller reads and writes the file (through
 // the Host API in the UI), and the file on disk stays the truth.
 
-import { removeField, setBody, setField, setComplexKeyLines, splitFrontmatter, type FieldWriteResult } from "pomade-kit/frontmatter";
+import { removeField, setBody, setComplexKeyLines, setField, setKeyLines, splitFrontmatter, type FieldWriteResult } from "pomade-kit/frontmatter";
 import { parse } from "yaml";
 
 import { JOBS_FOLDER } from "./model";
@@ -20,6 +20,7 @@ export type FieldChanges = Readonly<Record<string, FieldInput | undefined>>;
 export const FIELD_ORDER = [
   "kind",
   "name",
+  "description",
   "project",
   "folder",
   "enabled",
@@ -139,6 +140,20 @@ function setMappingField(text: string, key: string, value: { readonly [key: stri
   return { ok: true, text: next, changed: next !== text };
 }
 
+/** A text of several lines as a literal block (`description: |-` over its lines, each indented — an
+ *  empty one too, so the field's lines stay one span for the frontmatter writer), when that reads back
+ *  as exactly the text; `null` when it does not (a text ending in a line break, one whose first line
+ *  starts with a space), and the field is written double-quoted on one line instead. */
+function literalLines(key: string, value: string): string | null {
+  const lines = [`${key}: |-`, ...value.split("\n").map((line) => `  ${line}`)].join("\n");
+  try {
+    const read: unknown = parse(lines, { schema: "core" });
+    return typeof read === "object" && read !== null && (read as Record<string, unknown>)[key] === value ? lines : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Apply field changes to a job file's text, in the order given. */
 export function setJobFields(text: string, changes: FieldChanges): FieldWriteResult {
   let current = text;
@@ -146,6 +161,10 @@ export function setJobFields(text: string, changes: FieldChanges): FieldWriteRes
     let result: FieldWriteResult;
     if (value === undefined) result = removeField(current, key);
     else if (isMappingInput(value)) result = setMappingField(current, key, value);
+    else if (typeof value === "string" && /[\r\n]/.test(value)) {
+      const lines = literalLines(key, value);
+      result = lines === null ? setField(current, key, value) : setKeyLines(current, key, lines);
+    }
     // A top-level list is a list of text in the frontmatter writer; numbers go in nested ones.
     else result = setField(current, key, Array.isArray(value) ? value.map(String) : (value as string | number | boolean | null));
     if (!result.ok) return result;
