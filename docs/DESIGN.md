@@ -1030,7 +1030,7 @@ to it, light theme only.
     click on a job's cell opens that run's result card (`run/<job>/<run>`); a service's, a paused
     job's and a never-ran job's cell has none.
   - **Next run** (`nextLook`): "disabled", "paused" (the loop guard's), "always on" (a service on Mac startup), "with Pomade" (a Pomade-bound one), "on
-    event" (a hook or a chain), "on Run now" (a manual job), "finished" (a schedule with nothing ahead), else the next time —
+    event" (a hook or a chain), "not scheduled" (a manual job), "finished" (a schedule with nothing ahead), else the next time —
     "Today 13:00", "Tomorrow 7:00", "Wed 7:00", "Wed 25 Nov 7:00" — with the countdown under it
     within the hour. A job the switch holds (`JobRuns.held`) shows its time faint and Next up's
     amber **held** tag, with the switch's help, under it after the countdown.

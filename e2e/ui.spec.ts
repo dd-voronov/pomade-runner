@@ -2723,7 +2723,7 @@ test.describe("the Script form and the schedule picker", () => {
     expect(await fileText(page, `${JOBS}/web.md`)).toBe(WEB);
   });
 
-  test("T-027 · Manually: the Trigger's third choice, one sentence under it; the file has no trigger and checks clean; the Jobs row says manual, on Run now, and Run now runs it", async ({ page }) => {
+  test("T-027 · Manually: the Trigger's third choice, one sentence under it; the file has no trigger and checks clean; the Jobs row says manual, not scheduled, and Run now runs it", async ({ page }) => {
     await start(page);
     const frame = await newScript(page, "Clean cache");
     const choice = frame.getByTestId("trigger-choice");
@@ -2744,7 +2744,7 @@ test.describe("the Script form and the schedule picker", () => {
     // The checker takes it: a valid row, its trigger and Next run in words; Run now calls Runner.
     const row = frame.locator('[data-testid="job-row"][data-job="clean-cache"]');
     await expect(row.getByTestId("job-trigger")).toHaveText("manual");
-    await expect(row.getByTestId("job-next")).toHaveText("on Run now");
+    await expect(row.getByTestId("job-next")).toHaveText("not scheduled");
     await expect(frame.locator('[data-testid="job-invalid"][data-job="clean-cache"]')).toHaveCount(0);
     await shoot(page, "tab-jobs-manual-row");
     await page.evaluate(() => (window.runnerCalls.length = 0));

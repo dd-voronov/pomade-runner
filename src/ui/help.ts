@@ -39,7 +39,7 @@ export const HELP = {
   'need.failed': ['The job\'s latest run ended with an error. Opening its result, Dismiss and the job\'s next done run clear this.', 'Example: exit 1 — the card shows the last lines of its output.'],
   'jobs.this': ['Shows only the jobs of the project you have open.', 'Example: in blog — Dev server, Pull, Health check.'],
   'jobs.last': ['The most recent run. Click it to open its result card.', 'Example: done · today 8:32 · 4m 12s.'],
-  'jobs.next': ['The next time the schedule fires, in the Mac\'s local time; "held" while the switch holds the job.', 'Example: tomorrow 7:00. Hook jobs show "on event", manual jobs "on Run now".'],
+  'jobs.next': ['The next time the schedule fires, in the Mac\'s local time; "held" while the switch holds the job.', 'Example: tomorrow 7:00. Hook jobs show "on event", manual jobs "not scheduled".'],
   'jobs.invalid': ['The job file can\'t be read, so the job never runs. The message names the field, the line and the fix.', 'Example: run `pomade-runner check` to see the same message.'],
   'jobs.fullauto': ['This agent job skips every approval prompt.', 'Example: Tidy drafts moves and edits files without asking.'],
   'jobs.workspace': ['Jobs that belong to no project. Their files sit at the top of the jobs folder.', 'Example: Morning summary.'],

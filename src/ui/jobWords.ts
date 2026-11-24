@@ -35,7 +35,7 @@ export interface LastLook {
 
 /** A job row's Next run cell. */
 export interface NextLook {
-  /** "Today 13:00", "always on", "on event", "disabled". */
+  /** "Today 13:00", "always on", "on event", "not scheduled", "disabled". */
   words: string;
   /** "in 12 min" under an hour away, "in 56 s" under a minute, "now" from the run's moment. */
   sub: string | null;
@@ -150,14 +150,14 @@ const capitalized = (text: string): string => text.charAt(0).toUpperCase() + tex
 
 /** A job's Next run: disabled, paused by the loop guard, a service's "always on" — "with Pomade"
  *  for one bound to Pomade — a hook's or chain's
- *  "on event", a manual job's "on Run now", else its schedule's next time — "in N min" under it
+ *  "on event", a manual job's "not scheduled", else its schedule's next time — "in N min" under it
  *  within the hour, and held while the switch holds the job — or "finished". */
 export function nextLook(job: Job, runs: JobRuns | undefined, paused: boolean, now: number): NextLook {
   const none = (words: string): NextLook => ({ words, sub: null, none: true, held: false });
   if (!job.enabled) return none("disabled");
   if (paused) return none("paused");
   if (job.kind === "service") return none(pomadeBound(job.start) ? "with Pomade" : "always on");
-  if (job.trigger.kind === "manual") return none("on Run now");
+  if (job.trigger.kind === "manual") return none("not scheduled");
   if (job.trigger.kind !== "schedule") return none("on event");
   if (runs === undefined) return none("—");
   if (runs.next === null) return none(runs.finished ? "finished" : "—");

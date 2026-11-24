@@ -168,8 +168,8 @@ describe("a job's next run", () => {
     expect(nextLook({ ...hook, trigger: { kind: "chain", chain: { job: "pull", result: "any" } } }, runs(), false, now).words).toBe("on event");
   });
 
-  it("says a manual job's Next run on Run now", () => {
-    expect(nextLook({ ...hook, trigger: { kind: "manual" } }, runs(), false, now)).toEqual({ words: "on Run now", sub: null, none: true, held: false });
+  it("says a manual job's Next run is not scheduled", () => {
+    expect(nextLook({ ...hook, trigger: { kind: "manual" } }, runs(), false, now)).toEqual({ words: "not scheduled", sub: null, none: true, held: false });
     // The switch never holds a job that runs only by hand.
     expect(nextLook({ ...hook, trigger: { kind: "manual" } }, runs({ held: true }), false, now).held).toBe(false);
   });

@@ -74,7 +74,7 @@ reads "N jobs", plus "· N invalid" when a file has errors. Columns:
   "10× in 10 min". "never ran" for none. Click it to open the run's result card. A service shows its
   state as the Services view does.
 - **Next run** — "disabled", "paused" (the loop guard's), "always on" (a service that starts on Mac
-  startup), "with Pomade" (a service bound to Pomade), "on event" (a hook or a chain), "on Run now" (a
+  startup), "with Pomade" (a service bound to Pomade), "on event" (a hook or a chain), "not scheduled" (a
   manual job), "finished" (a schedule with nothing ahead), else the next time ("Today 13:00", "Wed
   7:00"), with the countdown under it within the hour ("in 56 s", "in 2 min", "in 40 min" — the same
   words as the panel's Next up). While the switch holds the job, the time is faint and an amber `held`
