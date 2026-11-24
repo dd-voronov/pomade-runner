@@ -109,7 +109,7 @@ export function TooltipLayer(): React.JSX.Element | null {
   if (shown === null) return null;
   const [text, ...rest] = shown.lines;
   return (
-    <div ref={tip} id={TIP_ID} role="tooltip" className={[styles.tip, rest.length === 0 && styles.plain, shown.code && styles.code].filter(Boolean).join(" ")} data-testid="tooltip">
+    <div ref={tip} id={TIP_ID} role="tooltip" className={[styles.tip, shown.code && styles.code].filter(Boolean).join(" ")} data-testid="tooltip">
       <span>{text}</span>
       {rest.map((line) => (
         <span key={line} className={styles.example}>

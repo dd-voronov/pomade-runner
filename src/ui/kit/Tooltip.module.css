@@ -4,7 +4,9 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-width: 280px;
+  width: max-content;
+  /* A text wider than this wraps onto further lines; a narrow frame (the side panel) narrows it. */
+  max-width: min(280px, calc(100vw - 12px));
   padding: 6px 9px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
@@ -13,16 +15,8 @@
   box-shadow: var(--shadow-2);
   font-size: var(--fs-sm);
   line-height: 1.35;
+  overflow-wrap: anywhere;
   pointer-events: none;
-}
-
-/* Keep the tip inside a narrow frame (the side panel). */
-.tip {
-  max-width: min(280px, calc(100vw - 12px));
-}
-
-.plain {
-  white-space: nowrap;
 }
 
 .example {
@@ -33,6 +27,5 @@
 .code {
   max-width: min(480px, calc(100vw - 12px));
   font-family: var(--font-mono);
-  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }

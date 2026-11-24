@@ -1223,7 +1223,9 @@ chrome around them (the panel's header with its title and collapse, the tab bar)
   heads, the empty block, the view table. A view extends one rather than forking it.
 - **Tooltips:** one per surface (`TooltipLayer`): any element with `data-tip` (a plain line) or
   `data-help` (a key of `src/ui/help.ts`) shows it on hover and on keyboard focus; `data-tip-cut`
-  adds an element's whole text to its tip while a column cuts it ("Resizable tables").
+  adds an element's whole text to its tip while a column cuts it ("Resizable tables"). A tip is as wide
+  as its text up to 280 px (480 px for a command); a text wider wraps onto further lines, and a word
+  wider than the tip breaks, so no text leaves the box.
 
 **Job form** (`src/ui/form/`). Creating and editing a job happens in a form, never by hand-editing
 md. A full page in the Runner tab: its head (back to Jobs, "Jobs / <name>", **Enabled**, and —

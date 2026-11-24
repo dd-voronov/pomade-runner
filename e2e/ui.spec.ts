@@ -1883,6 +1883,65 @@ test.describe("the Jobs view", () => {
     await invalid.getByRole("button", { name: "Open file" }).click();
     await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "file", projectId: "alpha", path: "Apps/pomade-runner/jobs/weekly-report.md" }]);
   });
+
+  test("T-042 · a tooltip whose text is wider than its largest width wraps onto further lines: the text stays inside the tip, and the tip inside the tab", async ({ page }) => {
+    const HUNT = "Job Hunt";
+    const LONG = "Job Hunt for a very long season of applications and interviews";
+    const projects = JSON.stringify([
+      { id: "alpha", name: "Alpha", root: "Projects/alpha" },
+      { id: "hunt", name: HUNT, root: "Projects/hunt" },
+      { id: "long", name: LONG, root: "Projects/long" },
+    ]);
+    const service = (name: string, project: string): string => file("service", name, `folder: .\ncommand: ./docs.sh\nstart: project-first-open\nstart-project: ${project}\n`);
+    const files = { "hunt.md": service("Docs hunt", "hunt"), "long.md": service("Docs long", "long") };
+    const tip = app(page).getByTestId("tooltip");
+    for (const size of [{ width: 1040, height: 760 }, { width: 420, height: 760 }]) {
+      await page.setViewportSize(size);
+      await start(page, { projects }, files);
+      for (const [id, name] of [["hunt", HUNT], ["long", LONG]] as const) {
+        const words = `from first open of ${name} while Pomade is running`;
+        const trigger = app(page).locator(`[data-testid="job-row"][data-job="${id}"]`).getByTestId("job-trigger");
+        await expect(trigger).toHaveText(words);
+        await trigger.hover();
+        await expect(tip).toHaveText(`F${words.slice(1)}`);
+        await shoot(page, `t042-tooltip-${id}-${size.width}`);
+        const box = (await tip.boundingBox())!;
+        const text = (await tip.locator("span").first().boundingBox())!;
+        // Inside its own box: the text's box within the tip's, nothing scrolls past its edge.
+        expect(text.x).toBeGreaterThanOrEqual(box.x);
+        expect(text.x + text.width).toBeLessThanOrEqual(box.x + box.width);
+        expect(await tip.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+        // Inside the tab, near its edges too.
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.y).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(size.width);
+        expect(box.y + box.height).toBeLessThanOrEqual(size.height);
+        // Wider than the largest width: it wraps onto further lines.
+        expect(box.width).toBeLessThanOrEqual(280);
+        const oneLine = await tip.locator("span").first().evaluate((el) => parseFloat(getComputedStyle(el).lineHeight));
+        expect(text.height).toBeGreaterThan(oneLine * 1.5);
+        await page.mouse.move(0, 0);
+        await expect(tip).toHaveCount(0);
+      }
+      // At the tab's right and bottom borders the tip is kept inside them.
+      const corner = app(page).locator("body");
+      await corner.evaluate((body, text) => {
+        const el = document.createElement("button");
+        el.dataset.testid = "t042-corner";
+        el.dataset.tip = text;
+        el.textContent = "·";
+        el.style.cssText = "position:fixed;right:0;bottom:0;width:24px;height:24px";
+        body.append(el);
+      }, `From first open of ${LONG} while Pomade is running`);
+      await app(page).getByTestId("t042-corner").hover();
+      await expect(tip).toBeVisible();
+      await shoot(page, `t042-tooltip-corner-${size.width}`);
+      const box = (await tip.boundingBox())!;
+      expect(box.x + box.width).toBeLessThanOrEqual(size.width);
+      expect(box.y + box.height).toBeLessThanOrEqual(size.height);
+      expect(await tip.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    }
+  });
 });
 
 test.describe("services: Running now and the Services view", () => {
