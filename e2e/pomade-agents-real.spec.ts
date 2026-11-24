@@ -8,7 +8,9 @@
 // run launches from the real launch spec; `sessions.liveIn` lists the run while it goes (Runner's
 // `run.started` accepted); `sessions.find` and `sessions.lastMessage` answer in the shapes Runner
 // reads; the app's B for the run (`run.finished` accepted) passes Runner's check and fires nothing;
-// `sessions.setStatus` to Done makes the app's C fire a Runner hook job on the session's transcript.
+// `sessions.setStatus` to Done makes the app's C fire a Runner hook job on the session's transcript;
+// a click on a run's row in the Agents panel's Live now opens the run's terminal tab (Runner's
+// `run.started` names the run's keeper session as its `terminal`).
 
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
@@ -31,6 +33,7 @@ import { startSchedulerProcess, type SchedulerProcess } from "./support/schedule
 
 const REAL = process.env.AGENTS_APP_DIST;
 const NOTES = "proj-notes";
+const STRIP_KEY = "app-pomade-agents-agents";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 test.describe("Runner with the real Agents app", () => {
@@ -72,6 +75,7 @@ test.describe("Runner with the real Agents app", () => {
     await mkdir(join(user, ".claude/projects"), { recursive: true });
     await writeFile(join(folders.workspace, "Apps/pomade-runner/settings.yaml"), "warm-up: 0m\n");
     await writeFile(join(jobs, "nightly.md"), `---\nkind: agent\nname: Nightly\nfolder: Projects/notes\nagent: claude\nschedule:\n  once: 2099-01-01 7:00\n---\nTidy the notes. [slow]\n`);
+    await writeFile(join(jobs, "watched.md"), `---\nkind: agent\nname: Watched\nfolder: Projects/notes\nagent: claude\nschedule:\n  once: 2099-01-01 7:00\n---\nTidy the notes. [long]\n`);
     await writeFile(join(jobs, "analyzer.md"), `---\nkind: script\nname: Session Analyzer\nfolder: .\ncommand: 'echo "analyzing $POMADE_SESSION_ID in $POMADE_PROJECT"; cat "$POMADE_SESSION_TRANSCRIPT"'\nhook: { event: session-status, status: done }\nlow-priority: false\n---\n`);
     await writeFile(join(jobs, "lint.md"), `---\nkind: script\nname: Lint after session\nfolder: .\ncommand: echo lint\nhook: { event: session-finished }\nlow-priority: false\n---\n`);
     app = await electron.launch({ executablePath: pomade.runtime, args: [pomade.main], env: pomadeEnv(folders, { POMADE_DEV_APPS: `${DIST};${resolve(REAL ?? "")}`, HOME: user }) });
@@ -198,5 +202,23 @@ test.describe("Runner with the real Agents app", () => {
     expect(record?.lastLines.join("\n")).toContain(`analyzing ${sessionId} in ${NOTES}`);
     expect(record?.lastLines.join("\n")).toContain('"text":"**Done.** Tidy the notes. [slow]"');
     expect(scheduler?.output()).not.toContain("ignored a pomade-agents:session.statusChanged");
+  });
+
+  test("a click on the run's row in Live now opens the run's terminal tab, attached to its keeper session", async () => {
+    const page = await (app as ElectronApplication).firstWindow();
+    await page.getByTestId(`strip-${STRIP_KEY}`).click();
+    const panel = page.frameLocator(`[data-testid="panel-frame-${STRIP_KEY}"]`);
+    const ran = await run(join(folders.home, "bin", "pomade-runner"), ["run", "watched"], { env: cleanEnv({ HOME: user }), cwd: tmp });
+    expect(ran.stderr).toBe("");
+    const row = panel.getByTestId("live-row").filter({ hasText: "Watched" });
+    await expect(row).toHaveCount(1, { timeout: 20_000 });
+    await row.click();
+    const title = page.locator('[data-testid^="attached-title-"]').filter({ hasText: "Watched" });
+    await expect(title).toHaveCount(1);
+    const id = ((await title.getAttribute("data-testid")) ?? "").slice("attached-title-".length);
+    await expect(page.getByTestId(`attached-${id}`)).toHaveAttribute("data-state", "attached");
+    await expect(page.getByTestId(`attached-${id}`)).toHaveAttribute("data-session-state", "running");
+    await expect.poll(async () => (await history("watched")).length, { timeout: 40_000 }).toBe(1);
+    await expect(page.getByTestId(`attached-${id}`)).toHaveAttribute("data-session-state", "exited", { timeout: 15_000 });
   });
 });

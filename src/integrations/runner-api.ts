@@ -119,13 +119,16 @@ export interface RunStartedPayload {
   /** An agent run's only — the shape `pomade-agents` reads (it ignores an agent run without `cwd`):
    *  its session (`null` while not known; `run.finished` carries one found after the start), the
    *  agent's roster id, the mode, the folder it started in (absolute, symlinks resolved), that
-   *  Runner started it, and when (ISO 8601). */
+   *  Runner started it, when (ISO 8601), and its `terminal`: the run's session in Runner's keeper
+   *  (`run:<encoded job id>:<run id>`), which the Agents app attaches a terminal tab to; `null` when
+   *  the run has no keeper session. */
   sessionId?: string | null;
   agent?: string;
   mode?: string;
   cwd?: string;
   startedByRunner?: true;
   startedAt?: string;
+  terminal?: string | null;
 }
 
 /** `run.finished`'s payload: `run.started`'s and how it ended. */

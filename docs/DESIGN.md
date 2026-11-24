@@ -1520,9 +1520,12 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
   - An agent run's also carry what `pomade-agents` reads them by (`../pomade-agents/docs/CONTRACTS.md`
     "Subscribed events"; `src/scheduler/run-events.ts`): `sessionId` (`null` while not known —
     `run.finished` carries one found after the start), `agent`, `mode`, `cwd` (absolute, symlinks
-    resolved), `startedByRunner: true` and `startedAt` (ISO 8601 with a zone: the session's start,
-    at or before the transcript's first record). `run.finished` repeats every field of `run.started`
-    for the same `job` and `run`.
+    resolved), `startedByRunner: true`, `startedAt` (ISO 8601 with a zone: the session's start,
+    at or before the transcript's first record) and `terminal` (the run's session in Runner's
+    keeper, `run:<encoded job id>:<run id>`, or `null` when the run has no keeper session: what
+    the Agents app's Live now row and **Open run terminal** attach to with `tabs.openAttached`).
+    A script, git or service run's events carry none of these. `run.finished` repeats every field
+    of `run.started` for the same `job` and `run`.
   - `pomade-agents` subscribes (its "agent live here?" and event B use them), and never calls
     Runner.
 - **The `pomade-runner` command.**

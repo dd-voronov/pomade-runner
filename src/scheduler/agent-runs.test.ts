@@ -50,6 +50,7 @@ function contractProblems(started: RunStartedPayload, finished: RunFinishedPaylo
     if (payload.sessionId !== null && (typeof payload.sessionId !== "string" || payload.sessionId === "")) problems.push("sessionId is neither null nor non-empty");
     if (typeof payload.cwd !== "string" || !payload.cwd.startsWith("/")) problems.push("cwd is not absolute");
     if (payload.startedByRunner !== true) problems.push("startedByRunner is not true");
+    if (typeof payload.terminal !== "string" || !/^run:[A-Za-z0-9._-]+:\d{8}-\d{6}-[0-9a-f]{6}$/.test(payload.terminal)) problems.push("terminal is not a run's keeper session id");
     if (typeof payload.startedAt !== "string" || !ISO_WITH_ZONE.test(payload.startedAt)) problems.push("startedAt is not ISO 8601 with a zone");
   }
   if (finished.job !== started.job || finished.run !== started.run) problems.push("run.finished names another run");
@@ -181,6 +182,21 @@ describe("agent runs", () => {
     expect(turns.watched()).toEqual([]);
     if (record === undefined || started[0] === undefined) throw new Error("no run");
     expect(contractProblems(runStartedPayload(started[0]), runFinishedPayload(record))).toEqual([]);
+  });
+
+  it("an agent run's run.started and run.finished name its keeper session as the terminal; a script run's events carry none", async () => {
+    const run = await runNow();
+    const session = run.session ?? "";
+    expect(session).toMatch(/^run:summary:/);
+    const [event] = started;
+    if (event === undefined) throw new Error("no run.started");
+    expect(runStartedPayload(event).terminal).toBe(session);
+    sessions.end(session, "exited", 0);
+    await runs.tick();
+    const record = finished[0];
+    if (record === undefined) throw new Error("no run.finished");
+    expect(runFinishedPayload(record).terminal).toBe(session);
+    expect(runStartedPayload({ ...event, kind: "script", agent: null })).not.toHaveProperty("terminal");
   });
 
   it("fails a run whose turn ended without an answer: the agent still gets its exit command, its last lines keep its screen", async () => {

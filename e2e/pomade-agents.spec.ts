@@ -205,11 +205,11 @@ test.describe("agent runs in Pomade", () => {
     expect(session.args).toEqual(["--session-id", sessionId, "Write my morning summary."]);
   });
 
-  test("5 · run.started and run.finished reach a subscriber with the session, the agent and the started-by-Runner flag", async () => {
+  test("5 · run.started and run.finished reach a subscriber with the session, the agent, the started-by-Runner flag and the run's terminal", async () => {
     const [record] = await history("summary");
     await expect.poll(async () => (await agents.events()).filter((e) => e.payload.run === record?.run).map((e) => e.event)).toEqual(["run.started", "run.finished"]);
     const [started, finished] = (await agents.events()).filter((e) => e.payload.run === record?.run);
-    const fields = { job: "summary", name: "Morning summary", kind: "agent", folder: "Projects/notes", project: null, sessionId: record?.agent?.sessionId, agent: "claude", mode: "normal", cwd: notes, startedByRunner: true, startedAt: record?.agent?.startedAt };
+    const fields = { job: "summary", name: "Morning summary", kind: "agent", folder: "Projects/notes", project: null, sessionId: record?.agent?.sessionId, agent: "claude", mode: "normal", cwd: notes, startedByRunner: true, startedAt: record?.agent?.startedAt, terminal: `run:summary:${record?.run ?? ""}` };
     expect(started?.payload).toMatchObject({ ...fields, trigger: "manual" });
     expect(finished?.payload).toMatchObject({ ...fields, trigger: "manual", result: "done", exitCode: 0 });
     expect(Date.parse(started?.payload.startedAt ?? "")).toBeLessThanOrEqual(Date.parse((await agents.session(record?.agent?.sessionId ?? "")).startedAt));
