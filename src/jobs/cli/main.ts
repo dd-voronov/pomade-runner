@@ -12,6 +12,7 @@ import { readSettingsText } from "../../scheduler/settings-file";
 import { readJobFiles } from "../folder";
 import type { ProjectRecord } from "../model";
 import { runCli } from "./cli";
+import { guardOutput } from "./output";
 
 const socketPath = schedulerSocketPath(process.env);
 
@@ -50,9 +51,11 @@ function workspace(): string | null {
   return root === null ? null : realPath(root);
 }
 
+const stdout = guardOutput(process.stdout);
+const stderr = guardOutput(process.stderr);
 process.exitCode = await runCli(process.argv.slice(2), {
-  out: (text) => process.stdout.write(text),
-  err: (text) => process.stderr.write(text),
+  out: stdout.write,
+  err: stderr.write,
   cwd: process.cwd(),
   // A service's start or restart waits for its running session to end first: up to the keeper's
   // grace and more; Run now and Enable / Disable wait their turn behind a tick.

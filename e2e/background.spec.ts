@@ -11,7 +11,7 @@ import { expect, test } from "@playwright/test";
 
 import manifest from "../app/manifest.json" with { type: "json" };
 import { callScheduler } from "../src/scheduler/control/client";
-import { DIST, cleanEnv, removeDir, run, tempDir } from "./support/env";
+import { DIST, cleanEnv, removeDir, run, runWithClosedReader, tempDir } from "./support/env";
 import { expectNothingLeft, stopKeeper } from "./support/keeper";
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
 
@@ -187,6 +187,28 @@ test.describe("scheduler and command", () => {
       code: 2,
       stdout: "",
       stderr: 'pomade-runner: unknown command "frobnicate". Run `pomade-runner --help` for what it takes.\n',
+    });
+  });
+
+  test.describe("a reader that closes its pipe", () => {
+    const entry = (): string => join(build, "cli/pomade-runner.mjs");
+    const withClosedReader = (closed: "stdout" | "stderr", ...args: string[]) => runWithClosedReader(process.execPath, [entry(), ...args], { env: { ...env, POMADE_CLIENT: "command" }, cwd: tmp }, closed);
+
+    test("a command ends with its own status and nothing on the other stream, whichever stream's reader closed", async () => {
+      const scheduler = startScheduler();
+      await expect.poll(() => scheduler.output()).toMatch(/keeper: connected — version \w+, pid \d+\n/);
+      for (const args of [["sessions"], ["history"], ["list"], ["runs"], ["services"], ["--help"], ["--version"]]) {
+        const printed = await command(...args);
+        expect(printed, args.join(" ")).toMatchObject({ code: 0, stderr: "", stdout: expect.stringMatching(/\S/) });
+        expect(await withClosedReader("stdout", ...args), args.join(" ")).toEqual({ code: 0, stdout: "", stderr: "" });
+      }
+    });
+
+    test("a message to stderr ends the same way: a refused command keeps its own status", async () => {
+      expect(await command("frobnicate")).toMatchObject({ code: 2, stderr: expect.stringContaining("unknown command") });
+      expect(await withClosedReader("stderr", "frobnicate")).toEqual({ code: 2, stdout: "", stderr: "" });
+      expect(await command("projects")).toMatchObject({ code: 1, stderr: expect.stringContaining("Pomade is not running") });
+      expect(await withClosedReader("stderr", "projects")).toEqual({ code: 1, stdout: "", stderr: "" });
     });
   });
 

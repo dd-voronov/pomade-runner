@@ -46,3 +46,18 @@ export function run(file: string, args: readonly string[], options: { env: Recor
     child.once("close", (code) => done({ code, stdout, stderr }));
   });
 }
+
+/** Run a program to its end whose reader of `closed` (its stdout or its stderr) closes its end of the
+ *  pipe at once, as `head -1` does when it has its line; the other stream is collected. */
+export function runWithClosedReader(file: string, args: readonly string[], options: { env: Record<string, string>; cwd?: string }, closed: "stdout" | "stderr"): Promise<Finished> {
+  return new Promise((done, fail) => {
+    const child = spawn(file, args, { env: options.env, cwd: options.cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const kept = { stdout: "", stderr: "" };
+    for (const name of ["stdout", "stderr"] as const) {
+      if (name === closed) child[name].destroy();
+      else child[name].setEncoding("utf8").on("data", (chunk: string) => (kept[name] += chunk));
+    }
+    child.once("error", fail);
+    child.once("close", (code) => done({ code, ...kept }));
+  });
+}
