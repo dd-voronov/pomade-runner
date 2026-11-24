@@ -1,6 +1,12 @@
-/* kind · job and trigger · last result · next run · actions · the Disable toggle */
+/* kind · job and trigger · last result · next run · actions (five icons) · the Disable toggle */
 .cols {
-  grid-template-columns: 16px minmax(0, 1.5fr) minmax(0, 1.1fr) 104px 102px 28px;
+  grid-template-columns: 16px minmax(0, 1.5fr) minmax(0, 1.1fr) 104px 128px 28px;
+}
+
+/* The place of Open terminal or Stop run while the job has no run going: the other icons keep their columns. */
+.slot {
+  flex: none;
+  width: var(--icon-btn);
 }
 
 /* A row's Next run: nothing is scheduled, or the switch holds the job. */

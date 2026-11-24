@@ -736,6 +736,46 @@ test.describe("Runner in Pomade", () => {
     await expect(row).toHaveAttribute("data-state", "running");
   });
 
+  test("T-034 · a script that sleeps: Run now on its row adds Open terminal and Stop run; Open terminal opens the run's tab; Stop run ends it as stopped by you, History says so, and both icons leave the row", async () => {
+    const running = scheduler ?? (await startTheScheduler());
+    const tab = page.frameLocator(`[data-testid="app-frame-${manifest.id}"]`);
+    await mkdir(join(folders.workspace, "Apps/pomade-runner/jobs"), { recursive: true });
+    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/row-stop.md"), scriptFile("Row stop", "echo row-stop-start; sleep 600"));
+    const runner = await connectAsRunner();
+    try {
+      await runner.tabs.openApp({ route: "", projectId: WORKSPACE_PROJECT_ID });
+      const row = tab.locator('[data-testid="job-row"][data-job="row-stop"]');
+      const icons = () => row.locator("button:not([role])").evaluateAll((all) => all.map((b) => b.getAttribute("aria-label")));
+      await expect(row).toBeVisible({ timeout: 5000 });
+      expect(await icons()).toEqual(["Run now", "Edit", "Delete"]);
+      const edit = row.getByRole("button", { name: "Edit" });
+      const left = await edit.evaluate((b) => b.getBoundingClientRect().left);
+      await row.getByRole("button", { name: "Run now" }).click();
+      await expect.poll(icons).toEqual(["Open terminal", "Stop run", "Run now", "Edit", "Delete"]);
+      expect(await edit.evaluate((b) => b.getBoundingClientRect().left)).toBe(left);
+      await shoot(page, "pomade-jobs-row-running");
+
+      await row.getByRole("button", { name: "Open terminal" }).click();
+      await expect.poll(() => attachedTabIds()).toHaveLength(1);
+      const [id = ""] = await attachedTabIds();
+      await expect(page.getByTestId(`tab-title-${id}`)).toHaveText("Row stop · Runner");
+      await expect.poll(() => buffer(id)).toContain("row-stop-start");
+      await page.getByTestId(`close-${id}`).click();
+      await expect.poll(() => attachedTabIds()).toHaveLength(0);
+      await expect(row.getByTestId("job-status")).toHaveText("running");
+
+      await row.getByRole("button", { name: "Stop run" }).click();
+      await expect(tab.getByTestId("toast").last()).toHaveText("RunnerRow stop stopped by you");
+      await expect.poll(() => history("row-stop")).toEqual([expect.objectContaining({ state: "stopped-by-you", trigger: "manual" }) as RunRecord]);
+      await expect.poll(icons).toEqual(["Run now", "Edit", "Delete"]);
+      expect(await edit.evaluate((b) => b.getBoundingClientRect().left)).toBe(left);
+      await expect(row.getByTestId("job-status")).toHaveText("stopped by you");
+      expect(running.output()).not.toContain("row-stop: error");
+    } finally {
+      runner.close();
+    }
+  });
+
   test("T-009 · a setting stepped in Settings reaches settings.yaml, comments kept, and applies with no restart; the read-only rows follow the Mac", async () => {
     const running = scheduler ?? (await startTheScheduler());
     const file = join(folders.workspace, "Apps/pomade-runner/settings.yaml");

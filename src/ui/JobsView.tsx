@@ -17,7 +17,9 @@ import { Button, Chip, EmptyBlock, GroupHead, Help, Icon, IconButton, KindCell, 
 import { useOpenServiceTab } from "./RunningNow";
 import { SERVICE_RUNS, serviceActions } from "./serviceWords";
 import { ViewFilters } from "./shell/TabShell";
+import { latestGoing, terminalLabel } from "./rowRun";
 import { useCountdownNow } from "./useNow";
+import { useOpenRunTerminal, useStopRun } from "./useRunActions";
 import { useProjectList, useRepos } from "./useRunnerApi";
 import { useServiceAction } from "./useServiceAction";
 
@@ -170,6 +172,8 @@ function JobRow({
   }, [marked]);
   const openTab = useOpenServiceTab(host);
   const act = useServiceAction(host);
+  const stopRun = useStopRun(host);
+  const openRunTerminal = useOpenRunTerminal(host);
   const runs = report?.jobs.find((info) => info.job === job.id);
   const last = lastLook(job, { runs, active, service, pausedAt: paused }, now);
   const next = nextLook(job, runs, paused !== null, now);
@@ -177,6 +181,9 @@ function JobRow({
   const git = job.kind === "git" ? gitDetail(job, repos) : null;
   const status = job.kind === "service" ? (service ?? fallbackService(job)) : null;
   const offered = status === null ? null : serviceActions(status, job.enabled);
+  // A script, agent or git job with runs going: its row acts on the latest one.
+  const going = status === null ? latestGoing(active) : null;
+  const goingSession = going?.session ?? null;
   return (
     <TableRow
       ref={row}
@@ -240,6 +247,8 @@ function JobRow({
         {next.words}
       </RowCell>
       <RowActions>
+        {status === null && (going === null || goingSession === null ? <span className={styles.slot} /> : <IconButton icon="terminal" label={terminalLabel(going)} onClick={() => openRunTerminal(going, goingSession)} />)}
+        {status === null && (going === null ? <span className={styles.slot} /> : <IconButton icon="stop" label="Stop run" onClick={() => stopRun(going)} />)}
         {status !== null && offered?.terminal === true && <IconButton icon="terminal" label="Open terminal" onClick={() => openTab(status)} />}
         {offered === null && <IconButton icon="play" label="Run now" onClick={() => actions.runNow(job)} />}
         {offered?.toggle === "start" && <IconButton icon="play" label="Start service" onClick={() => act("start", job)} />}
@@ -253,8 +262,9 @@ function JobRow({
 }
 
 /** The Jobs view: every job file grouped by project — workspace jobs first — each row with its kind,
- *  name and trigger in words, last result, next run, its actions (Run now · Edit · Delete; a service:
- *  Open terminal once it has a session, and Start service or Stop service in Run now's place) and the
+ *  name and trigger in words, last result, next run, its actions (Run now · Edit · Delete, with Open
+ *  terminal and Stop run before Run now while a run goes; a service: Open terminal once it has a
+ *  session, and Start service or Stop service in Run now's place) and the
  *  Disable toggle; an invalid file a red row with its error and Open file. The "This
  *  project" chip keeps the jobs of the project Pomade has open. `marked` is the job the route opens:
  *  its row is marked and scrolled to. */

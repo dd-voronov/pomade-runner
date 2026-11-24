@@ -1644,6 +1644,120 @@ test.describe("the Jobs view", () => {
     ]);
   });
 
+  test("T-034 · a job with a run going has Open terminal and Stop run on its row, acting on the latest run; the row's other icons stay where they are", async ({ page }) => {
+    const SUMMARY = "---\nkind: agent\nname: Morning summary\nfolder: .\nagent: claude\nschedule:\n  weekly: { days: [mon, tue, wed, thu, fri], at: 7:00 }\n---\nWrite my morning summary.\n";
+    await start(page, {}, { ...FILES, "summary.md": SUMMARY });
+    await page.waitForFunction(() => typeof window.setRuns === "function");
+    const now = await page.evaluate(() => Date.now());
+    const base: ActiveRun = {
+      job: "backup",
+      name: "Backup",
+      kind: "script",
+      project: null,
+      folder: "",
+      run: "20261117-130000-aaaaaa",
+      trigger: "manual",
+      cause: null,
+      dueAt: now - 300_000,
+      agent: null,
+      missed: null,
+      series: null,
+      state: "running",
+      lowPriority: false,
+      runAt: null,
+      deadline: null,
+      waits: null,
+      startedAt: now - 300_000,
+      session: "run:backup:20261117-130000-aaaaaa",
+      log: "/ud/output/backup/a.log",
+      limitHit: null,
+      warnedAt: null,
+      warningDismissed: false,
+    };
+    const latest: ActiveRun = { ...base, run: "20261117-130200-bbbbbb", dueAt: now - 100_000, startedAt: now - 100_000, session: "run:backup:20261117-130200-bbbbbb" };
+    const waiting: ActiveRun = {
+      ...base,
+      job: "summary",
+      name: "Morning summary",
+      kind: "agent",
+      run: "20261117-130100-cccccc",
+      session: "run:summary:20261117-130100-cccccc",
+      agent: { agent: "claude", name: "claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: null, cwd: "/fake/workspace", startedAt: new Date(now).toISOString(), exit: "/exit", exitSentAt: null, waiting: { prompt: "permission", since: now - 60_000 }, waitedMs: 0 },
+    };
+    const queued: ActiveRun = { ...base, job: "mount", name: "Mount drive", run: "20261117-130300-dddddd", state: "queued", startedAt: null, session: null, log: null, waits: { kind: "slot", ahead: 1 } };
+    const report = (active: ActiveRun[]): RunsReport => ({ active, nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null }, heldRuns: 0 });
+    const set = (active: ActiveRun[]) => page.evaluate((r) => window.setRuns({ report: r, history: [] }), report(active));
+    const row = (job: string) => app(page).locator(`[data-testid="job-row"][data-job="${job}"]`);
+    // The icons of the row's actions: the Last result cell is a button of its own.
+    const icons = (job: string) => row(job).locator("button:not([role])");
+    const labels = (job: string) => icons(job).evaluateAll((all) => all.map((b) => b.getAttribute("aria-label")));
+    // Each icon's left edge by its label — what must not move while Open terminal and Stop run come and go.
+    const lefts = (job: string) =>
+      icons(job).evaluateAll((all) => Object.fromEntries(all.map((b) => [b.getAttribute("aria-label"), Math.round(b.getBoundingClientRect().left * 100) / 100])));
+    const box = (job: string) => row(job).getByRole("button", { name: "Delete" }).evaluate((b) => Math.round(b.getBoundingClientRect().right * 100) / 100);
+
+    // No run going: Run now, Edit, Delete only; the two places are kept empty.
+    await set([]);
+    expect(await labels("backup")).toEqual(["Run now", "Edit", "Delete"]);
+    const idle = await lefts("backup");
+    const idleRight = await box("backup");
+    await page.mouse.move(0, 0);
+    await shoot(page, "T-034-row-idle");
+
+    // Two runs of Backup go, a queued run of Mount drive: Open terminal and Stop run before Run now.
+    await set([base, latest, queued]);
+    await expect.poll(() => labels("backup")).toEqual(["Open terminal", "Stop run", "Run now", "Edit", "Delete"]);
+    expect(await lefts("backup")).toMatchObject(idle);
+    expect(await box("backup")).toBe(idleRight);
+    // A queued run has no terminal and nothing to stop: its row keeps Run now.
+    expect(await labels("mount")).toEqual(["Run now", "Edit", "Delete"]);
+    await row("backup").getByRole("button", { name: "Stop run" }).hover();
+    expect(await lefts("backup")).toMatchObject(idle);
+    await shoot(page, "T-034-row-running-hover-stop");
+    await row("backup").getByRole("button", { name: "Open terminal" }).focus();
+    expect(await lefts("backup")).toMatchObject(idle);
+    expect(await box("backup")).toBe(idleRight);
+    await shoot(page, "T-034-row-running-focus-terminal");
+    await page.mouse.move(0, 0);
+    await shoot(page, "T-034-row-running");
+
+    // Both act on the latest run.
+    await row("backup").getByRole("button", { name: "Open terminal" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([{ kind: "attached", projectId: "alpha", session: { app: "pomade-runner", session: latest.session }, title: "Backup" }]);
+    await row("backup").getByRole("button", { name: "Stop run" }).click();
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerBackup stopped by you");
+    expect(await page.evaluate(() => window.runnerCalls)).toEqual([{ method: "runs.stop", params: { job: "backup", run: latest.run } }]);
+    // Run now stays, and still starts a run.
+    await row("backup").getByRole("button", { name: "Run now" }).click();
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerBackup started · trigger “manual”");
+
+    // A refused stop says why.
+    await page.evaluate(() => {
+      window.refuse["runs.stop"] = "run is not running";
+    });
+    await row("backup").getByRole("button", { name: "Stop run" }).click();
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCould not stop Backup: run is not running");
+
+    // The run ends: the icons leave, the rest has not moved.
+    await set([]);
+    await expect.poll(() => labels("backup")).toEqual(["Run now", "Edit", "Delete"]);
+    expect(await lefts("backup")).toEqual(idle);
+
+    // An agent run waiting at a prompt: its terminal is "Open at the prompt", as on its card.
+    await set([waiting]);
+    await expect.poll(() => labels("summary")).toEqual(["Open at the prompt", "Stop run", "Run now", "Edit", "Delete"]);
+    expect(await box("summary")).toBe(idleRight);
+    await page.mouse.move(0, 0);
+    await shoot(page, "T-034-row-agent-waiting");
+    await row("summary").getByRole("button", { name: "Open at the prompt" }).click();
+    await expect
+      .poll(() => page.evaluate(() => window.fakeHost.openedTabs.map((tab) => ("session" in tab ? tab.session : null))))
+      .toEqual([
+        { app: "pomade-runner", session: latest.session },
+        { app: "pomade-runner", session: waiting.session },
+      ]);
+  });
+
   test("Delete turns red under the pointer and on focus, confirms with the file's name — a running service is stopped first — and can be cancelled or refused", async ({ page }) => {
     await start(page);
     const row = (job: string) => app(page).locator(`[data-testid="job-row"][data-job="${job}"]`);

@@ -79,7 +79,10 @@ reads "N jobs", plus "· N invalid" when a file has errors. Columns:
   7:00"), with the countdown under it within the hour ("in 56 s", "in 2 min", "in 40 min" — the same
   words as the panel's Next up). While the switch holds the job, the time is faint and an amber `held`
   tag sits under it ([Missed runs and load](missed-runs-and-load.md)).
-- **Row actions** — `Run now`, `Edit`, `Delete`, and the `Enabled` toggle. A service has, in Run
+- **Row actions** — `Run now`, `Edit`, `Delete`, and the `Enabled` toggle. While a script, agent or
+  git job has a run going, `Open terminal` and `Stop run` come before `Run now` and act on the
+  latest run — the same two as on the run's card; for an agent run waiting for you the first reads
+  `Open at the prompt`. They leave when the run ends; the other icons do not move. A service has, in Run
   now's place, `Stop service` while it runs or starts and `Start service` while it does not (none
   while it is disabled — the toggle enables it — or while it waits for Pomade); before it, `Open terminal` once the service has run
   — its tab shows its output, the last output once it ended. A refused action reports as a toast

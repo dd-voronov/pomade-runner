@@ -3,11 +3,10 @@ import { WORKSPACE_PROJECT_ID, type GitRunResult } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
-import { DISMISS_METHOD, editRoute, MISSED_METHOD, outputTab, RUN_NOW_METHOD, RUN_STOP_METHOD, runRoute } from "../integrations/runner-api";
+import { DISMISS_METHOD, editRoute, MISSED_METHOD, outputTab, RUN_NOW_METHOD, runRoute } from "../integrations/runner-api";
 import {
   isMissedChoiceResult,
   isRunActionResult,
-  isRunStopResult,
   LAST_LINES,
   limitWords,
   missedRunsWords,
@@ -27,7 +26,9 @@ import {
 import { MessageText } from "./MessageText";
 import { Button, Dialog, DialogBody, DialogFoot, DialogHead, Help, Icon, LinkButton, Pill, useToast } from "./kit";
 import styles from "./RunCard.module.css";
+import { terminalLabel } from "./rowRun";
 import { dayWords, isRecord, KIND_WORDS, promptLines, runDuration, runLook, runningSince, runTime, shortDuration, slotHolders, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
+import { useOpenRunTerminal, useStopRun } from "./useRunActions";
 import { shortClock, upWords } from "./serviceWords";
 import { aheadMoment } from "./panelWords";
 import { RunAllConfirm } from "./RunAllConfirm";
@@ -146,20 +147,8 @@ function RunCard({
   ];
 
   const failed = (what: string) => (err: unknown) => toast(`Could not ${what}: ${err instanceof Error ? err.message : String(err)}`);
-  const stop = (): void => {
-    host.apps.call(APP_ID, RUN_STOP_METHOD, { job: view.job, run: view.run }).then(
-      (answer: unknown) => {
-        if (isRunStopResult(answer) && !answer.ok) return toast(`Could not stop ${view.name}: ${answer.reason}`);
-        toast(
-          <>
-            <b>{view.name}</b> stopped by you
-          </>,
-        );
-        close();
-      },
-      failed(`stop ${view.name}`),
-    );
-  };
+  const stopRun = useStopRun(host);
+  const stop = (): void => stopRun(view, close);
   const runNow = (): void => {
     host.apps.call(APP_ID, RUN_NOW_METHOD, { job: view.job }).then(
       (answer: unknown) => {
@@ -211,9 +200,8 @@ function RunCard({
       .resume({ agentId: agent, sessionId: session, projectId: view.project ?? WORKSPACE_PROJECT_ID, ...(view.folder === "" ? {} : { cwd: view.folder }) })
       .catch(failed(`open ${view.name}'s session`));
   };
-  const openTerminal = (session: string): void => {
-    host.tabs.openAttached({ session: { app: APP_ID, session }, title: view.name }).catch(failed(`open ${view.name}'s terminal`));
-  };
+  const openRunTerminal = useOpenRunTerminal(host);
+  const openTerminal = (session: string): void => openRunTerminal(view, session);
 
   const record = isRecord(view) ? view : null;
   const started = view.startedAt !== null;
@@ -238,7 +226,7 @@ function RunCard({
       <>
         {session !== null && (
           <Button variant="primary" onClick={() => openTerminal(session)}>
-            {wait === null ? "Open terminal" : "Open at the prompt"}
+            {terminalLabel(view)}
           </Button>
         )}
         <Button variant="danger" onClick={stop}>

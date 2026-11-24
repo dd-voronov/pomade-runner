@@ -1051,6 +1051,13 @@ to it, light theme only.
     Start and Stop call `services.start` and `services.stop` as the Services view does
     (`useServiceAction`). Run now, Start, Stop, a refused one or toggle and Delete report as toasts —
     Run now's "<job> started · trigger “manual”". The toggle writes `enabled:` (`jobs.setEnabled`).
+    A script, agent or git job with a run going has, before Run now, **Open terminal** (the run's
+    attached tab) and **Stop run** (`runs.stop`, "<job> stopped by you"), the same actions as the
+    run's result card (`useOpenRunTerminal`, `useStopRun`); with several runs going they act on the
+    latest started (`latestGoing`, `src/ui/rowRun.ts`); a run waiting at a prompt names its terminal
+    **Open at the prompt**, as the card does. Run now stays. A queued run has no terminal and nothing
+    to stop, so it adds neither. The two icons' places stay empty while the job has no run going,
+    so the row's other icons keep their columns (the actions column is five icons wide).
   - **An invalid file** is a red row with its file name, its help, its first error and **Open file**.
   - **The route `jobs/<job>`** marks that job's row — the accent bar and wash — and scrolls to it.
 - **History** (`src/ui/HistoryView.tsx`): the runs going (`runs.list`'s `active`: running — an
