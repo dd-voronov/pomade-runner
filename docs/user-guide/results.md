@@ -1,7 +1,7 @@
 ---
 doc: docs/user-guide/results.md
 audience: users
-holds: History and its filters, the result card, a run's output tab, Needs you and its items, notices and the badge, Next up and Running now
+holds: History and its filters, the result card (a turn without an answer, background work), a run's output tab, Needs you and its items, notices and the badge, Next up and Running now
 kind: reference
 ---
 
@@ -51,7 +51,8 @@ page when you scroll to the end; while older pages remain a count is of the runs
 
 Result wording: `done` · `failed · exit 1` · `stopped: time limit, 45 min` · `stopped by you` ·
 `skipped · previous run still going` · `missed · skipped · past 12:00` · `missed 4 runs, 17:40–17:46 ·
-skipped` · `queued · 1 ahead` · `running · 3h — still expected?` · `waiting for you`. A run that
+skipped` · `queued · 1 ahead` · `running · 3h — still expected?` · `running · waiting for the agent's
+background work` · `waiting for you`. A run that
 stands for more than one missed run says how many ([Missed runs and load](missed-runs-and-load.md)). Each explains itself on hover. A chain's action on a
 service is a record too: `done · restarted`.
 
@@ -70,8 +71,8 @@ waiting run's amber. **Edit job** ends every card.
 |---|---|---|
 | Script, ended | **Exit code** (red when failed), or the reason — a time limit as "Stopped: Time limit, 45 min — the job’s time limit" — and the **Last lines** | `View output` · `Run again`; a caught-up run that stood for more than one, while it is its job's latest, adds `Run the other 3` |
 | Git, ended | each repo with its commit hash and steps | `View output` · `Run again` |
-| Agent, ended | a failed run's reason; the agent's **Last message** | `Open session` · `View output` · `Run again` |
-| Running | **Latest output**, followed while it runs | `Open terminal` · `Stop run` |
+| Agent, ended | a failed run's reason; the agent's **Last message**. A run whose turn ended without an answer ("The agent's turn ended without an answer") shows **Last lines**, the agent's screen, in place of a message. A run whose agent never started a session says "The agent never started a session." | `Open session` (not for a run that never started a session) · `View output` · `Run again` |
+| Running | **Latest output**, followed while it runs. An agent run waiting for its agent's background work says first: "The agent’s turn is over, but work it started in the background still goes. Runner waits for that work: the agent goes on once it ends, and the run is done when the agent is. The time limit keeps counting." | `Open terminal` · `Stop run` |
 | Agent, waiting for you | what it waits at and **Waiting at**: the end of its output | `Open at the prompt` · `Stop run` |
 | Queued | what it waits for, in a sentence | `Run now` |
 | Missed, waiting for you | when it was due — "This job missed 4 runs, 17:40–17:46." for more than one — and that its policy is "Wait for me" | `Run now` · `Run at…` · `Skip`; for more than one `Run once` · `Run all 4` · `Run at…` · `Skip` |
@@ -108,7 +109,7 @@ to what the card is about — the time, one line of text and the actions. Every 
 | failed run | "Failed: exit 1 · 2×" (the count when more than one since the item came) | `Open` · `Run now` · `Dismiss` |
 | service gave up | "Crashed 5× in 1 min — gave up."; "Gave up — could not start: <why>" when it never got a terminal | `Start` · `View output` (not without a terminal) |
 | missed run waits | "Missed — it waits for you to pick a time."; "Missed 4 runs, 17:40–17:46 — …" when it stands for more than one | `Run now` · `Run at…` · `Skip`; for more than one `Run once` · `Run all 4` · `Run at…` · `Skip` (four buttons wrap to a second row) |
-| agent run waits | "Waiting for approval at a permission prompt." / "Waiting for you to trust its folder." | `Open at the prompt` |
+| agent run waits | "Waiting for approval at a permission prompt." / "Waiting for you to trust its folder." / "Has not started — look at its terminal." (an agent still not working 20 s into its run) | `Open at the prompt` |
 | long run | "Running 3h — still expected?" | `Open` · `Stop` · `Dismiss` |
 | job paused by the loop guard | "Paused: triggered 10× in 10 min." | `Resume` · `Edit job` |
 
@@ -147,7 +148,7 @@ starts; the Jobs view's Next run shows the same words. A `Run at…` run is in i
 a status dot, the name and where it stands ("up 3d 4h", "starting", "running 3m", "queued · 1 ahead",
 amber "waiting for you · 17m"), the project · folder below ("workspace · my-workspace" for the root), and a
 third line only for news ("waiting for port 5173", "restarted 3× · last crash 14:02", "restart to apply
-its file"). A queued run says what it waits for: "queued · at Wed 23:00", "queued · held · Pause all",
-"queued · warm-up until 08:32", "queued · after the previous run", "queued · opening Pomade".
+its file", "waiting for the agent's background work" on a run whose agent's background work goes). A queued run says what it waits for: "queued · at Wed 23:00", "queued · held · Pause all",
+"queued · warm-up until 08:32", "queued · after the previous run", "queued · opening Pomade", "queued · a fresh keeper, after the runs going" (an agent run, while Runner replaces a keeper that lost the macOS keychain).
 
-Tickets: T-008, T-012, T-016.
+Tickets: T-008, T-012, T-016, T-037, T-038, T-040, T-044.

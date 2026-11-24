@@ -31,10 +31,16 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
   Edit job. The tab follows Pomade's `route.changed` and tells Pomade each route it goes to by itself.
 - **Every non-obvious field, policy and status carries an (i) help** with an example; the texts are in
   `help.ts`, keyed `<area>.<what>`. A new key is added there and nowhere else.
-- **Tooltips** are one layer per surface: `data-tip` (a line) or `data-help` (a help key) on any element.
+- **Tooltips** are one layer per surface: `data-tip` (a text) or `data-help` (a help key) on any element.
+  A text wider than the tooltip's largest width (280 px, narrower in a narrow frame such as the side
+  panel; a `data-tip-code` text 480 px) wraps onto further lines, and a line break in a text starts a
+  new line (`white-space: pre-line`, `Tooltip.module.css`). The Jobs view's job name carries the job's
+  `description` as its `data-tip`, none without one.
 - **A view extends a kit primitive** (`kit/`) rather than forking it.
 - **The scheduler's words, once.** A run's state and trigger in words (`runWords`, `runTriggerWords`,
-  `missedRunsWords`, `heldRunsWords` in `src/scheduler/model.ts`) are the scheduler's, and so is whether
+  `missedRunsWords`, `heldRunsWords` in `src/scheduler/model.ts`) are the scheduler's — a run whose
+  agent's background work goes reads `BACKGROUND_WORDS` ("running · waiting for the agent's background
+  work") where `waitsForBackground` holds, in History, the Jobs cells, the card and the CLI — and so is whether
   a caught-up run's card offers Run the other N (`otherMissedRuns`); History, the
   cards, Needs you, the Jobs cells and `pomade-runner` read the same functions. Whether a job is held
   comes from the report (`NextRun.held`, `JobRuns.held`), never from the UI's own reading of the switch.
@@ -81,6 +87,21 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
   card's button). With no run going, or none with a session, the place is an empty slot of the same width
   so the other icons stay where they are. The row and the result card share `useStopRun` and
   `useOpenRunTerminal` (`useRunActions.tsx`).
+- **An agent run's card** (`RunCard.tsx`). An ended run whose reason is `NO_ANSWER_REASON` shows the
+  reason and **Last lines** (`record.lastLines`) and does not ask the Agents app for a message; any
+  other ended agent run reads its last message, and a session the Agents app does not have
+  (`useLastMessage` → `NO_SESSION`) says "The agent never started a session." and drops Open session.
+  A running run waiting for background work shows its sentence (`run-background`) above its Latest
+  output; a run waiting for you shows the sentence of what it waits at (`WAITING_SENTENCE`:
+  permission, trust, `not-started`), the Needs-you card's line (`WAITING_TEXT` in `panelWords.ts`)
+  and its help (`need.notstarted` for `not-started`, else `need.approval`). A queued run waiting for a
+  fresh keeper (`waits.kind` `keeper`) says why in `waitsSentence` (`runLook.ts`).
+- **The job form's description** (`DescriptionField` in `form/JobForm.tsx`): the link "Add a
+  description (optional)" until it is clicked or the file has one, then the Description text box;
+  `form/state.ts` writes it trimmed, and leaves the field out when empty.
+- **The Folder field's menu** (`form/FolderField.tsx`): Choose… opens Workspace, Connected projects
+  (an agent job's projects connected to its agent, in the order the Agents app gives them), Other
+  projects (Projects when none is connected) and Other folder…. There are no chips under the field.
 - **A manual job's Next run** reads "not scheduled" (`nextLook` in `jobWords.ts`; `jobs.next` in
   `help.ts`).
 - **Output tab** (`OutputPage.tsx`): a keyed Pomade tab per run, "<job> · output", with Copy; it closes
@@ -95,7 +116,7 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
 | `SwitchControl.tsx` | the three-position switch and its note, with the runs held so far as a link to History's Skipped & missed |
 | `NeedsYou.tsx` | Needs you's cards and their actions (a gave-up service without a session has no View output; its name opens the job in Jobs; a missed run that stands for more than one: Run once · Run all N · Run at… · Skip) |
 | `RunAllConfirm.tsx` | the confirm before Run all or Run the other N runs more than 20, naming the number; shared by Needs you and the result card |
-| `RunningNow.tsx`, `ActiveRunsList.tsx` | Running now: services and runs going; a row opens its tab, terminal or card |
+| `RunningNow.tsx`, `ActiveRunsList.tsx` | Running now: services and runs going (a run waiting for its agent's background work carries the news line "waiting for the agent's background work"); a row opens its tab, terminal or card |
 | `NextUp.tsx`, `runWords.ts` | Next up; the one countdown to a run (`soonWords`: "in 56 s", "in 2 min", "in 40 min"), the Jobs view's Next run reads it too |
 | `panelWords.ts` | the panel's words: a Needs-you card's look, a moment ahead or past, a run's age |
 | `RunnerTab.tsx`, `shell/TabShell.tsx` | the Runner tab and its frame: the four views, the route, the "This project" chip, New job |
@@ -105,20 +126,20 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
 | `ServicesView.tsx`, `serviceWords.ts`, `useServiceAction.tsx` | the Services view and its columns; a service's state in words (waiting for Pomade included) and `upChangeIn`, when a going run's time reads differently; Start, Stop and Restart through the scheduler, shared with the Jobs view |
 | `CommandCell.tsx` | the Services view's command cell: one mono line cut with "…", focusable and with the whole command as a tooltip only while cut |
 | `HistoryView.tsx`, `useHistoryPages.ts`, `runLook.ts` | History: filters, day heads, the held rows, pages of 100, the columns; a row's look (dot, words, pill, filter, duration) and the going runs' start moments (`runningSince`) |
-| `RunCard.tsx`, `MessageText.tsx`, `RunAtField.tsx` | the result card for every run state; an agent's message drawn as text, never as HTML; Run at…'s field |
+| `RunCard.tsx`, `MessageText.tsx`, `RunAtField.tsx` | the result card for every run state (an agent run's reason and Last lines, background-work and waiting sentences, no session); an agent's message drawn as text, never as HTML; Run at…'s field |
 | `OutputPage.tsx`, `useRunOutput.ts` | a run's output tab; a run's output, followed while it runs |
 | `SettingsView.tsx` | Settings: the four steppers, the skills folder's field, the read-only rows (notifications, where the agent skill is), the files |
-| `form/JobForm.tsx` | the form's page: head, Kind, kind sections, Policies, the Save bar, following the file |
+| `form/JobForm.tsx` | the form's page: head, Kind, Name and Description, kind sections, Policies, the Save bar, following the file |
 | `form/state.ts` | the form's state (pure): values, what the person set, the file as last read, the fields each kind writes (`FORM_KINDS`) |
 | `form/kinds.tsx` | each kind's card, sections, policy rows and Create button (`KIND_UI`) |
 | `form/TriggerSection.tsx` | On a schedule / When something happens / Manually: the schedule editor, the Event list and its filters, Manually's one line, a service's chain line |
 | `form/schedule.ts` | the schedule editor's values and their canonical lines (pure) |
 | `form/triggerWords.ts` | the Event list (`EVENT_CHOICES`), the pickers (jobs, projects, statuses, agents) and the trigger in words under the editor (pure) |
 | `form/policies.ts` | the policies' words in the one-sentence summary (pure) |
-| `form/FolderField.tsx`, `form/FormSection.tsx` | the Folder field and picker; a form section |
+| `form/FolderField.tsx`, `form/FormSection.tsx` | the Folder field and its Choose… menu (connected projects grouped); a form section |
 | `jobFiles.ts` | the form's job-file writes through the Host API: create under a free slug, field-only changes, follow the file |
 | `useRunnerApi.ts` | Runner's API, live; Pomade's projects, repos (`git.read`), the open project, the tab's route |
-| `useAgents.ts` | the Agents app through the broker: the roster, the projects connected to an agent, a session's last message |
+| `useAgents.ts` | the Agents app through the broker: the roster, the projects connected to an agent, a session's last message (`NO_SESSION` for a session the app lacks) |
 | `useAction.ts`, `useNow.ts` | the latest failure of a click; the Mac's clock, read again (`useNow`), read again the moment a countdown reads differently (`useCountdownNow`) and the moment a going run's time does (`useRunningNow`) |
 | `help.ts` | every help text |
 | `EmptyState.tsx` | a centred message for a surface with nothing to list |

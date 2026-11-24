@@ -19,7 +19,7 @@ socket, so it works with Pomade closed. A job is named by its **id** (`blog/dev-
 | `pomade-runner list` | every job: its kind, trigger in words ("manual" for a manual job), next run and last result |
 | `pomade-runner run <job>` | runs a job now: a script, agent or git job runs (or queues behind its run going, as its overlap says); a service starts — one stopped by you or failed too, but not a disabled one, nor one bound to Pomade while Pomade is closed ("starts with Pomade; Pomade is not running") |
 | `pomade-runner history [job]` | first, a line for each job the switch holds that has a run held so far — `low  Low  scheduled  held · 3 runs so far, 17:40–17:44` (`held · 1 run so far, 17:40` for one; across days `Tue 23:40–Wed 00:20`), of every job or the one asked; then the latest 20 finished runs, newest first, of every job or one, each with its trigger, result, time and output log (`output not on this Mac` when the log did not come along); a git run adds a line per repo. The held lines are not among the 20, and are gone once the switch lets the job go: its record is there instead |
-| `pomade-runner runs` | the switch — while it holds jobs, how many runs it has held so far ("6 runs so far") — the runs going — running, queued and what each waits for — and what needs you |
+| `pomade-runner runs` | the switch — while it holds jobs, how many runs it has held so far ("6 runs so far") — the runs going — running, queued and what each waits for — and what needs you. An agent run shows what it waits at: `running · waiting for the agent's background work`, `queued · a fresh keeper, after the runs going` (while the keeper is replaced once the runs going end), and as a Needs-you line `waiting for approval`, `waiting for you to trust its folder` or `has not started — look at its terminal` |
 | `pomade-runner pause [low\|all]` | holds scheduled runs: of low-priority jobs, or all (the default). Run now still runs; services keep running |
 | `pomade-runner resume` | lets held runs go: what the switch held is missed and follows each job's missed-run policy, once per job; its record replaces the job's held line in `history` |
 | `pomade-runner resume-job <job>` | lets hooks and chains fire a job the loop guard paused again |
@@ -32,7 +32,7 @@ socket, so it works with Pomade closed. A job is named by its **id** (`blog/dev-
 | `pomade-runner --version` | the version, and whether the scheduler is running |
 | `pomade-runner --help` | the usage |
 
-Every command but `check` and `projects` needs the scheduler running. Exit codes: 0 done; 1 problems
+Every command but `check` and `projects` needs the scheduler running. When the reader of the command's output closes the pipe (`pomade-runner sessions | head -1`), the command stops writing and ends quietly with the exit code it would have had. Exit codes: 0 done; 1 problems
 found, or the scheduler or Pomade needed and not running, or a refusal (printed with its reason); 2 the
 command could not run (a wrong argument, no workspace).
 

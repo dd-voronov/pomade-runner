@@ -76,13 +76,43 @@ keep true.
 - **Loop guard** (`loop-guard.ts`) — more than 10 firings of a job in 10 minutes by hooks or chains pauses
   it until Resume; Run now never counts.
 - **Runs** (`runs.ts`) — queued → running ⇄ waiting for you → done · failed · stopped by you; skipped and
-  missed ones are records. Agent runs (`agent-runs.ts` for the rules, the launch in `runs.ts`) and git
+  missed ones are records. A queued run waits for one of: its time, the switch, the warm-up, the job's
+  previous run, Pomade (an agent run), a fresh keeper (an agent run), a slot — in that order
+  (`queue.ts`, `Waits`). Agent runs (`agent-runs.ts` for the rules, the launch in `runs.ts`) and git
   runs (`git-runs.ts`) are script runs with their own command and end.
+- **Agent runs** — started in a keeper that reaches the macOS keychain: before the launch the
+  scheduler runs the keychain check (`Sessions.checkKeychain`, `keychain.ts`); a keeper that fails it is
+  replaced (`replaceKeeper`) and checked again. While other runs are going the agent run stays queued,
+  waiting for a fresh keeper, since replacing the keeper ends them; a fresh keeper that fails too fails
+  the run (`KEYCHAIN_LOST`); a check that cannot run does not hold the run back. `run.started` names the
+  run's keeper session as `terminal` (`run-events.ts`). The scanner's reading of the agent's screen
+  (`keeper/agent-turns.ts`) drives three more states of a running run:
+  - *waiting for you* — at a permission or trust prompt, or `not-started` (`AgentWait`,
+    `AGENT_WAIT_KINDS`): the agent has not been seen working `NOT_STARTED_MS` (20 s, its waits left
+    out; as long again after a scheduler restart) into the run and waits at no prompt the scanner names,
+    a consent or login screen. Only the agent working ends a `not-started` wait. The run holds no
+    low-priority slot meanwhile, its time limit is paused, and it is a Needs-you item and a notice;
+  - *waiting for the agent's background work* (`AgentRun.background`, `waitsForBackground`,
+    `BACKGROUND_WORDS`) — the turn ended with background work going: the run stays running, its time
+    limit counting and its slot kept, and types no exit command until the agent is idle without that
+    work. Not a wait for you: no Needs-you item, no notice;
+  - *exit typed* (`exitSentAt`) — once the turn is done. An agent that answers the exit command with its
+    background-work question has it declined with Escape (`background: "asked"`) and the run waits for
+    the turn's end afresh; if it is stopped after the exit wait with the question still up, it is
+    failed (`BACKGROUND_LEFT_REASON`).
+
+  How an agent run ends (`agentEnd`, `answeredEnd`): the agent exiting, or Runner's stop after the
+  exit wait, once the exit command was typed is **done**; an exit before it is **failed** ("the agent
+  exited before its turn was done"); a done run whose agent never answered — the Agents app's
+  `sessions.lastMessage` is `null` — is **failed**, `NO_ANSWER_REASON`; an answer that cannot be asked
+  leaves it done. Stopped by you and the time limit read as for a script. An agent stopped at the
+  `not-started` screen made no session of its own: the Agents app has none for the run's session id,
+  and the card says so.
 - **Records** — history (`history.ts`, JSON Lines per day, output log moved in at the run's end),
   `runs.json`, `switch.json`, `needs-you.json`, `services.json`, `renamed.json` in the workspace's records
   folder; sessions, projects, crash counts and the Pomade start in the machine-local state folder.
 - **Needs you and notices** (`needs-you.ts`) — one item per failed job; items for a service that gave up
-  (with why its last start failed, and whether it has a session), a missed run that waits, an agent run waiting for you, a long run, a loop-guard pause.
+  (with why its last start failed, and whether it has a session), a missed run that waits, an agent run waiting for you (at a prompt, or one that has not started), a long run, a loop-guard pause.
 - **Settings** (`settings.ts` pure, `settings-file.ts` read each tick and written field-only).
 - **Workspace** (`workspace-follow.ts`) — one workspace at a time; another recorded one restarts the
   scheduler on it, the keeper and its sessions untouched.
@@ -96,12 +126,12 @@ keep true.
 | `runs.ts` | the run lifecycle: the look, wake, overlap, the switch and its held rows (`heldRows`, `heldRuns`), the staged start, the login hook, firing hooks and chains, starting and ending sessions, time limits, long-run warnings, agent launch, waiting for you |
 | `triggers.ts` | which of a schedule's occurrences fell since the previous look, every one counted (pure; `pomade-kit`'s engine) |
 | `missed.ts` | what a missed-run policy makes of missed occurrences, their count kept with the decision; adding two counts; Run at…'s time (Run all is in `runs.ts`: it is the person's choice, no policy's) |
-| `queue.ts` | which queued runs start now, what each other waits for (time, switch, warm-up, previous run, Pomade, slot) |
+| `queue.ts` | which queued runs start now, what each other waits for (time, switch, warm-up, previous run, Pomade, a fresh keeper, slot) |
 | `switch.ts` | the switch's position, kept in `switch.json` |
 | `hooks.ts` | which jobs an event fires, the filters, the environment of a hook's runs (`projectFiring`, `sessionFiring`, `POMADE_STARTED`) |
 | `chains.ts` | which jobs a finished run fires |
 | `loop-guard.ts` | the firing count per job, the pause, Resume |
-| `agent-runs.ts` | an agent run's rules (pure): what its session runs, how its end reads, which session the lookup by folder and start time picks |
+| `agent-runs.ts` | an agent run's rules (pure): what its session runs, how its end reads — an unanswered turn and background work left included —, which session the lookup by folder and start time picks, the time an agent has to start working (`NOT_STARTED_MS`; `POMADE_RUNNER_NOT_STARTED_MS` in tests), the keychain failure's reason |
 | `git-runs.ts` | a git run's command line, its end read with `pomade-git`'s result, its lines per repo, the `jobs.forRepo` answer |
 | `history.ts` | history records and the output logs: appending, reading a page of records (`HistoryRecords`: a `HistoryPage` without its held rows, which `runs.ts` knows), retention, moving a log into the records folder |
 | `records-move.ts` | the one-time move of the records from the state folder into the workspace |
@@ -113,8 +143,8 @@ keep true.
 | `settings.ts`, `settings-file.ts` | the five workspace settings: validation (pure); the file read and written |
 | `environment.ts`, `read-environment.ts` | what Settings shows about the Mac (notification permission, where the skill's copy is): the shared type and check (pure); reading it from the Mac |
 | `workspace-follow.ts` | waiting for a workspace, starting again on another |
-| `run-events.ts` | the payloads of `run.started` and `run.finished`, agent fields included |
-| `model.ts` | the shared model of runs, history records, Needs you, the switch, and their words (`runTriggerWords`, `hookCauseWords`, `waitsWords`, `missedRunsWords`, `heldRunsWords`, `heldRowWords`), `HeldRun` and `HistoryPage.held` |
+| `run-events.ts` | the payloads of `run.started` and `run.finished`, agent fields included — the run's `terminal`, its keeper session |
+| `model.ts` | the shared model of runs (`AgentRun`: `worked`, `waiting`, `background`), history records, Needs you, the switch, and their words (`runTriggerWords`, `hookCauseWords`, `waitsWords`, `runWords`, `missedRunsWords`, `heldRunsWords`, `heldRowWords`), `HeldRun` and `HistoryPage.held` |
 | `clock.ts` | the `Clock`, the tick length, the test overrides `POMADE_RUNNER_TICK_MS`, `POMADE_RUNNER_CLOCK`, `POMADE_RUNNER_CLOCK_RATE` |
 | `log.ts` | one timestamped line per event on stdout (`<userData>/app-logs/pomade-runner/backend.log`) |
 | `control/protocol.ts` | the control protocol both sides import: methods, versions, shapes |
@@ -143,15 +173,29 @@ keep true.
 - An invalid or half-written job file never stops or starts a running service.
 - Every firing passes the loop guard, Pomade's hooks included; a service's start is no firing.
 - A Pomade-bound service never runs while Pomade is closed, and a `login` service is untouched by a Pomade quit.
+- An agent run starts in a keeper that passed the keychain check or whose check could not run; the keychain
+  check never replaces a keeper while a run is going.
+- An agent run that waits for the person (a prompt, `not-started`) has its wait left out of its time limit and holds no
+  low-priority slot; one that waits for the agent's background work has and holds both.
+- An agent's background-work question is declined, never answered with the exit: Runner never stops
+  background work by its own exit command.
 
 ## Tests
 
 Unit (vitest), beside the files: `agent-runs`, `chains`, `clock`, `control/protocol`, `delete`,
 `environment`, `git-runs`, `history`, `hooks`, `hooks-chains`, `load`, `loop-guard`, `missed`, `model`,
-`needs-you`, `project-moves`, `queue`, `records-move`, `renamed`, `runs`, `scheduler`, `settings`,
+`needs-you`, `project-moves`, `queue`, `read-environment`, `records-move`, `renamed`, `runs`, `scheduler`, `settings`,
 `settings-file`, `triggers`, `workspace-follow`. E2E: `background`, `runs`, `load`, `chains`, `git`,
 `services` (processes, Pomade closed); `pomade`, `pomade-hooks`, `pomade-agent-hooks`, `pomade-agents`,
 `pomade-agents-real`, `pomade-open`, `pomade-load`, `pomade-git`, `pomade-lifetimes` (a real Pomade).
+
+Environment seams of the scheduler process, for tests: `POMADE_RUNNER_TICK_MS`, `POMADE_RUNNER_CLOCK`,
+`POMADE_RUNNER_CLOCK_RATE` (`clock.ts`), `POMADE_RUNNER_QUIT_GRACE_MS` (Pomade's quit grace),
+`POMADE_RUNNER_NOT_STARTED_MS` (`agent-runs.ts`: how long an agent has to start working) and
+`POMADE_RUNNER_KEYCHAIN_CHECK` (`keeper/keychain.ts`: a command line the keychain check runs in place of
+`security list-keychains` — the stand-in for a keeper that lost the keychain). The scripted fake agent's
+words (`[long]`, `[ask]`, `[no-answer]`, `[stuck]`, `[background…]`, …) are documented in the header of
+`e2e/fixtures/fake-agent.mjs`.
 
 ## Known limits
 

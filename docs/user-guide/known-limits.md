@@ -15,7 +15,16 @@ kind: reference
 - **One Mac per workspace.** Two Macs running the same workspace at once both fire the jobs.
 - **Agent jobs need Pomade and the Agents app.** Runner opens a closed Pomade for a run and leaves it
   running; with no Agents app the run fails. Runner restarted mid-run learns an agent's turn is done only
-  from the agent's next window title.
+  from the agent's next turn.
+- **Background work is read from the agent's footer.** The reading that keeps a run waiting for its
+  agent's background work counts background shells only. A background sub-agent is not counted: its
+  turn looks done, and Runner notices it only when the agent answers the exit command with its
+  "Background work is running" question — Runner declines it and waits for the turn's end, and a
+  run still stopped at the question after 15 seconds is failed.
+- **The keeper's loss of the keychain is not explained.** Runner detects a keeper that cannot reach the
+  macOS keychain and replaces it before an agent run, but what cuts a keeper off from the keychain is
+  not known, so it can happen again. The replacement waits for the runs going to end, because it ends
+  them.
 - **Weekdays are Mon–Fri.** National holidays are not skipped.
 - **No cron syntax.** A schedule is one of the five shapes; a job that runs once per trigger has at most
   one trigger — a schedule, a hook or a chain; with none it is a manual job.

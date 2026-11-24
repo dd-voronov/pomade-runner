@@ -1,7 +1,7 @@
 ---
 doc: docs/user-guide/jobs.md
 audience: users
-holds: the four kinds of job, the job file, the Jobs view, creating and editing a job in the form, Enabled, Open file, Delete, policies
+holds: the four kinds of job, the job file (the description included), the Jobs view, creating and editing a job in the form, Enabled, Open file, Delete, policies
 kind: reference
 ---
 
@@ -40,6 +40,7 @@ change applies within a second. A file with an error is shown in Runner with the
 |---|---|---|
 | `kind` | all | `service` · `script` · `agent` · `git` |
 | `name` | all | required; unique across the workspace (case ignored); a git job's at most 100 characters |
+| `description` | all | optional; free text saying what the job is for, any length, line breaks kept; a job without one leaves the field out (a field with no text is an error). Jobs shows it as the tooltip on the job's name |
 | `project` | all | the project's id; only in a project's sub-folder |
 | `enabled` | all | `true` · `false` |
 | `folder` | service · script · agent | the working folder, relative to the workspace; `.` is the root |
@@ -61,11 +62,13 @@ Jobs are grouped by project: the Workspace first (jobs that belong to no project
 in Pomade's order, each group headed by its name, its jobs sub-folder and its count. The summary
 reads "N jobs", plus "· N invalid" when a file has errors. Columns:
 
-- **Job · trigger** — the kind icon, the name over the trigger in words ("weekdays at 7:00", "at Mac
+- **Job · trigger** — the kind icon, the name (with the job's description, when it has one, as its
+  tooltip, line breaks kept) over the trigger in words ("weekdays at 7:00", "at Mac
   login", "after Pull is done", "manual"; a service: "always on · starts on Mac startup", "while Pomade
   is running", "from first open of blog while Pomade is running"). An agent job in Full autonomy carries an amber `Full autonomy` tag. A
   git job's tooltip adds its operation and repos; a repo the workspace lacks is said in red.
-- **Last result** — the run going ("running", "waiting for you", "queued", "missed · waiting for you")
+- **Last result** — the run going ("running", "running · waiting for the agent's background work",
+  "waiting for you", "queued", "missed · waiting for you")
   or the latest finished one ("done", "failed · exit 1", "stopped: time limit, 45 min", "skipped · …",
   "missed · …", "stopped by you") over when it started and how long it took, with "· caught up" or
   "· manual" where that is how it started ("today 8:32 · 4m 12s · caught up") — a done git run shows
@@ -100,13 +103,17 @@ head has a back arrow to Jobs, "Jobs / <name>", **Enabled** and — editing — 
 
 1. **Kind** — four cards: Service "Keeps a command running, always"; Script "Runs a command on a
    trigger"; Agent "Runs an agent with a prompt"; Git "Git operation on your repos". Then **Name**.
-   Switching kind keeps what you set and resets the kind's defaults you left alone.
+   Switching kind keeps what you set and resets the kind's defaults you left alone. Under Name a
+   link, "Add a description (optional)", opens the **Description** box ("What this job is for — shown
+   when you hover its name in Jobs"); a job that has a description shows the box filled. Emptying it keeps the
+   box open; an empty description leaves the field out of the file.
 2. The kind's own sections — **Trigger** and **Runs** for a service and a script, **Trigger** and
    **Agent** for an agent, **Trigger** and **Git** for a git job.
 3. **Policies** — a one-sentence summary, the non-defaults in bold, until you press **Change**.
 
-**Folder** is typed or chosen from a menu (the workspace root, a project's folder, or Pomade's folder
-picker); a folder inside a project fills in that project. **Project** is the Workspace ("Workspace (no
+**Folder** is typed or chosen with **Choose…**: a menu of **Workspace** (the workspace root), the
+projects (an agent job groups the agent's **Connected projects** first, then **Other projects**) and
+**Other folder…** (Pomade's folder picker); a folder inside a project fills in that project. **Project** is the Workspace ("Workspace (no
 project)") or one of Pomade's projects.
 
 The bottom bar says "Saves to <path>", with **Cancel** and the save button: **Create and start**
@@ -147,4 +154,4 @@ Each job that runs once per trigger carries these; each has an (i) help.
 A service's policies are Low priority and Notify me; a missed-run policy, overlap and a time limit
 apply to jobs that run once per trigger. A policy at its default is left out of the file.
 
-Tickets: T-007, T-009.
+Tickets: T-007, T-009, T-041, T-043, T-044.
