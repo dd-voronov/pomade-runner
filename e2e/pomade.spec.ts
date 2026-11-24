@@ -764,7 +764,16 @@ test.describe("Runner in Pomade", () => {
       await expect.poll(() => attachedTabIds()).toHaveLength(0);
       await expect(row.getByTestId("job-status")).toHaveText("running");
 
-      await row.getByRole("button", { name: "Stop run" }).click();
+      // Closing the attached tab flips the Runner tab's pane from display:none back to block; until
+      // Chromium's hit-test data catches up, mouse events at the frame's coordinates do not reach the
+      // frame, though Playwright's in-frame actionability checks already pass and the click "succeeds".
+      // The pointer is over the icon once the frame sees it hovered; then the click lands.
+      const stop = row.getByRole("button", { name: "Stop run" });
+      await expect(async () => {
+        await stop.hover();
+        expect(await stop.evaluate((button) => button.matches(":hover"))).toBe(true);
+      }).toPass();
+      await stop.click();
       await expect(tab.getByTestId("toast").last()).toHaveText("RunnerRow stop stopped by you");
       await expect.poll(() => history("row-stop")).toEqual([expect.objectContaining({ state: "stopped-by-you", trigger: "manual" }) as RunRecord]);
       await expect.poll(icons).toEqual(["Run now", "Edit", "Delete"]);
