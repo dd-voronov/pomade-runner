@@ -406,11 +406,11 @@ function RepoPicker({ host, state, set, error }: FormProps): React.JSX.Element {
 const BASE_MODES = ["normal", FULL_AUTONOMY_MODE] as const;
 
 /** The Agent kind: Trigger (a schedule, a hook or a chain), then Agent — who (the roster), where
- *  (the folder: the projects connected to the agent first, then any folder; the project), how (the
+ *  (the folder, its picker grouping the projects connected to the agent; the project), how (the
  *  agent's modes, the Full-autonomy warning) — and the prompt, the file's body. Without the Agents
  *  app the form says so in place of the agent and mode pickers. */
 function AgentSections(props: FormProps): React.JSX.Element {
-  const { host, state, set, error, projects, workspaceName } = props;
+  const { host, state, set, error } = props;
   const { values } = state;
   const roster = useRoster(host);
   const agents = roster.status === "ready" ? roster.value : [];
@@ -425,21 +425,6 @@ function AgentSections(props: FormProps): React.JSX.Element {
     if (next !== undefined && !agentModes(next).some((mode) => mode.id === values.mode)) set("mode", "normal");
   };
   const agentName = agent?.name ?? values.agent;
-  const connectedProjects = connected.status === "ready" ? connected.value.flatMap((id) => projects.records.filter((record) => record.id === id)) : [];
-  const suggestions =
-    agent === undefined ? undefined : (
-      <div className={styles.inline} data-testid="agent-folders">
-        <span className={styles.hint}>Connected to {agentName}:</span>
-        {connectedProjects.map((project) => (
-          <button key={project.id} type="button" className={styles.suggest} data-tip={project.root} onClick={() => props.setFolder(project.root)}>
-            {project.name}
-          </button>
-        ))}
-        <button type="button" className={styles.suggest} onClick={() => props.setFolder(".")}>
-          {workspaceName} (workspace root)
-        </button>
-      </div>
-    );
   const absent = roster.status === "absent" || roster.status === "failed";
   return (
     <>
@@ -470,7 +455,7 @@ function AgentSections(props: FormProps): React.JSX.Element {
         )}
         <div className={styles.row}>
           <div className={styles.wide}>
-            <FolderField {...props} help="f.agentfolder" below={absent ? undefined : suggestions} />
+            <FolderField {...props} help="f.agentfolder" connected={connected.status === "ready" ? connected.value : []} />
           </div>
           <ProjectField {...props} />
         </div>

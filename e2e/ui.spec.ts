@@ -4064,7 +4064,7 @@ test.describe("agent jobs", () => {
     );
   }
 
-  test("the form makes an agent job: the roster's agents, the folders connected to the agent, its modes, the Full-autonomy warning, the prompt as the body", async ({ page }) => {
+  test("the form makes an agent job: the roster's agents, the projects connected to the agent grouped in the folder picker, its modes, the Full-autonomy warning, the prompt as the body", async ({ page }) => {
     await start(page, { route: "new" });
     await app(page).getByTestId("kind-agent").click();
     const form = app(page).getByTestId("form-agent");
@@ -4072,12 +4072,17 @@ test.describe("agent jobs", () => {
     const agents = form.getByRole("group", { name: "Agent" });
     await expect(agents.getByRole("button")).toHaveText(["claude", "claude-editor", "claude-coder", "claude-pm", "codex"]);
     await expect(agents.getByRole("button", { name: "claude", exact: true })).toHaveAttribute("aria-pressed", "true");
-    // The projects connected to the agent first, then the workspace root; a pick fills the project.
-    const folders = form.getByTestId("agent-folders");
-    await expect(folders).toHaveText("Connected to claude:Pomadeblogshopworkspace (workspace root)");
-    await folders.getByRole("button", { name: "blog" }).click();
+    // Choose… groups the projects: the workspace, the ones connected to the agent, the others; a
+    // pick fills the folder and the project. Nothing under the Folder box.
+    const folderMenu = app(page).getByTestId("folder-menu");
+    const groups = folderMenu.locator('[role="presentation"], [role="menuitem"]');
+    await form.getByRole("button", { name: "Choose…" }).click();
+    await expect(groups).toHaveText(["Workspace", "workspaceworkspace root", "Connected projects", "PomadeProjects/Pomade", "blogProjects/blog", "shopProjects/shop", "Other projects", "notesnotes", "pomade-kitProjects/pomade-kit", "pomade-runnerProjects/pomade-runner", "AlphaProjects/alpha", "Other folder…Pomade's folder picker"]);
+    await shoot(page, "agent-form-folder-menu");
+    await folderMenu.getByRole("menuitem", { name: /^blog/ }).click();
     await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveValue("Projects/blog");
     await expect(form.getByRole("combobox", { name: "Project" })).toHaveValue("blog");
+    await expect(form.getByRole("button", { name: "shop" })).toHaveCount(0);
     // Only the agent's modes; one it lacks is faded with why; another agent's own modes after them.
     const modes = form.getByRole("group", { name: "Mode" });
     await expect(modes.getByRole("button")).toHaveText(["Normaldefault", "Full autonomy"]);
@@ -4091,7 +4096,9 @@ test.describe("agent jobs", () => {
     await expect(form.getByTestId("full-autonomy-warning")).toHaveCount(0);
     await agents.getByRole("button", { name: "codex" }).click();
     await expect(modes.getByRole("button")).toHaveText(["Normaldefault", "Full autonomy", "Read-only"]);
-    await expect(folders).toHaveText("Connected to codex:pomade-kitworkspace (workspace root)");
+    await form.getByRole("button", { name: "Choose…" }).click();
+    await expect(groups).toHaveText(["Workspace", "workspaceworkspace root", "Connected projects", "pomade-kitProjects/pomade-kit", "Other projects", "notesnotes", "PomadeProjects/Pomade", "pomade-runnerProjects/pomade-runner", "AlphaProjects/alpha", "blogProjects/blog", "shopProjects/shop", "Other folder…Pomade's folder picker"]);
+    await page.keyboard.press("Escape");
     await agents.getByRole("button", { name: "claude", exact: true }).click();
     // Save with no prompt: the checker's words on the prompt.
     await app(page).getByTestId("form-save").click();
@@ -4136,6 +4143,23 @@ test.describe("agent jobs", () => {
     await expect(form.getByRole("group", { name: "Mode" })).toHaveCount(0);
     await expect(form.getByRole("textbox", { name: "Prompt" })).toHaveValue("Write my morning summary.");
     await shoot(page, "agent-form-absent");
+    // Choose… has no Connected projects group: Runner cannot ask which projects are the agent's.
+    await form.getByRole("button", { name: "Choose…" }).click();
+    await expect(app(page).getByTestId("folder-menu").locator('[role="presentation"]')).toHaveText(["Workspace", "Projects"]);
+  });
+
+  test("an agent the roster lacks has no Connected projects group in the folder picker", async ({ page }) => {
+    await start(page);
+    await writeJob(page, "morning-summary.md", SUMMARY.replace("agent: claude\n", "agent: ghost\n"));
+    await expect(app(page).getByTestId("job-row")).toHaveCount(1);
+    await page.evaluate(() => window.mounted.navigate("edit/morning-summary"));
+    const form = app(page).getByTestId("form-agent");
+    await expect(form).toContainText("ghost is not in the Agents app's roster.");
+    await form.getByRole("button", { name: "Choose…" }).click();
+    const menu = app(page).getByTestId("folder-menu");
+    await expect(menu.locator('[role="presentation"]')).toHaveText(["Workspace", "Projects"]);
+    await expect(menu.getByRole("menuitem")).toHaveCount(9);
+    await shoot(page, "agent-form-folder-menu-no-agent");
   });
 
   test("an agent job's row: the Full-autonomy mark with its help, Run now", async ({ page }) => {

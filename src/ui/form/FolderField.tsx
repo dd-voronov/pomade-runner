@@ -1,5 +1,6 @@
 // The form's Folder field: typed, or chosen — the workspace root, a project's folder, or any folder
-// through Pomade's folder picker; a folder inside a project fills in the project.
+// through Pomade's folder picker; a folder inside a project fills in the project. An agent job's
+// picker offers the projects connected to its agent in a group of their own, before the others.
 
 import { useState, type ReactNode } from "react";
 import type { ProjectListResult } from "pomade-kit/protocol";
@@ -41,10 +42,18 @@ export interface FormProps {
   jobId: string | null;
 }
 
-/** `help` names the field's (i); `below` goes under the input (an agent's connected projects). */
-export function FolderField({ host, state, setFolder, error, projects, workspaceName, help = "f.folder", below }: FormProps & { help?: HelpKey; below?: ReactNode }): React.JSX.Element {
+/** `help` names the field's (i); `connected` the ids of the projects connected to an agent job's
+ *  agent, in the order the picker offers them; none: no Connected projects group. */
+export function FolderField({ host, state, setFolder, error, projects, workspaceName, help = "f.folder", connected = [] }: FormProps & { help?: HelpKey; connected?: readonly string[] }): React.JSX.Element {
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const { folder } = state.values;
+  const first = connected.flatMap((id) => projects.records.filter((record) => record.id === id));
+  const rest = projects.records.filter((record) => !first.includes(record));
+  const item = (project: ProjectRecord): React.JSX.Element => (
+    <MenuItem key={project.id} sub={<span className={styles.monoFamily}>{project.root}</span>} onSelect={() => setFolder(project.root)}>
+      {project.name}
+    </MenuItem>
+  );
   const pickOther = (): void => {
     host.files.pickFolder({ initial: folder.trim() === "." ? "" : folder.trim() }).then(
       ({ path }) => {
@@ -56,7 +65,6 @@ export function FolderField({ host, state, setFolder, error, projects, workspace
   return (
     <Field label="Folder" help={help} error={error("folder")} hint={folder.trim() === "." ? `“.” is the workspace root, ${workspaceName}.` : undefined}>
       {(id) => (
-        <>
         <div className={styles.pick}>
           <TextInput id={id} mono placeholder="Projects/blog" value={folder} bad={error("folder") !== undefined} data-field="folder" onChange={(event) => setFolder(event.target.value)} />
           <Button className={styles.pickButton} icon="folder" aria-haspopup="menu" aria-expanded={menu !== null} onClick={(event) => setMenu(event.currentTarget)}>
@@ -68,12 +76,10 @@ export function FolderField({ host, state, setFolder, error, projects, workspace
               <MenuItem sub="workspace root" onSelect={() => setFolder(".")}>
                 {workspaceName}
               </MenuItem>
-              {projects.records.length > 0 && <MenuHeader>Projects</MenuHeader>}
-              {projects.records.map((project) => (
-                <MenuItem key={project.id} sub={<span className={styles.monoFamily}>{project.root}</span>} onSelect={() => setFolder(project.root)}>
-                  {project.name}
-                </MenuItem>
-              ))}
+              {first.length > 0 && <MenuHeader>Connected projects</MenuHeader>}
+              {first.map(item)}
+              {rest.length > 0 && <MenuHeader>{first.length > 0 ? "Other projects" : "Projects"}</MenuHeader>}
+              {rest.map(item)}
               <MenuSeparator />
               <MenuItem sub="Pomade's folder picker" onSelect={pickOther}>
                 Other folder…
@@ -81,8 +87,6 @@ export function FolderField({ host, state, setFolder, error, projects, workspace
             </Menu>
           )}
         </div>
-        {below}
-        </>
       )}
     </Field>
   );

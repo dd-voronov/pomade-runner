@@ -1359,9 +1359,12 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   Trigger section as a script's, then **Agent** — who · where · how:
   - **Agent**: a choice of the roster's agents (`roster.list`), by name; one the file names that the
     roster lacks stays, with a red line saying so that does not keep Save from writing;
-  - **Folder** and **Project** as a script's, the Folder's (i) its own, and under the input "Connected
-    to <agent>:" with a chip per project connected to it (`roster.projectsFor`, in the Projects
-    panel's order), then the workspace root — a chip sets the folder, and its project;
+  - **Folder** and **Project** as a script's, the Folder's (i) its own. Its **Choose…** menu groups
+    the choices: **Workspace** (the workspace root), **Connected projects** (the projects connected
+    to the agent, `roster.projectsFor`, in the Projects panel's order), **Other projects** (the
+    rest, in Pomade's order), then Other folder…; a pick sets the folder, and its project. With
+    the agent not in the roster, or the Agents app not answering, there is no Connected projects
+    group and the rest are **Projects**, as in a script's menu;
   - **Mode**: Normal and Full autonomy, then the agent's other modes; one the agent lacks is faded,
     its tooltip "claude-pm has no full autonomy mode"; Normal tagged default. Picking an agent that
     lacks the mode set goes back to Normal. Full autonomy shows the amber warning under it: "Skips

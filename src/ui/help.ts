@@ -75,7 +75,7 @@ export const HELP = {
   'f.folder': ['The working folder the command starts in, relative to the workspace.', 'Example: Projects/blog'],
   'f.project': ['Groups the job under a project and binds it by the project\'s id, so a rename doesn\'t orphan it.', 'Example: blog. "Workspace" = no project.'],
   'f.agent': ['Which agent runs the prompt. The list comes from the Agents app.', 'Example: claude-editor for tidying drafts.'],
-  'f.agentfolder': ['Where the agent starts — its session is kept under this folder, and Open session resumes it there. Projects connected to this agent are offered first; any workspace folder works.', 'Example: notes for claude-editor.'],
+  'f.agentfolder': ['Where the agent starts — its session is kept under this folder, and Open session resumes it there. Choose… offers the projects connected to this agent in a group of their own, after the workspace; any workspace folder works.', 'Example: notes for claude-editor.'],
   'f.mode': ['What the agent may do without asking. Normal: it asks before it edits a file or runs a command, and waits at the prompt. Full autonomy: it does both without asking. Only the modes this agent has are offered.', 'Example: Normal — Tidy drafts stops at “Allow git mv on 14 files?”; Full autonomy — Weekly review moves them on its own.'],
   'f.fullauto': ['Skips every approval. Choose it only for jobs that are safe with nobody watching.', 'Example: a read-only morning summary.'],
   'f.prompt': ['What the agent is asked to do, as its first message. Saved as the body of the job file; when the agent has answered and is idle, Runner ends the session.', 'Example: "Summarize today\'s plan and what ran overnight."'],
