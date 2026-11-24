@@ -18,12 +18,12 @@ import { useServiceAction } from "./useServiceAction";
 
 /** The table's columns: the kind icon · Service · Command · Status · the actions. The Command column
  *  at its default is 260 px, and never more than the row has left once the others take theirs (the
- *  icon, 120 px for Service, 176 for Status, the actions and the four gaps: 622 px) — a view narrower
+ *  icon, 120 px for Service, 192 for Status, the actions and the four gaps: 638 px) — a view narrower
  *  than 800 px has no Command column at all (`ServicesView.module.css`). */
 const COLUMNS: readonly Column[] = [
   { id: "kind", width: 16 },
   { id: "service", min: 120, track: "minmax(0, 1fr)" },
-  { id: "command", min: 120, track: "minmax(0, min(260px, calc(100% - 622px)))" },
+  { id: "command", min: 120, track: "minmax(0, min(260px, calc(100% - 638px)))" },
   { id: "status", min: 120, track: "192px" },
   { id: "actions", width: 262 },
 ];
