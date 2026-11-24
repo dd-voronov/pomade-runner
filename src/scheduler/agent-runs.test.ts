@@ -162,7 +162,7 @@ describe("agent runs", () => {
     const cwd = await realpath(join(workspace, "Projects/x"));
     const line = `claude '--session-id' '${sessionId}' 'Write my morning summary.'`;
     expect(spawn?.command).toMatchObject({ title: "Morning summary", argv: ["/bin/zsh", "-l", "-i", "-c", line], cwd, background: true });
-    expect(run.agent).toEqual({ agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId, cwd, startedAt: new Date(now).toISOString(), exit: "/exit", exitSentAt: null, worked: true, waiting: null, waitedMs: 0 });
+    expect(run.agent).toEqual({ agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId, cwd, startedAt: new Date(now).toISOString(), exit: "/exit", exitSentAt: null, worked: true, waiting: null, waitedMs: 0, background: null });
     expect(turns.watched()).toEqual([run.session]);
   });
 
@@ -612,6 +612,119 @@ describe("agent runs", () => {
     expect(notices).toHaveLength(1);
   });
 
+  describe("an agent whose turn ends with background work going", () => {
+    it("keeps the run running — no exit command, no wait for the person — until the agent's further turn ends without it; then one exit command", async () => {
+      const run = await runNow();
+      const session = run.session ?? "";
+      turns.background(session, true);
+      await runs.tick();
+      expect(runs.active()[0]).toMatchObject({ state: "running", agent: { background: "idle", waiting: null, exitSentAt: null } });
+      expect(turns.typed).toEqual([]);
+      expect(runs.needsYou()).toEqual([]);
+      expect(notices).toEqual([]);
+      expect(lines).toContain(`run summary ${run.run}: the agent's turn ended with background work going; waiting for that work`);
+      turns.background(session, false);
+      await runs.tick();
+      expect(runs.active()[0]?.agent?.background).toBeNull();
+      turns.done(session);
+      await runs.tick();
+      expect(turns.typed).toEqual([{ session, text: "/exit" }]);
+      sessions.end(session, "exited", 0);
+      await runs.tick();
+      expect(finished[0]).toMatchObject({ state: "done", reason: null, agent: { background: null } });
+    });
+
+    it("counts its time limit and keeps its low-priority slot meanwhile", async () => {
+      settings = { ...DEFAULT_SETTINGS, maxLowPriorityRuns: 1 };
+      files = { "summary.md": agentFile("time-limit: 10m\n"), "other.md": agentFile().replace("name: Morning summary", "name: Other") };
+      load();
+      const run = await runNow();
+      const session = run.session ?? "";
+      turns.background(session, true);
+      await runs.tick();
+      const other = await runs.runNow("other");
+      expect(other.ok && "run" in other && other.run.state).toBe("queued");
+      minutes(9);
+      await runs.tick();
+      expect(sessions.stops).toEqual([]);
+      minutes(1);
+      await runs.tick();
+      expect(sessions.stops).toEqual([{ id: session, reason: "time-limit" }]);
+      sessions.end(session, "time-limit", null, 600_000, "SIGTERM");
+      await runs.tick();
+      expect(finished[0]).toMatchObject({ job: "summary", state: "failed", reason: "stopped: time limit, 10 min", limitHit: 10 });
+      expect(turns.typed).toEqual([]);
+    });
+
+    it("declines the background-work question that answers its exit command with Escape — no wait for the person — and once the agent is idle again, waits for the turn's end afresh", async () => {
+      let clock = 1_000;
+      vi.spyOn(performance, "now").mockImplementation(() => clock);
+      const run = await runNow();
+      const session = run.session ?? "";
+      turns.done(session);
+      await runs.tick();
+      expect(turns.typed).toEqual([{ session, text: "/exit" }]);
+      turns.asks(session);
+      await runs.tick();
+      expect(turns.pressed).toEqual([{ session, data: "\x1b" }]);
+      expect(runs.active()[0]).toMatchObject({ state: "running", agent: { background: "asked", waiting: null } });
+      expect(runs.needsYou()).toEqual([]);
+      expect(notices).toEqual([]);
+      expect(lines).toContain(`run summary ${run.run}: the agent answered /exit with its background-work question; declining it (Escape)`);
+      turns.background(session, true);
+      await runs.tick();
+      expect(runs.active()[0]?.agent).toMatchObject({ background: "idle", exitSentAt: null });
+      expect(lines).toContain(`run summary ${run.run}: the agent stays with its background work; waiting for its turn's end`);
+      // The exit wait is cleared: the agent is not stopped while its work goes.
+      clock += AGENT_EXIT_WAIT_MS * 4;
+      await runs.tick();
+      expect(sessions.stops).toEqual([]);
+      turns.background(session, false);
+      turns.done(session);
+      await runs.tick();
+      expect(turns.typed).toEqual([
+        { session, text: "/exit" },
+        { session, text: "/exit" },
+      ]);
+      sessions.end(session, "exited", 0);
+      await runs.tick();
+      expect(finished[0]).toMatchObject({ state: "done", reason: null });
+    });
+
+    it("fails a run whose agent is stopped after the exit wait with its background-work question still up", async () => {
+      let clock = 1_000;
+      vi.spyOn(performance, "now").mockImplementation(() => clock);
+      const run = await runNow();
+      const session = run.session ?? "";
+      turns.done(session);
+      await runs.tick();
+      turns.asks(session);
+      await runs.tick();
+      clock += AGENT_EXIT_WAIT_MS;
+      await runs.tick();
+      expect(sessions.stops).toEqual([{ id: session, reason: "stopped" }]);
+      expect(lines).toContain(`run summary ${run.run}: the agent did not end after /exit, its background-work question still up; stopping its session`);
+      sessions.end(session, "stopped", null, 2000, "SIGTERM");
+      await runs.tick();
+      expect(finished[0]).toMatchObject({ state: "failed", reason: "the agent still had background work when Runner ended it" });
+    });
+
+    it("still waits for the background work after a restart", async () => {
+      const run = await runNow();
+      turns.background(run.session ?? "", true);
+      await runs.tick();
+      await runs.close();
+      turns = new FakeTurns();
+      await open();
+      await runs.tick();
+      expect(runs.active()[0]?.agent).toMatchObject({ background: "idle", exitSentAt: null });
+      turns.done(run.session ?? "");
+      await runs.tick();
+      expect(turns.typed).toEqual([{ session: run.session, text: "/exit" }]);
+      expect(runs.active()[0]?.agent?.background).toBeNull();
+    });
+  });
+
   describe("an agent that has not started working", () => {
     const seconds = (n: number): void => {
       now = new Date(now.getTime() + n * 1000);
@@ -770,16 +883,16 @@ describe("agent runs", () => {
     expect(notStartedMs({ POMADE_RUNNER_NOT_STARTED_MS: " 3000 " })).toBe(3000);
   });
 
-  it("reads a run going and a record of an older build, with no wait fields, as ones that never waited and whose agent started working", async () => {
+  it("reads a run going and a record of an older build, with no wait or background fields, as ones that never waited, whose agent started working and has no background work", async () => {
     const run = await runNow();
-    const { waiting: _waiting, waitedMs: _waitedMs, worked: _worked, ...older } = run.agent ?? ({} as AgentRun);
+    const { waiting: _waiting, waitedMs: _waitedMs, worked: _worked, background: _background, ...older } = run.agent ?? ({} as AgentRun);
     const records = recordsFolderOf(dir);
     await mkdir(dirname(runsRecordPath(records)), { recursive: true });
     await writeFile(runsRecordPath(records), JSON.stringify({ active: [{ ...run, agent: older }], last: {} }));
     const [going] = (await fileRunsStore(records, stateFolderOf(dir), () => undefined).load()).active;
-    expect(going?.agent).toEqual({ ...older, worked: true, waiting: null, waitedMs: 0 });
+    expect(going?.agent).toEqual({ ...older, worked: true, waiting: null, waitedMs: 0, background: null });
     const record = parseRunRecord({ ...run, state: "done", action: null, reason: null, endedAt: 1, durationMs: 1, exitCode: 0, signal: null, lastLines: [], git: null, agent: older });
-    expect(record?.agent).toEqual({ ...older, worked: true, waiting: null, waitedMs: 0 });
+    expect(record?.agent).toEqual({ ...older, worked: true, waiting: null, waitedMs: 0, background: null });
   });
 
   it("follows a running agent run's turns again after a restart", async () => {
@@ -794,7 +907,7 @@ describe("agent runs", () => {
 });
 
 describe("agent run rules", () => {
-  const agent: AgentRun = { agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-18T11:00:00.000Z", exit: "/exit", exitSentAt: null, worked: true, waiting: null, waitedMs: 0 };
+  const agent: AgentRun = { agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-18T11:00:00.000Z", exit: "/exit", exitSentAt: null, worked: true, waiting: null, waitedMs: 0, background: null };
   const end = { state: "done" as const, reason: null, exitCode: 0, signal: null, limitHit: null };
 
   it("runs the line in the shell, interactive and login", () => {
@@ -813,6 +926,14 @@ describe("agent run rules", () => {
     expect(agentEnd(limit, agent, "time-limit")).toEqual(limit);
     const gone = { ...end, state: "failed" as const, reason: "its session is gone", exitCode: null };
     expect(agentEnd(gone, { ...agent, exitSentAt: 1 }, null)).toEqual(gone);
+  });
+
+  it("fails a run stopped after the exit wait at the agent's background-work question; stopped idle with background work after a declined question, it reads as any stop", () => {
+    const stopped = { ...end, state: "failed" as const, reason: "stopped by Runner" };
+    expect(agentEnd(stopped, { ...agent, exitSentAt: 1, background: "asked" }, "stopped")).toEqual({ ...stopped, reason: "the agent still had background work when Runner ended it" });
+    expect(agentEnd(end, { ...agent, exitSentAt: 1, background: "asked" }, "exited")).toEqual(end);
+    const limit = { ...end, state: "failed" as const, reason: "stopped: time limit, 2 min", limitHit: 2 };
+    expect(agentEnd(limit, { ...agent, background: "idle" }, "time-limit")).toEqual(limit);
   });
 
   it("fails a done run whose agent never answered; an unknown answer or any other end stays as it was", () => {

@@ -714,7 +714,7 @@ export function createRuns(options: RunsOptions): Runs {
         command: spec.line,
         argv: agentArgv(options.shell, spec.line),
         cwd,
-        agent: { agent: agent.id, name: agent.name, provider: agent.provider, mode: mode.id, modeName: mode.name, sessionId: spec.sessionId, cwd, startedAt: new Date().toISOString(), exit: spec.exit, exitSentAt: null, worked: false, waiting: null, waitedMs: 0 },
+        agent: { agent: agent.id, name: agent.name, provider: agent.provider, mode: mode.id, modeName: mode.name, sessionId: spec.sessionId, cwd, startedAt: new Date().toISOString(), exit: spec.exit, exitSentAt: null, worked: false, waiting: null, waitedMs: 0, background: null },
       };
     } catch (err) {
       return `cannot start — ${errorText(err)}`;
@@ -1070,8 +1070,9 @@ export function createRuns(options: RunsOptions): Runs {
     }
   }
 
-  /** Follow a running agent run's turns: a prompt it waits at makes it wait for the person; once
-   *  the turn is done, its exit command is typed. */
+  /** Follow a running agent run's turns: a prompt it waits at makes it wait for the person; a turn
+   *  that ends with background work going waits for that work; once the turn is done, its exit
+   *  command is typed, and the background-work question that may answer it is declined. */
   function follow(run: ActiveRun, agent: AgentRun): void {
     if (run.session === null || agent.exitSentAt !== null) return;
     const { job, run: id } = run;
@@ -1080,6 +1081,8 @@ export function createRuns(options: RunsOptions): Runs {
       onWorking: () => void inLane(async () => working(job, id)),
       onTurnDone: () => void inLane(async () => endTurn(job, id)),
       onWaiting: (prompt) => void inLane(async () => waitAt(job, id, prompt)),
+      onBackground: (going) => void inLane(async () => backgroundWork(job, id, going)),
+      onBackgroundQuestion: () => void inLane(async () => declineExit(job, id)),
     });
   }
 
@@ -1129,15 +1132,56 @@ export function createRuns(options: RunsOptions): Runs {
     waitAt(run.job, run.run, "not-started");
   }
 
-  /** An agent run's turn is done: type its exit command, once. */
+  /** An agent run's turn is done: type its exit command, once — again only after the agent declined
+   *  it for its background work and went idle (`backgroundWork`). */
   function endTurn(job: string, id: string): void {
     const run = active.find((candidate) => candidate.job === job && candidate.run === id && candidate.state === "running");
     if (run?.agent == null || run.session === null || run.agent.exitSentAt !== null) return;
     run.agent.exitSentAt = now().getTime();
+    run.agent.background = null;
     exitDeadlines.set(run.session, performance.now() + AGENT_EXIT_WAIT_MS);
     save();
     log(`run ${job} ${id}: the agent's turn is done; typing ${run.agent.exit}`);
     options.turns.type(run.session, run.agent.exit);
+  }
+
+  /** An agent run's agent is idle with background work going (`going`) — its turn ended so, or it
+   *  stayed with that work after Runner declined its background-work question — or works again: the
+   *  run stays running and waits for that work, its time limit counting and its slot kept. Idle
+   *  again after the question, the run waits for the turn's end afresh: its exit command typed
+   *  once more then, its exit wait cleared. */
+  function backgroundWork(job: string, id: string, going: boolean): void {
+    const run = active.find((candidate) => candidate.job === job && candidate.run === id && candidate.state === "running");
+    if (run?.agent == null || run.session === null) return;
+    const agent = run.agent;
+    if (going) {
+      if (agent.exitSentAt !== null) {
+        agent.exitSentAt = null;
+        exitDeadlines.delete(run.session);
+        log(`run ${job} ${id}: the agent stays with its background work; waiting for its turn's end`);
+      } else {
+        log(`run ${job} ${id}: the agent's turn ended with background work going; waiting for that work`);
+      }
+      agent.background = "idle";
+    } else {
+      if (agent.background === null) return;
+      agent.background = null;
+      log(`run ${job} ${id}: the agent works again`);
+    }
+    save();
+    options.onChange();
+  }
+
+  /** The agent answered the exit command with its background-work question: Runner declines it
+   *  (Escape) and the agent stays. No wait for the person: the run waits for the turn's end. */
+  function declineExit(job: string, id: string): void {
+    const run = active.find((candidate) => candidate.job === job && candidate.run === id && candidate.state === "running");
+    if (run?.agent == null || run.session === null || run.agent.exitSentAt === null) return;
+    run.agent.background = "asked";
+    save();
+    options.onChange();
+    log(`run ${job} ${id}: the agent answered ${run.agent.exit} with its background-work question; declining it (Escape)`);
+    options.turns.press(run.session, "\x1b");
   }
 
   /** Look up the session of an agent run whose provider could not pre-assign one — by its folder and
@@ -1187,7 +1231,7 @@ export function createRuns(options: RunsOptions): Runs {
       if (deadline === undefined) exitDeadlines.set(run.session, performance.now() + AGENT_EXIT_WAIT_MS);
       else if (performance.now() >= deadline) {
         exitDeadlines.set(run.session, Number.POSITIVE_INFINITY);
-        log(`run ${run.job} ${run.run}: the agent did not end after ${run.agent.exit}; stopping its session`);
+        log(`run ${run.job} ${run.run}: the agent did not end after ${run.agent.exit}${run.agent.background === "asked" ? ", its background-work question still up" : ""}; stopping its session`);
         try {
           await sessions.stop(run.session, "stopped");
         } catch (err) {

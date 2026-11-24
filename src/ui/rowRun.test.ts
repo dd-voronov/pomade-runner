@@ -51,7 +51,7 @@ describe("latestGoing", () => {
 });
 
 describe("terminalLabel", () => {
-  const agent = { agent: "claude", name: "claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: null, cwd: "", startedAt: "", exit: "/exit", exitSentAt: null, worked: true, waitedMs: 0 } as const;
+  const agent = { agent: "claude", name: "claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: null, cwd: "", startedAt: "", exit: "/exit", exitSentAt: null, worked: true, waitedMs: 0, background: null } as const;
 
   it("is the card's: Open terminal, or Open at the prompt for an agent run waiting for you", () => {
     expect(terminalLabel(run("a"))).toBe("Open terminal");

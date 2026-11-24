@@ -15,6 +15,7 @@ export const HELP = {
   'st.stopped': ['You stopped it (Stop, or Ctrl+C in its tab). It stays stopped until you press Start.', 'Example: stopped by you · yesterday 18:10.'],
   'st.queued': ['Waiting for a free slot: at most 2 low-priority runs go at once (Settings).', 'Example: queued · 1 ahead — it starts when one finishes.'],
   'st.waiting': ['The agent hit a permission prompt, or has not started working 20 s into its run, and is paused until you act in its terminal. The time limit is paused too.', 'Example: "Allow git mv on 14 files?" — open the tab and answer.'],
+  'st.background': ['The agent\'s turn is over, but work it started in the background — a shell, a timer — still goes. Runner waits for it: the agent goes on by itself once it ends, and the run is done when the agent is. The time limit keeps counting.', 'Example: "wait 3 minutes, then say hello" — running for those 3 minutes.'],
   'st.done': ['The run finished. Scripts: exit code 0. Agents: the turn completed and the session was closed.', 'Example: done · 8:32 · 4m 12s.'],
   'st.failed': ['The run ended with an error: a non-zero exit code, a rejected push, or an agent that exited early.', 'Example: failed · exit 1.'],
   'st.limit': ['The run hit its job\'s time limit and was stopped.', 'Example: stopped: time limit, 45 min.'],

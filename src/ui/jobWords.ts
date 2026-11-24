@@ -8,7 +8,7 @@ import { pomadeBound, type Job, type ServiceJob } from "../jobs/model";
 import { GIT_OPERATION_WORDS } from "../jobs/words";
 import type { ServiceStatus } from "../keeper/model";
 import { FIRING_LIMIT, FIRING_WINDOW_MS } from "../scheduler/loop-guard";
-import { runWords, TRIGGER_WORDS, waitingAt, type ActiveRun, type JobRuns, type RunRecord, type RunTrigger } from "../scheduler/model";
+import { BACKGROUND_WORDS, runWords, TRIGGER_WORDS, waitingAt, waitsForBackground, type ActiveRun, type JobRuns, type RunRecord, type RunTrigger } from "../scheduler/model";
 import type { HelpKey } from "./help";
 import type { DotTone } from "./kit";
 import { shortDuration } from "./runLook";
@@ -84,10 +84,11 @@ function activeLook(run: ActiveRun, now: number): LastLook {
   const base = { subHelp: null, run: run.run };
   switch (run.state) {
     case "running": {
-      // Running: how long so far ("3h 02m · manual"); waiting for you: since when it waits on you.
+      // Running — or waiting for the agent's background work: how long so far ("3h 02m · manual");
+      // waiting for you: since when it waits on you.
       const going = upWords(now - (run.startedAt ?? run.dueAt));
       return waitingAt(run) === null
-        ? { ...base, tone: "accent", live: true, words: "running", help: "st.running", sub: [going, offTrigger(run.trigger)].filter((part) => part !== null).join(" · ") }
+        ? { ...base, tone: "accent", live: true, words: waitsForBackground(run) ? BACKGROUND_WORDS : "running", help: waitsForBackground(run) ? "st.background" : "st.running", sub: [going, offTrigger(run.trigger)].filter((part) => part !== null).join(" · ") }
         : { ...base, tone: "warning", live: false, words: "waiting for you", help: "st.waiting", sub: `started ${shortClock(run.startedAt ?? run.dueAt)} · ${going}` };
     }
     case "queued":

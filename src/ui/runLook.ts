@@ -12,6 +12,8 @@ import {
   runWords,
   SWITCH_WORDS,
   waitingAt,
+  waitsForBackground,
+  BACKGROUND_WORDS,
   type HeldRun,
   type RunRecord,
   type RunTrigger,
@@ -68,7 +70,9 @@ function doneWords(view: RunRecord): string {
 }
 
 /** A run's look; with `now`, a running run that has become a long-run warning says so: "running ·
- *  3h — still expected?". An agent run at a prompt waits for you: amber, "waiting for you". */
+ *  3h — still expected?". An agent run at a prompt waits for you: amber, "waiting for you"; one
+ *  whose agent's background work goes waits for that work: "running · waiting for the agent's
+ *  background work". */
 export function runLook(view: HistoryItem, now?: number): RunLook {
   if (isHeld(view)) return { ...HELD_LOOK, words: heldRowWords(view.missed) };
   if (view.state === "running" && waitingAt(view) !== null) {
@@ -86,8 +90,8 @@ export function runLook(view: HistoryItem, now?: number): RunLook {
       return {
         tone: "accent",
         live: true,
-        words: now === undefined ? "running" : runningWords(view, now),
-        help: "st.running",
+        words: now === undefined ? (waitsForBackground(view) ? BACKGROUND_WORDS : "running") : runningWords(view, now),
+        help: waitsForBackground(view) ? "st.background" : "st.running",
         label: "Running",
         pill: "accent",
         cardTone: undefined,
@@ -107,7 +111,7 @@ export function runLook(view: HistoryItem, now?: number): RunLook {
 }
 
 function runningWords(view: RunView, now: number): string {
-  if (isRecord(view) || view.warnedAt === null || view.warningDismissed || view.startedAt === null) return "running";
+  if (isRecord(view) || view.warnedAt === null || view.warningDismissed || view.startedAt === null) return waitsForBackground(view) ? BACKGROUND_WORDS : "running";
   return `running · ${Math.floor((now - view.startedAt) / 3_600_000)}h — still expected?`;
 }
 

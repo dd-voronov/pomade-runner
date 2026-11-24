@@ -134,8 +134,10 @@ describe("a job's last result", () => {
     expect(look(record("done"), [active("queued", { dueAt: at(17, 12, 46), waits: { kind: "slot", ahead: 1 } })])).toMatchObject({ tone: "hollow", words: "queued · 1 ahead", help: "st.queued", sub: "since 12:46" });
     expect(look(null, [active("missed-waiting", { dueAt: at(17, 3, 0) })])).toMatchObject({ tone: "warning", words: "missed · waiting for you", sub: "today 3:00" });
     expect(look(null, [active("queued"), active("running", { run: "r2" })])).toMatchObject({ words: "running", run: "r2" });
-    const waiting = active("running", { kind: "agent", agent: { ...{ agent: "claude", name: "claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-17T11:31:00.000Z", exit: "/exit", exitSentAt: null, worked: true, waitedMs: 0 }, waiting: { prompt: "permission", since: at(17, 12, 40) } } });
+    const waiting = active("running", { kind: "agent", agent: { ...{ agent: "claude", name: "claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-17T11:31:00.000Z", exit: "/exit", exitSentAt: null, worked: true, waitedMs: 0, background: null }, waiting: { prompt: "permission", since: at(17, 12, 40) } } });
     expect(look(record("done"), [waiting])).toMatchObject({ tone: "warning", live: false, words: "waiting for you", help: "st.waiting", sub: "started 12:31 · 17m" });
+    const background = active("running", { kind: "agent", agent: { ...(waiting.agent as NonNullable<typeof waiting.agent>), waiting: null, background: "idle" } });
+    expect(look(record("done"), [background])).toMatchObject({ tone: "accent", live: true, words: "running · waiting for the agent's background work", help: "st.background", sub: "17m" });
   });
 
   it("says a job the loop guard paused, after any run going, with no run to open", () => {

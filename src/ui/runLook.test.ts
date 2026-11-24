@@ -62,7 +62,7 @@ const active = (extra: Partial<ActiveRun> = {}): ActiveRun => ({
   ...extra,
 });
 
-const AGENT = { agent: "claude", name: "claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-17T11:31:00.000Z", exit: "/exit", exitSentAt: null, worked: true, waitedMs: 0 };
+const AGENT = { agent: "claude", name: "claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-17T11:31:00.000Z", exit: "/exit", exitSentAt: null, worked: true, waitedMs: 0, background: null };
 
 describe("a run's status: tone, words, help, pill, chip", () => {
   const cases: [string, RunView, Partial<ReturnType<typeof runLook>>][] = [
@@ -80,6 +80,12 @@ describe("a run's status: tone, words, help, pill, chip", () => {
       { tone: "warning", live: false, words: "waiting for you", help: "st.waiting", label: "Waiting for you", pill: "warning", cardTone: "warning", filter: "active" },
     ],
     ["an agent running, not waiting", active({ kind: "agent", agent: { ...AGENT, waiting: null } }), { tone: "accent", live: true, words: "running", help: "st.running" }],
+    [
+      "an agent's background work going",
+      active({ kind: "agent", agent: { ...AGENT, waiting: null, background: "idle" } }),
+      { tone: "accent", live: true, words: "running · waiting for the agent's background work", help: "st.background", label: "Running", pill: "accent", cardTone: undefined, filter: "active" },
+    ],
+    ["an agent at its background-work question", active({ kind: "agent", agent: { ...AGENT, waiting: null, background: "asked" } }), { tone: "accent", words: "running · waiting for the agent's background work", help: "st.background" }],
     ["queued", active({ state: "queued", startedAt: null, waits: { kind: "slot", ahead: 1 } }), { tone: "hollow", words: "queued · 1 ahead", help: "st.queued", label: "Queued", filter: "active" }],
     ["missed-waiting", active({ state: "missed-waiting", startedAt: null }), { tone: "warning", words: "missed · waiting for you", help: "st.missed", label: "Missed · waiting for you", pill: "warning", cardTone: "warning", filter: "missed" }],
     ["skipped", record({ state: "skipped", reason: "previous run still going", startedAt: null, durationMs: null }), { tone: "hollow", words: "skipped · previous run still going", help: "st.skipped", label: "Skipped", filter: "missed" }],
@@ -99,6 +105,12 @@ describe("a run's status: tone, words, help, pill, chip", () => {
       git: { op: "commit-push", job: "K", at: "2026-11-17T12:00:00Z", results: [{ repo: "K", path: "/k", op: "commit-push", status: "done", reason: null, steps: [], commit: "a1b2c3d4e5f6" }] },
     });
     expect(runLook(git).words).toBe("done · a1b2c3d");
+  });
+
+  it("a run waiting for its agent's background work says so, with the clock too; a long-run warning asks over it", () => {
+    const background = active({ kind: "agent", agent: { ...AGENT, waiting: null, background: "idle" }, startedAt: NOW - 60_000 });
+    expect(runLook(background, NOW).words).toBe("running · waiting for the agent's background work");
+    expect(runLook({ ...background, startedAt: NOW - 4 * 3_600_000, warnedAt: NOW - 60_000 }, NOW).words).toBe("running · 4h — still expected?");
   });
 
   it("a waiting run says it waits, over a long-run warning too", () => {

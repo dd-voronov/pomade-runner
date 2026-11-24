@@ -16,6 +16,7 @@ import {
   runWords,
   TRIGGER_WORDS,
   waitingAt,
+  waitsForBackground,
   type ActiveRun,
   type AgentWait,
   type JobRuns,
@@ -460,14 +461,28 @@ function AgentBody({ record, unanswered, message }: { record: RunRecord; unanswe
   );
 }
 
-/** A running run: the end of its output so far, followed as it grows. */
+/** A running run: the end of its output so far, followed as it grows — under a sentence saying it
+ *  waits for its agent's background work, while it does. */
 function RunningBody({ host, view }: { host: HostClient; view: ActiveRun }): React.JSX.Element {
   const output = useRunOutput(host, view.job, view.run, true);
+  const background = waitsForBackground(view) && (
+    <p data-testid="run-background">The agent’s turn is over, but work it started in the background still goes. Runner waits for that work: the agent goes on once it ends, and the run is done when the agent is. The time limit keeps counting.</p>
+  );
   if (output.status !== "ready")
-    return <p className={styles.note}>{output.status === "loading" ? "Reading its output…" : output.status === "failed" ? output.message : "Runner's scheduler is not running."}</p>;
+    return (
+      <>
+        {background}
+        <p className={styles.note}>{output.status === "loading" ? "Reading its output…" : output.status === "failed" ? output.message : "Runner's scheduler is not running."}</p>
+      </>
+    );
   const lines = plainLines(output.value.text);
   if (lines.at(-1) === "") lines.pop();
-  return <Lines lines={lines.slice(-LAST_LINES)} title="Latest output" testId="run-last-lines" />;
+  return (
+    <>
+      {background}
+      <Lines lines={lines.slice(-LAST_LINES)} title="Latest output" testId="run-last-lines" />
+    </>
+  );
 }
 
 /** What a waiting run's card says it waits at. */

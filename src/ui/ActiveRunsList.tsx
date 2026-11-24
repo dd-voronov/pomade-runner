@@ -1,7 +1,7 @@
 import type { HostClient } from "pomade-kit/sdk";
 
 import { runRoute } from "../integrations/runner-api";
-import { runWords, waitingAt, type ActiveRun } from "../scheduler/model";
+import { runWords, waitingAt, waitsForBackground, type ActiveRun } from "../scheduler/model";
 import { PanelEmpty, PanelRow, useToast } from "./kit";
 import { runningSince } from "./runLook";
 import { upWords } from "./serviceWords";
@@ -15,9 +15,10 @@ export function placeWords(project: string | null, projectName: (id: string | nu
   return `${project === null ? "workspace" : projectName(project)} · ${folder === "" ? root : folder}`;
 }
 
-/** One run going in Running now: running ("running 3m"), an agent run waiting for you at a prompt
- *  ("waiting for you · 17m", amber), or queued with what it waits for ("queued · 1 ahead"); a click
- *  opens what `onOpen` opens for it. */
+/** One run going in Running now: running ("running 3m") — waiting for its agent's background work
+ *  on the news line ("waiting for the agent's background work") — an agent run waiting for you at a
+ *  prompt ("waiting for you · 17m", amber), or queued with what it waits for ("queued · 1 ahead"); a
+ *  click opens what `onOpen` opens for it. */
 export function ActiveRunRow({
   run,
   now,
@@ -31,6 +32,7 @@ export function ActiveRunRow({
 }): React.JSX.Element {
   const running = run.state === "running";
   const waiting = running && waitingAt(run) !== null;
+  const background = waitsForBackground(run);
   const ran = run.startedAt === null ? "" : upWords(now - run.startedAt);
   return (
     <PanelRow
@@ -39,6 +41,8 @@ export function ActiveRunRow({
       live={running && !waiting}
       status={waiting ? `waiting for you${ran === "" ? "" : ` · ${ran}`}` : running ? `running ${ran}`.trim() : runWords(run)}
       statusHelp={waiting ? "st.waiting" : running ? "st.running" : "st.queued"}
+      news={background ? "waiting for the agent's background work" : undefined}
+      newsHelp={background ? "st.background" : undefined}
       statusTone={waiting ? "warning" : undefined}
       place={place}
       onClick={() => onOpen(run)}

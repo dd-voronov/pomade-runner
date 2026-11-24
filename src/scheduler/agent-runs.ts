@@ -66,13 +66,18 @@ export function pickSession(found: readonly FoundSession[], startedAt: string): 
   return best;
 }
 
+/** Why an agent run stopped after the exit wait at its background-work question failed. */
+export const BACKGROUND_LEFT_REASON = "the agent still had background work when Runner ended it";
+
 /** An agent run's end, from its session's end as a script's reads (`endOf`): once its turn was done
  *  and Runner typed the exit command, the agent's exit — or Runner's stop when it did not exit in
- *  time — is **done**; an end before that is **failed**, an exit with status 0 included. A stop by
- *  you, a time limit and a lost session read as for a script. */
+ *  time — is **done**, but a stop while the agent's background-work question was still up is
+ *  **failed**, `BACKGROUND_LEFT_REASON`; an end before the exit command is **failed**, an exit with
+ *  status 0 included. A stop by you, a time limit and a lost session read as for a script. */
 export function agentEnd(end: SessionEnd, agent: AgentRun, exitReason: string | null): SessionEnd {
   if (end.state === "stopped-by-you" || end.limitHit !== null || exitReason === null || exitReason === "lost-in-keeper-crash") return end;
   if (agent.exitSentAt !== null) {
+    if (exitReason === "stopped" && agent.background === "asked") return { ...end, state: "failed", reason: BACKGROUND_LEFT_REASON };
     if (exitReason === "exited" || exitReason === "stopped") return { ...end, state: "done", reason: null };
     return end;
   }

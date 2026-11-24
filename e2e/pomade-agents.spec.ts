@@ -17,8 +17,11 @@
 // and goes on once accepted there; one stopped at it never started a session, as its card says. A keeper that cannot reach the macOS keychain — the
 // check's command a script that fails as many times as the test says — is replaced before an agent
 // run, after the runs going, its services started again with no crash counted; a fresh keeper that
-// fails it too fails the run. `RUNNER_SHOTS=<dir>` saves screenshots of the form, the rows and the
-// cards.
+// fails it too fails the run. An agent whose turn ends with background work going keeps its run
+// running — History, Running now and its card say it waits for that work — until its further turn
+// ends without it, or its time limit; its exit command answered by the background-work question is
+// declined with Escape, and an agent stopped at that question fails. `RUNNER_SHOTS=<dir>` saves
+// screenshots of the form, the rows and the cards.
 
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -444,6 +447,105 @@ test.describe("agent runs in Pomade", () => {
     await expect(dialog.getByTestId("run-last-lines")).toContainText("Not logged in · Please run /login");
     await expect(dialog.getByTestId("run-agent-note")).toHaveCount(0);
     await shoot(page, "pomade-agent-no-answer");
+  });
+
+  test.describe("T-044 · an agent whose turn ends with background work going", () => {
+    /** The scheduler's lines about `run` of `job`, without their time. */
+    const said = (job: string, run: string): string[] =>
+      (scheduler?.output() ?? "")
+        .split("\n")
+        .map((line) => line.replace(/^\S+ /, ""))
+        .filter((line) => line.startsWith(`run ${job} ${run}: `));
+    const exits = (job: string, run: string): number => said(job, run).filter((line) => line.endsWith("typing /exit")).length;
+    /** The Needs-you items of runs waiting for you; earlier tests' failures aside. */
+    const waits = async (): Promise<string[]> => (await needsYou()).filter((id) => id.startsWith("waiting:"));
+
+    test("1 · the run stays running through the background work, then its further turn ends it: done, one exit command, typed after the last turn", async () => {
+      await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/hello-later.md"), agentJob("Hello later", "claude", "Say hello, wait 3 seconds, say it again. [background]"));
+      expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "hello-later"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+      await expect.poll(async () => (await going("hello-later"))?.agent?.background, { timeout: 15_000 }).toBe("idle");
+      const waiting = await going("hello-later");
+      expect(waiting).toMatchObject({ state: "running", agent: { exitSentAt: null, waiting: null } });
+      expect(await waits()).toEqual([]);
+      await expect.poll(async () => (await history("hello-later")).length, { timeout: 30_000 }).toBe(1);
+      const [record] = await history("hello-later");
+      expect(record).toMatchObject({ run: waiting?.run, state: "done", reason: null, exitCode: 0, agent: { background: null } });
+      expect((await agents.session(record?.agent?.sessionId ?? "")).lastMessage).toBe("**Done.** After the background work: Say hello, wait 3 seconds, say it again. [background]");
+      const lines = said("hello-later", record?.run ?? "");
+      expect(exits("hello-later", record?.run ?? "")).toBe(1);
+      expect(lines.findIndex((line) => line.endsWith("the agent works again"))).toBeLessThan(lines.findIndex((line) => line.endsWith("typing /exit")));
+      expect(await waits()).toEqual([]);
+    });
+
+    test("2 · under a time limit shorter than the background work: stopped: time limit; meanwhile its row, Running now and its card say it waits for the background work", async () => {
+      test.setTimeout(150_000);
+      await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/hello-limited.md"), agentJob("Hello limited", "claude", "Say hello, wait 2 minutes, say it again. [background-long]", "time-limit: 1m\n"));
+      expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "hello-limited"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+      await expect.poll(async () => (await going("hello-limited"))?.agent?.background, { timeout: 15_000 }).toBe("idle");
+      const waiting = await going("hello-limited");
+      const words = "running · waiting for the agent's background work";
+
+      // History's row and the run's card.
+      await openRunnerTab("history");
+      const historyRow = tab().getByTestId("history-row").filter({ hasText: "Hello limited" });
+      await expect(historyRow.getByTestId("history-result")).toHaveText(words);
+      await page.mouse.move(1000, 600);
+      await shoot(page, "T-044-history-row");
+      await openRunnerTab("jobs");
+      await expect(tab().locator('[data-testid="job-row"][data-job="hello-limited"]')).toContainText(words);
+      await page.mouse.move(1000, 600);
+      await shoot(page, "T-044-jobs-row");
+      await openRunnerTab(runRoute("hello-limited", waiting?.run ?? ""));
+      await expect(tab().getByTestId("run-result")).toHaveText("Running");
+      await expect(tab().getByTestId("run-background")).toHaveText(
+        "The agent’s turn is over, but work it started in the background still goes. Runner waits for that work: the agent goes on once it ends, and the run is done when the agent is. The time limit keeps counting.",
+      );
+      await shoot(page, "T-044-card");
+
+      // The panel's Running now.
+      await page.getByTestId(`strip-${STRIP_KEY}`).click();
+      await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
+      await drawn(page);
+      const row = panel().getByTestId("active-run").filter({ hasText: "Hello limited" });
+      await expect(row).toContainText("Hello limited");
+      await expect(row).toContainText("running");
+      await expect(row).toContainText("waiting for the agent's background work");
+      expect(await waits()).toEqual([]);
+      await page.mouse.move(1000, 600);
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await shoot(page, "T-044-panel-row");
+      await page.getByTestId(`strip-${STRIP_KEY}`).click();
+
+      await expect.poll(async () => (await history("hello-limited")).length, { timeout: 90_000 }).toBe(1);
+      const [record] = await history("hello-limited");
+      expect(record).toMatchObject({ run: waiting?.run, state: "failed", reason: "stopped: time limit, 1 min", limitHit: 1, agent: { exitSentAt: null } });
+      expect(exits("hello-limited", record?.run ?? "")).toBe(0);
+    });
+
+    test("3 · an exit command answered by the background-work question: Escape, the run stays running — no wait for you — and the agent's later turn ends it: done", async () => {
+      await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/hello-hidden.md"), agentJob("Hello hidden", "claude", "Say hello after the sub-agent. [background-hidden]"));
+      expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "hello-hidden"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+      await expect.poll(async () => (await going("hello-hidden"))?.agent?.background, { timeout: 15_000 }).toBe("idle");
+      const waiting = await going("hello-hidden");
+      expect(waiting).toMatchObject({ state: "running", agent: { exitSentAt: null, waiting: null } });
+      expect(said("hello-hidden", waiting?.run ?? "")).toContain(`run hello-hidden ${waiting?.run ?? ""}: the agent answered /exit with its background-work question; declining it (Escape)`);
+      expect(await waits()).toEqual([]);
+      await expect.poll(async () => (await history("hello-hidden")).length, { timeout: 30_000 }).toBe(1);
+      const [record] = await history("hello-hidden");
+      expect(record).toMatchObject({ run: waiting?.run, state: "done", reason: null, exitCode: 0 });
+      expect(exits("hello-hidden", record?.run ?? "")).toBe(2);
+      expect(record?.lastLines.join("\n")).toContain("Bye.");
+      expect(await runnerNotices()).not.toContain("Hello hidden needs your approval");
+    });
+
+    test("3 · stopped at the background-work question after the exit wait: failed, the agent still had background work", async () => {
+      test.setTimeout(90_000);
+      await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/hello-stuck.md"), agentJob("Hello stuck", "claude", "Say hello after the sub-agent. [background-hidden] [esc-ignored]"));
+      const record = await runToEnd("hello-stuck");
+      expect(record).toMatchObject({ state: "failed", reason: "the agent still had background work when Runner ended it", agent: { background: "asked" } });
+      expect(said("hello-stuck", record.run)).toContain(`run hello-stuck ${record.run}: the agent did not end after /exit, its background-work question still up; stopping its session`);
+      await expect.poll(() => needsYou()).toContain("run-failed:hello-stuck");
+    });
   });
 
   test.describe("T-038 · the keeper's reach to the macOS keychain", () => {

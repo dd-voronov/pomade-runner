@@ -3,11 +3,11 @@
 // a script job file; the Agents app and Pomade for agent runs as a test scripts them.
 
 import type { ExitReason, RosterAgent } from "pomade-kit/protocol";
-import type { AgentKind, AgentPrompt } from "pomade-kit/scanners";
+import type { AgentKind } from "pomade-kit/scanners";
 
 import { agentMode, type AgentsApi, type AgentsError, type FoundSession, type LastMessage, type LaunchSpec, type LaunchSpecParams } from "../integrations/agents";
 import type { PomadeForRuns } from "../integrations/pomade-open";
-import type { AgentTurns, TurnHandlers } from "../keeper/agent-turns";
+import type { AgentTurns, PersonPrompt, TurnHandlers } from "../keeper/agent-turns";
 import { sessionIdOf, type SessionOwner } from "../keeper/ids";
 import type { KeeperLink, RunnerSession } from "../keeper/model";
 import type { KeychainCheck } from "../keeper/keychain";
@@ -157,10 +157,13 @@ export function memorySwitch(): SwitchStore & { saved: SwitchState } {
 /** Agent runs' turns as a test plays them: a followed agent works at once unless `workAtOnce` is
  *  off, then `works(session)` is it starting; `done(session)` is the agent's turn completing,
  *  `waits(session, prompt)` a prompt coming up for the person and `waits(session, null)` it
- *  answered; what Runner typed is in `typed`. */
+ *  answered, `background(session, going)` the agent idle with background work going or working
+ *  again, `asks(session)` its background-work question answering the exit command; what Runner
+ *  typed is in `typed`, the keys it pressed in `pressed`. */
 export class FakeTurns implements AgentTurns {
   readonly followed = new Map<string, TurnHandlers>();
   readonly typed: { session: string; text: string }[] = [];
+  readonly pressed: { session: string; data: string }[] = [];
   /** Whether a followed agent is working at once; `false`: it stays at a screen until `works`. */
   workAtOnce = true;
 
@@ -172,6 +175,10 @@ export class FakeTurns implements AgentTurns {
 
   type(session: string, text: string): void {
     this.typed.push({ session, text });
+  }
+
+  press(session: string, data: string): void {
+    this.pressed.push({ session, data });
   }
 
   unwatch(session: string): void {
@@ -192,8 +199,18 @@ export class FakeTurns implements AgentTurns {
   }
 
   /** The agent of `session` waits at `prompt` for the person; `null`: the prompt was answered. */
-  waits(session: string, prompt: AgentPrompt | null): void {
+  waits(session: string, prompt: PersonPrompt | null): void {
     this.followed.get(session)?.onWaiting(prompt);
+  }
+
+  /** The agent of `session` is idle with background work going (`true`), or works again (`false`). */
+  background(session: string, going: boolean): void {
+    this.followed.get(session)?.onBackground(going);
+  }
+
+  /** The agent of `session` answers the exit command with its background-work question. */
+  asks(session: string): void {
+    this.followed.get(session)?.onBackgroundQuestion();
   }
 }
 

@@ -630,15 +630,34 @@ hooks, chains, History, notices and Needs you.
   10 s around `startedAt` — every 5 s while it runs and once more at its end; of several, the one
   started nearest it. Kept on the run.
 - **Finishing.** The agent runs interactively, so approvals and Open session work. The scheduler
-  attaches to the session as a viewer and replays its output into the kit's agent-state scanner
+  attaches to the session as a viewer and replays its output — text the keeper decoded as a stream,
+  so a character split across two reads arrives whole — into the kit's agent-state scanner
   (`AgentStateScanner`, the provider's screen and window title), afresh on every snapshot — an
   attach, a reconnect after a keeper update, a scheduler restart. When the turn completes — working,
-  then idle with no prompt pending — Runner types the spec's `exit` and, 300 ms later, Enter (a CLI
-  reads text and Enter in one chunk as a paste). The agent's exit then is **done**; an agent still
-  there 15 s later is stopped (reason `stopped`) and the run is **done** all the same. An end before
-  the exit was typed is **failed**, "the agent exited before its turn was done", a status 0
-  included; a crash after it **failed** with its exit code; Stop, the time limit and a lost session
-  read as a script's. A permission or trust prompt is no finished turn: the run waits for you.
+  then idle with no background work and no prompt pending — Runner types the spec's `exit` and,
+  300 ms later, Enter (a CLI reads text and Enter in one chunk as a paste). The agent's exit then is
+  **done**; an agent still there 15 s later is stopped (reason `stopped`) and the run is **done** all
+  the same. An end before the exit was typed is **failed**, "the agent exited before its turn was
+  done", a status 0 included; a crash after it **failed** with its exit code; Stop, the time limit
+  and a lost session read as a script's. A permission or trust prompt is no finished turn: the run
+  waits for you.
+- **Background work.** A turn can end with work the agent put in the background still going — a
+  shell it left running (the scanner's `idle` with `background`: Claude's footer counts it, "· 1
+  shell"). That turn is not done: the run stays **running** and waits for that work —
+  `background: "idle"` on its `AgentRun` — with no exit command, its time limit counting and its
+  low-priority slot kept. It is no wait for you: no Needs-you item, no notice, no badge. Its state
+  reads "running · waiting for the agent's background work" in History, Jobs and the CLI, Running
+  now says "waiting for the agent's background work" on the row's news line, and its card says so in
+  a sentence above its latest output. The agent goes on by itself when the work ends — a further
+  turn, or idle without it — and once it is idle with no background work the turn is done and the
+  exit command is typed. The moment of work an exit command causes (Claude sets its working title
+  for it) is the command's, not a new turn. An exit command the agent answers with its
+  "Background work is running" question (`waiting`, prompt `background` — work the footer does
+  not count, a background sub-agent) is never a wait for you: Runner declines it with Escape
+  (`background: "asked"`), and once the agent is idle again the run waits for the turn's end afresh
+  — the exit command's time cleared, its exit wait with it — until the agent's next turn ends. An
+  agent stopped after the exit wait with that question still up is **failed**, "the agent still
+  had background work when Runner ended it". Each step is in the scheduler's log.
 - **A turn without an answer.** A turn can end with no answer: an API error ("Not logged in ·
   Please run /login") ends it as any turn, and the Agents app leaves the error out of the session's
   messages. So a run read **done** is checked as it is recorded — the agent has exited by then, its
@@ -655,12 +674,13 @@ hooks, chains, History, notices and Needs you.
   `waitedMs` adds up its waits, which `ranFor` leaves out. Answered — the agent works or idles
   again — the wait ends, the item goes, and the turn finishes as any turn. A prompt that turns into
   another is one wait, noticed once. A fresh snapshot — an attach, a reconnect, a scheduler
-  restart — draws the screen without a window title: a prompt on it is a wait (noticed when the
-  run had none), a screen without one ends the wait the run had — the first snapshot of a run
-  followed afresh too, so a prompt answered while the scheduler was down ends its wait. Whether the agent is idle is
-  read from the title alone, so a restarted scheduler learns a turn is done only from the next
-  title the agent sets. A run that ends while it waits keeps the wait in `waitedMs`. A record or a
-  run going of an older build reads as one that never waited and whose agent started working.
+  restart — draws the screen and, last, the window title: a prompt on it is a wait (noticed when
+  the run had none), a screen without one ends the wait the run had — the first snapshot of a run
+  followed afresh too, so a prompt answered while the scheduler was down ends its wait. A turn is
+  done only once the scheduler's following has seen the agent work, so a restarted scheduler learns
+  a turn is done from the agent's next turn. A run that ends while it waits keeps the wait in
+  `waitedMs`. A record or a run going of an older build reads as one that never waited, whose agent
+  started working and has no background work.
 - **An agent that has not started.** An agent can stop before it works at a screen the scanner
   does not name — a consent (Claude's Bypass Permissions one, for a profile that never accepted
   it), a login, an onboarding step. A running run whose agent has not worked
@@ -1614,7 +1634,7 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
 
 ## Stack
 
-TypeScript (strict) everywhere, on `pomade-kit` (`github:dd-voronov/pomade-kit#v0.14.0`).
+TypeScript (strict) everywhere, on `pomade-kit` (`github:dd-voronov/pomade-kit#v0.16.0`).
 
 | Part | Built with | Why |
 |---|---|---|

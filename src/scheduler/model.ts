@@ -94,7 +94,22 @@ export interface AgentRun {
   waiting: AgentWait | null;
   /** How long its earlier waits for the person lasted (ms): left out of its time limit. */
   waitedMs: number;
+  /** The agent's background work as Runner last read it: `idle` — its turn is over, work it put in
+   *  the background still goes, and the run waits for that work; `asked` — it answered Runner's exit
+   *  command with its background-work question; `null` — none read. Never a wait for the person. */
+  background: AgentBackground | null;
 }
+
+export const AGENT_BACKGROUND = ["idle", "asked"] as const;
+export type AgentBackground = (typeof AGENT_BACKGROUND)[number];
+
+/** An agent run going whose agent's background work still goes: it waits for that work. */
+export function waitsForBackground(run: { state: string; agent: AgentRun | null }): boolean {
+  return run.state === "running" && run.agent?.waiting == null && run.agent?.background != null;
+}
+
+/** A run's state while its agent's background work goes. */
+export const BACKGROUND_WORDS = "running · waiting for the agent's background work";
 
 /** What an agent waits at — approval of a tool call or trust for the folder it started in (the
  *  kit's `AgentPrompt`), or a screen it has not started working past (`not-started`) — and since
@@ -494,9 +509,10 @@ function isAgentWait(value: unknown): value is AgentWait {
 
 function isAgentRun(value: unknown): value is AgentRun {
   if (!isRecord(value)) return false;
-  const { agent, name, provider, mode, modeName, sessionId, cwd, startedAt, exit, exitSentAt, worked, waiting, waitedMs } = value;
+  const { agent, name, provider, mode, modeName, sessionId, cwd, startedAt, exit, exitSentAt, worked, waiting, waitedMs, background } = value;
   return (
     typeof worked === "boolean" &&
+    (background === null || AGENT_BACKGROUND.includes(background as AgentBackground)) &&
     (waiting === null || isAgentWait(waiting)) &&
     finite(waitedMs) &&
     typeof agent === "string" &&
@@ -607,9 +623,9 @@ export function isRunRecord(value: unknown): value is RunRecord {
 }
 
 /** A run's agent as a file keeps it; a field a record of an older build lacks gets its default — its
- *  agent counts as one that started working. */
+ *  agent counts as one that started working, with no background work read. */
 export function withAgentDefaults(agent: unknown): unknown {
-  return isRecord(agent) ? { worked: true, waiting: null, waitedMs: 0, ...agent } : (agent ?? null);
+  return isRecord(agent) ? { worked: true, waiting: null, waitedMs: 0, background: null, ...agent } : (agent ?? null);
 }
 
 /** A history record as a file keeps it; a field a record of an older build lacks gets its default. */
@@ -861,7 +877,7 @@ export function runWords(view: RunView): string {
     case "queued":
       return `queued · ${waitsWords(view.waits)}`;
     case "running":
-      return waitingAt(view) === null ? "running" : "waiting for you";
+      return waitingAt(view) !== null ? "waiting for you" : waitsForBackground(view) ? BACKGROUND_WORDS : "running";
     case "done":
       return "action" in view && view.action !== null ? ACTION_DONE_WORDS[view.action] : "done";
     case "stopped-by-you":
