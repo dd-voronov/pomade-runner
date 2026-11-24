@@ -1556,7 +1556,7 @@ test.describe("the Jobs view", () => {
               nextUp: [],
               jobs: [
                 { job: "backup", next: at + 2 * 60_000, finished: false, last: null, held: h },
-                { job: "alpha/pull", next: at + 26 * 3_600_000, finished: false, last: null, held: h },
+                { job: "alpha/pull", next: at + 20 * 3_600_000, finished: false, last: null, held: h },
                 { job: "beta/lint", next: at + 3 * 3_600_000, finished: false, last: null, held: false },
               ],
               needsYou: [],
