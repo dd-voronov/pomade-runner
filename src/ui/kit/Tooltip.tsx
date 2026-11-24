@@ -2,7 +2,10 @@
 // line) or `data-help` (a key of `help.ts`: the text and its example) shows it on hover, and on
 // keyboard focus. It sits above the element, centred, kept inside the frame, below when there is no
 // room above; scrolling, Esc, leaving or blurring hides it. `data-tip-code` sets a `data-tip` line in
-// the mono type and wraps it, for a command shown whole. `TooltipLayer` is mounted once per surface.
+// the mono type and wraps it, for a command shown whole. `data-tip-cut` on an element whose text may
+// be cut with "…": while it is cut, its whole text leads the tip (above the element's own help or
+// line, if it has one); while it fits, the tip is as without it. `TooltipLayer` is mounted once per
+// surface.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
@@ -15,20 +18,30 @@ const EDGE = 6;
 
 interface Shown {
   target: HTMLElement;
-  lines: readonly [string] | readonly [string, string];
+  lines: readonly string[];
   code: boolean;
 }
 
-/** What `el`'s tooltip says; `null` when nothing (an unknown help key says nothing). */
-function linesOf(el: HTMLElement): Shown["lines"] | null {
+/** Whether `el`, or one of the elements inside it, shows less than its text. */
+const isCut = (el: HTMLElement): boolean => [el, ...el.querySelectorAll<HTMLElement>("*")].some((node) => node.scrollWidth > node.clientWidth);
+
+/** What `el`'s own help or line says; `null` when nothing (an unknown help key says nothing). */
+function ownLines(el: HTMLElement): readonly string[] | null {
   const key = el.dataset.help;
   if (key !== undefined) return isHelpKey(key) ? HELP[key] : null;
   const tip = el.dataset.tip;
   return tip === undefined || tip === "" ? null : [tip];
 }
 
+/** What `el`'s tooltip says; `null` when nothing. */
+function linesOf(el: HTMLElement): readonly string[] | null {
+  const own = ownLines(el);
+  const whole = el.dataset.tipCut !== undefined && isCut(el) ? el.textContent.trim() : "";
+  return whole === "" ? own : [whole, ...(own ?? [])];
+}
+
 function targetOf(node: EventTarget | null): HTMLElement | null {
-  return node instanceof Element ? node.closest<HTMLElement>("[data-help],[data-tip]") : null;
+  return node instanceof Element ? node.closest<HTMLElement>("[data-help],[data-tip],[data-tip-cut]") : null;
 }
 
 export function TooltipLayer(): React.JSX.Element | null {
@@ -94,11 +107,15 @@ export function TooltipLayer(): React.JSX.Element | null {
   }, [shown]);
 
   if (shown === null) return null;
-  const [text, example] = shown.lines;
+  const [text, ...rest] = shown.lines;
   return (
-    <div ref={tip} id={TIP_ID} role="tooltip" className={[styles.tip, example === undefined && styles.plain, shown.code && styles.code].filter(Boolean).join(" ")} data-testid="tooltip">
+    <div ref={tip} id={TIP_ID} role="tooltip" className={[styles.tip, rest.length === 0 && styles.plain, shown.code && styles.code].filter(Boolean).join(" ")} data-testid="tooltip">
       <span>{text}</span>
-      {example !== undefined && <span className={styles.example}>{example}</span>}
+      {rest.map((line) => (
+        <span key={line} className={styles.example}>
+          {line}
+        </span>
+      ))}
     </div>
   );
 }

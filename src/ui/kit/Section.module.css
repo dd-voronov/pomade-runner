@@ -89,6 +89,12 @@
   color: var(--text-muted);
 }
 
+/* In a table that scrolls sideways the title stays in view at the left edge. */
+.pinned .title {
+  position: sticky;
+  left: calc(var(--space-2) + var(--table-room, 0px));
+}
+
 .path {
   min-width: 0;
   overflow: hidden;

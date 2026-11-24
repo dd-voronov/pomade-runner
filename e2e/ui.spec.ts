@@ -2223,6 +2223,148 @@ test.describe("History and result cards", () => {
     await expect(app(page).getByTestId("history-end")).toHaveText("");
   });
 
+  test("T-030 · every History column with text has a grip — Job, Result, Duration, Trigger; the time and the icon have none — and dragging one widens that column only, the rows and day heads staying in line", async ({ page }) => {
+    const long: RunRecord = { ...failed, name: "Scraper with a very long job name that gets cut" };
+    await page.setViewportSize({ width: 1500, height: 700 });
+    await show(page, "history", { active: [running], history: [done, long, skipped] });
+    const table = app(page).getByTestId("resizable-table");
+    const head = table.locator("> div > div").first();
+    const headCell = (id: string) => head.locator(`:scope > [data-col="${id}"]`);
+    const grip = (id: string) => app(page).locator(`[data-testid="column-grip"][data-grip="${id}"]`);
+    const ids = ["trigger", "job", "result", "duration"] as const;
+    await expect(app(page).getByTestId("column-grip")).toHaveCount(4);
+    await expect(head).toHaveText("TimeJobResultDurationTrigger");
+    const widths = async (): Promise<number[]> => Promise.all(ids.map(async (id) => (await headCell(id).boundingBox())!.width));
+    // The last column's grip is dragged first, while it is still in the tab.
+    const aligned = async (): Promise<void> => {
+      for (const view of await app(page).getByTestId("history-row").all()) {
+        for (const [index, id] of [[2, "job"], [3, "result"], [4, "duration"], [5, "trigger"]] as const) {
+          const cellBox = (await view.locator(":scope > *").nth(index).boundingBox())!;
+          const headBox = (await headCell(id).boundingBox())!;
+          expect(cellBox.x).toBeCloseTo(headBox.x, 0);
+          expect(cellBox.width).toBeCloseTo(headBox.width, 0);
+        }
+      }
+    };
+    await aligned();
+    for (const id of ids) {
+      const cellBox = (await headCell(id).boundingBox())!;
+      const gripBox = (await grip(id).boundingBox())!;
+      expect(gripBox.x).toBeGreaterThanOrEqual(cellBox.x + cellBox.width - 4.5);
+      expect(gripBox.x).toBeLessThanOrEqual(cellBox.x + cellBox.width + 0.5);
+    }
+    await headCell("result").hover();
+    await shoot(page, "t030-history-grip-hover");
+
+    for (const id of ids) {
+      const before = await widths();
+      const box = (await grip(id).boundingBox())!;
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2, { steps: 6 });
+      await page.mouse.up();
+      const after = await widths();
+      after.forEach((value, index) => expect(value, `${ids[index]} after dragging ${id}`).toBeCloseTo(before[index]! + (ids[index] === id ? 40 : 0), 0));
+      await aligned();
+    }
+    await page.mouse.move(0, 0);
+    await shoot(page, "t030-history-widened");
+    // A day head spans the table, as wide as a row.
+    const rowBox = (await app(page).getByTestId("history-row").first().boundingBox())!;
+    for (const day of await app(page).getByTestId("history-day").all()) expect((await day.boundingBox())!.width).toBeCloseTo(rowBox.width, 0);
+  });
+
+  test("T-030 · History scrolls sideways when its columns are wider than the tab: head, rows and day heads together, the day's title kept at the left edge, the page itself never", async ({ page }) => {
+    await show(page, "history", { active: [running], history: [done, failed, skipped] });
+    const table = app(page).getByTestId("resizable-table");
+    expect(await table.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    const grip = app(page).locator('[data-testid="column-grip"][data-grip="trigger"]');
+    const box = (await grip.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 500, box.y + box.height / 2, { steps: 8 });
+    await page.mouse.up();
+    const room = await table.evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(room).toBeGreaterThan(300);
+    expect(await app(page).locator("html").evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    const day = app(page).getByTestId("history-day").first();
+    const title = day.locator("[class*=title]");
+    const titleAt = (await title.boundingBox())!.x;
+    const first = app(page).getByTestId("history-row").first();
+    const trigger = first.getByTestId("history-trigger");
+    expect((await trigger.boundingBox())!.x + (await trigger.boundingBox())!.width).toBeGreaterThan(1040);
+    for (const left of [0, 150, room]) {
+      await table.evaluate((el, x) => void (el.scrollLeft = x), left);
+      const head = (await table.locator("> div > div").first().boundingBox())!;
+      const rowBox = (await first.boundingBox())!;
+      expect(head.x).toBeCloseTo(rowBox.x, 0);
+      expect(head.width).toBeCloseTo(rowBox.width, 0);
+      expect((await day.boundingBox())!.x).toBeCloseTo(rowBox.x, 0);
+      expect((await day.boundingBox())!.width).toBeCloseTo(rowBox.width, 0);
+      // The title stays where it was; the day's line goes on under the columns.
+      expect((await title.boundingBox())!.x).toBeCloseTo(titleAt, 0);
+      const t = (await trigger.boundingBox())!;
+      const h = (await table.locator('> div > div').first().locator(':scope > [data-col="trigger"]').boundingBox())!;
+      expect(t.x).toBeCloseTo(h.x, 0);
+    }
+    const end = (await trigger.boundingBox())!;
+    expect(end.x + end.width).toBeLessThanOrEqual(1040);
+    const wide = (await first.boundingBox())!;
+    expect(wide.width).toBeCloseTo((await table.evaluate((el) => el.scrollWidth)) - 4, 0);
+    expect(wide.x + wide.width).toBeGreaterThanOrEqual(end.x + end.width);
+    await shoot(page, "t030-history-scrolled");
+  });
+
+  test("T-030 · History's widths are kept on this Mac, and a double click on a grip puts them back to the default", async ({ page }) => {
+    await show(page, "history", { active: [running], history: [done, failed] });
+    const headCell = (id: string) => app(page).getByTestId("resizable-table").locator("> div > div").first().locator(`:scope > [data-col="${id}"]`);
+    const result = async (): Promise<number> => (await headCell("result").boundingBox())!.width;
+    const start = await result();
+    const grip = app(page).locator('[data-testid="column-grip"][data-grip="result"]');
+    await grip.focus();
+    await page.keyboard.press("Shift+ArrowRight");
+    await expect.poll(result).toBeCloseTo(start + 64, 0);
+    const key = "pomade-runner.history.column-widths";
+    expect(JSON.parse((await app(page).locator("html").evaluate((_, k) => window.localStorage.getItem(k), key))!).result).toBe(Math.round(start + 64));
+
+    await show(page, "history", { active: [running], history: [done, failed] });
+    expect(await result()).toBeCloseTo(start + 64, 0);
+    await grip.dblclick();
+    expect(await app(page).locator("html").evaluate((_, k) => window.localStorage.getItem(k), key)).toBeNull();
+    expect(await result()).toBeCloseTo(start, 0);
+  });
+
+  test("T-030 · a cut Job, Result or Trigger shows whole in its tooltip — above the help the Result and Trigger carry; one that fits shows the help alone", async ({ page }) => {
+    const long: RunRecord = { ...failed, name: "Scraper with a very long job name that gets cut" };
+    const three = { count: 3, first: at(1, 17, 40), last: at(1, 17, 44) };
+    const caught: RunRecord = { ...done, job: "low", name: "Low", run: "20261117-000600-gggggg", trigger: "caught-up", dueAt: three.last, startedAt: at(1, 17, 45), endedAt: at(1, 17, 45) + 2000, missed: three };
+    await show(page, "history", { history: [done, long, skipped, caught] });
+    const tip = app(page).getByTestId("tooltip");
+    const view = (job: string) => app(page).locator(`[data-testid="history-row"][data-job="${job}"]`);
+    // Job: no help of its own, so the tip is the name — only while it is cut.
+    await view("scraper").locator("[class*=name]").hover();
+    await expect(tip).toHaveText(long.name);
+    await view("backup").locator("[class*=name]").hover();
+    await expect(tip).toHaveCount(0);
+    // Result and Trigger fit: the help alone, as before.
+    await view("health").getByTestId("history-result").hover();
+    await expect(tip).toHaveText(HELP["st.skipped"].join(""));
+    await view("low").getByTestId("history-trigger").hover();
+    await expect(tip).toHaveText(HELP["tr.caught up"].join(""));
+    // Narrowed to their least, they are cut: the whole text leads, the help follows.
+    for (const id of ["result", "trigger"]) {
+      await app(page).locator(`[data-testid="column-grip"][data-grip="${id}"]`).focus();
+      for (let i = 0; i < 12; i++) await page.keyboard.press("Shift+ArrowLeft");
+    }
+    await view("health").getByTestId("history-result").hover();
+    await expect(tip).toHaveText(`skipped · previous run still going${HELP["st.skipped"].join("")}`);
+    await view("low").getByTestId("history-trigger").hover();
+    await expect(tip).toHaveText(`missed 3 runs, 17:40–17:44 · caught up once${HELP["tr.caught up"].join("")}`);
+    await shoot(page, "t030-history-cut-tooltip");
+    await view("backup").getByTestId("history-trigger").hover();
+    await expect(tip).toHaveText(HELP["tr.scheduled"].join(""));
+  });
+
   test("a running run's card: its latest output, Open terminal opens its attached tab, Stop run stops it", async ({ page }) => {
     await show(page, `run/lint/${running.run}`, { active: [running], output: "$ ./lint.sh\r\nchecking 12 files\r\n" });
     const dialog = app(page).getByTestId("run-dialog");
@@ -3934,13 +4076,14 @@ test.describe("agent jobs", () => {
   });
 });
 
-test.describe("T-022 · the Services view's Command column", () => {
+test.describe("T-022 · T-030 · the Services table's columns", () => {
   test.use({ viewport: { width: 1040, height: 700 } });
 
   const LONG = "npm run dev -- --host 0.0.0.0 --port 5173 --strictPort --logLevel info --config vite.config.ts --mode staging";
   const MID = "npm run dev -- --host 0.0.0.0 --port 5173";
   const job = (name: string, command: string, extra = ""): string => `---\nkind: service\nname: ${name}\nfolder: .\ncommand: ${command}\n${extra}---\n`;
-  const KEPT = "pomade-runner.services.command-width";
+  const KEPT = "pomade-runner.services.column-widths";
+  const COLUMNS = ["service", "command", "status"] as const;
 
   /** The Services view with a short command, a medium one, a long one, a disabled one, one waiting for Pomade and an invalid file. */
   async function open(page: Page, reload = false): Promise<void> {
@@ -3960,22 +4103,51 @@ test.describe("T-022 · the Services view's Command column", () => {
     await expect(app(page).getByTestId("service-row")).toHaveCount(5);
   }
 
-  const cell = (page: Page, jobId: string) => app(page).locator(`[data-testid="service-row"][data-job="${jobId}"]`).getByTestId("service-command");
+  const table = (page: Page) => app(page).getByTestId("resizable-table");
+  const head = (page: Page) => table(page).locator("> div > div").first();
+  const headCell = (page: Page, id: string) => head(page).locator(`:scope > [data-col="${id}"]`);
+  const grip = (page: Page, id: string) => app(page).locator(`[data-testid="column-grip"][data-grip="${id}"]`);
+  const row = (page: Page, jobId: string) => app(page).locator(`[data-testid="service-row"][data-job="${jobId}"]`);
+  const cell = (page: Page, jobId: string) => row(page, jobId).getByTestId("service-command");
   const width = async (page: Page, jobId: string): Promise<number> => (await cell(page, jobId).boundingBox())?.width ?? 0;
+  /** The three sized columns' head widths. */
+  async function widths(page: Page): Promise<Record<(typeof COLUMNS)[number], number>> {
+    const [service, command, status] = await Promise.all(COLUMNS.map(async (id) => (await headCell(page, id).boundingBox())!.width));
+    return { service: service!, command: command!, status: status! };
+  }
+  const kept = (page: Page): Promise<string | null> => app(page).locator("html").evaluate((_, key) => window.localStorage.getItem(key), KEPT);
+  const scrollTo = (page: Page, left: number): Promise<void> => table(page).evaluate((el, x) => void (el.scrollLeft = x), left);
+
+  /** Drag `id`'s grip by `dx` px, naming a screenshot taken mid-drag. */
+  async function drag(page: Page, id: string, dx: number, name?: string): Promise<void> {
+    await grip(page, id).scrollIntoViewIfNeeded();
+    const box = (await grip(page, id).boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2, { steps: 8 });
+    if (name !== undefined) await shoot(page, name);
+    await page.mouse.up();
+  }
+
+  /** Every cell of a row sits under its head cell, at every scroll position. */
+  async function aligned(page: Page, jobId: string): Promise<void> {
+    const at = async (locator: Locator): Promise<number> => (await locator.boundingBox())!.x;
+    const r = row(page, jobId);
+    expect(await at(r.locator("[class*=main]"))).toBeCloseTo(await at(headCell(page, "service")), 0);
+    expect(await at(cell(page, jobId))).toBeCloseTo(await at(headCell(page, "command")), 0);
+    expect(await at(r.getByTestId("service-status"))).toBeCloseTo(await at(headCell(page, "status")), 0);
+  }
 
   test("the command has a column of its own: the head names it, the line under the name is project · folder, a long one is cut with … and shows whole in a tooltip", async ({ page }) => {
     await open(page);
-    const head = app(page).getByTestId("services").locator("> div").nth(1);
-    await expect(head).toHaveText("Service · project · folderCommandStatus");
-    const row = app(page).locator('[data-testid="service-row"][data-job="long"]');
-    await expect(row.getByRole("button", { name: "Restart" })).toBeVisible();
-    await expect(row).toContainText(/Long\s*Workspace · \./);
-    await expect(row.locator("[class*=sub]").first()).not.toContainText("npm run dev");
+    await expect(head(page)).toHaveText("Service · project · folderCommandStatus");
+    const long = row(page, "long");
+    await expect(long.getByRole("button", { name: "Restart" })).toBeVisible();
+    await expect(long).toContainText(/Long\s*Workspace · \./);
+    await expect(long.locator("[class*=sub]").first()).not.toContainText("npm run dev");
 
     // The head's labels sit over their columns.
-    const left = async (locator: Locator): Promise<number> => (await locator.boundingBox())?.x ?? 0;
-    expect(await left(head.getByText("Command", { exact: true }))).toBeCloseTo(await left(cell(page, "long")), 0);
-    expect(await left(head.getByText("Status", { exact: true }))).toBeCloseTo(await left(row.getByTestId("service-status")), 0);
+    await aligned(page, "long");
 
     // Short fits: no tooltip, not a tab stop. Long is cut: focusable, with the whole command as its tip.
     await expect(cell(page, "short")).toHaveAttribute("data-cut", "false");
@@ -4015,65 +4187,133 @@ test.describe("T-022 · the Services view's Command column", () => {
     await shoot(page, "t022-services-default");
   });
 
-  test("dragging the column's edge widens it until the command fits — then no tooltip — and the width is kept for the next time the tab opens", async ({ page }) => {
+  test("T-030 · Service, Command and Status each have a grip on the head's right edge; the icon and the actions have none; Jobs has no grips", async ({ page }) => {
     await open(page);
-    const row = app(page).locator('[data-testid="service-row"][data-job="mid"]');
-    const status = async (): Promise<number> => (await row.getByTestId("service-status").boundingBox())!.x;
-    await expect(cell(page, "mid")).toHaveAttribute("data-cut", "true");
-    const before = await width(page, "mid");
-    const statusAt = await status();
-    const drag = async (dx: number, name: string): Promise<void> => {
-      const box = (await app(page).getByTestId("command-grip").boundingBox())!;
-      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2, { steps: 8 });
-      await shoot(page, name);
-      await page.mouse.up();
-    };
-    await drag(80, "t022-services-dragging");
-    expect(await width(page, "mid")).toBeCloseTo(before + 80, 0);
-    expect(await status()).toBeCloseTo(statusAt, 0);
-    await expect(cell(page, "mid")).toHaveAttribute("data-cut", "false");
-    await expect(cell(page, "mid")).not.toHaveAttribute("data-tip", /.*/);
-    await page.mouse.move(0, 0);
-    await cell(page, "mid").hover();
-    await expect(app(page).getByTestId("tooltip")).toHaveCount(0);
-    await page.mouse.move(0, 0);
-    await shoot(page, "t022-services-widened");
+    await expect(app(page).getByTestId("column-grip")).toHaveCount(3);
+    for (const id of COLUMNS) {
+      const g = grip(page, id);
+      await expect(g).toHaveAttribute("role", "separator");
+      await expect(g).toHaveAttribute("tabindex", "0");
+      expect(await g.evaluate((el) => getComputedStyle(el).cursor)).toBe("col-resize");
+      // On the head cell's right edge, in the gap before the next column.
+      const cellBox = (await headCell(page, id).boundingBox())!;
+      const gripBox = (await g.boundingBox())!;
+      expect(gripBox.x).toBeCloseTo(cellBox.x + cellBox.width, 0);
+      expect(gripBox.width).toBeCloseTo(12, 0);
+    }
+    // Hovering a head cell shows its grip's line; nothing moves.
+    const before = await widths(page);
+    await headCell(page, "command").hover();
+    await shoot(page, "t030-services-grip-hover");
+    expect(await widths(page)).toEqual(before);
 
-    // Closed and opened again: the same width.
-    const widened = await width(page, "mid");
-    await open(page, true);
-    expect(await width(page, "mid")).toBeCloseTo(widened, 0);
-
-    // The edge never pushes Status or the actions out of the tab, and stops at the minimum.
-    await drag(900, "t022-services-widest");
-    expect(await status()).toBeCloseTo(statusAt, 0);
-    expect(await width(page, "mid")).toBeGreaterThan(widened);
-    await drag(-1500, "t022-services-narrowest");
-    expect(await width(page, "mid")).toBeCloseTo(120, 0);
-    expect(await status()).toBeCloseTo(statusAt, 0);
+    await page.evaluate(() => window.mounted.navigate(""));
+    await expect(app(page).getByTestId("job-row").first()).toBeVisible();
+    await expect(app(page).getByTestId("column-grip")).toHaveCount(0);
+    await expect(app(page).getByTestId("resizable-table")).toHaveCount(0);
   });
 
-  test("the grip is a separator with a keyboard: Left and Right change the width in steps, Shift in larger ones", async ({ page }) => {
+  for (const id of COLUMNS) {
+    test(`T-030 · dragging the ${id} grip widens that column only; the rows stay under their heads and Status and the actions never leave the table`, async ({ page }) => {
+      await open(page);
+      const before = await widths(page);
+      const statusRight = (await row(page, "mid").getByTestId("service-status").boundingBox())!.x;
+      await drag(page, id, 50, `t030-services-dragging-${id}`);
+      const after = await widths(page);
+      for (const other of COLUMNS) expect(after[other]).toBeCloseTo(before[other] + (other === id ? 50 : 0), 0);
+      for (const jobId of ["short", "long", "mid", "off", "watch"]) await aligned(page, jobId);
+      // Only the columns after it move, by what it grew.
+      const moved = (await row(page, "mid").getByTestId("service-status").boundingBox())!.x - statusRight;
+      expect(moved).toBeCloseTo(id === "status" ? 0 : 50, 0);
+      await page.mouse.move(0, 0);
+      await shoot(page, `t030-services-widened-${id}`);
+    });
+  }
+
+  test("T-030 · columns wider than the tab scroll the table sideways: the head scrolls with the rows, the last column is reached, the page itself never scrolls", async ({ page }) => {
     await open(page);
-    const grip = app(page).getByTestId("command-grip");
-    await expect(grip).toHaveAttribute("role", "separator");
-    expect(await grip.evaluate((el) => getComputedStyle(el).cursor)).toBe("col-resize");
+    expect(await table(page).evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    await drag(page, "command", 500, "t030-services-dragging-wide");
+    const room = await table(page).evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(room).toBeGreaterThan(200);
+    expect(await app(page).locator("html").evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    // The actions are out of the tab until the table is scrolled to its end.
+    const open_ = row(page, "mid").getByRole("button", { name: "Open file" });
+    expect((await open_.boundingBox())!.x).toBeGreaterThan(1040);
+    for (const left of [0, 120, room]) {
+      await scrollTo(page, left);
+      for (const jobId of ["short", "long", "mid", "off", "watch"]) await aligned(page, jobId);
+      // The head cells keep their place over the rows.
+      const rowBox = (await row(page, "mid").boundingBox())!;
+      expect((await head(page).boundingBox())!.x).toBeCloseTo(rowBox.x, 0);
+    }
+    await scrollTo(page, room);
+    const last = (await open_.boundingBox())!;
+    expect(last.x + last.width).toBeLessThanOrEqual(1040);
+    expect(last.x).toBeGreaterThan(0);
+    // A row, with its hover tint and hairline, is as wide as the columns: it reaches past the last cell.
+    const wide = (await row(page, "mid").boundingBox())!;
+    expect(wide.width).toBeCloseTo((await table(page).evaluate((el) => el.scrollWidth)) - 4, 0);
+    expect(wide.x + wide.width).toBeGreaterThanOrEqual(last.x + last.width);
+    // The invalid row spans the same width as the others.
+    expect((await app(page).getByTestId("service-invalid").boundingBox())!.width).toBeCloseTo((await row(page, "mid").boundingBox())!.width, 0);
+    await shoot(page, "t030-services-scrolled");
+    // The grips keep working scrolled: Status narrows by a step.
+    const status = (await headCell(page, "status").boundingBox())!.width;
+    await grip(page, "status").focus();
+    await page.keyboard.press("ArrowLeft");
+    expect((await headCell(page, "status").boundingBox())!.width).toBeCloseTo(status - 16, 0);
+  });
+
+  test("T-030 · the widths are kept on this Mac: the same after the tab is closed and opened again; a double click on a grip puts the table back to its default layout", async ({ page }) => {
+    await open(page);
+    const first = await widths(page);
+    await drag(page, "command", 80);
+    await drag(page, "service", -30);
+    const resized = await widths(page);
+    expect(resized.command).toBeCloseTo(first.command + 80, 0);
+    expect(resized.service).toBeCloseTo(first.service - 30, 0);
+    expect(JSON.parse((await kept(page))!)).toEqual({ service: Math.round(resized.service), command: Math.round(resized.command), status: Math.round(resized.status) });
+
+    await open(page, true);
+    const again = await widths(page);
+    for (const id of COLUMNS) expect(again[id]).toBeCloseTo(resized[id], 0);
+    await aligned(page, "mid");
+
+    await grip(page, "status").dblclick();
+    expect(await kept(page)).toBeNull();
+    const reset = await widths(page);
+    for (const id of COLUMNS) expect(reset[id]).toBeCloseTo(first[id], 0);
+    await open(page, true);
+    expect(await widths(page)).toEqual(reset);
+  });
+
+  test("T-030 · the grip is a separator with a keyboard: Left and Right change that column's width in steps, Shift in larger ones, never under its minimum", async ({ page }) => {
+    await open(page);
+    const g = grip(page, "command");
     const start = await width(page, "mid");
-    await grip.focus();
+    await g.focus();
     await page.keyboard.press("ArrowRight");
     await expect.poll(() => width(page, "mid")).toBeCloseTo(start + 16, 0);
     await page.keyboard.press("Shift+ArrowRight");
     await expect.poll(() => width(page, "mid")).toBeCloseTo(start + 80, 0);
     await page.keyboard.press("ArrowLeft");
     await expect.poll(() => width(page, "mid")).toBeCloseTo(start + 64, 0);
-    await expect(grip).toHaveAttribute("aria-valuenow", String(Math.round(start + 64)));
-    expect(await app(page).locator("html").evaluate((_, key) => window.localStorage.getItem(key), KEPT)).toBe(String(Math.round(start + 64)));
-    await shoot(page, "t022-services-grip-focus");
+    await expect(g).toHaveAttribute("aria-valuenow", String(Math.round(start + 64)));
+    await expect(g).toHaveAttribute("aria-valuemin", "120");
+    expect(JSON.parse((await kept(page))!).command).toBe(Math.round(start + 64));
+    // The grip is lit while focused, and nothing moves for it.
+    const before = await widths(page);
+    await page.mouse.move(0, 0);
+    await shoot(page, "t030-services-grip-focus");
+    expect(await widths(page)).toEqual(before);
+    for (let i = 0; i < 12; i++) await page.keyboard.press("Shift+ArrowLeft");
+    await expect.poll(() => width(page, "mid")).toBeCloseTo(120, 0);
+    await drag(page, "service", -900);
+    expect((await headCell(page, "service").boundingBox())!.width).toBeCloseTo(120, 0);
   });
 
-  test("with a store that refuses, the view renders at the default width and still resizes", async ({ page }) => {
+  test("with a store that refuses, the view renders at the default layout and still resizes", async ({ page }) => {
     await page.addInitScript(() => {
       if (window.parent === window) return;
       Object.defineProperty(window, "localStorage", {
@@ -4085,16 +4325,25 @@ test.describe("T-022 · the Services view's Command column", () => {
     });
     await open(page);
     expect(await width(page, "mid")).toBeCloseTo(260, 0);
-    await app(page).getByTestId("command-grip").focus();
+    await grip(page, "command").focus();
     await page.keyboard.press("ArrowRight");
     await expect.poll(() => width(page, "mid")).toBeCloseTo(276, 0);
+  });
+
+  test("T-030 · widths kept in a shape the table does not know leave the default layout", async ({ page }) => {
+    await page.addInitScript((key) => {
+      if (window.parent !== window) window.localStorage.setItem(key, '{"command":400}');
+    }, KEPT);
+    await open(page);
+    expect(await width(page, "mid")).toBeCloseTo(260, 0);
   });
 
   for (const tab of [640, 560]) {
     test(`a ${tab} px tab puts the command under the name — still cut, still with its tooltip — and nothing overlaps or leaves the tab`, async ({ page }) => {
       await page.setViewportSize({ width: tab, height: 700 });
       await open(page);
-      await expect(app(page).getByTestId("command-grip")).toBeHidden();
+      await expect(app(page).getByTestId("column-grip").first()).toBeHidden();
+      await expect(headCell(page, "command")).toBeHidden();
       const rows = app(page).getByTestId("service-row");
       for (let i = 0; i < 5; i++) {
         const row = (await rows.nth(i).boundingBox())!;
@@ -4123,18 +4372,39 @@ test.describe("T-022 · the Services view's Command column", () => {
       expect(invalidActions.x + invalidActions.width).toBeLessThanOrEqual(invalid.x + invalid.width);
       await page.mouse.move(0, 0);
       await shoot(page, `t022-services-narrow-${tab}`);
+      // Widths kept from a wider tab do not widen the narrow layout: no sideways scroll.
       expect(await app(page).locator("html").evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+      expect(await table(page).evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
     });
   }
 
-  test("a tab resized while open re-measures: a command cut at one width fits at a wider one and is cut again at a narrower", async ({ page }) => {
+  test("T-030 · widths kept from a wide tab leave a narrow tab as it is: the command under the name, no sideways scroll", async ({ page }) => {
+    await open(page);
+    await drag(page, "command", 400);
+    await page.setViewportSize({ width: 640, height: 700 });
+    await expect(grip(page, "status")).toBeHidden();
+    expect(await table(page).evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    const actions = (await row(page, "mid").locator("[class*=actions]").boundingBox())!;
+    expect(actions.x + actions.width).toBeLessThanOrEqual(640);
+  });
+
+  test("a command cut in a tab at its default width is measured again as the tab changes size, and as its column does", async ({ page }) => {
     await page.setViewportSize({ width: 1500, height: 700 });
     await open(page);
+    await writeJob(page, "fit.md", job("Fit", "./serve.sh --port 5173 --open"));
+    await expect(app(page).getByTestId("service-row")).toHaveCount(6);
+    await expect(cell(page, "fit")).toHaveAttribute("data-cut", "false");
+    await page.setViewportSize({ width: 860, height: 700 });
+    await expect(cell(page, "fit")).toHaveAttribute("data-cut", "true");
+    await expect(cell(page, "fit")).toHaveAttribute("data-tip", "./serve.sh --port 5173 --open");
+    await page.setViewportSize({ width: 1500, height: 700 });
+    await expect(cell(page, "fit")).toHaveAttribute("data-cut", "false");
+
     await expect(cell(page, "mid")).toHaveAttribute("data-cut", "true");
-    await app(page).getByTestId("command-grip").focus();
+    await grip(page, "command").focus();
     for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
     await expect(cell(page, "mid")).toHaveAttribute("data-cut", "false");
-    await page.setViewportSize({ width: 860, height: 700 });
+    for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowLeft");
     await expect(cell(page, "mid")).toHaveAttribute("data-cut", "true");
     await expect(cell(page, "mid")).toHaveAttribute("data-tip", MID);
   });

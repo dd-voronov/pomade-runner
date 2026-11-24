@@ -5,7 +5,7 @@ import type { HostClient } from "pomade-kit/sdk";
 import { jobsRoute, runRoute } from "../integrations/runner-api";
 import { runTriggerWords, type ActiveRun } from "../scheduler/model";
 import styles from "./HistoryView.module.css";
-import { Chip, EmptyBlock, GroupHead, Help, KindCell, Status, TableHead, TableRow } from "./kit";
+import { Chip, ColumnHead, EmptyBlock, GroupHead, Help, KindCell, ResizableTable, Status, TableHead, TableRow, useColumnSizing, type Column } from "./kit";
 import {
   byDay,
   FILTER_WORDS,
@@ -30,11 +30,26 @@ import { useHistoryPages } from "./useHistoryPages";
 import { useRunningNow } from "./useNow";
 import { useActiveProject, useSettings } from "./useRunnerApi";
 
+/** The table's columns: Time · the kind icon · Job · Result · Duration · Trigger. At its default the
+ *  Job, Result and Trigger columns share the view; the Trigger column is at least 86 px, and wide
+ *  enough for "hook: Mac login" and a caught-up run's "missed 4 runs, 17:40–17:46 · caught up once"
+ *  in a tab of the usual width. */
+const COLUMNS: readonly Column[] = [
+  { id: "time", width: 44 },
+  { id: "kind", width: 16 },
+  { id: "job", min: 80, track: "minmax(0, 0.8fr)" },
+  { id: "result", min: 80, track: "minmax(0, 1.1fr)" },
+  { id: "duration", min: 62, track: "62px" },
+  { id: "trigger", min: 86, track: "minmax(86px, 1fr)" },
+];
+
 /** History: the runs going, the jobs the switch holds — a row each, with the runs held so far — and
  *  every run that ended or never started, newest first, in their days — each row its time, job,
  *  result, duration and what started it; a row opens its result card, a held row its job.
  *  The result chips keep the runs going, the failed ones or the ones that never started; "This
- *  project" those of the project Pomade has open. Older pages load as the list scrolls to its end. */
+ *  project" those of the project Pomade has open. Older pages load as the list scrolls to its end.
+ *  The columns are as wide as the viewer dragged them to, and the table scrolls sideways where they
+ *  are wider than the tab. */
 export function HistoryView({
   host,
   active,
@@ -56,6 +71,7 @@ export function HistoryView({
   newJob: (testId: string) => React.JSX.Element;
 }): React.JSX.Element {
   const history = useHistoryPages(host);
+  const sizing = useColumnSizing("pomade-runner.history.column-widths", COLUMNS);
   const settings = useSettings(host);
   const project = useActiveProject(host);
   const now = useRunningNow(runningSince(active), 10_000);
@@ -123,27 +139,35 @@ export function HistoryView({
           This project
         </Chip>
       </ViewFilters>
-      <TableHead columns={styles.cols}>
-        <span>Time</span>
-        <span />
-        <span>Job</span>
-        <span>Result</span>
-        <span className={styles.right}>
-          Duration <Help k="hist.dur" />
-        </span>
-        <span>Trigger</span>
-      </TableHead>
-      <div className={styles.list}>
-        {days.map(({ day, key, runs }) => [
-          <GroupHead key={`day:${key}`} title={day} testId="history-day" />,
-          ...runs.map((view) => <HistoryRow key={itemKey(view)} view={view} now={now} onOpen={() => open(isHeld(view) ? jobsRoute(view.job) : runRoute(view.job, view.run))} />),
-        ])}
-        {days.length === 0 && !ready.more && (
-          <div className={styles.none} data-testid="history-none">
-            No runs match this filter.
-          </div>
-        )}
-      </div>
+      <ResizableTable sizing={sizing}>
+        <TableHead columns={undefined}>
+          <span>Time</span>
+          <span />
+          <ColumnHead id="job" label="Job">
+            Job
+          </ColumnHead>
+          <ColumnHead id="result" label="Result">
+            Result
+          </ColumnHead>
+          <ColumnHead id="duration" label="Duration" className={styles.right} whole after={<Help k="hist.dur" />}>
+            Duration
+          </ColumnHead>
+          <ColumnHead id="trigger" label="Trigger">
+            Trigger
+          </ColumnHead>
+        </TableHead>
+        <div className={styles.list}>
+          {days.map(({ day, key, runs }) => [
+            <GroupHead key={`day:${key}`} title={day} pinned testId="history-day" />,
+            ...runs.map((view) => <HistoryRow key={itemKey(view)} view={view} now={now} onOpen={() => open(isHeld(view) ? jobsRoute(view.job) : runRoute(view.job, view.run))} />),
+          ])}
+          {days.length === 0 && !ready.more && (
+            <div className={styles.none} data-testid="history-none">
+              No runs match this filter.
+            </div>
+          )}
+        </div>
+      </ResizableTable>
       <div ref={end} className={styles.end} data-testid="history-end">
         {ready.more && "Loading older runs…"}
       </div>
@@ -158,7 +182,7 @@ function HistoryRow({ view, now, onOpen }: { view: HistoryItem; now: number; onO
   const duration = runDuration(view, now);
   return (
     <TableRow
-      columns={styles.cols}
+      columns={undefined}
       className={styles.row}
       role="button"
       tabIndex={0}
@@ -174,14 +198,16 @@ function HistoryRow({ view, now, onOpen }: { view: HistoryItem; now: number; onO
     >
       <span className={styles.time}>{shortClock(runTime(view))}</span>
       <KindCell icon={view.kind} label={KIND_WORDS[view.kind]} />
-      <span className={styles.name}>{view.name}</span>
+      <span className={styles.name} data-tip-cut="">
+        {view.name}
+      </span>
       <span className={styles.result}>
-        <Status tone={look.tone} live={look.live} size="sm" help={look.help} testId="history-result">
+        <Status tone={look.tone} live={look.live} size="sm" help={look.help} cutTip testId="history-result">
           {look.words}
         </Status>
       </span>
       <span className={styles.duration} data-testid="history-duration">{duration === null ? "—" : view.state === "running" ? upWords(duration) : shortDuration(duration)}</span>
-      <span className={styles.trigger} data-help={TRIGGER_HELP[isHeld(view) ? "scheduled" : view.trigger]} data-testid="history-trigger">
+      <span className={styles.trigger} data-help={TRIGGER_HELP[isHeld(view) ? "scheduled" : view.trigger]} data-tip-cut="" data-testid="history-trigger">
         {runTriggerWords(isHeld(view) ? { trigger: "scheduled", cause: null } : view)}
       </span>
     </TableRow>

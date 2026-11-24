@@ -2,18 +2,21 @@ import type { HTMLAttributes, ReactNode, Ref } from "react";
 
 import { Icon } from "./Icon";
 import type { IconName } from "./icons";
+import { useSized } from "./ResizableTable";
 import styles from "./Table.module.css";
 
 const join = (...names: (string | false | undefined)[]): string => names.filter(Boolean).join(" ");
 
-/** A view table's head row. `columns` is the view's class that sets `grid-template-columns`. */
+/** A view table's head row. `columns` is the view's class that sets `grid-template-columns`; inside
+ *  a `ResizableTable` the table's tracks lay it out. */
 export function TableHead({ columns, children }: { columns: string | undefined; children: ReactNode }): React.JSX.Element {
-  return <div className={join(styles.cols, styles.head, columns)}>{children}</div>;
+  const sized = useSized();
+  return <div className={join(styles.cols, styles.head, sized && styles.sized, columns)}>{children}</div>;
 }
 
 /** A view table's row: 44 px, hover tint, a hairline between rows. `off` greys a disabled job's
  *  name; `invalid` is an invalid file's red row; `onClick` makes the whole row a click target; `ref`
- *  is the row's element. */
+ *  is the row's element. Inside a `ResizableTable` the table's tracks lay it out. */
 export function TableRow({
   columns,
   off = false,
@@ -22,8 +25,9 @@ export function TableRow({
   children,
   ...rest
 }: { columns: string | undefined; off?: boolean | undefined; invalid?: boolean | undefined; children: ReactNode; ref?: Ref<HTMLDivElement> | undefined } & HTMLAttributes<HTMLDivElement>): React.JSX.Element {
+  const sized = useSized();
   return (
-    <div className={join(styles.cols, styles.row, off && styles.off, invalid && styles.invalid, rest.onClick !== undefined && styles.click, columns, className)} {...rest}>
+    <div className={join(styles.cols, styles.row, sized && styles.sized, off && styles.off, invalid && styles.invalid, rest.onClick !== undefined && styles.click, columns, className)} {...rest}>
       {children}
     </div>
   );

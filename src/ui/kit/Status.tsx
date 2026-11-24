@@ -21,12 +21,14 @@ function textTone(tone: DotTone): string | undefined {
 }
 
 /** A status: its dot and words ("running · up 3d 4h", "failed · exit 1"). `size="xs"` is the panel's,
- *  `sm` a view column's; `help` shows that status's help text on hover and focus. */
+ *  `sm` a view column's; `help` shows that status's help text on hover and focus; `cutTip` adds the
+ *  whole words to it while a column cuts them. */
 export function Status({
   tone,
   live = false,
   size = "xs",
   help,
+  cutTip = false,
   children,
   testId,
 }: {
@@ -34,12 +36,13 @@ export function Status({
   live?: boolean | undefined;
   size?: "xs" | "sm";
   help?: HelpKey | undefined;
+  cutTip?: boolean | undefined;
   children: ReactNode;
   testId?: string | undefined;
 }): React.JSX.Element {
   const names = [styles.status, size === "sm" && styles.sm, textTone(tone)].filter(Boolean).join(" ");
   return (
-    <span className={names} data-help={help} data-testid={testId}>
+    <span className={names} data-help={help} data-tip-cut={cutTip ? "" : undefined} data-testid={testId}>
       <Dot tone={tone} live={live} />
       <span className={styles.words}>{children}</span>
     </span>

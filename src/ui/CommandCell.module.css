@@ -1,0 +1,31 @@
+/* The cell is as tall as the name and its line below; the command is on the first of the two, level
+   with the name and the status words. */
+.cell {
+  min-width: 0;
+  height: calc(2 * 17px);
+}
+
+/* One mono line, cut with "…". */
+.command {
+  display: block;
+  height: 17px;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command:focus-visible {
+  border-radius: var(--radius-sm);
+}
+
+/* A tab too narrow for the column: the command goes under the name, across the service and status columns. */
+@container (max-width: 799px) {
+  .cell {
+    grid-row: 2;
+    grid-column: 2 / 4;
+    height: 17px;
+  }
+}

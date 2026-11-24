@@ -5,6 +5,11 @@
   column-gap: var(--space-3);
 }
 
+/* A resizable table's rows: the table's tracks (`ResizableTable`), or a view's own `--cols`. */
+.sized {
+  grid-template-columns: var(--cols, var(--sized-cols));
+}
+
 .head {
   height: 24px;
   padding: 0 var(--space-2);

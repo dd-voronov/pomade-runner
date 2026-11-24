@@ -69,22 +69,24 @@ export function PanelEmpty({ children }: { children: ReactNode }): React.JSX.Ele
 }
 
 /** A view's group head: a project's jobs, a History day — the title (help beside it), a faint path
- *  and a count at its end. */
+ *  and a count at its end. `pinned` keeps the title at the left edge of a table that scrolls sideways. */
 export function GroupHead({
   title,
   help,
   path,
   count,
+  pinned = false,
   testId,
 }: {
   title: string;
   help?: HelpKey | undefined;
   path?: string | undefined;
   count?: number | undefined;
+  pinned?: boolean | undefined;
   testId?: string | undefined;
 }): React.JSX.Element {
   return (
-    <div className={styles.group} data-testid={testId}>
+    <div className={pinned ? `${styles.group} ${styles.pinned}` : styles.group} data-testid={testId}>
       <span className={styles.title}>{title}</span>
       {help !== undefined && <Help k={help} />}
       {path !== undefined && <span className={styles.path}>{path}</span>}

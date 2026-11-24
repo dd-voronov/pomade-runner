@@ -1089,9 +1089,15 @@ to it, light theme only.
   count is of the runs loaded and says so ("3+"). A row — click, Enter or Space — opens the run's
   result card. The route `history/missed` turns **Skipped & missed** on, then goes back to
   `history`, so the next ask turns it on again. With no runs at all, the view says "Nothing here yet" with **New job**.
+  - **The columns** are resized as Services' are ("Resizable tables"): a grip on the head of Job,
+    Result, Duration and Trigger; the Time and the kind icon are fixed. At the default layout the
+    Job, Result and Trigger columns share the tab (0.8 : 1.1 : 1, Trigger at least 86 px) and
+    Duration is 62 px. A Job, Result or Trigger a column cuts with "…" shows whole in its tooltip —
+    above the help the Result and Trigger carry — on hover. A day head spans the whole table and
+    keeps its title at the left edge while the table is scrolled sideways.
 - **Services** (`src/ui/ServicesView.tsx`): the "This project" chip (the tab's, as in Jobs) with
   the open project's name, and the summary "Services on Mac startup outlive Pomade · the switch
-  never pauses them"; the table head **Service · project · folder**, **Command** and **Status**; then
+  never pauses them"; the table head **Service · project · folder**, **Command** and **Status**, each with a grip; then
   every service file in start order — a valid one's row: the kind icon, the name over project ·
   folder, the command, the status (`serviceLook`, `src/ui/serviceWords.ts`) — "running · up 3d 4h" over "no
   crashes" or "restarted 3× · last crash 14:02" (and "restart to apply its file" after an edit of
@@ -1110,19 +1116,44 @@ to it, light theme only.
   line N: …" and **Open file**. The chip keeps the open project's services ("No services in this
   project." when none); with no service files, the view says what a service is and offers **New
   job**, as History does with no runs.
-  - **The Command column** (`CommandColumn.tsx`, `commandWidth.ts`): the command in the mono type,
-    one line cut with "…", on the name's line. The column's width is changed by dragging its right
-    edge in the head — a grip shows on hover, with the `col-resize` cursor — or by Left and Right on
-    the focused grip (16 px; Shift 64 px); between 120 and 720 px, 260 by default, and never more
-    than the row leaves once the kind icon, Service (120 px at least), Status (176 px) and the
-    actions have theirs, so Status and the actions never leave the tab; Service takes the rest. The
-    width is kept on this Mac per viewer (`localStorage`); without storage the view renders at the
-    default. A command that is cut is focusable and shows whole, wrapped in the mono type, in the
-    tooltip on hover and on keyboard focus; one that fits has no tooltip — measured, and again on
-    every resize of the column or the tab. In a tab narrower than 800 px the column gives way: the
-    head drops Command, the command goes under the name across the Service and Status columns (same
-    cut and tooltip), and Service and Status share what the actions leave. An invalid file's row
-    spans the middle columns in both.
+  - **The Command column** (`CommandCell.tsx`): the command in the mono type, one line cut with
+    "…", on the name's line; 260 px by default. A command that is cut is focusable and shows whole,
+    wrapped in the mono type, in the tooltip on hover and on keyboard focus; one that fits has no
+    tooltip — measured, and again on every resize of the column or the tab. The column's width is
+    changed as every column's ("Resizable tables"). In a tab narrower than 800 px the column gives
+    way: the head drops Command, the command goes under the name across the Service and Status
+    columns (same cut and tooltip), Service and Status share what the actions leave, no grips show
+    and the table does not scroll sideways whatever widths are kept. An invalid file's row spans the
+    middle columns in both.
+- **Resizable tables** (`src/ui/kit/ResizableTable.tsx`, `columnWidths.ts`): the Services and
+  History tables, and no other. A view lists its columns once — a fixed one (the kind icon, the
+  Services actions, History's time) has its px width, a sized one its least width (`min`) and its
+  default CSS track — and wraps its head and rows in `ResizableTable`. Every sized column's head
+  cell has a grip on its right edge, in the gap before the next column: a faint line while the head
+  cell is hovered, the accent while the grip is hovered or dragged, a ring while it is focused (the
+  grip is a focusable `separator`, `col-resize` cursor, and nothing moves for hover or focus).
+  Dragging it changes that column's width and no other column's; Left and Right on the focused grip
+  do the same by 16 px, with Shift by 64 px; a double click puts the table back to its default
+  layout. A column is never narrower than its `min` (Service, Command and Status 120 px; Job and
+  Result 80; Duration 62; Trigger 86) nor wider than 2000 px.
+  - **Default and resized layouts.** Until a column is resized, the table lays out by the columns'
+    default tracks, flexible ones included, and fits the tab. The first resize fixes every sized
+    column at the width it has that moment (whole px), then changes the dragged one; from then on
+    every column has its own width, no column gives room to another, and what is left of the tab is
+    empty at the table's right while the columns are narrower than the tab.
+  - **Scrolling.** When the columns, the gaps between them and the row padding together are wider
+    than the tab, the table scrolls sideways inside its view — head, rows, invalid rows and day heads
+    together, so every cell stays under its head cell at every scroll position; the page itself
+    never scrolls sideways. A day head's title stays at the table's left edge.
+  - **Kept widths.** Each table's widths are kept on this Mac per viewer (`localStorage`: Services
+    under `pomade-runner.services.column-widths`, History under `pomade-runner.history.column-widths`,
+    one JSON object of column id to px) and are the same after the tab is closed and opened again.
+    Widths that miss a sized column or do not read leave the default layout; without storage the
+    table renders at the default layout and still resizes for the view's life.
+  - **Cut text.** `data-tip-cut` on an element tells the tooltip that its text may be cut with "…":
+    while it is cut, its whole text leads the tip, above the element's own help or line;
+    while it fits, the tip is as without it. (The Services command has its own measuring, since a
+    cut one is also a tab stop.)
 - **Settings** (`src/ui/SettingsView.tsx`): cards of rows — a name with its (i), a line under it, the
   control at the end.
   - **Load** and **History:** the four settings ("Settings"), each a stepper (− number +, its unit
@@ -1181,7 +1212,8 @@ chrome around them (the panel's header with its title and collapse, the tab bar)
   tooltip, the (i) Help, dialogs and the confirm, menus, toasts, panel sections, cards and Running now's rows, group
   heads, the empty block, the view table. A view extends one rather than forking it.
 - **Tooltips:** one per surface (`TooltipLayer`): any element with `data-tip` (a plain line) or
-  `data-help` (a key of `src/ui/help.ts`) shows it on hover and on keyboard focus.
+  `data-help` (a key of `src/ui/help.ts`) shows it on hover and on keyboard focus; `data-tip-cut`
+  adds an element's whole text to its tip while a column cuts it ("Resizable tables").
 
 **Job form** (`src/ui/form/`). Creating and editing a job happens in a form, never by hand-editing
 md. A full page in the Runner tab: its head (back to Jobs, "Jobs / <name>", **Enabled**, and —

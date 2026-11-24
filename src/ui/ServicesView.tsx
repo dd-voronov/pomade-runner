@@ -5,8 +5,8 @@ import { editRoute } from "../integrations/runner-api";
 import { describeJobError } from "../jobs/format";
 import { JOBS_FOLDER, type InvalidJob, type JobEntry, type ServiceJob } from "../jobs/model";
 import type { ServiceStatus } from "../keeper/model";
-import { CommandCell, CommandHead, commandVars, useCommandWidth } from "./CommandColumn";
-import { Button, Chip, EmptyBlock, Help, Icon, IconButton, KindCell, RowCell, RowMain, Status, TableHead, TableRow, useToast } from "./kit";
+import { CommandCell } from "./CommandCell";
+import { Button, Chip, ColumnHead, EmptyBlock, Help, Icon, IconButton, KindCell, ResizableTable, RowCell, RowMain, Status, TableHead, TableRow, useColumnSizing, useToast, type Column } from "./kit";
 import { fallbackService } from "./jobWords";
 import { useOpenServiceTab } from "./RunningNow";
 import { serviceActions, serviceLook } from "./serviceWords";
@@ -15,6 +15,18 @@ import { ViewFilters } from "./shell/TabShell";
 import { useNow } from "./useNow";
 import { useActiveProject, useProjectNames } from "./useRunnerApi";
 import { useServiceAction } from "./useServiceAction";
+
+/** The table's columns: the kind icon · Service · Command · Status · the actions. The Command column
+ *  at its default is 260 px, and never more than the row has left once the others take theirs (the
+ *  icon, 120 px for Service, 176 for Status, the actions and the four gaps: 622 px) — a view narrower
+ *  than 800 px has no Command column at all (`ServicesView.module.css`). */
+const COLUMNS: readonly Column[] = [
+  { id: "kind", width: 16 },
+  { id: "service", min: 120, track: "minmax(0, 1fr)" },
+  { id: "command", min: 120, track: "minmax(0, min(260px, calc(100% - 622px)))" },
+  { id: "status", min: 120, track: "192px" },
+  { id: "actions", width: 262 },
+];
 
 /** A service file: valid, or invalid with its error. */
 type ServiceEntry = { valid: true; job: ServiceJob } | { valid: false; invalid: InvalidJob };
@@ -30,10 +42,11 @@ function serviceEntries(jobs: readonly JobEntry[]): ServiceEntry[] {
     .sort((a, b) => startOrder(idOf(a), idOf(b)));
 }
 
-/** The Services view: every service with its project and folder, its command in a column of its own
- *  (as wide as the viewer dragged it to), where it stands, Start or
- *  Restart · Stop, and its terminal (once it has a session), form and file; an invalid service file with its error. The
- *  "This project" chip keeps the services of the project Pomade has open. */
+/** The Services view: every service with its project and folder, its command in a column of its own,
+ *  where it stands, Start or Restart · Stop, and its terminal (once it has a session), form and
+ *  file; an invalid service file with its error. The columns are as wide as the viewer dragged them
+ *  to, and the table scrolls sideways where they are wider than the tab. The "This project" chip
+ *  keeps the services of the project Pomade has open. */
 export function ServicesView({
   host,
   jobs,
@@ -60,7 +73,7 @@ export function ServicesView({
   const toast = useToast();
   const openTab = useOpenServiceTab(host);
   const act = useServiceAction(host);
-  const command = useCommandWidth();
+  const sizing = useColumnSizing("pomade-runner.services.column-widths", COLUMNS);
   const all = serviceEntries(jobs);
 
   if (all.length === 0) {
@@ -77,104 +90,112 @@ export function ServicesView({
     host.tabs.openFile({ path }).catch((err: unknown) => toast(`Could not open ${path}: ${err instanceof Error ? err.message : String(err)}`));
   };
   return (
-    <section className={styles.view} style={commandVars(command.width)} data-testid="services">
+    <section className={styles.view} data-testid="services">
       <ViewFilters summary="Services on Mac startup outlive Pomade · the switch never pauses them">
         <Chip on={thisProject} count={active?.name ?? "…"} onClick={() => onThisProject(!thisProject)} data-testid="this-project">
           This project
         </Chip>
       </ViewFilters>
-      <TableHead columns={styles.cols}>
-        <span />
-        <span className={styles.headText}>Service · project · folder</span>
-        <CommandHead width={command.width} onChange={command.set} onCommit={command.commit} />
-        <span>Status</span>
-        <span />
-      </TableHead>
-      <div>
-        {shown.length === 0 && (
-          <div className={styles.none} data-testid="services-none">
-            No services in this project.
-          </div>
-        )}
-        {shown.map((entry) => {
-          if (!entry.valid) {
-            const { invalid } = entry;
-            const [first] = invalid.errors;
+      <ResizableTable sizing={sizing} className={styles.table}>
+        <TableHead columns={undefined}>
+          <span />
+          <ColumnHead id="service" label="Service">
+            Service · project · folder
+          </ColumnHead>
+          <ColumnHead id="command" label="Command" className={styles.commandHead}>
+            Command
+          </ColumnHead>
+          <ColumnHead id="status" label="Status">
+            Status
+          </ColumnHead>
+          <span />
+        </TableHead>
+        <div>
+          {shown.length === 0 && (
+            <div className={styles.none} data-testid="services-none">
+              No services in this project.
+            </div>
+          )}
+          {shown.map((entry) => {
+            if (!entry.valid) {
+              const { invalid } = entry;
+              const [first] = invalid.errors;
+              return (
+                <TableRow key={invalid.id} columns={undefined} invalid data-testid="service-invalid" data-job={invalid.id}>
+                  <span className={styles.warn}>
+                    <Icon name="warn" />
+                  </span>
+                  <div className={styles.invalidText}>
+                    <div className={styles.invalidLine}>
+                      <span className={styles.file}>{invalid.path.startsWith(`${JOBS_FOLDER}/`) ? invalid.path.slice(JOBS_FOLDER.length + 1) : invalid.path}</span>
+                      <Help k="jobs.invalid" />
+                    </div>
+                    <div className={styles.error}>
+                      Invalid: {first === undefined ? "the file has an error." : `line ${first.line}: ${describeJobError(first)}`}
+                      {invalid.errors.length > 1 && ` · ${invalid.errors.length - 1} more`}
+                    </div>
+                  </div>
+                  <div className={styles.actions}>
+                    <Button size="sm" onClick={() => openFile(invalid.path)}>
+                      Open file
+                    </Button>
+                  </div>
+                </TableRow>
+              );
+            }
+            const { job } = entry;
+            const status = services.find((candidate) => candidate.job === job.id) ?? fallbackService(job);
+            const look = serviceLook(status, job.ready, now, job.startProject === null ? null : projectName(job.startProject));
+            const offered = serviceActions(status, job.enabled);
             return (
-              <TableRow key={invalid.id} columns={styles.cols} invalid data-testid="service-invalid" data-job={invalid.id}>
-                <span className={styles.warn}>
-                  <Icon name="warn" />
-                </span>
-                <div className={styles.invalidText}>
-                  <div className={styles.invalidLine}>
-                    <span className={styles.file}>{invalid.path.startsWith(`${JOBS_FOLDER}/`) ? invalid.path.slice(JOBS_FOLDER.length + 1) : invalid.path}</span>
-                    <Help k="jobs.invalid" />
-                  </div>
-                  <div className={styles.error}>
-                    Invalid: {first === undefined ? "the file has an error." : `line ${first.line}: ${describeJobError(first)}`}
-                    {invalid.errors.length > 1 && ` · ${invalid.errors.length - 1} more`}
-                  </div>
-                </div>
+              <TableRow key={job.id} columns={undefined} className={styles.row} data-testid="service-row" data-job={job.id} data-state={status.state}>
+                <KindCell icon="service" label="Service" />
+                <RowMain
+                  name={job.name}
+                  sub={
+                    <>
+                      {projectName(job.project)} · <span className={styles.mono}>{job.folder === "" ? "." : job.folder}</span>
+                    </>
+                  }
+                />
+                <CommandCell command={job.command} />
+                <RowCell
+                  sub={
+                    <span data-help={look.subHelp ?? undefined} className={look.subHelp === null ? undefined : styles.helped} data-testid="service-sub">
+                      {look.sub}
+                    </span>
+                  }
+                >
+                  <Status tone={look.tone} live={look.live} size="sm" help={look.help ?? undefined} testId="service-status">
+                    {look.words}
+                  </Status>
+                </RowCell>
                 <div className={styles.actions}>
-                  <Button size="sm" onClick={() => openFile(invalid.path)}>
-                    Open file
-                  </Button>
+                  {offered.toggle === "stop" && (
+                    <>
+                      <Button size="row" icon="restart" onClick={() => act("restart", job)}>
+                        Restart
+                      </Button>
+                      <Button size="row" icon="stop" onClick={() => act("stop", job)}>
+                        Stop
+                      </Button>
+                    </>
+                  )}
+                  {offered.toggle === "start" && (
+                    <Button size="row" variant="primary" icon="play" onClick={() => act("start", job)}>
+                      Start
+                    </Button>
+                  )}
+                  <span className={styles.gap} />
+                  {offered.terminal ? <IconButton icon="terminal" label="Open terminal" onClick={() => openTab(status)} /> : <span className={styles.slot} />}
+                  <IconButton icon="edit" label="Edit" onClick={() => open(editRoute(job.id))} />
+                  <IconButton icon="file" label="Open file" onClick={() => openFile(job.path)} />
                 </div>
               </TableRow>
             );
-          }
-          const { job } = entry;
-          const status = services.find((candidate) => candidate.job === job.id) ?? fallbackService(job);
-          const look = serviceLook(status, job.ready, now, job.startProject === null ? null : projectName(job.startProject));
-          const offered = serviceActions(status, job.enabled);
-          return (
-            <TableRow key={job.id} columns={styles.cols} className={styles.row} data-testid="service-row" data-job={job.id} data-state={status.state}>
-              <KindCell icon="service" label="Service" />
-              <RowMain
-                name={job.name}
-                sub={
-                  <>
-                    {projectName(job.project)} · <span className={styles.mono}>{job.folder === "" ? "." : job.folder}</span>
-                  </>
-                }
-              />
-              <CommandCell command={job.command} />
-              <RowCell
-                sub={
-                  <span data-help={look.subHelp ?? undefined} className={look.subHelp === null ? undefined : styles.helped} data-testid="service-sub">
-                    {look.sub}
-                  </span>
-                }
-              >
-                <Status tone={look.tone} live={look.live} size="sm" help={look.help ?? undefined} testId="service-status">
-                  {look.words}
-                </Status>
-              </RowCell>
-              <div className={styles.actions}>
-                {offered.toggle === "stop" && (
-                  <>
-                    <Button size="row" icon="restart" onClick={() => act("restart", job)}>
-                      Restart
-                    </Button>
-                    <Button size="row" icon="stop" onClick={() => act("stop", job)}>
-                      Stop
-                    </Button>
-                  </>
-                )}
-                {offered.toggle === "start" && (
-                  <Button size="row" variant="primary" icon="play" onClick={() => act("start", job)}>
-                    Start
-                  </Button>
-                )}
-                <span className={styles.gap} />
-                {offered.terminal ? <IconButton icon="terminal" label="Open terminal" onClick={() => openTab(status)} /> : <span className={styles.slot} />}
-                <IconButton icon="edit" label="Edit" onClick={() => open(editRoute(job.id))} />
-                <IconButton icon="file" label="Open file" onClick={() => openFile(job.path)} />
-              </div>
-            </TableRow>
-          );
-        })}
-      </div>
+          })}
+        </div>
+      </ResizableTable>
     </section>
   );
 }
