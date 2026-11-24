@@ -81,7 +81,7 @@ import type { ChainActionOutcome, RunnerSession } from "../keeper/model";
 import { jobIdOf } from "../keeper/services";
 import type { Sessions } from "../keeper/sessions";
 import { liveOutputLogPath, runsRecordPath, type RecordsFolder, type StateFolder } from "../locations";
-import { AGENT_EXIT_WAIT_MS, agentArgv, agentEnd, answeredEnd, KEYCHAIN_LOST, lookupWindow, pickSession, SESSION_LOOKUP_EVERY_MS, type TurnAnswer } from "./agent-runs";
+import { AGENT_EXIT_WAIT_MS, agentArgv, agentEnd, answeredEnd, KEYCHAIN_LOST, lookupWindow, NOT_STARTED_MS, pickSession, SESSION_LOOKUP_EVERY_MS, type TurnAnswer } from "./agent-runs";
 import { chainCause, followers, parentResult } from "./chains";
 import type { Clock } from "./clock";
 import { gitCommandLine, gitRunEnd, type SessionEnd } from "./git-runs";
@@ -308,6 +308,9 @@ export interface RunsOptions {
   turns: AgentTurns;
   /** The user's login shell: an agent run's line runs in it, interactive. */
   shell: string;
+  /** How long an agent has to start working before its run waits for the person; default
+   *  `NOT_STARTED_MS`. */
+  notStartedMs?: number;
   /** A run's session started. */
   onStarted(run: ActiveRun): void;
   /** A run ended, could not start, was skipped or missed: its record is in the history. */
@@ -448,6 +451,8 @@ export function createRuns(options: RunsOptions): Runs {
   const exitDeadlines = new Map<string, number>();
   /** Agent runs whose session is looked up: by session, when it was last asked (`performance.now()`). */
   const lookedUp = new Map<string, number>();
+  /** Agent runs followed by this scheduler: by session, since when (epoch ms, the scheduler's clock). */
+  const followedSince = new Map<string, number>();
   /** Whether Runner is opening Pomade for the agent runs that wait for it. */
   let opening = false;
   /** Set by `close()`: an opening that ends later changes nothing. */
@@ -709,7 +714,7 @@ export function createRuns(options: RunsOptions): Runs {
         command: spec.line,
         argv: agentArgv(options.shell, spec.line),
         cwd,
-        agent: { agent: agent.id, name: agent.name, provider: agent.provider, mode: mode.id, modeName: mode.name, sessionId: spec.sessionId, cwd, startedAt: new Date().toISOString(), exit: spec.exit, exitSentAt: null, waiting: null, waitedMs: 0 },
+        agent: { agent: agent.id, name: agent.name, provider: agent.provider, mode: mode.id, modeName: mode.name, sessionId: spec.sessionId, cwd, startedAt: new Date().toISOString(), exit: spec.exit, exitSentAt: null, worked: false, waiting: null, waitedMs: 0 },
       };
     } catch (err) {
       return `cannot start — ${errorText(err)}`;
@@ -1070,15 +1075,18 @@ export function createRuns(options: RunsOptions): Runs {
   function follow(run: ActiveRun, agent: AgentRun): void {
     if (run.session === null || agent.exitSentAt !== null) return;
     const { job, run: id } = run;
+    if (!followedSince.has(run.session)) followedSince.set(run.session, now().getTime());
     options.turns.watch(run.session, agent.provider, {
+      onWorking: () => void inLane(async () => working(job, id)),
       onTurnDone: () => void inLane(async () => endTurn(job, id)),
       onWaiting: (prompt) => void inLane(async () => waitAt(job, id, prompt)),
     });
   }
 
-  /** An agent run's prompt for the person came (`prompt`) or went (`null`): it waits for you — a
-   *  Needs-you item and a notice — or goes on, its wait left out of its time limit. A prompt that
-   *  turns into another is one wait. */
+  /** An agent run's wait for the person came (`prompt`) or went (`null`): it waits for you — a
+   *  Needs-you item and a notice — or goes on, its wait left out of its time limit. A wait that
+   *  turns into another is one wait. A screen without a prompt does not end a `not-started` wait:
+   *  only the agent working does. */
   function waitAt(job: string, id: string, prompt: AgentWait["prompt"] | null): void {
     const run = active.find((candidate) => candidate.job === job && candidate.run === id && candidate.state === "running");
     if (run?.agent == null) return;
@@ -1086,10 +1094,10 @@ export function createRuns(options: RunsOptions): Runs {
     const at = now().getTime();
     const wait = agent.waiting;
     if (prompt === null) {
-      if (wait === null) return;
+      if (wait === null || (wait.prompt === "not-started" && !agent.worked)) return;
       agent.waitedMs += Math.max(0, at - wait.since);
       agent.waiting = null;
-      log(`run ${job} ${id}: answered; the agent goes on`);
+      log(`run ${job} ${id}: ${wait.prompt === "not-started" ? "the agent started working" : "answered"}; the agent goes on`);
     } else {
       if (wait?.prompt === prompt) return;
       agent.waiting = { prompt, since: wait?.since ?? at };
@@ -1098,6 +1106,27 @@ export function createRuns(options: RunsOptions): Runs {
     }
     save();
     options.onChange();
+  }
+
+  /** An agent run's agent works: it has started, and a `not-started` wait ends. */
+  function working(job: string, id: string): void {
+    const run = active.find((candidate) => candidate.job === job && candidate.run === id && candidate.state === "running");
+    if (run?.agent == null || run.agent.worked) return;
+    run.agent.worked = true;
+    save();
+    if (run.agent.waiting?.prompt === "not-started") waitAt(job, id, null);
+  }
+
+  /** An agent run whose agent has not started working `notStartedMs` into its run — its waits left
+   *  out — and waits at no prompt waits for the person: it stopped at a screen no scanner names. A
+   *  scheduler that follows the run afresh (a restart) gives the scanner as long to see it work:
+   *  the agent may have started while it was down. */
+  function waitIfNotStarted(run: ActiveRun, agent: AgentRun, session: string, at: number): void {
+    if (agent.worked || agent.waiting !== null || agent.exitSentAt !== null) return;
+    const since = followedSince.get(session) ?? at;
+    const grace = options.notStartedMs ?? NOT_STARTED_MS;
+    if (ranFor(run, at) < grace || at - since < grace) return;
+    waitAt(run.job, run.run, "not-started");
   }
 
   /** An agent run's turn is done: type its exit command, once. */
@@ -1144,12 +1173,14 @@ export function createRuns(options: RunsOptions): Runs {
     }
   }
 
-  /** The agent runs going: follow their turns — after a restart too — look up a session not known
-   *  yet, and stop one that did not end after its exit command. */
+  /** The agent runs going: follow their turns — after a restart too — make one whose agent has not
+   *  started working wait for you, look up a session not known yet, and stop one that did not end
+   *  after its exit command. */
   async function agentRuns(): Promise<void> {
     for (const run of active) {
       if (run.state !== "running" || run.agent === null || run.session === null) continue;
       follow(run, run.agent);
+      waitIfNotStarted(run, run.agent, run.session, now().getTime());
       await lookUp(run, run.agent);
       if (run.agent.exitSentAt === null) continue;
       const deadline = exitDeadlines.get(run.session);
@@ -1198,6 +1229,7 @@ export function createRuns(options: RunsOptions): Runs {
       if (run.session !== null) {
         options.turns.unwatch(run.session);
         exitDeadlines.delete(run.session);
+        followedSince.delete(run.session);
         lookedUp.delete(run.session);
       }
       if (session !== undefined) await forget(session.id);

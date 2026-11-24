@@ -12,6 +12,23 @@ import type { SessionEnd } from "./git-runs";
  *  session — the turn was done, so the run is done all the same. */
 export const AGENT_EXIT_WAIT_MS = 15_000;
 
+/** How long an agent run's agent has, counted as its time limit counts, to start working: past it,
+ *  at a screen the scanner does not name — a consent, a login, an onboarding step — the run waits
+ *  for the person, `not-started`. */
+export const NOT_STARTED_MS = 20_000;
+
+/** The env var that overrides `NOT_STARTED_MS` (tests). */
+export const NOT_STARTED_ENV = "POMADE_RUNNER_NOT_STARTED_MS";
+
+/** How long an agent has to start working: `POMADE_RUNNER_NOT_STARTED_MS` when it is a positive
+ *  integer of milliseconds; unset, empty or invalid means the production value. */
+export function notStartedMs(env: Readonly<Record<string, string | undefined>>): number {
+  const raw = env[NOT_STARTED_ENV]?.trim() ?? "";
+  if (!/^[1-9]\d*$/.test(raw)) return NOT_STARTED_MS;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : NOT_STARTED_MS;
+}
+
 /** Why an agent run fails when even a fresh keeper fails the keychain check. */
 export const KEYCHAIN_LOST = "cannot start — the keeper cannot reach the macOS keychain, so the agent would have no login";
 

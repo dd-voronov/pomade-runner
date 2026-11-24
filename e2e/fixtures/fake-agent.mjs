@@ -7,7 +7,10 @@
 // Enter allows it and the turn goes on, Esc (or the provider's "No") denies it and the turn ends
 // there; `[ask-late]` puts it up 5 s into the turn; `[no-answer]` ends the turn on an API error
 // ("Not logged in · Please run /login") with no answer — the record's last message stays `null`,
-// and the transcript's assistant record is the error one Claude Code writes (`isApiErrorMessage`).
+// and the transcript's assistant record is the error one Claude Code writes (`isApiErrorMessage`);
+// `[stuck]` stops at a consent screen no scanner names before it starts (Claude's Bypass
+// Permissions one), with no session made: `2` accepts it and the agent starts as with no word,
+// `1` or Esc ends it with status 1.
 // `--provider claude|codex` picks the titles and the dialog the kit's scanner reads
 // (`pomade-kit/scanners`). It keeps, under `$HOME/.fake-agents/`,
 // each session's record — the id (`--session-id`'s, else one of its own, as Codex), the agent, the
@@ -56,13 +59,28 @@ const DIALOG =
     ? ["", "  Bash command", "    git mv drafts/2026-11-16-*.md published/", "", "  Do you want to proceed?", "  ❯ 1. Yes", "    2. Yes, and don't ask again for git mv", "    3. No, tell Claude what to do differently", "", "  Esc to cancel"]
     : ["", "  Would you like to run the following command?", "    $ git mv drafts/2026-11-16-*.md published/", "", "  › 1. Yes, proceed", "    2. No, and tell Codex what to do differently", "", "  Press enter to confirm or esc to cancel"];
 
+/** Claude Code's consent screen for Bypass Permissions mode, as a profile that never accepted it shows it. */
+const CONSENT = ["", "  WARNING: Claude Code running in Bypass Permissions mode", "", "  In Bypass Permissions mode, Claude Code will not ask for your approval before running", "  potentially dangerous commands.", "", "  ❯ 1. No, exit", "    2. Yes, I accept", "", "  Enter to confirm · Esc to exit"];
+
 let input = "";
+/** Whether the session has begun: a `[stuck]` agent's begins once its consent is accepted. */
+let begun = false;
 /** While a permission prompt is up: what answering it does. */
 let answer = null;
 const listen = () => {
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (data) => {
+    if (answer !== null && prompt.includes("[stuck]") && !begun) {
+      if (data === "\x03") process.exit(130);
+      const key = data[0] ?? "";
+      const choice = key === "2" ? "accept" : ["1", "\x1b"].includes(key) ? "exit" : null;
+      if (choice === null) return;
+      const then = answer;
+      answer = null;
+      then(choice);
+      return;
+    }
     if (answer !== null) {
       if (data === "\x03") process.exit(130);
       // claude: 1 and 2 allow, 3 denies; codex: 1 allows, 2 denies; Enter takes the first, Esc denies.
@@ -99,7 +117,23 @@ if (resume !== null) {
   title(IDLE);
   process.stdout.write(`resumed session ${id}\r\n● ${record.lastMessage}\r\n> `);
   listen();
+} else if (prompt.includes("[stuck]")) {
+  title(IDLE);
+  process.stdout.write(`${CONSENT.join("\r\n")}`);
+  answer = (choice) => {
+    if (choice !== "accept") process.exit(1);
+    process.stdout.write("\r\n\r\n");
+    begin();
+  };
+  listen();
 } else {
+  begin();
+  listen();
+}
+
+/** The session starts: its record and transcript are made, and the turn goes. */
+function begin() {
+  begun = true;
   const startedAt = new Date().toISOString();
   const record = { id, provider: provider === "claude" ? "claude-code" : "codex", agent, cwd, startedAt, args, prompt, lastMessage: null, at: null };
   save(record);
@@ -109,7 +143,6 @@ if (resume !== null) {
     writeFileSync(transcript, `${JSON.stringify({ type: "user", sessionId: id, cwd, timestamp: startedAt, message: { role: "user", content: prompt } })}\n`);
   }
   title(IDLE);
-  listen();
   let frame = 0;
   let spin = null;
   const work = () => {

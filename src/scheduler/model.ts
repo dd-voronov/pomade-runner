@@ -88,18 +88,26 @@ export interface AgentRun {
   exit: string;
   /** When Runner typed `exit` once the turn was done (epoch ms, the scheduler's clock); `null` before. */
   exitSentAt: number | null;
-  /** The prompt the agent waits at for the person now; `null` while it does not wait. */
+  /** Whether the agent has started working: the scanner has seen it work once. */
+  worked: boolean;
+  /** What the agent waits at for the person now; `null` while it does not wait. */
   waiting: AgentWait | null;
   /** How long its earlier waits for the person lasted (ms): left out of its time limit. */
   waitedMs: number;
 }
 
-/** What an agent waits at: approval of a tool call, or trust for the folder it started in — the
- *  kit's `AgentPrompt` — and since when (epoch ms, the scheduler's clock). */
+/** What an agent waits at — approval of a tool call or trust for the folder it started in (the
+ *  kit's `AgentPrompt`), or a screen it has not started working past (`not-started`) — and since
+ *  when (epoch ms, the scheduler's clock). */
 export interface AgentWait {
-  prompt: "permission" | "trust";
+  prompt: AgentWaitKind;
   since: number;
 }
+
+export const AGENT_WAIT_KINDS = ["permission", "trust", "not-started"] as const;
+export type AgentWaitKind = (typeof AGENT_WAIT_KINDS)[number];
+
+const isAgentWaitKind = (value: unknown): value is AgentWaitKind => AGENT_WAIT_KINDS.includes(value as AgentWaitKind);
 
 /** An agent run going that waits for the person at a prompt. */
 export function waitingAt(run: { agent: AgentRun | null }): AgentWait | null {
@@ -311,7 +319,8 @@ export type NeedsYouItem =
       detail: string;
     }
   | {
-      /** `waiting:<job>:<run>`: an agent run at a permission or trust prompt. */
+      /** `waiting:<job>:<run>`: an agent run at a permission or trust prompt, or one whose agent has
+       *  not started working. */
       id: string;
       kind: "waiting";
       job: string;
@@ -480,13 +489,14 @@ function isRunCause(value: unknown): value is RunCause {
 }
 
 function isAgentWait(value: unknown): value is AgentWait {
-  return isRecord(value) && (value.prompt === "permission" || value.prompt === "trust") && finite(value.since);
+  return isRecord(value) && isAgentWaitKind(value.prompt) && finite(value.since);
 }
 
 function isAgentRun(value: unknown): value is AgentRun {
   if (!isRecord(value)) return false;
-  const { agent, name, provider, mode, modeName, sessionId, cwd, startedAt, exit, exitSentAt, waiting, waitedMs } = value;
+  const { agent, name, provider, mode, modeName, sessionId, cwd, startedAt, exit, exitSentAt, worked, waiting, waitedMs } = value;
   return (
+    typeof worked === "boolean" &&
     (waiting === null || isAgentWait(waiting)) &&
     finite(waitedMs) &&
     typeof agent === "string" &&
@@ -596,9 +606,10 @@ export function isRunRecord(value: unknown): value is RunRecord {
   );
 }
 
-/** A run's agent as a file keeps it; a field a record of an older build lacks gets its default. */
+/** A run's agent as a file keeps it; a field a record of an older build lacks gets its default — its
+ *  agent counts as one that started working. */
 export function withAgentDefaults(agent: unknown): unknown {
-  return isRecord(agent) ? { waiting: null, waitedMs: 0, ...agent } : (agent ?? null);
+  return isRecord(agent) ? { worked: true, waiting: null, waitedMs: 0, ...agent } : (agent ?? null);
 }
 
 /** A history record as a file keeps it; a field a record of an older build lacks gets its default. */
@@ -624,7 +635,7 @@ function isNeedsYouItem(value: unknown): value is NeedsYouItem {
     case "missed":
       return typeof value.run === "string" && (value.missed === null || isMissedRuns(value.missed));
     case "waiting":
-      return typeof value.run === "string" && (value.prompt === "permission" || value.prompt === "trust");
+      return typeof value.run === "string" && isAgentWaitKind(value.prompt);
     case "long-run":
       return typeof value.run === "string" && finite(value.startedAt);
     case "loop-paused":

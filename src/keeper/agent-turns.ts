@@ -1,7 +1,9 @@
 // Following an agent run's turns: the scheduler attaches to the run's keeper session as a viewer
 // and replays its output into the kit's agent-state scanner (`pomade-kit/scanners`), which reads
 // the provider's own screen and window title. A permission or trust prompt on screen is a wait for
-// the person, told when it comes and when it goes — answered, the agent works again. When the turn
+// the person, told when it comes and when it goes — answered, the agent works again. The agent
+// working is told too: an agent that never does waits for the person at a screen no scanner names
+// (`runs.ts`). When the turn
 // completes — the agent was working and is idle, with no prompt pending — the run is told once; it
 // then types the launch spec's exit command through the same attachment. The scanner is made
 // afresh on every snapshot (an attach, a reconnect after a keeper update, a resync, a scheduler
@@ -37,6 +39,8 @@ export function loginShell(env: NodeJS.ProcessEnv): string {
 
 /** What a followed agent run is told. */
 export interface TurnHandlers {
+  /** The agent works: once per following — again after a snapshot made it afresh. */
+  onWorking(): void;
   /** Its turn completed: once. */
   onTurnDone(): void;
   /** It waits at a prompt for the person (`prompt`), or no longer does (`null`); told on a change only. */
@@ -46,11 +50,13 @@ export interface TurnHandlers {
 /** A turn's progress as the scanner reports it (`onState`), and the screen a fresh snapshot shows
  *  once read (`onScreen`): a prompt is a wait until the agent works or idles again, or a screen
  *  shows none; the turn is done once the agent went from working to idle — a prompt pending is
- *  never idle. */
+ *  never idle. The first snapshot's screen without a prompt is told even with no wait known: the
+ *  run followed afresh may keep one from before — a prompt answered while the scheduler was down. */
 export function turnTracker(handlers: TurnHandlers): { onState(state: AgentState): void; onScreen(state: AgentState): void } {
   let working = false;
   let done = false;
   let waiting: AgentPrompt | null = null;
+  let screened = false;
   const wait = (prompt: AgentPrompt | null): void => {
     if (prompt === waiting) return;
     waiting = prompt;
@@ -61,14 +67,20 @@ export function turnTracker(handlers: TurnHandlers): { onState(state: AgentState
       if (state.kind === "waiting") return wait(state.prompt);
       if (state.kind === "unknown") return;
       wait(null);
-      if (state.kind === "working") working = true;
-      else if (working && !done) {
+      if (state.kind === "working") {
+        if (!working) handlers.onWorking();
+        working = true;
+      } else if (working && !done) {
         done = true;
         handlers.onTurnDone();
       }
     },
     onScreen(state) {
-      if (state.kind !== "waiting") wait(null);
+      const first = !screened;
+      screened = true;
+      if (state.kind === "waiting") return;
+      if (first && waiting === null) handlers.onWaiting(null);
+      else wait(null);
     },
   };
 }
@@ -103,6 +115,10 @@ export function createAgentTurns(options: { socketPath: string; log: Log }): Age
     watch(session, provider, handlers) {
       if (followed.has(session)) return;
       const track = turnTracker({
+        onWorking() {
+          log(`session ${session}: the agent works`);
+          handlers.onWorking();
+        },
         onTurnDone() {
           log(`session ${session}: the agent's turn is done`);
           handlers.onTurnDone();

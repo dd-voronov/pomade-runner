@@ -23,6 +23,7 @@ import {
   type RunRecord,
   type RunView,
 } from "../scheduler/model";
+import type { LastMessage } from "../integrations/agents";
 import { NO_ANSWER_REASON } from "../scheduler/agent-runs";
 import { MessageText } from "./MessageText";
 import { Button, Dialog, DialogBody, DialogFoot, DialogHead, Help, Icon, LinkButton, Pill, useToast } from "./kit";
@@ -34,7 +35,7 @@ import { shortClock, upWords } from "./serviceWords";
 import { aheadMoment } from "./panelWords";
 import { RunAllConfirm } from "./RunAllConfirm";
 import { RunAtField } from "./RunAtField";
-import { useLastMessage } from "./useAgents";
+import { NO_SESSION, useLastMessage, type AgentsState } from "./useAgents";
 import { useRunningNow } from "./useNow";
 import { useRunOutput } from "./useRunOutput";
 import { useRun } from "./useRunnerApi";
@@ -206,6 +207,9 @@ function RunCard({
 
   const record = isRecord(view) ? view : null;
   const started = view.startedAt !== null;
+  const unanswered = record?.state === "failed" && record.reason === NO_ANSWER_REASON;
+  const message = useLastMessage(host, record === null || unanswered ? null : (record.agent?.sessionId ?? null));
+  const noSession = message.status === "ready" && message.value === NO_SESSION;
   const wait = view.state === "running" ? waitingAt(view) : null;
   let foot: React.ReactNode;
   if (view.state === "missed-waiting") {
@@ -239,7 +243,7 @@ function RunCard({
     const agent = view.agent;
     foot = (
       <>
-        {agent !== null && agent.sessionId !== null && (
+        {agent !== null && agent.sessionId !== null && !noSession && (
           <Button variant="primary" data-help="c.session" onClick={() => openSession(agent.agent, agent.sessionId ?? "")}>
             Open session
           </Button>
@@ -285,7 +289,7 @@ function RunCard({
           ) : record.git !== null ? (
             <GitBody record={record} />
           ) : record.agent !== null ? (
-            <AgentBody host={host} record={record} />
+            <AgentBody record={record} unanswered={unanswered} message={message} />
           ) : (
             <EndedBody record={record} />
           )}
@@ -398,12 +402,11 @@ function EndedBody({ record }: { record: RunRecord }): React.JSX.Element {
 }
 
 /** An agent run that ended: why it failed, when it did — its time limit, its reason, its exit — and
- *  the agent's last message in the session, from the Agents app. A turn that ended without an
- *  answer has none to read: its last lines show instead, the agent's screen with what went wrong. */
-function AgentBody({ host, record }: { host: HostClient; record: RunRecord }): React.JSX.Element {
-  const unanswered = record.state === "failed" && record.reason === NO_ANSWER_REASON;
+ *  the agent's last message in the session, from the Agents app (`message`). A turn that ended
+ *  without an answer has none to read: its last lines show instead, the agent's screen with what
+ *  went wrong. A session the Agents app does not have is one the agent never started. */
+function AgentBody({ record, unanswered, message }: { record: RunRecord; unanswered: boolean; message: AgentsState<LastMessage | null | typeof NO_SESSION> }): React.JSX.Element {
   const session = record.agent?.sessionId ?? null;
-  const message = useLastMessage(host, unanswered ? null : session);
   const failed = record.state === "failed";
   if (unanswered)
     return (
@@ -435,7 +438,11 @@ function AgentBody({ host, record }: { host: HostClient; record: RunRecord }): R
           <p className={styles.note} data-testid="run-agent-note">
             Runner did not learn this run’s session, so its last message cannot be read.
           </p>
-        ) : message.status === "ready" && message.value !== null ? (
+        ) : message.status === "ready" && message.value === NO_SESSION ? (
+          <p className={styles.note} data-testid="run-agent-note">
+            The agent never started a session.
+          </p>
+        ) : message.status === "ready" && message.value !== null && message.value !== NO_SESSION ? (
           <MessageText text={message.value.text} testId="run-agent-message" />
         ) : (
           <p className={styles.note} data-testid="run-agent-note">
@@ -463,6 +470,13 @@ function RunningBody({ host, view }: { host: HostClient; view: ActiveRun }): Rea
   return <Lines lines={lines.slice(-LAST_LINES)} title="Latest output" testId="run-last-lines" />;
 }
 
+/** What a waiting run's card says it waits at. */
+const WAITING_SENTENCE: Record<AgentWait["prompt"], string> = {
+  permission: "The agent stopped at a permission prompt and waits for your answer.",
+  trust: "The agent stopped to ask whether it may trust its folder, and waits for your answer.",
+  "not-started": "The agent has not started working: it stopped at a screen Runner does not know — a consent, a login, a first-run step. Look at its terminal.",
+};
+
 /** An agent run that waits for you: what it waits at — the end of its output, the prompt — and
  *  that its time limit is paused. */
 function WaitingBody({ host, view, wait }: { host: HostClient; view: ActiveRun; wait: AgentWait }): React.JSX.Element {
@@ -470,9 +484,7 @@ function WaitingBody({ host, view, wait }: { host: HostClient; view: ActiveRun; 
   const lines = output.status === "ready" ? plainLines(output.value.text) : [];
   return (
     <>
-      <p data-testid="run-waits">
-        {wait.prompt === "permission" ? "The agent stopped at a permission prompt and waits for your answer." : "The agent stopped to ask whether it may trust its folder, and waits for your answer."}
-      </p>
+      <p data-testid="run-waits">{WAITING_SENTENCE[wait.prompt]}</p>
       {output.status === "ready" ? (
         <Lines lines={promptLines(lines)} title="Waiting at" testId="run-prompt" />
       ) : (

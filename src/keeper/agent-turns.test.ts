@@ -12,10 +12,11 @@ const title = (text: string): string => `\x1b]0;${text}\x07`;
 /** Claude Code's permission dialog as it draws it: the question, the options, the footer last. */
 const DIALOG = ["", " Bash command", "   git mv drafts/*.md published/", "", " Do you want to proceed?", " ❯ 1. Yes", "   2. Yes, and don't ask again for git mv", "   3. No, tell Claude what to do differently", "", " Esc to cancel"].join("\r\n");
 
-function recorder(): { handlers: TurnHandlers; done: () => number; waits: (string | null)[] } {
+function recorder(): { handlers: TurnHandlers; done: () => number; worked: () => number; waits: (string | null)[] } {
   let done = 0;
+  let worked = 0;
   const waits: (string | null)[] = [];
-  return { handlers: { onTurnDone: () => done++, onWaiting: (prompt) => waits.push(prompt) }, done: () => done, waits };
+  return { handlers: { onWorking: () => worked++, onTurnDone: () => done++, onWaiting: (prompt) => waits.push(prompt) }, done: () => done, worked: () => worked, waits };
 }
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -76,6 +77,28 @@ describe("an agent's turn", () => {
     track.onState({ kind: "idle" });
     expect(seen.waits).toEqual(["permission", "trust", null]);
     expect(seen.done()).toBe(1);
+  });
+
+  it("tells the agent working once, and never for an unknown or idle screen", () => {
+    const seen = recorder();
+    const track = turnTracker(seen.handlers);
+    track.onState({ kind: "unknown" });
+    track.onState({ kind: "idle" });
+    expect(seen.worked()).toBe(0);
+    track.onState({ kind: "working" });
+    track.onState({ kind: "waiting", prompt: "permission" });
+    track.onState({ kind: "working" });
+    expect(seen.worked()).toBe(1);
+  });
+
+  it("tells a fresh following's first screen without a prompt even with no wait known — a wait the run kept from before ends — and only once", () => {
+    const seen = recorder();
+    const track = turnTracker(seen.handlers);
+    track.onScreen({ kind: "unknown" });
+    expect(seen.waits).toEqual([null]);
+    track.onScreen({ kind: "unknown" });
+    track.onState({ kind: "working" });
+    expect(seen.waits).toEqual([null]);
   });
 
   it("ends a wait when a fresh snapshot's screen shows no prompt, and keeps it when it shows one", () => {

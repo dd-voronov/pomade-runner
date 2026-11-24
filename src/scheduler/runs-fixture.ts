@@ -154,15 +154,20 @@ export function memorySwitch(): SwitchStore & { saved: SwitchState } {
   return store;
 }
 
-/** Agent runs' turns as a test plays them: `done(session)` is the agent's turn completing,
+/** Agent runs' turns as a test plays them: a followed agent works at once unless `workAtOnce` is
+ *  off, then `works(session)` is it starting; `done(session)` is the agent's turn completing,
  *  `waits(session, prompt)` a prompt coming up for the person and `waits(session, null)` it
  *  answered; what Runner typed is in `typed`. */
 export class FakeTurns implements AgentTurns {
   readonly followed = new Map<string, TurnHandlers>();
   readonly typed: { session: string; text: string }[] = [];
+  /** Whether a followed agent is working at once; `false`: it stays at a screen until `works`. */
+  workAtOnce = true;
 
   watch(session: string, _provider: AgentKind, handlers: TurnHandlers): void {
-    if (!this.followed.has(session)) this.followed.set(session, handlers);
+    if (this.followed.has(session)) return;
+    this.followed.set(session, handlers);
+    if (this.workAtOnce) handlers.onWorking();
   }
 
   type(session: string, text: string): void {
@@ -175,6 +180,11 @@ export class FakeTurns implements AgentTurns {
 
   watched = (): string[] => [...this.followed.keys()];
   close = (): void => this.followed.clear();
+
+  /** The agent of `session` works. */
+  works(session: string): void {
+    this.followed.get(session)?.onWorking();
+  }
 
   /** The agent of `session` finished its turn. */
   done(session: string): void {

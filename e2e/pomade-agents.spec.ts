@@ -12,7 +12,9 @@
 // resumes it in a Pomade agent tab. An agent that asks for permission waits for you — a notice, a
 // Needs-you card, the badge — and its notice, card and Running now row open its terminal tab at the
 // prompt; answered there, the run is done; a prompt that comes while the scheduler is down is read
-// from the session's screen when it is back. A keeper that cannot reach the macOS keychain — the
+// from the session's screen when it is back. An agent stopped at a screen before it starts working
+// (the fake's consent screen) waits for you once its time to start is up — its time limit paused —
+// and goes on once accepted there; one stopped at it never started a session, as its card says. A keeper that cannot reach the macOS keychain — the
 // check's command a script that fails as many times as the test says — is replaced before an agent
 // run, after the runs going, its services started again with no crash counted; a fresh keeper that
 // fails it too fails the run. `RUNNER_SHOTS=<dir>` saves screenshots of the form, the rows and the
@@ -28,7 +30,7 @@ import type { HostClient } from "pomade-kit/sdk";
 
 import manifest from "../app/manifest.json" with { type: "json" };
 import { STRIP_ICON } from "../src/app";
-import { DISMISS_METHOD, runRoute } from "../src/integrations/runner-api";
+import { DISMISS_METHOD, RUN_STOP_METHOD, runRoute } from "../src/integrations/runner-api";
 import { callScheduler } from "../src/scheduler/control/client";
 import type { ActiveRun, RunRecord } from "../src/scheduler/model";
 import { AGENTS_APP, fakeAgents, type FakeAgents } from "./support/agents";
@@ -40,6 +42,8 @@ import { serviceFile } from "./support/runner";
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
 
 const SHOTS = process.env.RUNNER_SHOTS;
+/** How long an agent has to start working here: the scheduler's 20 s, shortened. */
+const NOT_STARTED_MS = 3000;
 const STRIP_KEY = `app-${manifest.id}-${STRIP_ICON}`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -99,6 +103,7 @@ test.describe("agent runs in Pomade", () => {
         POMADE_KEEPER_SOCKET: keeperSocket,
         POMADE_HOME: folders.home,
         POMADE_RUNNER_TICK_MS: "50",
+        POMADE_RUNNER_NOT_STARTED_MS: String(NOT_STARTED_MS),
         HOME: user,
         SHELL: "/bin/sh",
         ...extra,
@@ -208,6 +213,8 @@ test.describe("agent runs in Pomade", () => {
     const session = await agents.session(sessionId);
     expect(session).toMatchObject({ cwd: notes, prompt: "Write my morning summary.", lastMessage: "**Done.** Write my morning summary." });
     expect(session.args).toEqual(["--session-id", sessionId, "Write my morning summary."]);
+    // It worked at once: it never waited for you.
+    expect(record.agent).toMatchObject({ worked: true, waitedMs: 0 });
   });
 
   test("5 · run.started and run.finished reach a subscriber with the session, the agent, the started-by-Runner flag and the run's terminal", async () => {
@@ -324,6 +331,81 @@ test.describe("agent runs in Pomade", () => {
     await expect.poll(async () => (await history("late")).length, { timeout: 30_000 }).toBe(1);
     expect((await history("late"))[0]).toMatchObject({ state: "done", agent: { provider: "codex", waiting: null } });
     await closeTab(tabId);
+  });
+
+  test("T-040 · an agent stopped at a screen before it starts working waits for you: a notice, a Needs-you card, the badge, its time limit paused; accepted in its terminal, the run goes on to done", async () => {
+    expect(await needsYou()).toEqual([]);
+    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/consent.md"), agentJob("Weekly digest", "claude", "Sum up the week. [stuck]", "time-limit: 1m\n"));
+    expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "consent"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+    await expect.poll(async () => (await going("consent"))?.state, { timeout: 15_000 }).toBe("running");
+    expect((await going("consent"))?.agent?.waiting).toBeNull();
+    await expect.poll(async () => (await going("consent"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("not-started");
+    const waiting = await going("consent");
+    expect(await needsYou()).toEqual([`waiting:consent:${waiting?.run ?? ""}`]);
+    await expect.poll(() => runnerNotices()).toContain("Weekly digest has not started");
+    await expect(page.getByTestId(`strip-badge-${STRIP_KEY}`)).toHaveText("1");
+
+    // Its card while it waits.
+    await openRunnerTab(runRoute("consent", waiting?.run ?? ""));
+    await expect(tab().getByTestId("run-result")).toHaveText("Waiting for you");
+    await expect(tab().getByTestId("run-waits")).toContainText("The agent has not started working");
+    await expect(tab().getByTestId("run-prompt")).toContainText("Yes, I accept");
+    await shoot(page, "pomade-not-started-card");
+
+    // Needs you's card: amber, "Open at the prompt", which opens its terminal at the screen.
+    await page.getByTestId(`strip-${STRIP_KEY}`).click();
+    await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
+    await drawn(page);
+    const card = panel().locator('[data-testid="needs-you-item"][data-kind="waiting"]');
+    await expect(card).toContainText("Weekly digest");
+    await expect(card.getByTestId("needs-you-words")).toHaveText("Has not started — look at its terminal.");
+    // Away from the strip, whose tooltip — it follows the focus — would cover the card.
+    await page.mouse.move(1000, 600);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await shoot(page, "pomade-not-started-panel");
+    await card.getByRole("button", { name: "Open at the prompt" }).click();
+    await expect.poll(() => attachedTabIds()).toHaveLength(1);
+    const [tabId = ""] = await attachedTabIds();
+    await expect.poll(() => buffer(tabId)).toContain("Yes, I accept");
+    await shoot(page, "pomade-not-started-tab");
+
+    // The agent accepted, it starts working: the wait ends and the run is done.
+    await page.getByTestId(`attached-xterm-${tabId}`).click();
+    await page.keyboard.press("2");
+    await expect.poll(() => needsYou()).toEqual([]);
+    await expect.poll(async () => (await history("consent")).length, { timeout: 30_000 }).toBe(1);
+    const [record] = await history("consent");
+    expect(record).toMatchObject({ state: "done", agent: { worked: true, waiting: null } });
+    expect(record?.agent?.waitedMs).toBeGreaterThan(0);
+    await expect.poll(() => buffer(tabId)).toContain("Done.");
+    await closeTab(tabId);
+  });
+
+  test("T-040 · a run stopped at that screen never started a session: its card says so, with no Open session — and its time limit did not stop it while it waited", async () => {
+    test.setTimeout(120_000);
+    expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "consent"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+    await expect.poll(async () => (await going("consent"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("not-started");
+    const waiting = await going("consent");
+    // Past its time limit of 1 minute, it still waits.
+    await new Promise((resolve) => setTimeout(resolve, 62_000));
+    expect(await going("consent")).toMatchObject({ state: "running", limitHit: null, agent: { waiting: { prompt: "not-started" } } });
+    const runner = await connectAs(manifest.id);
+    try {
+      await runner.apps.call(manifest.id, RUN_STOP_METHOD, { job: "consent", run: waiting?.run ?? "" });
+    } finally {
+      runner.close();
+    }
+    await expect.poll(async () => (await history("consent")).length, { timeout: 30_000 }).toBe(2);
+    const [record] = await history("consent");
+    expect(record).toMatchObject({ run: waiting?.run, state: "stopped-by-you", limitHit: null, agent: { worked: false, waiting: null } });
+    expect(await needsYou()).toEqual([]);
+    await openRunnerTab(runRoute("consent", record?.run ?? ""));
+    const dialog = tab().getByTestId("run-dialog");
+    await expect(dialog.getByTestId("run-agent-note")).toHaveText("The agent never started a session.");
+    await expect(dialog.getByRole("button", { name: "Open session" })).toHaveCount(0);
+    await expect(dialog).not.toContainText("cannot be read");
+    await expect(dialog.getByRole("button", { name: "Run again" })).toBeVisible();
+    await shoot(page, "pomade-never-started-card");
   });
 
   test("3 · the done card shows the agent's last message; Open session resumes the session in a Pomade agent tab", async () => {

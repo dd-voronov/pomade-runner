@@ -109,6 +109,9 @@ export interface SchedulerOptions {
   /** How long, on the clock, the link to Pomade is down with no Pomade start found before Pomade
    *  counts as quit; default `QUIT_GRACE_MS`. */
   quitGraceMs?: number;
+  /** How long an agent has to start working before its run waits for the person; default
+   *  `NOT_STARTED_MS`. */
+  notStartedMs?: number;
 }
 
 export interface Scheduler {
@@ -266,6 +269,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     }),
     turns: options.turns,
     shell: options.shell,
+    ...(options.notStartedMs === undefined ? {} : { notStartedMs: options.notStartedMs }),
     gitResult: (job, run) => gitResultPath(state, job, run),
     keepLog: (job, run) => keepOutputLog(records, state, job, run),
     projectPath: (project) => {

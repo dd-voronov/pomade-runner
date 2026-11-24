@@ -18,7 +18,7 @@ import type { RunFinishedPayload, RunStartedPayload } from "../integrations/runn
 import { checkJobs } from "../jobs/check";
 import type { JobsSnapshot } from "../jobs/model";
 import { recordsFolderOf, runsRecordPath, stateFolderOf } from "../locations";
-import { AGENT_EXIT_WAIT_MS, agentArgv, agentEnd, answeredEnd, lookupWindow, pickSession } from "./agent-runs";
+import { AGENT_EXIT_WAIT_MS, agentArgv, agentEnd, answeredEnd, lookupWindow, NOT_STARTED_MS, notStartedMs, pickSession } from "./agent-runs";
 import { createHistory, keepOutputLog } from "./history";
 import { parseRunRecord, type ActiveRun, type AgentRun, type RunRecord } from "./model";
 import { runFinishedPayload, runStartedPayload } from "./run-events";
@@ -162,7 +162,7 @@ describe("agent runs", () => {
     const cwd = await realpath(join(workspace, "Projects/x"));
     const line = `claude '--session-id' '${sessionId}' 'Write my morning summary.'`;
     expect(spawn?.command).toMatchObject({ title: "Morning summary", argv: ["/bin/zsh", "-l", "-i", "-c", line], cwd, background: true });
-    expect(run.agent).toEqual({ agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId, cwd, startedAt: new Date(now).toISOString(), exit: "/exit", exitSentAt: null, waiting: null, waitedMs: 0 });
+    expect(run.agent).toEqual({ agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId, cwd, startedAt: new Date(now).toISOString(), exit: "/exit", exitSentAt: null, worked: true, waiting: null, waitedMs: 0 });
     expect(turns.watched()).toEqual([run.session]);
   });
 
@@ -612,16 +612,174 @@ describe("agent runs", () => {
     expect(notices).toHaveLength(1);
   });
 
-  it("reads a run going and a record of an older build, with no wait fields, as ones that never waited", async () => {
+  describe("an agent that has not started working", () => {
+    const seconds = (n: number): void => {
+      now = new Date(now.getTime() + n * 1000);
+    };
+
+    beforeEach(() => {
+      turns.workAtOnce = false;
+    });
+
+    it("waits for you 20 s into its run — a Needs-you item and one notice that opens it at the prompt — its time limit paused, and goes on once the agent works", async () => {
+      files = { "summary.md": agentFile("time-limit: 1m\n") };
+      load();
+      const run = await runNow();
+      const session = run.session ?? "";
+      seconds(19);
+      await runs.tick();
+      expect(runs.active()[0]?.agent?.waiting).toBeNull();
+      seconds(1);
+      await runs.tick();
+      const since = now.getTime();
+      expect(runs.active()[0]?.agent).toMatchObject({ worked: false, waiting: { prompt: "not-started", since } });
+      expect(runs.needsYou()).toEqual([{ id: `waiting:summary:${run.run}`, kind: "waiting", job: "summary", name: "Morning summary", project: null, run: run.run, prompt: "not-started", at: since, detail: "has not started — look at its terminal" }]);
+      expect(notices).toEqual([
+        {
+          title: "Morning summary has not started",
+          body: "The agent stopped at a screen before it began working. Look at its terminal; the time limit is paused meanwhile.",
+          action: { kind: "openApp", route: `prompt/summary/${run.run}` },
+        },
+      ]);
+      // The screen shows no prompt — a snapshot, a resync: the agent still has not started.
+      turns.waits(session, null);
+      minutes(10);
+      await runs.tick();
+      expect(runs.active()[0]?.agent?.waiting?.prompt).toBe("not-started");
+      expect(sessions.stops).toEqual([]);
+      expect(notices).toHaveLength(1);
+      turns.works(session);
+      await runs.tick();
+      expect(runs.active()[0]?.agent).toMatchObject({ worked: true, waiting: null, waitedMs: 10 * 60_000 });
+      expect(runs.needsYou()).toEqual([]);
+      seconds(39);
+      await runs.tick();
+      expect(sessions.stops).toEqual([]);
+      seconds(1);
+      await runs.tick();
+      expect(sessions.stops).toEqual([{ id: session, reason: "time-limit" }]);
+    });
+
+    it("does not wait when the agent works within 20 s", async () => {
+      const run = await runNow();
+      seconds(10);
+      turns.works(run.session ?? "");
+      await runs.tick();
+      minutes(5);
+      await runs.tick();
+      expect(runs.active()[0]?.agent).toMatchObject({ worked: true, waiting: null, waitedMs: 0 });
+      expect(runs.needsYou()).toEqual([]);
+      expect(notices).toEqual([]);
+    });
+
+    it("a prompt the scanner names keeps its own words: before 20 s no not-started wait follows it, after it the wait turns into it", async () => {
+      const run = await runNow();
+      const session = run.session ?? "";
+      seconds(2);
+      turns.waits(session, "trust");
+      await runs.tick();
+      minutes(1);
+      await runs.tick();
+      expect(runs.active()[0]?.agent?.waiting?.prompt).toBe("trust");
+      // Answered, it has its 20 s to start working: the time it waited does not count.
+      turns.waits(session, null);
+      await runs.tick();
+      seconds(17);
+      await runs.tick();
+      expect(runs.active()[0]?.agent?.waiting).toBeNull();
+      seconds(1);
+      await runs.tick();
+      const since = now.getTime();
+      expect(runs.active()[0]?.agent?.waiting).toEqual({ prompt: "not-started", since });
+      seconds(5);
+      turns.waits(session, "permission");
+      await runs.tick();
+      expect(runs.active()[0]?.agent?.waiting).toEqual({ prompt: "permission", since });
+      expect(runs.needsYou().map((item) => item.kind === "waiting" && item.prompt)).toEqual(["permission"]);
+      expect(notices.map((notice) => notice.title)).toEqual(["Morning summary needs your approval", "Morning summary has not started"]);
+    });
+
+    it("frees its low-priority slot while it waits", async () => {
+      settings = { ...DEFAULT_SETTINGS, maxLowPriorityRuns: 1 };
+      files = { ...files, "other.md": agentFile().replace("name: Morning summary", "name: Other") };
+      load();
+      await runNow();
+      expect((await runs.runNow("other")).ok).toBe(true);
+      expect(runs.active().map((candidate) => candidate.state)).toEqual(["running", "queued"]);
+      seconds(20);
+      await runs.tick();
+      expect(runs.active().map((candidate) => candidate.state)).toEqual(["running", "running"]);
+    });
+
+    it("a scheduler restarted before the agent was seen working gives it 20 s from then to be seen working", async () => {
+      const run = await runNow();
+      const session = run.session ?? "";
+      seconds(1);
+      await runs.close();
+      turns = new FakeTurns();
+      turns.workAtOnce = false;
+      minutes(5);
+      await open();
+      await runs.tick();
+      seconds(19);
+      await runs.tick();
+      expect(runs.active()[0]?.agent?.waiting).toBeNull();
+      turns.works(session);
+      seconds(5);
+      await runs.tick();
+      expect(runs.active()[0]?.agent).toMatchObject({ worked: true, waiting: null });
+      expect(notices).toEqual([]);
+    });
+
+    it("still waits after a restart, with no second notice, though the screen shows no prompt; the agent working ends it", async () => {
+      const run = await runNow();
+      const session = run.session ?? "";
+      seconds(20);
+      await runs.tick();
+      await runs.close();
+      turns = new FakeTurns();
+      turns.workAtOnce = false;
+      await open();
+      await runs.tick();
+      turns.waits(session, null);
+      minutes(1);
+      await runs.tick();
+      expect(runs.needsYou().map((item) => item.kind === "waiting" && item.prompt)).toEqual(["not-started"]);
+      expect(notices).toHaveLength(1);
+      turns.works(session);
+      await runs.tick();
+      expect(runs.needsYou()).toEqual([]);
+    });
+
+    it("ends with the run: stopped at that screen, its record keeps how long it waited and Needs you is clear", async () => {
+      const run = await runNow();
+      const session = run.session ?? "";
+      seconds(20);
+      await runs.tick();
+      minutes(3);
+      sessions.end(session, "stopped-by-you", 130, 200_000, "SIGINT");
+      await runs.tick();
+      expect(finished[0]).toMatchObject({ state: "stopped-by-you", agent: { worked: false, waiting: null, waitedMs: 3 * 60_000 } });
+      expect(runs.needsYou()).toEqual([]);
+    });
+  });
+
+  it("gives an agent 20 s to start working unless POMADE_RUNNER_NOT_STARTED_MS gives a positive whole number of milliseconds", () => {
+    expect(NOT_STARTED_MS).toBe(20_000);
+    for (const value of [undefined, "", "x", "0", "-5", "1.5"]) expect(notStartedMs({ POMADE_RUNNER_NOT_STARTED_MS: value })).toBe(NOT_STARTED_MS);
+    expect(notStartedMs({ POMADE_RUNNER_NOT_STARTED_MS: " 3000 " })).toBe(3000);
+  });
+
+  it("reads a run going and a record of an older build, with no wait fields, as ones that never waited and whose agent started working", async () => {
     const run = await runNow();
-    const { waiting: _waiting, waitedMs: _waitedMs, ...older } = run.agent ?? ({} as AgentRun);
+    const { waiting: _waiting, waitedMs: _waitedMs, worked: _worked, ...older } = run.agent ?? ({} as AgentRun);
     const records = recordsFolderOf(dir);
     await mkdir(dirname(runsRecordPath(records)), { recursive: true });
     await writeFile(runsRecordPath(records), JSON.stringify({ active: [{ ...run, agent: older }], last: {} }));
     const [going] = (await fileRunsStore(records, stateFolderOf(dir), () => undefined).load()).active;
-    expect(going?.agent).toEqual({ ...older, waiting: null, waitedMs: 0 });
+    expect(going?.agent).toEqual({ ...older, worked: true, waiting: null, waitedMs: 0 });
     const record = parseRunRecord({ ...run, state: "done", action: null, reason: null, endedAt: 1, durationMs: 1, exitCode: 0, signal: null, lastLines: [], git: null, agent: older });
-    expect(record?.agent).toEqual({ ...older, waiting: null, waitedMs: 0 });
+    expect(record?.agent).toEqual({ ...older, worked: true, waiting: null, waitedMs: 0 });
   });
 
   it("follows a running agent run's turns again after a restart", async () => {
@@ -636,7 +794,7 @@ describe("agent runs", () => {
 });
 
 describe("agent run rules", () => {
-  const agent: AgentRun = { agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-18T11:00:00.000Z", exit: "/exit", exitSentAt: null, waiting: null, waitedMs: 0 };
+  const agent: AgentRun = { agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-18T11:00:00.000Z", exit: "/exit", exitSentAt: null, worked: true, waiting: null, waitedMs: 0 };
   const end = { state: "done" as const, reason: null, exitCode: 0, signal: null, limitHit: null };
 
   it("runs the line in the shell, interactive and login", () => {

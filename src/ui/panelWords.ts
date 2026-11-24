@@ -2,7 +2,7 @@
 // tone, help, time, text) and Next up's "in 40 min". Pure.
 
 import { FIRING_LIMIT, FIRING_WINDOW_MS } from "../scheduler/loop-guard";
-import { missedRunsWords, type NeedsYouItem } from "../scheduler/model";
+import { missedRunsWords, type AgentWait, type NeedsYouItem } from "../scheduler/model";
 import type { HelpKey } from "./help";
 import type { DotTone } from "./kit";
 import { soonWords } from "./runWords";
@@ -61,6 +61,13 @@ export interface NeedLook {
   text: string;
 }
 
+/** A waiting run's Needs-you line, by what it waits at. */
+const WAITING_TEXT: Record<AgentWait["prompt"], string> = {
+  permission: "Waiting for approval at a permission prompt.",
+  trust: "Waiting for you to trust its folder.",
+  "not-started": "Has not started — look at its terminal.",
+};
+
 const capital = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
 
 export function needLook(item: NeedsYouItem, now: number): NeedLook {
@@ -73,7 +80,7 @@ export function needLook(item: NeedsYouItem, now: number): NeedLook {
       // One run: "Missed — …"; more: "Missed 4 runs, 17:40–17:46 — …".
       return { tone: "warning", help: "need.waitforme", when: pastWhen(item.at, now), text: `${capital(missedRunsWords(item.missed) ?? "missed")} — it waits for you to pick a time.` };
     case "waiting":
-      return { tone: "warning", help: "need.approval", when: upWords(now - item.at), text: item.prompt === "permission" ? "Waiting for approval at a permission prompt." : "Waiting for you to trust its folder." };
+      return { tone: "warning", help: item.prompt === "not-started" ? "need.notstarted" : "need.approval", when: upWords(now - item.at), text: WAITING_TEXT[item.prompt] };
     case "long-run": {
       const ran = now - item.startedAt;
       const hours = Math.floor(ran / 3_600_000);

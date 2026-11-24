@@ -147,16 +147,23 @@ export function missedNotice(run: ActiveRun): NoticeParams {
 }
 
 /** What an agent run waits at, in words: a Needs-you item's detail. */
-export const WAIT_WORDS: Record<AgentWait["prompt"], string> = { permission: "waiting for approval", trust: "waiting for you to trust its folder" };
+export const WAIT_WORDS: Record<AgentWait["prompt"], string> = {
+  permission: "waiting for approval",
+  trust: "waiting for you to trust its folder",
+  "not-started": "has not started — look at its terminal",
+};
 
-/** The notice for an agent run that waits for the person at a prompt. Its click opens the run's
- *  terminal tab at the prompt. */
+const WAIT_NOTICES: Record<AgentWait["prompt"], { title: string; body: string }> = {
+  permission: { title: "needs your approval", body: "The agent waits at a permission prompt. Open it to answer; the time limit is paused meanwhile." },
+  trust: { title: "needs your approval", body: "The agent asks whether to trust its folder. Open it to answer; the time limit is paused meanwhile." },
+  "not-started": { title: "has not started", body: "The agent stopped at a screen before it began working. Look at its terminal; the time limit is paused meanwhile." },
+};
+
+/** The notice for an agent run that waits for the person. Its click opens the run's terminal tab
+ *  at the prompt. */
 export function waitingNotice(run: ActiveRun, prompt: AgentWait["prompt"]): NoticeParams {
-  return {
-    title: `${run.name} needs your approval`,
-    body: prompt === "permission" ? "The agent waits at a permission prompt. Open it to answer; the time limit is paused meanwhile." : "The agent asks whether to trust its folder. Open it to answer; the time limit is paused meanwhile.",
-    action: { kind: "openApp", route: promptRoute(run.job, run.run) },
-  };
+  const words = WAIT_NOTICES[prompt];
+  return { title: `${run.name} ${words.title}`, body: words.body, action: { kind: "openApp", route: promptRoute(run.job, run.run) } };
 }
 
 /** The notice for a run going longer than the long-run warning: it keeps going. */

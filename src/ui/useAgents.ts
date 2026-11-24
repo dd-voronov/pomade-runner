@@ -51,7 +51,16 @@ export function useProjectsFor(host: HostClient, agent: string | null): AgentsSt
   return useAsk(host, agent, (api) => api.projectsFor(agent ?? ""));
 }
 
-/** A session's last message; `null` while the agent has not answered. Loading without a session. */
-export function useLastMessage(host: HostClient, session: string | null): AgentsState<LastMessage | null> {
-  return useAsk(host, session, (api) => api.lastMessage(session ?? ""));
+/** What the Agents app says of a session that does not exist: the agent never started it. */
+export const NO_SESSION = "no-session";
+
+/** A session's last message; `null` while the agent has not answered; `NO_SESSION` when the Agents
+ *  app has no such session. Loading without a session. */
+export function useLastMessage(host: HostClient, session: string | null): AgentsState<LastMessage | null | typeof NO_SESSION> {
+  return useAsk(host, session, (api) =>
+    api.lastMessage(session ?? "").catch((err: unknown) => {
+      if (err instanceof AgentsError && err.code === "not-found") return NO_SESSION;
+      throw err;
+    }),
+  );
 }

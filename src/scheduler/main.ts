@@ -18,6 +18,7 @@ import { probeReadiness } from "../keeper/readiness";
 import { createSessions } from "../keeper/sessions";
 import { fileStore } from "../keeper/supervisor";
 import { keeperSocketPath, pomadeGitPath, recordsFolderOf, schedulerSocketPath, stateFolder, userDataDir } from "../locations";
+import { notStartedMs } from "./agent-runs";
 import { clockFrom, quitGraceMs, systemClock, tickMs } from "./clock";
 import { createLog } from "./log";
 import { startScheduler, type StartResult } from "./scheduler";
@@ -81,6 +82,7 @@ if (state === null || socketPath === null || userData === null) {
       shell: loginShell(process.env),
       pomadeStart: () => pomadeStartOf(process.env),
       quitGraceMs: quitGraceMs(process.env),
+      notStartedMs: notStartedMs(process.env),
     });
   };
   const following = followWorkspace({ workspace: () => resolveWorkspace(), start, pollMs: tick, log });

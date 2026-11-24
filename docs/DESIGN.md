@@ -623,7 +623,8 @@ hooks, chains, History, notices and Needs you.
   has no Full autonomy mode"); a folder that does not exist.
 - **The run's agent** (`AgentRun` on the run and its record): the agent's id and name, provider,
   mode and its name, the session id, `cwd`, `startedAt` — the session's start on this Mac's clock,
-  ISO 8601 — the spec's `exit`, and when Runner typed it.
+  ISO 8601 — the spec's `exit`, when Runner typed it, and whether the agent has started working
+  (`worked`: the scanner has seen it work once).
 - **Session id.** The spec's `sessionId`: the one Runner made, when the provider pre-assigns it; when
   it is `null` (Codex) the run's session is looked up with `sessions.find` — `cwd`, the agent, and
   10 s around `startedAt` — every 5 s while it runs and once more at its end; of several, the one
@@ -655,10 +656,25 @@ hooks, chains, History, notices and Needs you.
   again — the wait ends, the item goes, and the turn finishes as any turn. A prompt that turns into
   another is one wait, noticed once. A fresh snapshot — an attach, a reconnect, a scheduler
   restart — draws the screen without a window title: a prompt on it is a wait (noticed when the
-  run had none), a screen without one ends the wait the run had. Whether the agent is idle is
+  run had none), a screen without one ends the wait the run had — the first snapshot of a run
+  followed afresh too, so a prompt answered while the scheduler was down ends its wait. Whether the agent is idle is
   read from the title alone, so a restarted scheduler learns a turn is done only from the next
   title the agent sets. A run that ends while it waits keeps the wait in `waitedMs`. A record or a
-  run going of an older build reads as one that never waited.
+  run going of an older build reads as one that never waited and whose agent started working.
+- **An agent that has not started.** An agent can stop before it works at a screen the scanner
+  does not name — a consent (Claude's Bypass Permissions one, for a profile that never accepted
+  it), a login, an onboarding step. A running run whose agent has not worked
+  `NOT_STARTED_MS` (20 s) into its run — `ranFor`, so its waits are left out — and waits at no
+  prompt waits for you as at a prompt, its wait `not-started`: the same item, notice, badge,
+  paused time limit and slot given up. A scheduler that follows the run afresh — a restart — gives
+  the agent the same 20 s from then to be seen working, since it may have started while the
+  scheduler was down. A screen the scanner names keeps its own words: a permission or trust prompt
+  that comes turns the wait into its own, since when it began; one before the 20 s is a prompt's
+  wait, and once answered the agent has its remaining time to start. A screen without a prompt
+  does not end a `not-started` wait; the agent working does, or the run's end. Such an agent made
+  no session: the Agents app answers `not-found` for the run's session id, and its ended card says
+  "The agent never started a session", with no Open session. `POMADE_RUNNER_NOT_STARTED_MS`
+  shortens the 20 s for tests.
 
 **Git runs** (`src/scheduler/git-runs.ts`, `runs.ts`) run Pomade's `pomade-git` and keep its
 structured result. Everything else about the run is a script run's: run id, queue (a git job is
@@ -713,9 +729,9 @@ head is red, a run that waits for you amber. Its body, by what the run left:
 |---|---|---|
 | Script, ended | exit code (red when failed) or the reason it failed — a time limit as "Stopped: Time limit, 45 min — the job's time limit" — and the last lines | **View output** · **Run again**; a caught-up run that ran for more than one missed run, while it is its job's latest and no Run all of the job goes (`otherMissedRuns`), **Run the other N** between them — on every ended run's card |
 | Git, ended | each repo: its commit hash and its steps (✓ done, ✗ failed, faint skipped), and a reason a step does not say | **View output** · **Run again** |
-| Agent, ended | a failed run's reason in red; the agent's last message (`sessions.lastMessage` by the run's session, its Markdown drawn as text: paragraphs, lists, bold, emphasis, code), or why it cannot be read — no session known, none written yet, the Agents app not running; a run whose turn ended without an answer: the last lines in its place | **Open session** (a Pomade agent tab resuming the session — `agentTabs.resume` in the job's project and folder — or the live tab already on it) · **View output** · **Run again** |
+| Agent, ended | a failed run's reason in red; the agent's last message (`sessions.lastMessage` by the run's session, its Markdown drawn as text: paragraphs, lists, bold, emphasis, code), or why it cannot be read — no session known, none written yet, the Agents app not running; "The agent never started a session." when the Agents app has no such session (`not-found`), its raw error not shown; a run whose turn ended without an answer: the last lines in its place | **Open session** (not for a session the agent never started) (a Pomade agent tab resuming the session — `agentTabs.resume` in the job's project and folder — or the live tab already on it) · **View output** · **Run again** |
 | Running | the latest output, followed while it runs | **Open terminal** · **Stop run** |
-| Agent, waiting for you | what it waits at ("The agent stopped at a permission prompt and waits for your answer."), **Waiting at**: the end of its output from the step that asks (`promptLines`), and that the time limit is paused | **Open at the prompt** (its terminal tab) · **Stop run** |
+| Agent, waiting for you | what it waits at ("The agent stopped at a permission prompt and waits for your answer."; for an agent that has not started, that it stopped at a screen Runner does not know — a consent, a login, a first-run step — and to look at its terminal), **Waiting at**: the end of its output from the step that asks (`promptLines`), and that the time limit is paused | **Open at the prompt** (its terminal tab) · **Stop run** |
 | Queued | what it waits for, in a sentence — waiting for a slot, the low-priority runs holding the slots by name ("Two low-priority runs are going (Wiki lint, Photo backup). This one starts when one of them finishes.") | **Run now** |
 | Missed, waiting for you | when it was due — for more than one missed run, "This job missed 4 runs, 17:40–17:46." — and that its policy waits for you; **Run at…** opens a field that reads the time as it is typed | **Run now** · **Run at…** · **Skip**; for more than one **Run once** · **Run all N** · **Run at…** · **Skip** |
 | Skipped or missed; a chain's action on a service | why it never started ("Missed 4 runs, 17:40–17:46 · skipped." for more than one), or what the chain did | **Run now** (scripts and git jobs) |
@@ -982,9 +998,10 @@ skills-folder: Knowledge/_skills/apps/   # where Runner keeps its agent skill
     Actions: Run now · Run at… · Skip (`runs.missed`); for more than one missed run Run once · Run
     all N · Run at… · Skip. Its notice's body names them: "It waits for you: Run once, Run all 4,
     Run at… or Skip."
-  - **An agent run waiting for you** (`waiting:<job>:<run>`) at a permission or trust prompt is an
-    item while it waits; it cannot be dismissed. Noticed when the wait begins: "<job> needs your
-    approval", what it waits at and that the time limit is paused; the notice opens the Runner tab
+  - **An agent run waiting for you** (`waiting:<job>:<run>`) at a permission or trust prompt, or
+    whose agent has not started working, is an item while it waits; it cannot be dismissed.
+    Noticed when the wait begins: "<job> needs your approval" ("<job> has not started"), what it
+    waits at and that the time limit is paused; the notice opens the Runner tab
     at `prompt/<job>/<run>`, which opens the run's terminal tab at the prompt. Action: Open at the
     prompt (its terminal tab).
   - **A long-run warning** (`long-run:<job>:<run>`) is an item while its run runs, until dismissed;
@@ -1030,7 +1047,7 @@ to it, light theme only.
    | failed run | when it failed | "Failed: exit 1 · 2×" (the count when more than one) | Open · Run now · Dismiss |
    | service gave up | its last crash | "Crashed 5× in 1 min — gave up."; when its last start failed, "Gave up — could not start: <why>" | Start · View output (only when the service has a terminal session) |
    | missed run waits | when it was missed | "Missed — it waits for you to pick a time." ("Missed 4 runs, 17:40–17:46 — …" for more than one) | Run now · Run at… · Skip; for more than one Run once · Run all N · Run at… · Skip, wrapping to a second row in the panel |
-   | agent run waits for you | how long it has waited ("17m") | "Waiting for approval at a permission prompt." / "Waiting for you to trust its folder." | Open at the prompt |
+   | agent run waits for you | how long it has waited ("17m") | "Waiting for approval at a permission prompt." / "Waiting for you to trust its folder." / "Has not started — look at its terminal." | Open at the prompt |
    | long run | how long it has gone ("3h 02m") | "Running 3h — still expected?" | Open (its terminal) · Stop · Dismiss |
    | job paused by the loop guard | when it paused | "Paused: triggered 10× in 10 min." | Resume · Edit job |
 

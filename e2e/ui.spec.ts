@@ -1728,7 +1728,7 @@ test.describe("the Jobs view", () => {
       kind: "agent",
       run: "20261117-130100-cccccc",
       session: "run:summary:20261117-130100-cccccc",
-      agent: { agent: "claude", name: "claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: null, cwd: "/fake/workspace", startedAt: new Date(now).toISOString(), exit: "/exit", exitSentAt: null, waiting: { prompt: "permission", since: now - 60_000 }, waitedMs: 0 },
+      agent: { agent: "claude", name: "claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: null, cwd: "/fake/workspace", startedAt: new Date(now).toISOString(), exit: "/exit", exitSentAt: null, worked: true, waiting: { prompt: "permission", since: now - 60_000 }, waitedMs: 0 },
     };
     const queued: ActiveRun = { ...base, job: "mount", name: "Mount drive", run: "20261117-130300-dddddd", state: "queued", startedAt: null, session: null, log: null, waits: { kind: "slot", ahead: 1 } };
     const report = (active: ActiveRun[]): RunsReport => ({ active, nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null }, heldRuns: 0 });
@@ -4030,7 +4030,7 @@ test.describe("agent jobs", () => {
     trigger: "scheduled",
     cause: null,
     dueAt: at(7, 0),
-    agent: { agent: "claude", name: "claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: SESSION, cwd: "/fake/workspace", startedAt: new Date(at(7, 0)).toISOString(), exit: "/exit", exitSentAt: at(7, 4), waiting: null, waitedMs: 0 },
+    agent: { agent: "claude", name: "claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: SESSION, cwd: "/fake/workspace", startedAt: new Date(at(7, 0)).toISOString(), exit: "/exit", exitSentAt: at(7, 4), worked: true, waiting: null, waitedMs: 0 },
     missed: null,
     series: null,
     state: "done",
