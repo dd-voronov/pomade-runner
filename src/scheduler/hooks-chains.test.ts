@@ -414,6 +414,8 @@ describe("hooks and chains", () => {
       logins.loggedIn = false;
       await restart("2026-11-18T14:00:00");
       expect(lines).toContain(`start: the same console login (${logins.recorded ?? ""}) — no login: no warm-up, no login hooks`);
+      // The services' supervision asks the same decision: their start is Runner's own, not a Mac startup's.
+      expect(await runs.startIsLogin()).toBe(false);
       expect(going("mount")).toEqual([]);
       // Down across 13:30: one caught-up run, at once.
       expect(going("report")).toEqual([expect.objectContaining({ state: "running", trigger: "caught-up" }) as ActiveRun]);
@@ -426,6 +428,8 @@ describe("hooks and chains", () => {
       sessions.keeperStarted = false;
       await restart("2026-11-18T14:00:00");
       expect(lines).toContain("login: a new console login (console 3) — the staged start begins; the login hooks run after the warm-up");
+      expect(await runs.startIsLogin()).toBe(true);
+      expect(lines.filter((line) => line.startsWith("login: a new console login (console 3)"))).toHaveLength(1);
       expect(going("mount")[0]?.waits).toEqual({ kind: "warm-up", until: ms("2026-11-18T14:02:00") });
       expect(logins.recorded).toBe("console 3");
       await awake("2026-11-18T14:02:00");

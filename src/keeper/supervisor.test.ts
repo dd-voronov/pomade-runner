@@ -14,7 +14,7 @@ import { recordsFolderOf, stateFolderOf, type RecordsFolder, type StateFolder } 
 import { sessionIdOf } from "./ids";
 import type { KeychainCheck } from "./keychain";
 import type { KeeperLink, RunnerSession, ServicesReport, ServiceStatus } from "./model";
-import { runWords, type RunRecord } from "../scheduler/model";
+import { runTriggerWords, runWords, type RunRecord } from "../scheduler/model";
 import type { NetworkReadiness } from "./readiness";
 import type { SessionCommand, Sessions, StopReason } from "./sessions";
 import {
@@ -192,6 +192,8 @@ describe("service supervision", () => {
   /** The service events written, a crash window's row replaced as it is put again. */
   let events: RunRecord[];
   let randoms: number;
+  /** Whether the scheduler start the next `open()` stands for is a Mac login. */
+  let loginStart: boolean;
 
   function load(): void {
     snapshot = checkJobs(
@@ -208,6 +210,7 @@ describe("service supervision", () => {
       systemNow: () => now + skew,
       log: (line) => lines.push(line),
       store,
+      startIsLogin: () => Promise.resolve(loginStart),
       probe: (ready) => new Promise((resolve) => probes.push({ ready, answer: resolve })),
       pomade: () => ({ state: pomade, opened }),
       onChange: (report) => reports.push(report),
@@ -264,6 +267,7 @@ describe("service supervision", () => {
     pomade = "running";
     events = [];
     randoms = 0;
+    loginStart = true;
     load();
     await open();
   });
@@ -1214,6 +1218,22 @@ describe("service supervision", () => {
       await at(2 * ALIVE_MS);
       expect(said().at(-1)).toEqual(["c", "started", "job-file", "started"]);
       expect(events.at(-1)?.event?.detail).toBe("created");
+    });
+
+    it("a scheduler started again within the same Mac login starts an always-on service not running for its own start, not a Mac startup", async () => {
+      files = { "a.md": service("A"), "late.md": service("Late", "start: pomade-started\n") };
+      await supervisor.close();
+      loginStart = false;
+      await open();
+      load();
+      await at(0);
+      await at(ALIVE_MS);
+      await at(2 * ALIVE_MS);
+      expect(said()).toEqual([
+        ["a", "started", "runner-started", "started"],
+        ["late", "started", "pomade-started", "started"],
+      ]);
+      expect(events.map((record) => runTriggerWords(record))).toEqual(["Runner started", "Pomade started"]);
     });
 
     it("a restarted scheduler that finds its services running writes nothing", async () => {

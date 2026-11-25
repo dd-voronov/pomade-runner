@@ -331,6 +331,10 @@ export interface Runs {
   /** Read the records and the switch. Whether this start is a login is decided once the keeper is
    *  followed. */
   load(): Promise<void>;
+  /** Whether this scheduler start is a Mac login (`console-login.ts`), decided once, on the first
+   *  ask after the keeper is followed: the services due at the first look start for it, or for
+   *  Runner's own start. */
+  startIsLogin(): Promise<boolean>;
   /** Record the runs that ended, look at the schedules, enforce the limits, start what may start.
    *  A tick asked for while one is due is dropped. */
   tick(): Promise<void>;
@@ -446,8 +450,8 @@ export function createRuns(options: RunsOptions): Runs {
   /** Jobs whose ids changed while this scheduler ran, old → new: a run going under its old id
    *  ends as the new id's latest. */
   const movedTo = new Map<string, string>();
-  /** Whether this start is a login is decided once the keeper is followed. */
-  let startDecided = false;
+  /** Whether this start is a login, decided once the keeper is followed; `null` before. */
+  let startDecision: Promise<boolean> | null = null;
   /** A login: its hooks fire on the first reconcile that can run them. */
   let login = false;
   /** The console login this start acts on, kept once its login hooks fired (at a login). */
@@ -1359,16 +1363,18 @@ export function createRuns(options: RunsOptions): Runs {
    *  (`console-login.ts`): a log-out and log-in, a Mac restart — whether or not the keeper outlived
    *  it. An update or a restart of the scheduler within one login is no login: no staged start, no
    *  login hooks. */
-  async function decideStart(): Promise<void> {
-    if (startDecided) return;
-    startDecided = true;
-    const decision = decideLogin(await options.consoleLogin(), await options.logins.last(), sessions.startedKeeper());
-    log(decision.line);
-    if (decision.login) {
-      stage = { settledAt: null };
-      login = true;
-    }
-    actedOn = decision.record;
+  function decideStart(): Promise<boolean> {
+    startDecision ??= (async () => {
+      const decision = decideLogin(await options.consoleLogin(), await options.logins.last(), sessions.startedKeeper());
+      log(decision.line);
+      if (decision.login) {
+        stage = { settledAt: null };
+        login = true;
+      }
+      actedOn = decision.record;
+      return decision.login;
+    })();
+    return startDecision;
   }
 
   async function reconcile(): Promise<void> {
@@ -1592,6 +1598,8 @@ export function createRuns(options: RunsOptions): Runs {
     heldRuns,
 
     heldRows,
+
+    startIsLogin: decideStart,
 
     setSwitch: (position) =>
       inLane(async () => {

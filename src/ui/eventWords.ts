@@ -37,6 +37,8 @@ export function causeSentence(view: EventRecord): string {
         : "It ended by itself; Runner restarted it.";
     case "login":
       return "You logged in to the Mac; Runner started its always-on services one by one.";
+    case "runner-started":
+      return `Runner started again within the same Mac login — after an update or a restart — and found ${name} not running, so it started it.`;
     case "first-open":
       return `You opened ${event.detail ?? "its project"} for the first time since Pomade started.`;
     case "pomade-started":

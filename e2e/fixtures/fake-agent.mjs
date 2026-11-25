@@ -13,7 +13,7 @@
 // under the idle title, with no session made: `1`, `2` or Enter picks a method and the agent starts
 // as with no word, Esc ends it with status 1. `[consent]` stops at Claude's Bypass Permissions
 // consent screen before it sets any title, with no session made — the screen as Claude drew it,
-// from a real run's output log (`claude-bypass-consent.log`, its trailing terminal queries left
+// from a real run's output log (`claude-bypass-consent.txt`, its trailing terminal queries left
 // out) — "❯ No, exit" highlighted: ↓/↑ move the highlight, Enter picks it — "Yes, I accept" clears
 // the screen and the agent starts as with no word, "No, exit" ends it with status 1, leaving the
 // screen as drawn; Esc ends it so too. `[question]` puts up Claude's question form midway (its
@@ -84,7 +84,7 @@ const DIALOG =
 
 /** Claude Code's consent screen for Bypass Permissions mode, as a profile that never accepted it
  *  shows it: "No, exit" highlighted, and the same screen with "Yes, I accept" highlighted. */
-const CONSENT = readFileSync(new URL("claude-bypass-consent.log", import.meta.url), "utf8");
+const CONSENT = readFileSync(new URL("claude-bypass-consent.txt", import.meta.url), "utf8");
 const NO_HIGHLIGHTED = "\x1b[3G\x1b[38;5;105m❯\x1b[5GNo,\x1b[9Gexit\x1b[39m\r\r\n\x1b[5GYes,\x1b[10GI\x1b[12Gaccept\r\r\n";
 if (!CONSENT.includes(NO_HIGHLIGHTED)) throw new Error("fake-agent: the consent capture's option rows changed");
 const CONSENT_ACCEPT = CONSENT.replace(NO_HIGHLIGHTED, "\x1b[5GNo,\x1b[9Gexit\r\r\n\x1b[3G\x1b[38;5;105m❯\x1b[5GYes,\x1b[10GI\x1b[12Gaccept\x1b[39m\r\r\n");

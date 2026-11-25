@@ -236,8 +236,9 @@ disk.
   install is a login and an update is not. The decision is made once per scheduler, when it first
   follows the keeper, and said in the log (`login: a new console login (loginwindow 76407, since
   2026-11-25T12:46:11.000Z) — …`, `start: the same console login (…) — no login …`); a login fires
-  the login hooks once, in a known workspace. The keeper that outlived a log-out is kept: its
-  services and runs go on.
+  the login hooks once, in a known workspace, and the services' supervision asks the same decision
+  for the cause of the services its first look starts (`login` or `runner-started`, "Service
+  events"). The keeper that outlived a log-out is kept: its services and runs go on.
 - **Pomade's events** (`src/integrations/pomade.ts`, `src/integrations/pomade-start.ts`,
   `scheduler.ts`) are heard while the scheduler is connected to Pomade. One that came while Pomade
   or the scheduler was not listening does not exist: nothing catches it up.
@@ -601,7 +602,8 @@ Trigger History shows:
 
 | Cause (`cause`) | Trigger | When |
 |---|---|---|
-| `login` | Mac startup | a `login` service started by the scheduler's first supervision — at a Mac login; a service that outlived a log-out keeps running and writes nothing |
+| `login` | Mac startup | a `login` service started by the scheduler's first supervision when that scheduler start is a Mac login ("Firing hooks", **Mac login**); a service that outlived a log-out keeps running and writes nothing |
+| `runner-started` | Runner started | a `login` service started by the scheduler's first supervision when that start is no Mac login — a crash-restart of the scheduler, an update of Runner, the first start after an update with the keeper running, or a console login that cannot be told while the keeper ran — and the service was not running |
 | `pomade-started` | Pomade started | a `pomade-started` service started once Pomade runs |
 | `first-open` | first open | a first-open service started at its project's first open (`detail`: the project's name) |
 | `pomade-quit` | Pomade quit | a Pomade-bound service stopped when Pomade quit, or found running while Pomade is closed |
@@ -1124,7 +1126,12 @@ skills-folder: Knowledge/_skills/apps/   # where Runner keeps its agent skill
   `always` every run that started, `on-failure` a failed one, `never` none; a skipped or missed run
   never.
   The notice names the job and the result ("Backup failed", "exit 3 · <its last line>"); its click
-  opens the run's result card (`openApp`, route `run/<job>/<run>`).
+  opens the run's result card (`openApp`, route `run/<job>/<run>`). A failed agent run's line is
+  its screen's error, not its goodbye to the exit command (`agentErrorLine`, `agent-runs.ts`): the
+  screen is cut at the input box Runner typed the command into — the last line showing the command
+  or the box's frame, since the log's plain lines lose a box redrawn in place — and the line is the
+  last above it, frame and blank lines skipped
+  ("the agent's turn ended without an answer · ⎿ API Error: Not logged in · Please run /login").
 - **"Needs you" items always notify:**
   - a failed run
   - waiting for approval

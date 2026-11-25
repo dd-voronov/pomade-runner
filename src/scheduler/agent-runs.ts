@@ -104,3 +104,26 @@ export function answeredEnd(end: SessionEnd, answer: TurnAnswer): SessionEnd {
   if (end.state !== "done" || answer !== "none") return end;
   return { ...end, state: "failed", reason: NO_ANSWER_REASON };
 }
+
+/** A line of the agent's input box or a rule: nothing but its frame, a prompt sign and blanks. */
+const FRAME = /^[\s─━═│┃╭╮╰╯┌┐└┘>›❯]*$/u;
+
+/** The line of a failed agent run's screen that says what went wrong — the agent's error, as its
+ *  notice says it. Once Runner typed the exit command (`exit`; `null` when it typed none), what the
+ *  agent wrote after it is its goodbye: the screen is cut at the input box Runner typed it into —
+ *  the last line that shows the command or the box's frame — and the error is the last line above
+ *  it, blank lines and other frame lines skipped. The log's plain lines cannot always show the
+ *  command (the box is redrawn in place), so the frame marks the cut too. Without the command, the
+ *  last line that is no frame. `undefined` for none. */
+export function agentErrorLine(lines: readonly string[], exit: string | null): string | undefined {
+  let end = lines.length;
+  if (exit !== null) {
+    const box = lines.map((line) => line.includes(exit) || (line.trim() !== "" && FRAME.test(line))).lastIndexOf(true);
+    if (box !== -1) end = box;
+  }
+  return lines
+    .slice(0, end)
+    .reverse()
+    .find((line) => !FRAME.test(line))
+    ?.trim();
+}

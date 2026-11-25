@@ -51,7 +51,7 @@ import { serviceFile } from "./support/runner";
 import { startSchedulerProcess, type SchedulerProcess } from "./support/scheduler";
 
 const SHOTS = process.env.RUNNER_SHOTS;
-/** How long an agent has to start working here: the scheduler's 20 s, shortened. */
+/** How long an agent has to start working in the T-040 and T-052 tests: the scheduler's 20 s, shortened. */
 const NOT_STARTED_MS = 3000;
 const STRIP_KEY = `app-${manifest.id}-${STRIP_ICON}`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -112,7 +112,6 @@ test.describe("agent runs in Pomade", () => {
         POMADE_KEEPER_SOCKET: keeperSocket,
         POMADE_HOME: folders.home,
         POMADE_RUNNER_TICK_MS: "50",
-        POMADE_RUNNER_NOT_STARTED_MS: String(NOT_STARTED_MS),
         HOME: user,
         SHELL: "/bin/sh",
         ...extra,
@@ -342,143 +341,159 @@ test.describe("agent runs in Pomade", () => {
     await closeTab(tabId);
   });
 
-  test("T-040 · an agent stopped at a screen before it starts working waits for you: a notice, a Needs-you card, the badge, its time limit paused; accepted in its terminal, the run goes on to done", async () => {
-    expect(await needsYou()).toEqual([]);
-    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/consent.md"), agentJob("Weekly digest", "claude", "Sum up the week. [stuck]", "time-limit: 1m\n"));
-    expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "consent"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
-    await expect.poll(async () => (await going("consent"))?.state, { timeout: 15_000 }).toBe("running");
-    expect((await going("consent"))?.agent?.waiting).toBeNull();
-    await expect.poll(async () => (await going("consent"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("not-started");
-    const waiting = await going("consent");
-    expect(await needsYou()).toEqual([`waiting:consent:${waiting?.run ?? ""}`]);
-    await expect.poll(() => runnerNotices()).toContain("Weekly digest has not started");
-    await expect(page.getByTestId(`strip-badge-${STRIP_KEY}`)).toHaveText("1");
+  // The scheduler of the other tests gives an agent the production time to start working: under
+  // load the fake agent's login shell and Node can take seconds to start, and a shortened grace would
+  // make a run that started late wait for you. These tests — an agent that never starts working, and
+  // a consent that outlasts that time — start it again with the grace shortened.
+  test.describe("T-040 · T-052 · an agent's time to start working, shortened", () => {
+    test.beforeAll(async () => {
+      await scheduler?.kill();
+      await startScheduler({ POMADE_RUNNER_NOT_STARTED_MS: String(NOT_STARTED_MS) });
+    });
 
-    // Its card while it waits.
-    await openRunnerTab(runRoute("consent", waiting?.run ?? ""));
-    await expect(tab().getByTestId("run-result")).toHaveText("Waiting for you");
-    await expect(tab().getByTestId("run-waits")).toContainText("The agent has not started working");
-    await expect(tab().getByTestId("run-prompt")).toContainText("Select login method");
-    await shoot(page, "pomade-not-started-card");
+    test.afterAll(async () => {
+      await scheduler?.kill();
+      await startScheduler();
+    });
 
-    // Needs you's card: amber, "Open at the prompt", which opens its terminal at the screen.
-    await page.getByTestId(`strip-${STRIP_KEY}`).click();
-    await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
-    await drawn(page);
-    const card = panel().locator('[data-testid="needs-you-item"][data-kind="waiting"]');
-    await expect(card).toContainText("Weekly digest");
-    await expect(card.getByTestId("needs-you-words")).toHaveText("Has not started — look at its terminal.");
-    // Away from the strip, whose tooltip — it follows the focus — would cover the card.
-    await page.mouse.move(1000, 600);
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-    await shoot(page, "pomade-not-started-panel");
-    await card.getByRole("button", { name: "Open at the prompt" }).click();
-    await expect.poll(() => attachedTabIds()).toHaveLength(1);
-    const [tabId = ""] = await attachedTabIds();
-    await expect.poll(() => buffer(tabId)).toContain("Select login method");
-    await shoot(page, "pomade-not-started-tab");
+    test("T-040 · an agent stopped at a screen before it starts working waits for you: a notice, a Needs-you card, the badge, its time limit paused; accepted in its terminal, the run goes on to done", async () => {
+      expect(await needsYou()).toEqual([]);
+      await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/consent.md"), agentJob("Weekly digest", "claude", "Sum up the week. [stuck]", "time-limit: 1m\n"));
+      expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "consent"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+      await expect.poll(async () => (await going("consent"))?.state, { timeout: 15_000 }).toBe("running");
+      expect((await going("consent"))?.agent?.waiting).toBeNull();
+      await expect.poll(async () => (await going("consent"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("not-started");
+      const waiting = await going("consent");
+      expect(await needsYou()).toEqual([`waiting:consent:${waiting?.run ?? ""}`]);
+      await expect.poll(() => runnerNotices()).toContain("Weekly digest has not started");
+      await expect(page.getByTestId(`strip-badge-${STRIP_KEY}`)).toHaveText("1");
 
-    // A login method picked, the agent starts working: the wait ends and the run is done.
-    await page.getByTestId(`attached-xterm-${tabId}`).click();
-    await page.keyboard.press("2");
-    await expect.poll(() => needsYou()).toEqual([]);
-    await expect.poll(async () => (await history("consent")).length, { timeout: 30_000 }).toBe(1);
-    const [record] = await history("consent");
-    expect(record).toMatchObject({ state: "done", agent: { worked: true, waiting: null } });
-    expect(record?.agent?.waitedMs).toBeGreaterThan(0);
-    await expect.poll(() => buffer(tabId)).toContain("Done.");
-    await closeTab(tabId);
-  });
+      // Its card while it waits.
+      await openRunnerTab(runRoute("consent", waiting?.run ?? ""));
+      await expect(tab().getByTestId("run-result")).toHaveText("Waiting for you");
+      await expect(tab().getByTestId("run-waits")).toContainText("The agent has not started working");
+      await expect(tab().getByTestId("run-prompt")).toContainText("Select login method");
+      await shoot(page, "pomade-not-started-card");
 
-  test("T-040 · a run stopped at that screen never started a session: its card says so, with no Open session — and its time limit did not stop it while it waited", async () => {
-    test.setTimeout(120_000);
-    expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "consent"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
-    await expect.poll(async () => (await going("consent"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("not-started");
-    const waiting = await going("consent");
-    // Past its time limit of 1 minute, it still waits.
-    await new Promise((resolve) => setTimeout(resolve, 62_000));
-    expect(await going("consent")).toMatchObject({ state: "running", limitHit: null, agent: { waiting: { prompt: "not-started" } } });
-    const runner = await connectAs(manifest.id);
-    try {
-      await runner.apps.call(manifest.id, RUN_STOP_METHOD, { job: "consent", run: waiting?.run ?? "" });
-    } finally {
-      runner.close();
-    }
-    await expect.poll(async () => (await history("consent")).length, { timeout: 30_000 }).toBe(2);
-    const [record] = await history("consent");
-    expect(record).toMatchObject({ run: waiting?.run, state: "stopped-by-you", limitHit: null, agent: { worked: false, waiting: null } });
-    expect(await needsYou()).toEqual([]);
-    await openRunnerTab(runRoute("consent", record?.run ?? ""));
-    const dialog = tab().getByTestId("run-dialog");
-    await expect(dialog.getByTestId("run-agent-note")).toHaveText("The agent never started a session.");
-    await expect(dialog.getByRole("button", { name: "Open session" })).toHaveCount(0);
-    await expect(dialog).not.toContainText("cannot be read");
-    await expect(dialog.getByRole("button", { name: "Run again" })).toBeVisible();
-    await shoot(page, "pomade-never-started-card");
-  });
+      // Needs you's card: amber, "Open at the prompt", which opens its terminal at the screen.
+      await page.getByTestId(`strip-${STRIP_KEY}`).click();
+      await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
+      await drawn(page);
+      const card = panel().locator('[data-testid="needs-you-item"][data-kind="waiting"]');
+      await expect(card).toContainText("Weekly digest");
+      await expect(card.getByTestId("needs-you-words")).toHaveText("Has not started — look at its terminal.");
+      // Away from the strip, whose tooltip — it follows the focus — would cover the card.
+      await page.mouse.move(1000, 600);
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await shoot(page, "pomade-not-started-panel");
+      await card.getByRole("button", { name: "Open at the prompt" }).click();
+      await expect.poll(() => attachedTabIds()).toHaveLength(1);
+      const [tabId = ""] = await attachedTabIds();
+      await expect.poll(() => buffer(tabId)).toContain("Select login method");
+      await shoot(page, "pomade-not-started-tab");
 
-  test("T-052 · an agent at Claude's Bypass Permissions consent waits for you at once in Full autonomy, in its own words — notice, Needs you, card — Runner never answers it; accepted in its terminal, the run goes on to done", async () => {
-    expect(await needsYou()).toEqual([]);
-    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/bypass.md"), agentJob("Nightly cleanup", "claude", "Clean up the notes. [consent]", "mode: full-autonomy\n"));
-    expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "bypass"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
-    await expect.poll(async () => (await going("bypass"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("consent");
-    const waiting = await going("bypass");
-    // At once: well inside the agent's time to start.
-    expect((waiting?.agent?.waiting?.since ?? Infinity) - (waiting?.startedAt ?? 0)).toBeLessThan(NOT_STARTED_MS);
-    expect(await needsYou()).toEqual([`waiting:bypass:${waiting?.run ?? ""}`]);
-    await expect.poll(() => runnerNotices()).toContain("Nightly cleanup needs your consent");
+      // A login method picked, the agent starts working: the wait ends and the run is done.
+      await page.getByTestId(`attached-xterm-${tabId}`).click();
+      await page.keyboard.press("2");
+      await expect.poll(() => needsYou()).toEqual([]);
+      await expect.poll(async () => (await history("consent")).length, { timeout: 30_000 }).toBe(1);
+      const [record] = await history("consent");
+      expect(record).toMatchObject({ state: "done", agent: { worked: true, waiting: null } });
+      expect(record?.agent?.waitedMs).toBeGreaterThan(0);
+      await expect.poll(() => buffer(tabId)).toContain("Done.");
+      await closeTab(tabId);
+    });
 
-    await openRunnerTab(runRoute("bypass", waiting?.run ?? ""));
-    await expect(tab().getByTestId("run-result")).toHaveText("Waiting for you");
-    await expect(tab().getByTestId("run-waits")).toHaveText('Claude asks you to accept its Bypass Permissions mode — Full autonomy — for this agent profile, once. Pick "Yes, I accept" in its terminal and the run goes on; "No, exit" ends it.');
-    await expect(tab().getByTestId("run-prompt")).toContainText("Yes, I accept");
-    await shoot(page, "pomade-consent-card");
+    test("T-040 · a run stopped at that screen never started a session: its card says so, with no Open session — and its time limit did not stop it while it waited", async () => {
+      test.setTimeout(120_000);
+      expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "consent"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+      await expect.poll(async () => (await going("consent"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("not-started");
+      const waiting = await going("consent");
+      // Past its time limit of 1 minute, it still waits.
+      await new Promise((resolve) => setTimeout(resolve, 62_000));
+      expect(await going("consent")).toMatchObject({ state: "running", limitHit: null, agent: { waiting: { prompt: "not-started" } } });
+      const runner = await connectAs(manifest.id);
+      try {
+        await runner.apps.call(manifest.id, RUN_STOP_METHOD, { job: "consent", run: waiting?.run ?? "" });
+      } finally {
+        runner.close();
+      }
+      await expect.poll(async () => (await history("consent")).length, { timeout: 30_000 }).toBe(2);
+      const [record] = await history("consent");
+      expect(record).toMatchObject({ run: waiting?.run, state: "stopped-by-you", limitHit: null, agent: { worked: false, waiting: null } });
+      expect(await needsYou()).toEqual([]);
+      await openRunnerTab(runRoute("consent", record?.run ?? ""));
+      const dialog = tab().getByTestId("run-dialog");
+      await expect(dialog.getByTestId("run-agent-note")).toHaveText("The agent never started a session.");
+      await expect(dialog.getByRole("button", { name: "Open session" })).toHaveCount(0);
+      await expect(dialog).not.toContainText("cannot be read");
+      await expect(dialog.getByRole("button", { name: "Run again" })).toBeVisible();
+      await shoot(page, "pomade-never-started-card");
+    });
 
-    await page.getByTestId(`strip-${STRIP_KEY}`).click();
-    await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
-    await drawn(page);
-    const card = panel().locator('[data-testid="needs-you-item"][data-kind="waiting"]');
-    await expect(card).toContainText("Nightly cleanup");
-    await expect(card.getByTestId("needs-you-words")).toHaveText("Waiting for you to accept Full autonomy for its agent profile.");
-    await page.mouse.move(1000, 600);
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-    await shoot(page, "pomade-consent-panel");
-    // Past the agent's time to start, it still waits at the consent: no not-started wait takes over.
-    await new Promise((resolve) => setTimeout(resolve, NOT_STARTED_MS + 1000));
-    expect(await going("bypass")).toMatchObject({ state: "running", agent: { worked: false, waiting: { prompt: "consent" } } });
+    test("T-052 · an agent at Claude's Bypass Permissions consent waits for you at once in Full autonomy, in its own words — notice, Needs you, card — Runner never answers it; accepted in its terminal, the run goes on to done", async () => {
+      expect(await needsYou()).toEqual([]);
+      await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/bypass.md"), agentJob("Nightly cleanup", "claude", "Clean up the notes. [consent]", "mode: full-autonomy\n"));
+      expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "bypass"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+      await expect.poll(async () => (await going("bypass"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("consent");
+      const waiting = await going("bypass");
+      // At once: well inside the agent's time to start.
+      expect((waiting?.agent?.waiting?.since ?? Infinity) - (waiting?.startedAt ?? 0)).toBeLessThan(NOT_STARTED_MS);
+      expect(await needsYou()).toEqual([`waiting:bypass:${waiting?.run ?? ""}`]);
+      await expect.poll(() => runnerNotices()).toContain("Nightly cleanup needs your consent");
 
-    await card.getByRole("button", { name: "Open at the prompt" }).click();
-    await expect.poll(() => attachedTabIds()).toHaveLength(1);
-    const [tabId = ""] = await attachedTabIds();
-    await expect.poll(() => buffer(tabId)).toContain("Enter to confirm · Esc to cancel");
-    await shoot(page, "pomade-consent-tab");
-    await page.getByTestId(`attached-xterm-${tabId}`).click();
-    await page.keyboard.press("ArrowDown");
-    await page.keyboard.press("Enter");
-    await expect.poll(() => needsYou()).toEqual([]);
-    await expect.poll(async () => (await history("bypass")).length, { timeout: 30_000 }).toBe(1);
-    expect((await history("bypass"))[0]).toMatchObject({ state: "done", agent: { mode: "full-autonomy", worked: true, waiting: null, answered: [] } });
-    await closeTab(tabId);
-  });
+      await openRunnerTab(runRoute("bypass", waiting?.run ?? ""));
+      await expect(tab().getByTestId("run-result")).toHaveText("Waiting for you");
+      await expect(tab().getByTestId("run-waits")).toHaveText('Claude asks you to accept its Bypass Permissions mode — Full autonomy — for this agent profile, once. Pick "Yes, I accept" in its terminal and the run goes on; "No, exit" ends it.');
+      await expect(tab().getByTestId("run-prompt")).toContainText("Yes, I accept");
+      await shoot(page, "pomade-consent-card");
 
-  test("T-052 · \"No, exit\" at the consent ends the run and its wait: the screen stays as drawn, the agent's exit is the run's end", async () => {
-    expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "bypass"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
-    await expect.poll(async () => (await going("bypass"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("consent");
-    const waiting = await going("bypass");
-    await openRunnerTab(runRoute("bypass", waiting?.run ?? ""));
-    await tab().getByRole("button", { name: "Open at the prompt" }).click();
-    await expect.poll(() => attachedTabIds()).toHaveLength(1);
-    const [tabId = ""] = await attachedTabIds();
-    await expect.poll(() => buffer(tabId)).toContain("Enter to confirm · Esc to cancel");
-    // Enter on the highlighted "No, exit".
-    await page.getByTestId(`attached-xterm-${tabId}`).click();
-    await page.keyboard.press("Enter");
-    await expect.poll(async () => (await history("bypass")).length, { timeout: 30_000 }).toBe(2);
-    const [record] = await history("bypass");
-    expect(record).toMatchObject({ run: waiting?.run, state: "failed", agent: { worked: false, waiting: null } });
-    // The wait is gone; the failure's own item is cleared by its card, open in the Runner tab.
-    await expect.poll(() => needsYou()).toEqual([]);
-    await closeTab(tabId);
+      await page.getByTestId(`strip-${STRIP_KEY}`).click();
+      await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
+      await drawn(page);
+      const card = panel().locator('[data-testid="needs-you-item"][data-kind="waiting"]');
+      await expect(card).toContainText("Nightly cleanup");
+      await expect(card.getByTestId("needs-you-words")).toHaveText("Waiting for you to accept Full autonomy for its agent profile.");
+      await page.mouse.move(1000, 600);
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await shoot(page, "pomade-consent-panel");
+      // Past the agent's time to start, it still waits at the consent: no not-started wait takes over.
+      await new Promise((resolve) => setTimeout(resolve, NOT_STARTED_MS + 1000));
+      expect(await going("bypass")).toMatchObject({ state: "running", agent: { worked: false, waiting: { prompt: "consent" } } });
+
+      await card.getByRole("button", { name: "Open at the prompt" }).click();
+      await expect.poll(() => attachedTabIds()).toHaveLength(1);
+      const [tabId = ""] = await attachedTabIds();
+      await expect.poll(() => buffer(tabId)).toContain("Enter to confirm · Esc to cancel");
+      await shoot(page, "pomade-consent-tab");
+      await page.getByTestId(`attached-xterm-${tabId}`).click();
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      await expect.poll(() => needsYou()).toEqual([]);
+      await expect.poll(async () => (await history("bypass")).length, { timeout: 30_000 }).toBe(1);
+      expect((await history("bypass"))[0]).toMatchObject({ state: "done", agent: { mode: "full-autonomy", worked: true, waiting: null, answered: [] } });
+      await closeTab(tabId);
+    });
+
+    test("T-052 · \"No, exit\" at the consent ends the run and its wait: the screen stays as drawn, the agent's exit is the run's end", async () => {
+      expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "bypass"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+      await expect.poll(async () => (await going("bypass"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("consent");
+      const waiting = await going("bypass");
+      await openRunnerTab(runRoute("bypass", waiting?.run ?? ""));
+      await tab().getByRole("button", { name: "Open at the prompt" }).click();
+      await expect.poll(() => attachedTabIds()).toHaveLength(1);
+      const [tabId = ""] = await attachedTabIds();
+      await expect.poll(() => buffer(tabId)).toContain("Enter to confirm · Esc to cancel");
+      // Enter on the highlighted "No, exit".
+      await page.getByTestId(`attached-xterm-${tabId}`).click();
+      await page.keyboard.press("Enter");
+      await expect.poll(async () => (await history("bypass")).length, { timeout: 30_000 }).toBe(2);
+      const [record] = await history("bypass");
+      expect(record).toMatchObject({ run: waiting?.run, state: "failed", agent: { worked: false, waiting: null } });
+      // The wait is gone; the failure's own item is cleared by its card, open in the Runner tab.
+      await expect.poll(() => needsYou()).toEqual([]);
+      await closeTab(tabId);
+    });
   });
 
   test("3 · the done card shows the agent's last message; Open session resumes the session in a Pomade agent tab", async () => {
@@ -510,6 +525,10 @@ test.describe("agent runs in Pomade", () => {
     expect((await agents.session(record.agent?.sessionId ?? "")).lastMessage).toBeNull();
     await expect.poll(() => needsYou()).toContain("run-failed:unanswered");
     await expect.poll(() => runnerNotices()).toContain("Unanswered failed");
+    // The notice says the agent's error, not its goodbye to /exit.
+    const notice = page.getByTestId("notices-panel").locator('[data-testid="notice-row"][data-source="pomade-runner"]').filter({ hasText: "Unanswered failed" });
+    await expect(notice).toContainText("the agent's turn ended without an answer · ⎿ API Error: Not logged in · Please run /login");
+    await expect(notice).not.toContainText("Bye.");
     await openRunnerTab(runRoute("unanswered", record.run));
     const dialog = tab().getByTestId("run-dialog");
     await expect(tab().getByTestId("run-result")).toHaveText("Failed");

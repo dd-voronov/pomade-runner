@@ -218,13 +218,15 @@ export interface ActiveRun extends RunBase {
 export const SERVICE_EVENT_KINDS = ["started", "stopped", "restarted", "gave-up"] as const;
 export type ServiceEventKind = (typeof SERVICE_EVENT_KINDS)[number];
 
-/** Why it happened — the History row's Trigger: `login` a Mac login (Mac startup) · `first-open`
+/** Why it happened — the History row's Trigger: `login` a Mac login (Mac startup) ·
+ *  `runner-started` Runner's scheduler started within the same Mac login — after an update or a
+ *  restart — and found an always-on service not running · `first-open`
  *  its project's first open since Pomade started · `pomade-started` · `pomade-quit` · `you` Start,
  *  Stop or Restart (Runner, its tab, the command), or Ctrl+C in its tab · `chain` another job
  *  finished (the record's `cause` names it) · `crash` it ended by itself · `keeper` the keeper that
  *  held its session ended (it crashed, or was replaced) · `job-file` its job file was made, turned on
  *  or off, deleted, or moved with its project. */
-export const SERVICE_EVENT_CAUSES = ["login", "first-open", "pomade-started", "pomade-quit", "you", "chain", "crash", "keeper", "job-file"] as const;
+export const SERVICE_EVENT_CAUSES = ["login", "runner-started", "first-open", "pomade-started", "pomade-quit", "you", "chain", "crash", "keeper", "job-file"] as const;
 export type ServiceEventCause = (typeof SERVICE_EVENT_CAUSES)[number];
 
 /** How a crashed session ended: its exit code, or the signal that ended it; both `null` for a start
@@ -938,6 +940,7 @@ export function otherMissedRuns(view: RunView, latest: RunRecord | null, active:
 /** A service event's cause, as History's Trigger column says it. */
 export const SERVICE_CAUSE_WORDS: Record<ServiceEventCause, string> = {
   login: "Mac startup",
+  "runner-started": "Runner started",
   "first-open": "first open",
   "pomade-started": "Pomade started",
   "pomade-quit": "Pomade quit",

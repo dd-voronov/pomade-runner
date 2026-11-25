@@ -25,6 +25,7 @@ import { promptRoute, runRoute } from "../integrations/runner-api";
 import { entryId, type JobsSnapshot, type Notify } from "../jobs/model";
 import type { ServicesReport, ServiceStatus } from "../keeper/model";
 import { needsYouRecordPath, type RecordsFolder } from "../locations";
+import { agentErrorLine } from "./agent-runs";
 import type { Log } from "./log";
 import { FIRING_LIMIT, FIRING_WINDOW_MS } from "./loop-guard";
 import { dayTime, durationWords, failureWords, missedRunsWords, runWords, type ActiveRun, type AgentWait, type NeedsYouItem, type RunRecord } from "./model";
@@ -125,8 +126,16 @@ export function runNotice(record: RunRecord, notify: Notify): NoticeParams | nul
   }
   switch (record.state) {
     case "failed": {
-      // A git run's reason names each failed repo; its last lines say the same per repo.
-      const line = record.git === null ? record.lastLines.map(plainLine).reverse().find((text) => text.trim() !== "")?.trim() : undefined;
+      // A git run's reason names each failed repo; its last lines say the same per repo. An agent
+      // run's last line is its goodbye to the exit command: the line before that says the error.
+      // The notice is plain text: the lines' colours go.
+      const plain = record.lastLines.map(plainLine);
+      const line =
+        record.git !== null
+          ? undefined
+          : record.agent !== null
+            ? agentErrorLine(plain, record.agent.exitSentAt === null ? null : record.agent.exit)
+            : plain.reverse().find((text) => text.trim() !== "")?.trim();
       return { title: `${record.name} failed`, body: [failureWords(record), line].filter((part) => part !== undefined).join(" · ").slice(0, 2000), action };
     }
     case "done":

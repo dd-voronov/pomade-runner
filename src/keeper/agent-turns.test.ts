@@ -88,7 +88,7 @@ const UNNAMED = `\x1b[2J${row(3, " Ready to code?")}${row(5, " ❯ 1. Yes, auto-
 
 /** Claude Code's Bypass Permissions consent screen, from a real run's output log: drawn before any
  *  title, "❯ No, exit" highlighted. */
-const CONSENT = readFileSync(new URL("../../e2e/fixtures/claude-bypass-consent.log", import.meta.url), "utf8");
+const CONSENT = readFileSync(new URL("../../e2e/fixtures/claude-bypass-consent.txt", import.meta.url), "utf8");
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 

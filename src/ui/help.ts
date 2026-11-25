@@ -55,6 +55,7 @@ export const HELP = {
   'hist.events': ['Shows or hides the services’ starts, stops and restarts. Runs are always shown.', 'Example: off — only runs.'],
   'ev.row': ['A service started, stopped or was restarted. It has no duration and no output of its own — open its terminal while the session lives.', 'Example: started · Mac startup.'],
   'ev.startup': ['Runner started the always-on services after you logged in to the Mac.', 'Example: Dev server, up before you open Pomade.'],
+  'ev.runnerstart': ['Runner started again without a new Mac login — after an update, or after it restarted itself — and found this always-on service not running, so it started it.', 'Example: a service whose job file was made while Runner was not running.'],
   'ev.firstopen': ['The service starts the first time you open its project after Pomade starts.', 'Example: first open of shop → Docs preview.'],
   'ev.pomadestart': ['The service runs while Pomade runs: it started when Pomade was ready.', 'Example: Ticker.'],
   'ev.pomadequit': ['Pomade quit, so its Pomade-bound services stopped with it.', 'Example: Ticker and Docs preview stop at 19:05.'],

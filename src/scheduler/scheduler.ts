@@ -176,6 +176,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     clock,
     log,
     store: options.supervision,
+    startIsLogin: () => runs.startIsLogin(),
     probe: options.probe,
     pomade: () => ({ state: pomadeState, opened }),
     onChange: () => publish(SERVICES_CHANGED_EVENT),

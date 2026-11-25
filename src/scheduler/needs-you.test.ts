@@ -12,7 +12,7 @@ import { checkJobs } from "../jobs/check";
 import { needsYouRecordPath, recordsFolderOf } from "../locations";
 import type { Notify } from "../jobs/model";
 import type { RunnerSession, ServicesReport, ServiceStatus } from "../keeper/model";
-import { chainEvent, type RunRecord } from "./model";
+import { chainEvent, type AgentRun, type RunRecord } from "./model";
 import { createNeedsYou, fileNeedsYouStore, gaveUpNotice, loopNotice, runNotice, type NeedsYou, type NeedsYouStore } from "./needs-you";
 
 const T0 = Date.parse("2026-11-17T12:00:00.000Z");
@@ -80,6 +80,22 @@ describe("runNotice", () => {
     expect(runNotice(record("failed"), "on-failure")).toEqual({ title: "Backup failed", body: "exit 1 · rsync: connection refused", action: { kind: "openApp", route } });
     expect(runNotice(record("failed", { reason: "lost in a keeper crash", exitCode: null, lastLines: [] }), "on-failure")).toEqual({ title: "Backup failed", body: "lost in a keeper crash", action: { kind: "openApp", route } });
     for (const state of ["done", "skipped", "stopped-by-you"] as const) expect(runNotice(record(state), "on-failure")).toBeNull();
+  });
+
+  it("a failed agent run's notice says the agent's error, the line before the exit command Runner typed — not its goodbye", () => {
+    const agent: AgentRun = { agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-17T12:00:00.000Z", exit: "/exit", exitSentAt: T0, workedOn: false, worked: true, waiting: null, waitedMs: 0, background: null, answered: [] };
+    const screen = ["● Write my morning summary.", "  ⎿  API Error: Not logged in · Please run /login", "", "╭──────────╮", "│ >        │", "╰──────────╯", "> /exit", "Bye."];
+    const unanswered = record("failed", { kind: "agent", agent, reason: "the agent's turn ended without an answer", exitCode: 0, lastLines: screen });
+    expect(runNotice(unanswered, "on-failure")?.body).toBe("the agent's turn ended without an answer · ⎿  API Error: Not logged in · Please run /login");
+    // An agent that exited before its turn was done had no exit command typed: its last line says it.
+    const early = record("failed", { kind: "agent", agent: { ...agent, exitSentAt: null }, reason: "the agent exited before its turn was done", exitCode: 1, lastLines: ["● Working…", "Error: out of memory"] });
+    expect(runNotice(early, "on-failure")?.body).toBe("the agent exited before its turn was done · Error: out of memory");
+    // The box redrawn in place: the command and the goodbye on one plain line, under the box's frame.
+    expect(runNotice({ ...unanswered, lastLines: ["  ⎿  API Error: Not logged in · Please run /login", "─".repeat(40), "❯ ", "─".repeat(40), "Bye."] }, "on-failure")?.body).toBe("the agent's turn ended without an answer · ⎿  API Error: Not logged in · Please run /login");
+    // Coloured lines: the notice says the error as plain text, the frame known under its colours.
+    expect(runNotice({ ...unanswered, lastLines: ["  \x1b[31m⎿  API Error: Not logged in\x1b[0m", "\x1b[2m────────\x1b[0m", "\x1b[2m❯ \x1b[0m", "Bye."] }, "on-failure")?.body).toBe("the agent's turn ended without an answer · ⎿  API Error: Not logged in");
+    // The command not on screen as typed: the last line that is no frame.
+    expect(runNotice({ ...unanswered, lastLines: ["  ⎿  API Error: 529 Overloaded", "────────", ">"] }, "on-failure")?.body).toBe("the agent's turn ended without an answer · ⎿  API Error: 529 Overloaded");
   });
 
   it("says a failed run's last line as plain text when the program coloured it", () => {

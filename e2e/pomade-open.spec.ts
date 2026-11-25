@@ -129,6 +129,9 @@ test.describe("Pomade opened for an agent run", () => {
   }
 
   test("E-004 1 · at a weekday 7:00 with Pomade closed, Runner opens Pomade, the runs that came due meanwhile wait for that one launch and start in their order, and the panel shows them running", async () => {
+    // Two 15 s turns after a launch of Pomade fill most of the default 30 s by themselves; the test
+    // gets the time its own waits allow (Pomade up within 90 s, the turns done within 40 s).
+    test.setTimeout(150_000);
     const jobs = join(folders.workspace, "Apps/pomade-runner/jobs");
     await writeFile(join(jobs, "summary.md"), summaryJob("Write my morning summary. [long]"));
     await writeFile(join(jobs, "inbox.md"), summaryJob("Tidy the drafts. [long]").replace("name: Morning summary", "name: Tidy drafts"));

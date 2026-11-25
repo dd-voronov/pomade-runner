@@ -60,6 +60,7 @@ export function isEventRecord(item: HistoryItem): item is EventRecord {
 /** The help of a service event's cause. */
 export const CAUSE_HELP: Record<ServiceEventCause, HelpKey> = {
   login: "ev.startup",
+  "runner-started": "ev.runnerstart",
   "first-open": "ev.firstopen",
   "pomade-started": "ev.pomadestart",
   "pomade-quit": "ev.pomadequit",

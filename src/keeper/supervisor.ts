@@ -244,6 +244,9 @@ export interface SupervisorOptions {
   systemNow?: () => number;
   log: Log;
   store: SupervisionStore;
+  /** Whether this scheduler start is a Mac login; asked once, on the first reconcile. An
+   *  always-on service due then starts for the login, else for Runner's own start (`runner-started`). */
+  startIsLogin(): Promise<boolean>;
   /** Whether a port or URL check passes now. */
   probe(ready: NetworkReadiness): Promise<boolean>;
   /** Where Pomade stands and the projects opened since it started: a `pomade-started` service is
@@ -347,8 +350,11 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
   const random = options.random ?? ((): string => randomBytes(3).toString("hex"));
   /** What made each service due to start, kept until it starts or is due no more: its event's cause. */
   const dueCauses = new Map<string, { cause: ServiceEventCause; detail: string | null }>();
-  /** Whether a reconcile has run: the services due at the first are the Mac login's. */
+  /** Whether a reconcile has run: the always-on services due at the first are the Mac login's, or
+   *  Runner's own start's. */
   let booted = false;
+  /** Whether this scheduler start is a Mac login; known from the first reconcile on. */
+  let startIsLogin = false;
   /** Where Pomade stood, and the projects opened since it started, at the latest reconcile. */
   let pomadeBefore: PomadeState | null = null;
   let openedBefore: ReadonlySet<string> = new Set();
@@ -518,10 +524,10 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     );
   }
 
-  /** Why a service not started by a crash is due: the Mac login (the first reconcile's), Pomade's
-   *  start, its project's first open — else its job file, made or turned on. */
+  /** Why a service not started by a crash is due: the Mac login or Runner's own start (the first
+   *  reconcile's), Pomade's start, its project's first open — else its job file, made or turned on. */
   function dueCause(service: ServiceJob): { cause: ServiceEventCause; detail: string | null } {
-    if (!booted && service.start === "login") return { cause: "login", detail: null };
+    if (!booted && service.start === "login") return { cause: startIsLogin ? "login" : "runner-started", detail: null };
     if (service.start === "pomade-started" && pomadeBefore !== "running") return { cause: "pomade-started", detail: null };
     const project = service.startProject;
     if (service.start === "project-first-open" && project !== null && options.pomade().opened.has(project) && !openedBefore.has(project)) {
@@ -719,6 +725,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
   async function reconcile(): Promise<void> {
     const workspace = options.jobs().workspace;
     if (!sessions.followed() || workspace === null) return;
+    if (!booted) startIsLogin = await options.startIsLogin();
     const at = now();
     const list = entries();
     const due: { entry: Entry; service: ServiceJob }[] = [];
