@@ -84,7 +84,9 @@ keep true.
   supervision record). A chain's action on a service is written by `runs.ts` from the supervisor's
   outcome (`chainEvent`: the session it started and the one it ended), never by the supervisor. The
   record is a `RunRecord` with `event` (`ServiceEvent`: `what`, `cause`, `detail`, `session`,
-  `ended`, `restarts`, `ends`); `history.sessionEnd` finds the event whose `ended` holds the session
+  `ended`, `restarts`, `ends`); the cause of the start a scheduler's first look makes is `login`
+  (Mac startup) only at a Mac login and `runner-started` ("Runner started") at any other scheduler
+  start — a restart, an update — by the same decision (`decideStart`); `history.sessionEnd` finds the event whose `ended` holds the session
   an event started. A record with an `action` field instead of `event` reads as its event
   (`parseRunRecord`). A service event fires no chain (`parentResult` is `null`).
 - **The agent skill** (`jobs/skill/place.ts`) — the scheduler keeps a copy of the installed skill in the
@@ -108,12 +110,15 @@ keep true.
   run's keeper session as `terminal` (`run-events.ts`). The scanner's reading of the agent's screen
   (`keeper/agent-turns.ts`) drives four more states of a running run:
   - *waiting for you* — at a permission or trust prompt, at the agent's question form (`question`),
-    at a screen Runner does not know (`unknown`), or `not-started` (`AgentWait`, `AGENT_WAIT_KINDS`).
-    `unknown` is the scanner's wait at the idle title over any screen but the agent's empty prompt,
+    at Claude's Bypass Permissions consent (`consent`), at a screen Runner does not know (`unknown`),
+    or `not-started` (`AgentWait`, `AGENT_WAIT_KINDS`). The consent comes before the agent sets any
+    title and is a wait at once, in every mode; Runner never answers it: "Yes, I accept" brings the
+    agent's start screen and ends the wait, "No, exit" ends the agent, and the run is failed ("the
+    agent exited before its turn was done"). `unknown` is the scanner's wait at the idle title over any screen but the agent's empty prompt,
     and counts only once the agent has worked, and not after the exit command (the exit wait ends
     it); before the agent worked such a screen is the `not-started` case: the agent has not been seen
     working `NOT_STARTED_MS` (20 s, its waits left out; as long again after a scheduler restart) into
-    the run and waits at no prompt the scanner names, a consent or login screen. Only the agent
+    the run and waits at no prompt the scanner names, a login or onboarding screen. Only the agent
     working ends a `not-started` wait. The run holds no low-priority slot meanwhile, its time limit
     is paused, and it is a Needs-you item and a notice (`WAIT_WORDS`, `WAIT_NOTICES`);
   - *a question form answered* (`answer`, `AgentRun.answered`) — in Full autonomy (`FULL_AUTONOMY_MODE`)
@@ -141,15 +146,20 @@ keep true.
   exit wait, once the exit command was typed is **done**; an exit before it is **failed** ("the agent
   exited before its turn was done"); a done run whose agent never answered — the Agents app's
   `sessions.lastMessage` is `null` — is **failed**, `NO_ANSWER_REASON`; an answer that cannot be asked
-  leaves it done. Stopped by you and the time limit read as for a script. An agent stopped at the
+  leaves it done. A failed run's notice says the agent's error line — the last line above the input
+  box the exit command was typed into, frame and blank lines skipped (`agentErrorLine`) — not its
+  goodbye line. Stopped by you and the time limit read as for a script. An agent stopped at the
   `not-started` screen made no session of its own: the Agents app has none for the run's session id,
   and the card says so.
-- **Records** — history (`history.ts`, JSON Lines per day, output log moved in at the run's end),
+- **Records** — history (`history.ts`, JSON Lines per day, output log moved in at the run's end; the
+  record's last lines keep the colours and bold of the program as SGR codes of Runner's palette,
+  every other terminal code removed — `terminal-text.ts`; notices and the `history` command show
+  them as plain text),
   `runs.json`, `switch.json`, `needs-you.json`, `services.json`, `renamed.json` in the workspace's records
   folder; sessions, projects, crash counts (and the crash window going), the Pomade start and the
   console login acted on (`login.json`) in the machine-local state folder.
 - **Needs you and notices** (`needs-you.ts`) — one item per failed job; items for a service that gave up
-  (with why its last start failed, and whether it has a session), a missed run that waits, an agent run waiting for you (at a prompt, at a question, at a screen Runner does not know, or one that has not started), a long run, a loop-guard pause.
+  (with why its last start failed, and whether it has a session), a missed run that waits, an agent run waiting for you (at a prompt, at a question, at the consent, at a screen Runner does not know, or one that has not started), a long run, a loop-guard pause.
 - **Settings** (`settings.ts` pure, `settings-file.ts` read each tick and written field-only).
 - **Workspace** (`workspace-follow.ts`) — one workspace at a time; another recorded one restarts the
   scheduler on it, the keeper and its sessions untouched.
@@ -169,9 +179,9 @@ keep true.
 | `hooks.ts` | which jobs an event fires, the filters, the environment of a hook's runs (`projectFiring`, `sessionFiring`, `POMADE_STARTED`) |
 | `chains.ts` | which jobs a finished run fires; the result a chain sees (none for a service event) |
 | `loop-guard.ts` | the firing count per job, the pause, Resume |
-| `agent-runs.ts` | an agent run's rules (pure): what its session runs, how its end reads — an unanswered turn and background work left included —, which session the lookup by folder and start time picks, the time an agent has to start working (`NOT_STARTED_MS`; `POMADE_RUNNER_NOT_STARTED_MS` in tests), the question form's free-text rows Runner never answers (`FREE_TEXT_OPTIONS`), the keychain failure's reason |
-| `git-runs.ts` | a git run's command line (the repos in the job file's order), its end read with `pomade-git`'s result, its lines per repo, the `jobs.forRepo` answer; a done pull's commit count is read from the result by `integrations/pomade-next.ts` (`pulledCommits`) |
-| `history.ts` | history records and the output logs: appending, replacing a crash window's record in place (`put`), reading a page of records (`HistoryRecords`: a `HistoryPage` without its held rows, which `runs.ts` knows), the event that ended a service session (`sessionEnd`), retention, moving a log into the records folder |
+| `agent-runs.ts` | an agent run's rules (pure): what its session runs, how its end reads — an unanswered turn and background work left included —, which session the lookup by folder and start time picks, the line of a failed run's screen that is its error (`agentErrorLine`), the time an agent has to start working (`NOT_STARTED_MS`; `POMADE_RUNNER_NOT_STARTED_MS` in tests), the question form's free-text rows Runner never answers (`FREE_TEXT_OPTIONS`), the keychain failure's reason |
+| `git-runs.ts` | a git run's command line (the repos in the job file's order), its end read with `pomade-git`'s result, its lines per repo, the `jobs.forRepo` answer; a pull's line says what it got — "pulled · 2 commits", "pulled · up to date" — from its step's `commits` (`gitRepoLine`) |
+| `history.ts` | history records and the output logs, a record's last lines kept with their colours and bold: appending, replacing a crash window's record in place (`put`), reading a page of records (`HistoryRecords`: a `HistoryPage` without its held rows, which `runs.ts` knows), the event that ended a service session (`sessionEnd`), retention, moving a log into the records folder |
 | `records-move.ts` | the one-time move of the records from the state folder into the workspace |
 | `renamed.ts` | `renamed.json`: old job id → new id after a project move; a job's history takes in every id it had |
 | `project-moves.ts` | following a project renamed or moved: job files' `folder:`, the jobs sub-folder, the jobs' state |
@@ -181,6 +191,7 @@ keep true.
 | `settings.ts`, `settings-file.ts` | the five workspace settings: validation (pure); the file read and written |
 | `environment.ts`, `read-environment.ts` | what Settings shows about the Mac (notification permission, where the skill's copy is): the shared type and check (pure); reading it from the Mac |
 | `workspace-follow.ts` | waiting for a workspace, starting again on another |
+| `terminal-text.ts` | a run's output as lines of styled spans: the colours and bold kept in the app's palette, every other terminal code removed, a line rewritten with `\r` as it ended (`outputLines`); the plain lines (`plainLines`, `plainLine`), a line as SGR codes for the record (`styledText`), a line cut with "…" (`cutLine`) |
 | `run-events.ts` | the payloads of `run.started` and `run.finished`, agent fields included — the run's `terminal`, its keeper session |
 | `model.ts` | the shared model of runs (`AgentRun`: `worked`, `workedOn`, `waiting`, `background`, `answered`), history records and their `ServiceEvent`, Needs you, the switch, and their words (`runTriggerWords`, `hookCauseWords`, `waitsWords`, `runWords`, `serviceEventWords`, `pulledWords`, `missedRunsWords`, `heldRunsWords`, `heldRowWords`), `HeldRun` and `HistoryPage.held` |
 | `clock.ts` | the `Clock`, the tick length, the test overrides `POMADE_RUNNER_TICK_MS`, `POMADE_RUNNER_CLOCK`, `POMADE_RUNNER_CLOCK_RATE` |
@@ -214,7 +225,7 @@ keep true.
 - A Pomade-bound service never runs while Pomade is closed, and a `login` service is untouched by a Pomade quit.
 - An agent run starts in a keeper that passed the keychain check or whose check could not run; the keychain
   check never replaces a keeper while a run is going.
-- An agent run that waits for the person (a prompt, `not-started`) has its wait left out of its time limit and holds no
+- An agent run that waits for the person (a prompt, the consent, `not-started`) has its wait left out of its time limit and holds no
   low-priority slot; one that waits for the agent's background work has and holds both.
 - The exit command is typed only on the scanner's `idle`, the agent's empty prompt; a screen that is not
   one is never typed into except by Runner's answer to a question form in Full autonomy.
@@ -231,7 +242,7 @@ keep true.
 Unit (vitest), beside the files: `agent-runs`, `chains`, `clock`, `console-login`, `control/protocol`,
 `delete`, `environment`, `git-runs`, `history`, `hooks`, `hooks-chains`, `load`, `loop-guard`, `missed`, `model`,
 `needs-you`, `project-moves`, `queue`, `read-environment`, `records-move`, `renamed`, `runs`, `scheduler`, `settings`,
-`settings-file`, `triggers`, `workspace-follow`. E2E: `background`, `runs`, `load`, `chains`, `git`,
+`settings-file`, `terminal-text`, `triggers`, `workspace-follow`. E2E: `background`, `runs`, `load`, `chains`, `git`,
 `services` (processes, Pomade closed); `pomade`, `pomade-hooks`, `pomade-agent-hooks`, `pomade-agents`,
 `pomade-agents-real`, `pomade-open`, `pomade-load`, `pomade-git`, `pomade-lifetimes` (a real Pomade).
 

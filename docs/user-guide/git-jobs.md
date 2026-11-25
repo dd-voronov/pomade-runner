@@ -56,7 +56,9 @@ Pomade's command folder; open Pomade once. A failed run is a notice and a Needs-
 ## The result card
 
 A git run's card lists each repo with its commit hash and its steps — a tick for done, a cross for
-failed, faint for skipped: "notes · committed a1b2c3d · pulled · pushed", "skipped · agent working".
+failed, faint for skipped: "notes · committed a1b2c3d · pulled · 2 commits · pushed", "notes · pulled · up to
+date", "skipped · agent working". A pull says what it got when the Pomade that ran it reports it, else plain
+"pulled".
 A failed repo's line ends with **Open in Git**: it takes you to that repo in Pomade's Git panel, where
 you resolve the conflict — in the job's project when its folder holds the repo, else the first project
 whose folder holds it, else the Workspace. The button shows only when your Pomade supports it; if

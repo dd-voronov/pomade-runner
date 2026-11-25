@@ -25,14 +25,15 @@ result card show the same time at the same moment. Click a row, or press Enter o
 open its result card.
 
 **Service events.** Every start, stop, restart and give-up of a service is a row of its own, with no
-duration and its cause as the Trigger: `Mac startup` · `first open` · `Pomade started` · `Pomade quit` ·
+duration and its cause as the Trigger: `Mac startup` · `Runner started` · `first open` · `Pomade started` · `Pomade quit` ·
 `you` (Start, Stop or Restart, or Ctrl+C in its tab) · `chain` · `crash` · `keeper` (the keeper that held
 its session ended) · `job file` (the file was made, turned on or off, deleted, or its project moved). The
 Result reads `started` · `stopped` · `restarted` · `restarted 4× · exit 1, 137` (after a crash, in plain
 words with an amber dot; one row for a whole crash window, which grows as the restarts add up) ·
 `gave up after 5 crashes` (red); a chain's action that had nothing to do or was refused reads
 `restart skipped · <why>` or `start failed · <why>`. The **Service events** chip after `This project`
-is on by default; turn it off to see runs only. Runs are never hidden. Click an event row, or press
+is on by default; turn it off to see runs only. The tab keeps the chip as you set it while you visit
+other views. Runs are never hidden. Click an event row, or press
 Enter or Space on it, for its card.
 
 While the switch holds a job, History has a row for it: the job's name, `held · 2 runs so far,
@@ -45,7 +46,9 @@ released the row becomes the record of the miss (`missed 2 runs, 17:40–17:42 �
 Every column with text can be resized: **Job**, **Result**, **Duration** and **Trigger** each have a
 grip on the right edge of their header (the time and the kind icon have none). Drag one, or focus it
 and press Left or Right (Shift for bigger steps), to change that column's width and no other's; a
-double click puts the table back to its default layout. When the columns are wider than the tab, the
+double click puts the table back to its default layout. The table scrolls in its own area under the filter
+chips: the column header stays at the top, and under it the head of the day being read, while the
+runs scroll beneath; the sideways scrollbar is at the bottom of the tab. When the columns are wider than the tab, the
 table scrolls sideways with its header and rows, the day heads keeping their titles at the left. A
 Job, Result or Trigger too long for its column ends in "…" and shows whole in a tooltip. Runner
 remembers the widths on this Mac.
@@ -88,7 +91,7 @@ waiting run's amber. **Edit job** ends every card.
 | Git, ended | each repo with its commit hash and steps; a failed repo's line ends with `Open in Git` | `View output` · `Run again` |
 | Agent, ended | a failed run's reason; the agent's **Last message**. A run whose turn ended without an answer ("The agent's turn ended without an answer") shows **Last lines**, the agent's screen, in place of a message. A run whose agent never started a session says "The agent never started a session." In Full autonomy, a line "Runner answered: <option>" for each question form Runner answered itself | `Open session` (not for a run that never started a session) · `View output` · `Run again` |
 | Running | **Latest output**, followed while it runs. An agent run waiting for its agent's background work says first: "The agent’s turn is over, but work it started in the background still goes. Runner waits for that work: the agent goes on once it ends, and the run is done when the agent is. The time limit keeps counting." Under it, "Runner answered: <option>" for each question form Runner answered in Full autonomy | `Open terminal` · `Stop run` |
-| Agent, waiting for you | what it waits at — a permission prompt, the folder's trust, its question ("The agent asks you a question and waits for you to pick an option."), a screen Runner does not know — and **Waiting at**: the end of its output | `Open at the prompt` · `Stop run` |
+| Agent, waiting for you | what it waits at — a permission prompt, the folder's trust, its question ("The agent asks you a question and waits for you to pick an option."), Claude's consent to Full autonomy for its agent profile, a screen Runner does not know — and **Waiting at**: the end of its output | `Open at the prompt` · `Stop run` |
 | Queued | what it waits for, in a sentence | `Run now` |
 | Missed, waiting for you | when it was due — "This job missed 4 runs, 17:40–17:46." for more than one — and that its policy is "Wait for me" | `Run now` · `Run at…` · `Skip`; for more than one `Run once` · `Run all 4` · `Run at…` · `Skip` |
 | Skipped or missed | why it never started | `Run now` |
@@ -97,6 +100,9 @@ waiting run's amber. **Edit job** ends every card.
 `Run all` and `Run the other N` ask once more above 20 runs, naming the number
 ([Missed runs and load](missed-runs-and-load.md) "Run all"). `Stop run` and a missed run's choices close the card and toast the outcome; `Run again` toasts
 "<job> started · trigger “manual”" (or "queued"). A run no longer in History opens a card that says so.
+
+A card's **Last lines** and **Latest output** show the same colours and bold; the notices, the
+`Waiting at` lines and `pomade-runner history` show the text alone.
 
 **Open in Git** takes you to the failed repo in Pomade's Git panel, where a conflict is resolved: in the
 job's own project when its folder holds the repo, else in the first project that holds it, else in the
@@ -109,8 +115,8 @@ Opening the card of a failed run clears that run's Needs-you item.
 
 `View output` opens the run's output in a Pomade tab of its own, "<job> · output", beside the Runner
 tab — one per run; pressing it again focuses the tab. Its head names the job and says "Captured log ·
-<when> · read-only" (plus "· still running" while it goes); **Copy** puts the log on the clipboard ("Copied
-the log"). The log is plain text, followed while the run runs; a log longer than 1 MiB shows its end
+<when> · read-only" (plus "· still running" while it goes); **Copy** puts the log on the clipboard as plain text ("Copied
+the log"). The log is shown in the colours and bold the program printed — a failing test in red, a heading in bold — followed while the run runs; a log longer than 1 MiB shows its end
 under "… only the end of a longer log is shown". It reads "(no output)" for none, and "This run's
 output is not on this Mac." when the record came with the workspace from another Mac — the record's last
 lines still show on the card. A restored tab whose run has left History closes itself. A git run's log
@@ -130,7 +136,7 @@ to what the card is about — the time, one line of text and the actions. Every 
 | failed run | "Failed: exit 1 · 2×" (the count when more than one since the item came) | `Open` · `Run now` · `Dismiss` |
 | service gave up | "Crashed 5× in 1 min — gave up."; "Gave up — could not start: <why>" when it never got a terminal | `Start` · `View output` (not without a terminal) |
 | missed run waits | "Missed — it waits for you to pick a time."; "Missed 4 runs, 17:40–17:46 — …" when it stands for more than one | `Run now` · `Run at…` · `Skip`; for more than one `Run once` · `Run all 4` · `Run at…` · `Skip` (four buttons wrap to a second row) |
-| agent run waits | "Waiting for approval at a permission prompt." / "Waiting for you to trust its folder." / "Waiting for your answer to its question." (in Full autonomy Runner answers the form itself, so no item — unless the form highlights no option) / "Waiting at a screen Runner does not know." (an agent that worked; Runner never types into it) / "Has not started — look at its terminal." (an agent still not working 20 s into its run) | `Open at the prompt` |
+| agent run waits | "Waiting for approval at a permission prompt." / "Waiting for you to trust its folder." / "Waiting for your answer to its question." (in Full autonomy Runner answers the form itself, so no item — unless the form highlights no option) / "Waiting for you to accept Full autonomy for its agent profile." (Claude's consent, asked once per agent profile; Runner never answers it) / "Waiting at a screen Runner does not know." (an agent that worked; Runner never types into it) / "Has not started — look at its terminal." (an agent still not working 20 s into its run) | `Open at the prompt` |
 | long run | "Running 3h — still expected?" | `Open` · `Stop` · `Dismiss` |
 | job paused by the loop guard | "Paused: triggered 10× in 10 min." | `Resume` · `Edit job` |
 
@@ -149,7 +155,7 @@ to what the card is about — the time, one line of text and the actions. Every 
 **Notify me** is per job: `Always` notices every run that started, `On failure` a failed one, `Never`
 none. A skipped or missed run never notices, except a Wait for me job's missed run. A notice names the
 job and the result ("Backup failed", "exit 3 · <its last line>"); its click opens the run's card. A
-`Needs you` item notices once, when it appears ("<job> asks you a question", "<job> waits at a screen
+`Needs you` item notices once, when it appears ("<job> asks you a question", "<job> needs your consent", "<job> waits at a screen
 Runner does not know").
 
 While Pomade runs, notices appear in Pomade and the Runner icon carries a red badge with the Needs-you

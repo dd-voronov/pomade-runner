@@ -77,7 +77,9 @@ reads "N jobs", plus "· N invalid" when a file has errors. Columns:
   pulled", "done · 1 commit pulled", "done · up to date"; no pull, or no count, reads "done"). A run going shows how long so far, counted each second for the first minute; a queued run reads "queued · 1 ahead" over
   "since 12:46"; a job the loop guard paused reads amber "paused · looks like a loop" over when and
   "10× in 10 min". "never ran" for none. Click it to open the run's result card. A service shows its
-  state as the Services view does.
+  state as the Services view does — with the project's name when it waits for that project's first
+  open — and none while Runner's scheduler has not reported it (a disabled file reads "disabled" at
+  once), with no Start or Stop yet.
 - **Next run** — "disabled", "paused" (the loop guard's), "always on" (a service that starts on Mac
   startup), "with Pomade" (a service bound to Pomade), "on event" (a hook or a chain), "not scheduled" (a
   manual job), "finished" (a schedule with nothing ahead), else the next time ("Today 13:00", "Wed

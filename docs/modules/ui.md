@@ -54,13 +54,22 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
   click puts the table back to its default layout. While no column was resized the default tracks apply;
   from the first resize every sized column has a fixed width, the first resize starting from the widths
   as rendered. The table is as wide as the view or, when the widths need more
-  (`tableMinWidth`), wider: it scrolls sideways inside the view with its head and rows together, and a
-  History day head (`GroupHead` `pinned`) keeps its title at the left edge. The widths are kept in the
+  (`tableMinWidth`), wider. The widths are kept in the
   browser's `localStorage` (`pomade-runner.services.column-widths`, `pomade-runner.history.column-widths`,
   one JSON object per table); a store that is missing or refuses, or widths missing a sized column,
   leave the default layout and the table still resizes. A Services view narrower than 800 px (a
   container query, `ServicesView.module.css`) drops the Command column from the head, puts each command
   under its name, shows no grips and does not scroll sideways; the widths kept stay for a wider tab.
+- **A table's own scroll area.** History's and Services' pages fill the tab (`TabShell`'s `fill`,
+  `RunnerTab.tsx`), so the tab's region does not scroll: the filter row stays, and the table
+  (`ResizableTable`, the last thing of the view) is a scroll area of its own, as tall as its rows and
+  at most down to 12 px above the tab's bottom edge. The column head stays at its top, with a
+  hairline while the list is scrolled down (`data-scrolled`, set by the area's `onScroll`), and
+  History's day head (`GroupHead` `pinned`) stays under it — each day is a block of its own, so the
+  next day's head pushes the one before it up (`--table-pinned-h`, the pinned rows' height) — and
+  keeps its title at the left edge while the table scrolls sideways, head and rows together. The
+  sideways scrollbar is at the bottom of the view, and a row that takes focus scrolls into sight below
+  the pinned rows. Jobs, Settings and the other pages scroll in the region.
 - **Cut text carries its whole text.** An element with `data-tip-cut` (History's Job, Result and
   Trigger; `Status` with `cutTip`) shows its whole text first in its tooltip while its text is cut with
   "…", above its own help or line; while it fits the tooltip is its help alone. A service's command
@@ -93,24 +102,27 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
   (`useLastMessage` → `NO_SESSION`) says "The agent never started a session." and drops Open session.
   A running run waiting for background work shows its sentence (`run-background`) above its Latest
   output; a run waiting for you shows the sentence of what it waits at (`WAITING_SENTENCE`:
-  permission, trust, question, unknown, `not-started`), the Needs-you card's line (`WAITING_TEXT` in
-  `panelWords.ts`: "Waiting for your answer to its question.", "Waiting at a screen Runner does not
-  know.") and its help (`WAITING_HELP`: `need.approval`, `need.question`, `need.unknown`,
-  `need.notstarted`). A run's `agent.answered` — the options Runner picked at the agent's question
+  permission, trust, question, `consent`, unknown, `not-started`), the Needs-you card's line
+  (`WAITING_TEXT` in `panelWords.ts`: "Waiting for your answer to its question.", "Waiting for you to
+  accept Full autonomy for its agent profile.", "Waiting at a screen Runner does not know.") and its
+  help (`WAITING_HELP`: `need.approval`, `need.question`, `need.consent`, `need.unknown`,
+  `need.notstarted`). The consent's sentence names Claude's Bypass Permissions mode — Full
+  autonomy — and says to pick "Yes, I accept" in the terminal; the `not-started` sentence lists a
+  login and a first-run step. A run's `agent.answered` — the options Runner picked at the agent's question
   forms in Full autonomy — is one line each, "Runner answered: <option>" (`Answered`, `run-answered`),
   above Latest output while the run goes and above Last message once it ended. A queued run waiting
   for a fresh keeper (`waits.kind` `keeper`) says why in `waitsSentence` (`runLook.ts`).
 - **A git run's card and words.** A failed repo's line ends with **Open in Git** (`GitBody` in
   `RunCard.tsx`) while the host serves `git.reveal`: Pomade's `git.getState` and `project.list` give the
   repo's root and the projects, `revealProject` (`gitReveal.ts`) picks the project that holds it (the
-  job's own, else the first by id, else the Workspace), and the call is `git.reveal` with the repo's
-  path and that project. The kit's client has no method for it, so `main.tsx` keeps the transport it
-  connects with and `platformCalls.ts` sends the call over it (`PlatformCalls`, `transportCaller`); the
-  first card with a failed repo probes once with an empty path per UI session (`useGitReveal`:
+  job's own, else the first by id, else the Workspace), and the call is the kit's `host.git.reveal`
+  with the repo's path and that project. The SDK cannot say whether the host serves it, so the first
+  card with a failed repo probes once with an empty path per UI session (`useGitRevealServed`:
   `invalid-params` or `not-found` = served, `unknown-method` or `capability-denied` = not; any other
   answer is not kept and the next card asks again), and the button is absent until the verdict is
   "served". A `not-found` answer toasts "Could not open <repo> in Git: Pomade has no such repo or
-  project now". The call's types and the pull count sit in `src/integrations/pomade-next.ts`. A done
+  project now". A repo's line says what its pull got ("pulled · 2 commits", "pulled · up to date": the
+  scheduler's `gitRepoLine`, from the step's `commits`). A done
   run's words carry what its pulls got (`pulledWords`, `src/scheduler/model.ts`): "done · 2 commits
   pulled", "done · 1 commit pulled", "done · up to date" in the Jobs cell and, with the commit, in History
   ("done · a1b2c3d · 2 commits pulled"); with no done pull, or any pull's count unknown, the words stay
@@ -122,7 +134,8 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
   a chain; a restart after a crash is an amber dot with plain words, `plain`). Gave up counts under
   Failed; a chain's skipped action under Skipped & missed, its refused one under Failed. The
   **Service events** chip (`history-events`, on by default, with its help `hist.events`) hides the
-  rows and their count; the result chips' counts follow it. The newest page replaces a record it brings
+  rows and their count; the result chips' counts follow it. The tab keeps the chip's position
+  (`RunnerTab.tsx`, like "This project"), so it holds while the person visits other views. The newest page replaces a record it brings
   again (`withHead` in `useHistoryPages.ts`), since a crash window's row is written again as its
   restarts add up. A row opens `EventCard` in place of `RunCard` (`RunDialog` picks by `event`): the
   cause as a sentence (`eventWords.ts`), the Exit code, and the Session — "still going · up 3h 48m"
@@ -153,16 +166,26 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
 - **The Folder field's menu** (`form/FolderField.tsx`): Choose… opens Workspace, Connected projects
   (an agent job's projects connected to its agent, in the order the Agents app gives them), Other
   projects (Projects when none is connected) and Other folder…. There are no chips under the field.
+- **A service the scheduler has not reported** shows no state in Jobs' Last result and no Start or
+  Stop (`fallbackService` in `jobWords.ts` is `null` for an enabled one; a disabled file's "disabled"
+  is its own word). A service waiting for a project's first open says which in the cell
+  (`lastLook`'s `startsOn`, the project's name from `JobsView.tsx`).
 - **A manual job's Next run** reads "not scheduled" (`nextLook` in `jobWords.ts`; `jobs.next` in
   `help.ts`).
-- **Output tab** (`OutputPage.tsx`): a keyed Pomade tab per run, "<job> · output", with Copy; it closes
-  itself when its run is gone from the history.
+- **A run's output in its colours** (`src/scheduler/terminal-text.ts`, drawn by `OutputText.tsx`). A
+  card's Last lines and Latest output (`RunCard.tsx`) and the output tab show the colours and bold the
+  program printed, as spans — React elements with the palette's classes (`OutputText.module.css`,
+  the `--term-*` tokens in `tokens.css`), never HTML. A record's last lines come with their colours
+  as SGR codes, read back by `outputLines`; a log is read by it whole. Copy, notices and the CLI take
+  the plain text (`plainLines`, `plainLine`), and so does a waiting run's "Waiting at".
+- **Output tab** (`OutputPage.tsx`): a keyed Pomade tab per run, "<job> · output", with Copy (the log
+  as plain text); it closes itself when its run is gone from the history.
 
 ## File map
 
 | File | Holds |
 |---|---|
-| `main.tsx`, `App.tsx`, `index.html` | the entry (it connects over a transport it keeps for `PlatformCalls`), the frame choice, the page |
+| `main.tsx`, `App.tsx`, `index.html` | the entry (it connects to the Host API), the frame choice, the page |
 | `Panel.tsx`, `shell/PanelShell.tsx` | the side panel and its frame: the switch pinned on top, sections, Open Runner at the foot |
 | `SwitchControl.tsx` | the three-position switch and its note, with the runs held so far as a link to History's Skipped & missed |
 | `NeedsYou.tsx` | Needs you's cards and their actions (a gave-up service without a session has no View output; its name opens the job in Jobs; a missed run that stands for more than one: Run once · Run all N · Run at… · Skip) |
@@ -179,8 +202,8 @@ output tab, job form, deleting a job, help) — this page is the code map and wh
 | `HistoryView.tsx`, `useHistoryPages.ts`, `runLook.ts` | History: filters and the Service events chip, day heads, the held rows, the service-event rows, pages of 100, the columns; a row's look (dot, words, pill, filter, duration; `eventLook`) and the going runs' start moments (`runningSince`) |
 | `RunCard.tsx`, `MessageText.tsx`, `RunAtField.tsx` | the result card for every run state (an agent run's reason and Last lines, background-work and waiting sentences, Runner's answers, no session; a git run's repos with Open in Git); an agent's message drawn as text, never as HTML; Run at…'s field |
 | `EventCard.tsx`, `eventWords.ts` | a service event's card (cause, exit code, the session still going or ended, Open terminal, Start) and its pure words: the cause in a sentence and in the head, how a session ended (`eventWords.test.ts`) |
-| `gitReveal.ts`, `platformCalls.ts` | Open in Git: the project to reveal a repo in (pure); the host calls the kit's client lacks, sent over the frame's transport, and the `git.reveal` probe (`useGitReveal`) |
-| `OutputPage.tsx`, `useRunOutput.ts` | a run's output tab; a run's output, followed while it runs |
+| `gitReveal.ts` | Open in Git: the repo's root and the project to reveal it in (pure), and the `git.reveal` probe (`useGitRevealServed`) |
+| `OutputPage.tsx`, `OutputText.tsx`, `useRunOutput.ts` | a run's output tab; a line of output drawn in the program's colours and bold (`OutputText.module.css`); a run's output, followed while it runs |
 | `SettingsView.tsx` | Settings: the four steppers, the skills folder's field, the read-only rows (notifications, where the agent skill is), the files |
 | `form/JobForm.tsx` | the form's page: head, Kind, Name and Description, kind sections, Policies, the Save bar, following the file |
 | `form/state.ts` | the form's state (pure): values, what the person set, the file as last read, the fields each kind writes (`FORM_KINDS`) |
@@ -221,7 +244,7 @@ clickable table cell open on Enter or Space. The repository picker's checkboxes 
 ## Tests
 
 Unit (vitest) for the pure parts: `kit/columnWidths`, `form/policies`, `form/repoList`, `form/schedule`, `form/state`, `form/triggers`,
-`eventWords`, `gitReveal`, `help`, `jobFiles`, `jobWords`, `panelWords`, `platformCalls`, `rowRun`, `runLook`, `runWords`, `serviceWords`, `useNow`. E2E: `ui.spec.ts` drives
+`eventWords`, `gitReveal`, `help`, `jobFiles`, `jobWords`, `panelWords`, `rowRun`, `runLook`, `runWords`, `serviceWords`, `useNow`. E2E: `ui.spec.ts` drives
 the built page in pomade-kit's fake host (`e2e/harness/`) and in a plain browser — it covers the
 columns' grips, drag, keys, sideways scroll, kept and unreadable widths and the narrow Services tab,
 the going run's time agreeing across the three places, the held rows and the switch's link, the Jobs
@@ -241,4 +264,4 @@ a row's Open terminal and Stop run against a real run).
 - A service event has no output of its own; its terminal is the service's, open only while that
   session lives.
 
-Tickets: T-045, T-047, T-048, T-049, T-050, T-051.
+Tickets: T-035, T-045, T-047, T-048, T-049, T-050, T-051, T-052, T-053, T-056.

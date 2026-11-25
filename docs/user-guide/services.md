@@ -114,7 +114,9 @@ tooltip on hover and on keyboard focus; one that fits has none.
 **Service**, **Command** and **Status** each have a grip on the right edge of their header. Drag one —
 or focus it and press Left or Right, Shift for bigger steps — to change that column's width and no
 other's; none goes under 120 px. A double click on a grip puts the table back to its default layout.
-When the columns together are wider than the tab, the table scrolls sideways, header and rows together.
+The table scrolls in its own area under the **This project** chip: the header stays at the top and
+the sideways scrollbar at the bottom of the tab. When the columns together are wider than the tab, the table scrolls
+sideways, header and rows together.
 Runner remembers the widths on this Mac, for the next time the tab opens. In a tab narrower than 800 px
 there is no Command column: each command sits under its service's name, and nothing is resized or
 scrolled (the widths you set return in a wider tab).
@@ -135,6 +137,9 @@ scrolled (the widths you set return in a wider tab).
 "restart to apply its file" shows when you edited the service's `command` or `folder` while it runs:
 it keeps running with what it started with until you restart it. An invalid file never stops or starts
 a running service.
+
+A service Runner's scheduler has not reported yet — right after the tab opens, or while the scheduler
+is not running — shows no status and no Start or Stop; a disabled file reads `disabled` at once.
 
 An invalid service file is a red row with its first error and **Open file**. The **This project** chip
 keeps the open project's services. With no service files the view says what a service is.
@@ -159,12 +164,14 @@ form](jobs.md) describes Delete.
 ## Starts, stops and crashes in History
 
 Every start, stop, restart and give-up of a service is a row in **History** (a **service event**), with
-the cause in the Trigger column: **Mac startup**, **Pomade started**, **first open** (of its project),
+the cause in the Trigger column: **Mac startup** (a service started at a new Mac login),
+**Runner started** (an always-on service Runner found not running when its background part started
+again within the same login — after a restart or an update of Runner), **Pomade started**, **first open** (of its project),
 **Pomade quit**, **you** (Start, Stop, Restart in Runner, its tab, Needs you or the command, or Ctrl+C
 or Stop in its terminal tab), **chain**, **crash**, **keeper** (the keeper that held its session
 ended and Runner started it again, or it was not due to start again) and **job file** (made or turned
 on, turned off, deleted, or moved with its project). A service that outlived a log-out, and a Runner
-update, write nothing: the service never stopped.
+update that found it running, write nothing: the service never stopped.
 
 - The result reads "started", "stopped", "restarted", or, for a chain's action with nothing to do or
   refused, "restart skipped · it is not running" and "start failed · <the keeper's reason>".

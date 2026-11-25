@@ -1,7 +1,7 @@
 ---
 doc: docs/user-guide/agent-jobs.md
 audience: users
-holds: agent jobs — the Agent section of the job form, modes and Full autonomy, how a run starts and finishes (an agent's background work, a turn without an answer), a run that waits for you (a prompt, a question, a screen Runner does not know, an agent that has not started), the keeper's keychain, Open session, Pomade opened for a run, what needs the Agents app
+holds: agent jobs — the Agent section of the job form, modes and Full autonomy, how a run starts and finishes (an agent's background work, a turn without an answer), a run that waits for you (a prompt, a question, Claude's consent to Full autonomy, a screen Runner does not know, an agent that has not started), the keeper's keychain, Open session, Pomade opened for a run, what needs the Agents app
 kind: reference
 ---
 
@@ -60,7 +60,9 @@ for scripts ([Jobs and the job form](jobs.md), [Missed runs and load](missed-run
 5. A run whose turn ended without an answer — an API error such as "Not logged in" ends a turn as any
    turn — is **failed**, "the agent's turn ended without an answer", although the agent exited as it
    should. Its card shows the reason and **Last lines**, the agent's screen with the error, in place
-   of the last message. When the Agents app cannot be asked, the run stays **done**.
+   of the last message. When the Agents app cannot be asked, the run stays **done**. The failed run's
+   notice says that error ("the agent's turn ended without an answer · ⎿ API Error: Not logged in ·
+   Please run /login"), not the agent's goodbye line after the exit command.
 
 ### Background work
 
@@ -98,8 +100,8 @@ going`, because replacing the keeper ends them. When the fresh keeper fails too,
 ## When it waits for you
 
 A permission or trust prompt on the agent's screen is not a finished turn: the run **waits for you**.
-So does the agent's question form, a screen Runner does not know, and an agent that has not started
-working 20 seconds into its run.
+So does the agent's question form, Claude's consent screen, a screen Runner does not know, and an
+agent that has not started working 20 seconds into its run.
 
 - **A question form** — the agent asks you to pick among options (Claude's question tool). In
   `Normal` and every mode but Full autonomy the run waits; each further question of the same form is
@@ -112,23 +114,32 @@ working 20 seconds into its run.
   empty prompt nor a prompt Runner reads: a plan to approve, a dialog a new version of the agent
   adds. The run waits for you in every mode; Runner never types into such a screen. (Before the agent
   has worked, the same screen is the not-started case below.)
+- **Claude's consent to Full autonomy** — Full autonomy runs Claude in its Bypass Permissions mode,
+  and Claude asks once per agent profile whether you accept it, before it starts. The run waits for
+  you at once, in every mode, and Runner never answers it: pick "Yes, I accept" in the terminal and the
+  agent starts — the profile's next run starts without the question. "No, exit" ends the agent, and the
+  run is failed ("the agent exited before its turn was done"); its card says "The agent never started
+  a session."
 - **An agent that has not started working** 20 seconds into its run stopped at a screen Runner does
-  not know — a consent, a login, a first-run step.
+  not know — a login, a first-run step.
 
 - Under Last result and in History it reads `waiting for you` (amber); Needs you shows a card "Waiting for
   approval at a permission prompt." (or "Waiting for you to trust its folder.", "Waiting for your answer
-  to its question.", "Waiting at a screen Runner does not know.", or "Has not started — look at its
-  terminal.") with how long it has waited, and you get a notice "<job> needs your approval" (or "<job>
-  asks you a question", "<job> waits at a screen Runner does not know", "<job> has not started").
+  to its question.", "Waiting for you to accept Full autonomy for its agent profile.", "Waiting at a
+  screen Runner does not know.", or "Has not started — look at its terminal.") with how long it has
+  waited, and you get a notice "<job> needs your approval" (or "<job> asks you a question", "<job>
+  needs your consent", "<job> waits at a screen Runner does not know", "<job> has not started").
 - **Open at the prompt** opens the run's terminal tab where the agent asks. Answer there and the run
   goes on — an agent that has not started goes on once it works. The notice does the same.
 - While it waits, the run's **time limit pauses** and it holds no low-priority slot, so a forgotten
   prompt does not hold back other jobs. The long-run warning pauses too.
 - The result card of a waiting run shows what it waits at ("Waiting at") and "The time limit is paused
   while it waits." For a question it says "The agent asks you a question and waits for you to pick an
-  option."; for a screen Runner does not know, "The agent stopped at a screen Runner does not know and
+  option."; for the consent, "Claude asks you to accept its Bypass Permissions mode — Full autonomy — for
+  this agent profile, once. Pick "Yes, I accept" in its terminal and the run goes on; "No, exit" ends
+  it."; for a screen Runner does not know, "The agent stopped at a screen Runner does not know and
   waits for you. Look at its terminal." For an agent that has not started it says "The agent has not started working: it
-  stopped at a screen Runner does not know — a consent, a login, a first-run step. Look at its
+  stopped at a screen Runner does not know — a login, a first-run step. Look at its
   terminal."
 
 A waiting run cannot be dismissed in Needs you; answer it or **Stop run** from its card.

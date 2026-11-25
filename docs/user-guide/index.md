@@ -30,7 +30,7 @@ and what happens to them when Pomade quits.
 - **[Agent jobs](agent-jobs.md)** — running an agent with a prompt unattended: agent, folder (and its
   picker of connected projects), mode, Full autonomy, the prompt, how a run ends (a turn without an
   answer, an agent's background work), the keeper's keychain check, a run that waits for you (a prompt,
-  an agent that has not started), Open session, Pomade opened for a run, and what needs the Agents app.
+  Claude's consent to Full autonomy, an agent that has not started), Open session, Pomade opened for a run, and what needs the Agents app.
 - **[Git jobs](git-jobs.md)** — commit and push, pull, push or fetch on one or more repos, with
   Pomade's safety rails, and how Pomade's Git panel shows them.
 - **[Results](results.md)** — History and its filters, the result card for every kind of run (a turn
