@@ -220,13 +220,24 @@ disk.
   filter left out takes any value. Every event comes through one firing path, `hook()`, with the
   context its runs get in their environment and the name of its project, which the run's cause
   keeps.
-- **Mac login** is a scheduler start that finds no keeper running (`startedKeeper` in
-  `src/keeper/sessions.ts`): macOS ends the user's processes at log-out and shutdown, so the
-  scheduler — the login item — starts the keeper itself at a login. An update of Runner or a
-  restart of the scheduler after a crash finds the keeper alive and is no login. The decision is
-  made once per scheduler, when it first follows the keeper; a login fires the login hooks once,
-  in a known workspace. A keeper that died and the scheduler restarted after it is a login too:
-  the services start again then as well. So is the first start after Runner is installed.
+- **Mac login** is a scheduler start at another **console login** than the one the scheduler last
+  acted on (`src/scheduler/console-login.ts`). The console login is the Mac's own GUI session of
+  the user, named by its `loginwindow` process — the session's leader, the process macOS records
+  in `utmpx` as the console login and that creates the user's launchd GUI domain: its pid and
+  start time, read with `ps` (no permission needed). macOS starts a new one at every log-out and at
+  startup, and it lives as long as the session. So a log-out and log-in and a Mac restart are each a
+  login, whether or not the keeper outlived them (the keeper is a detached process and survives a
+  log-out); an update of Runner, a restart of the scheduler after a crash, sleep and fast user
+  switching away and back are none. The console login acted on is kept in `login.json` in the state
+  folder, written once a login's hooks fired (at once at a start that is no login). With none kept —
+  the first start after Runner is installed, or updated to a Runner that keeps it — or a console
+  login that cannot be told, the keeper decides: a start that had to start the keeper
+  (`startedKeeper` in `src/keeper/sessions.ts`) is a login, one that found it running is none; so an
+  install is a login and an update is not. The decision is made once per scheduler, when it first
+  follows the keeper, and said in the log (`login: a new console login (loginwindow 76407, since
+  2026-11-25T12:46:11.000Z) — …`, `start: the same console login (…) — no login …`); a login fires
+  the login hooks once, in a known workspace. The keeper that outlived a log-out is kept: its
+  services and runs go on.
 - **Pomade's events** (`src/integrations/pomade.ts`, `src/integrations/pomade-start.ts`,
   `scheduler.ts`) are heard while the scheduler is connected to Pomade. One that came while Pomade
   or the scheduler was not listening does not exist: nothing catches it up.
@@ -486,9 +497,10 @@ the keeper reports updates the service's record.
 
   The two later ones are **Pomade-bound** (`pomadeBound` in `src/jobs/model.ts`).
 - **What keeps running.** A valid, enabled `login` service runs all the time. Every scheduler
-  start — the scheduler is the login item — starts each such service that is not running: at a
-  login (no keeper running, "Firing hooks") that is all of them; a scheduler restarted after a
-  crash or an update reattaches the running ones and never restarts one. A new service file, or
+  start — the scheduler is the login item — starts each such service that is not running and
+  reattaches the running ones, never restarting one: after a Mac restart (the keeper ended with
+  it) that is all of them; at a log-out and log-in, whose keeper lives on ("Firing hooks"), and at a
+  scheduler restarted after a crash or an update, the ones that run go on. A new service file, or
   one enabled again, starts the same way within a tick.
 - **Where Pomade stands** (`PomadeState` in `supervisor.ts`, told by the scheduler): `running` once
   Pomade is ready on the current connection and its start is known; `closed` once Pomade quit;
@@ -909,9 +921,9 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
     held · Pause all", "queued · warm-up until 08:32", "queued · after the previous run", "queued ·
     opening Pomade", "queued · a fresh keeper, after the runs going".
   - Run now joins the queue too: the switch never holds it, a slot may.
-- **Staged start after login or wake.** A login — a scheduler start that finds no keeper running
-  ("Firing hooks") — and every wake begin a staged start; a scheduler restarted with its keeper
-  alive begins none, so its caught-up runs need no warm-up:
+- **Staged start after login or wake.** A login — a scheduler start at a new console login
+  ("Firing hooks") — and every wake begin a staged start; a scheduler restarted within one login
+  begins none, so its caught-up runs need no warm-up:
   1. the services start one by one (the supervisor's staged start, "Services"; at a wake they run
      already);
   2. once no service waits for its turn or is starting (`servicesSettled`), the **warm-up**
@@ -1488,7 +1500,7 @@ Runner writes in two folders, both named only in `src/locations.ts`, each with i
   end.
 - **The state folder**, `<userData>/app-state/pomade-runner/` of the Pomade that hosts Runner: what
   describes this Mac's processes — the control socket, the keeper, the output being written, crash
-  counts, Pomade's projects as last heard.
+  counts, Pomade's projects as last heard, the console login last acted on.
 
 | What | Where |
 |---|---|
@@ -1508,6 +1520,7 @@ Runner writes in two folders, both named only in `src/locations.ts`, each with i
 | Service supervision on this Mac (crash counts, a restart due, a service given up on, the last start's problem) | `<userData>/app-state/pomade-runner/services.json` |
 | Pomade's projects as last heard (for `POMADE_PROJECT_PATH`, and to tell a project moved) | `<userData>/app-state/pomade-runner/projects.json` |
 | The Pomade start each workspace's Pomade started hooks fired for, and the projects opened in it | `<userData>/app-state/pomade-runner/pomade-started.json` |
+| The console login the scheduler last acted on (a Mac login is a start at another) | `<userData>/app-state/pomade-runner/login.json` |
 | Where this Mac put the agent skill's copy last | `<userData>/app-state/pomade-runner/skill.json` |
 | The keeper's own state (session records, exit statuses, `keeper.log`) and its stdout and stderr (`keeper.out`) | `<userData>/app-state/pomade-runner/keeper/` |
 | Scheduler log (its stdout and stderr) | `<userData>/app-logs/pomade-runner/backend.log` |
@@ -1714,7 +1727,8 @@ clock at another time, running `POMADE_RUNNER_CLOCK_RATE` times as fast (default
 schedule plays out in seconds. Unset, empty or invalid values mean the production ones. A tick
 due while the previous one still works is dropped. A wake is simulated the way it is detected:
 the scheduler process stopped (`SIGSTOP`) while its clock runs on, then continued — its next tick
-comes after a gap. A login is simulated the way it is detected too: the scheduler and its keeper
-stopped, then the scheduler started. On a clock many times as fast a short stall of the machine is
+comes after a gap. A login is simulated the way it is detected too: `POMADE_RUNNER_CONSOLE_LOGIN`
+names the console login in place of the Mac's; the scheduler stopped, that value changed — the
+keeper kept, as at a log-out, or stopped too, as at a Mac restart — then the scheduler started. On a clock many times as fast a short stall of the machine is
 a gap of minutes too; the specs with caught-up runs, which a wake holds for the warm-up, run their
 clock at most 60 times as fast.

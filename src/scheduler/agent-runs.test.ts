@@ -23,7 +23,7 @@ import { createHistory, keepOutputLog } from "./history";
 import { parseRunRecord, type ActiveRun, type AgentRun, type RunRecord } from "./model";
 import { runFinishedPayload, runStartedPayload } from "./run-events";
 import { createRuns, fileRunsStore, type Runs } from "./runs";
-import { FakeAgents, FakePomade, FakeSessions, FakeTurns, memoryStore, memorySwitch, script } from "./runs-fixture";
+import { FakeAgents, FakeLogins, FakePomade, FakeSessions, FakeTurns, memoryStore, memorySwitch, script } from "./runs-fixture";
 import { DEFAULT_SETTINGS, type Settings } from "./settings";
 
 const agentFile = (extra = "", body = "Write my morning summary."): string => `---\nkind: agent\nname: Morning summary\nfolder: Projects/x\nagent: claude\n${extra}schedule:\n  daily: { at: 7:00 }\n---\n${body}\n`;
@@ -69,6 +69,7 @@ describe("agent runs", () => {
   let files: Record<string, string>;
   let snapshot: JobsSnapshot;
   let sessions: FakeSessions;
+  let logins: FakeLogins;
   let turns: FakeTurns;
   let agents: FakeAgents;
   let connected: boolean;
@@ -94,6 +95,8 @@ describe("agent runs", () => {
       jobs: () => snapshot,
       settings: () => settings,
       servicesSettled: () => true,
+      consoleLogin: logins.current,
+      logins,
       clock: { now: () => now },
       log: (line) => lines.push(line),
       history: createHistory(recordsFolderOf(dir), stateFolderOf(dir), () => undefined),
@@ -124,6 +127,7 @@ describe("agent runs", () => {
     files = { "summary.md": agentFile() };
     load();
     sessions = new FakeSessions(() => now.getTime(), dir);
+    logins = new FakeLogins();
     turns = new FakeTurns();
     store = memoryStore();
     agents = new FakeAgents();

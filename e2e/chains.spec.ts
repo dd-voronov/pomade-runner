@@ -3,9 +3,10 @@
 // (`support/runner.ts`). Every rule's edge is in the unit tests (`src/scheduler/hooks-chains.test.ts`
 // and its neighbours); these show E-005's acceptance on real processes.
 //
-// A login is a scheduler start that finds no keeper running: macOS ends the user's processes at
-// log-out and shutdown. A simulated login is the scheduler and its keeper stopped (`logOut`), then
-// the scheduler started again; a scheduler started again with its keeper alive — an update, a
+// A login is a scheduler start at another console login than the one it last acted on. A
+// simulated one is the scheduler stopped, the console login changed (`POMADE_RUNNER_CONSOLE_LOGIN`)
+// — with the keeper alive (`logOut`, as macOS keeps it) or ended with it (`restartMac`) — then the
+// scheduler started again; a scheduler started again at the same console login — an update, a
 // crash-restart — is no login. The login specs run its clock 60 times as fast: a second is a
 // minute, so the warm-up's minute passes in a second.
 
@@ -123,10 +124,10 @@ test.describe("chains and login hooks", () => {
       const scheduler = world.startScheduler(ZONE);
       await world.ready(scheduler);
       await expect.poll(() => scheduler.output(), { timeout: 15_000 }).toMatch(login <= 10 ? /run mount \S+: done — exit 0\n/ : /job mount: fired more than 10 times in 10 min by hooks or chains — looks like a loop; paused until Resume\n[\s\S]*notice "Mount paused: triggered 10× in 10 min — looks like a loop": queued for Pomade's next launch\n/);
-      expect(scheduler.output()).toContain("login: no keeper was running");
+      expect(scheduler.output()).toMatch(/ login: [^\n]* — the staged start begins/);
       // The eleventh waits for the pause's notice in the queue too: killed before, it would be lost.
       await scheduler.kill();
-      await world.logOut();
+      await world.restartMac();
     }
     await expect.poll(() => world.queuedNotices()).toContainEqual(expect.objectContaining({ title: "Mount paused: triggered 10× in 10 min — looks like a loop" }));
 
@@ -142,7 +143,7 @@ test.describe("chains and login hooks", () => {
     expect((await world.command("runs")).stdout).not.toContain("needs you: Mount");
     expect(await world.command("resume-job", "mount")).toMatchObject({ code: 1, stderr: 'pomade-runner resume-job: cannot resume "mount": "mount" is not paused.\n' });
     await scheduler.kill();
-    await world.logOut();
+    await world.restartMac();
     const resumed = world.startScheduler(ZONE);
     await world.ready(resumed);
     await expect.poll(() => world.history("mount"), { timeout: 15_000 }).toHaveLength(11);
@@ -168,13 +169,13 @@ test.describe("chains and login hooks", () => {
     expect(await world.history("mount")).toHaveLength(1);
 
     await scheduler.kill();
-    await world.logOut();
+    await world.restartMac();
     const next = world.startScheduler(fast("2026-11-19T08:00:00"));
     await world.ready(next);
     await expect.poll(() => world.history("mount"), { timeout: 15_000 }).toHaveLength(2);
   });
 
-  test("6 · a scheduler restarted with its keeper alive — an update, a crash-restart — is no login: the login hook does not fire, the services run on and no warm-up runs", async () => {
+  test("6 · a scheduler restarted at the same console login — an update, a crash-restart — is no login: the login hook does not fire, the services run on and no warm-up runs", async () => {
     await writeSettings(world, "warm-up: 1m\n");
     await world.writeJob("mount.md", scriptFile("Mount", "echo mounted", "hook: { event: login }\n"));
     await world.writeJob("web.md", serviceFile("Web", "sleep 600"));
@@ -186,7 +187,7 @@ test.describe("chains and login hooks", () => {
 
     const restarted = world.startScheduler(fast("2026-11-18T09:00:00"));
     await world.ready(restarted);
-    await expect.poll(() => restarted.output()).toContain("start: the keeper was running — no login: no warm-up, no login hooks\n");
+    await expect.poll(() => restarted.output()).toContain("start: the same console login (console 1) — no login: no warm-up, no login hooks\n");
     await expect.poll(() => schedulerTime(world), { timeout: 30_000 }).toBeGreaterThan(madrid("2026-11-18T09:10:00"));
     expect(await world.history("mount")).toHaveLength(1);
     expect((await world.service("web"))?.session?.info).toMatchObject({ state: "running", startedAt: web.info.startedAt, pid: web.info.pid });
@@ -195,5 +196,41 @@ test.describe("chains and login hooks", () => {
     expect(log).not.toContain("warm-up:");
     expect(log).not.toContain("hook login");
     expect(log).not.toContain("service web: starting");
+  });
+
+  test("7 · T-046 · a log-out and log-in with the keeper alive is a login: the keeper and its service run on, a login service not running starts, the login hook fires once after the warm-up", async () => {
+    await writeSettings(world, "warm-up: 1m\n");
+    await world.writeJob("mount.md", scriptFile("Mount", "echo mounted", "hook: { event: login }\n"));
+    await world.writeJob("web.md", serviceFile("Web", "sleep 600"));
+    const first = world.startScheduler(fast("2026-11-18T08:00:00"));
+    await world.ready(first);
+    await expect.poll(() => world.history("mount"), { timeout: 15_000 }).toHaveLength(1);
+    const web = await world.running("svc:web");
+    const keeper = /keeper: connected — version \w+, pid (\d+)\n/.exec(first.output())?.[1];
+    await first.kill();
+    world.logOut();
+    // Made while the scheduler was down: a login service that is not running.
+    await world.writeJob("api.md", serviceFile("Api", "sleep 600"));
+
+    const login = world.startScheduler(fast("2026-11-19T08:00:00"));
+    await world.ready(login);
+    expect(login.output()).toContain("login: a new console login (console 2) — the staged start begins; the login hooks run after the warm-up\n");
+    expect(login.output()).toContain(`keeper: connected — version ${/version (\w+)/.exec(first.output())?.[1] ?? ""}, pid ${keeper ?? ""}\n`);
+    expect(login.output()).not.toContain("keeper: started");
+    await expect.poll(() => world.history("mount"), { timeout: 15_000 }).toHaveLength(2);
+    const [mounted] = await world.history("mount");
+    expect(mounted).toMatchObject({ trigger: "hook", state: "done", cause: { kind: "hook", event: "login", context: {} } });
+    expect(mounted?.startedAt ?? 0).toBeGreaterThanOrEqual(warmUpEnd(login, "2026-11-19", /run mount \S+: started \(hook\)/));
+    await world.running("svc:api");
+    expect((await world.service("web"))?.session?.info).toMatchObject({ state: "running", startedAt: web.info.startedAt, pid: web.info.pid });
+    expect(login.output()).not.toContain("service web: starting");
+
+    // A crash-restart within that login is none.
+    await login.kill();
+    const restarted = world.startScheduler(fast("2026-11-19T09:00:00"));
+    await world.ready(restarted);
+    expect(restarted.output()).toContain("start: the same console login (console 2) — no login: no warm-up, no login hooks\n");
+    await expect.poll(() => schedulerTime(world), { timeout: 30_000 }).toBeGreaterThan(madrid("2026-11-19T09:10:00"));
+    expect(await world.history("mount")).toHaveLength(2);
   });
 });

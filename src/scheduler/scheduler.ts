@@ -48,6 +48,7 @@ import { jobIdOf, RESTART_ACTION, START_ACTION } from "../keeper/services";
 import type { Sessions } from "../keeper/sessions";
 import { createSupervisor, type PomadeState, type SupervisionStore } from "../keeper/supervisor";
 import { QUIT_GRACE_MS, type Clock } from "./clock";
+import { loginRecord, type ConsoleLogin } from "./console-login";
 import type { JobEnabled, PomadeLinkState, RunStarted, SchedulerStatus } from "./control/protocol";
 import { callScheduler } from "./control/client";
 import { ControlRefused, serveControl } from "./control/server";
@@ -106,6 +107,9 @@ export interface SchedulerOptions {
   /** The running Pomade's start (`pomadeStartOf`); `null` when it cannot be told, or Pomade does
    *  not run. */
   pomadeStart(): Promise<string | null>;
+  /** The Mac's console login now (`consoleLoginOf`): a start at another one than the scheduler last
+   *  acted on is a login. */
+  consoleLogin(): Promise<ConsoleLogin>;
   /** How long, on the clock, the link to Pomade is down with no Pomade start found before Pomade
    *  counts as quit; default `QUIT_GRACE_MS`. */
   quitGraceMs?: number;
@@ -247,6 +251,8 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     jobs: jobs.snapshot,
     settings: () => settings.report().settings,
     servicesSettled: supervisor.settled,
+    consoleLogin: options.consoleLogin,
+    logins: loginRecord(state, log),
     clock,
     log,
     history,

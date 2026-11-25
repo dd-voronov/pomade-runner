@@ -73,10 +73,10 @@ export interface Sessions {
   list(): RunnerSession[];
   /** Whether `list()` is the keeper's: the latest refresh read the keeper's list. */
   followed(): boolean;
-  /** Whether this scheduler found no keeper running and started it before it first connected:
-   *  the user's processes ended — a log-out, a shutdown — so this start is a Mac login. `false`
-   *  when a keeper was running (an update or a restart of the scheduler) and before the first
-   *  connection. */
+  /** Whether this scheduler found no keeper running and started it before it first connected —
+   *  Runner was just installed, or the keeper ended (a Mac restart, a crash). `false` when a keeper
+   *  was running and before the first connection. A login is told without it, by the console
+   *  login, as long as one is kept (`src/scheduler/console-login.ts`). */
   startedKeeper(): boolean;
   report(): SessionsReport;
   /** Make sure the keeper runs and the connection to it is up, and follow its sessions; reports

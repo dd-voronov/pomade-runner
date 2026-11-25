@@ -18,7 +18,7 @@ import type { JobsSnapshot } from "../jobs/model";
 import { createHistory, type History } from "./history";
 import { heldRowWords, runTriggerWords, runWords, type ActiveRun, type RunRecord } from "./model";
 import { ALIVE_EVERY_MS, createRuns, WAKE_GAP_MS, type Runs } from "./runs";
-import { FakeSessions, FakeTurns, memoryStore, memorySwitch, script } from "./runs-fixture";
+import { FakeLogins, FakeSessions, FakeTurns, memoryStore, memorySwitch, script } from "./runs-fixture";
 import { DEFAULT_SETTINGS, type Settings } from "./settings";
 
 const ms = (local: string): number => new Date(local).getTime();
@@ -29,6 +29,7 @@ describe("missed runs and load", () => {
   let files: Record<string, string>;
   let snapshot: JobsSnapshot;
   let sessions: FakeSessions;
+  let logins: FakeLogins;
   let store: ReturnType<typeof memoryStore>;
   let switchStore: ReturnType<typeof memorySwitch>;
   let history: History;
@@ -53,6 +54,8 @@ describe("missed runs and load", () => {
       jobs: () => snapshot,
       settings: () => settings,
       servicesSettled: () => settled,
+      consoleLogin: logins.current,
+      logins,
       clock: { now: () => now },
       log: (line) => lines.push(line),
       history,
@@ -109,6 +112,7 @@ describe("missed runs and load", () => {
     files = { "summary.md": script("Summary", "schedule:\n  daily: { at: 7:00 }\n") };
     load();
     sessions = new FakeSessions(() => now.getTime(), dir);
+    logins = new FakeLogins();
     store = memoryStore();
     switchStore = memorySwitch();
     history = createHistory(recordsFolderOf(dir), stateFolderOf(dir), () => undefined);
@@ -363,8 +367,9 @@ describe("missed runs and load", () => {
     const DAILY = "schedule:\n  daily: { at: 7:00 }\n";
 
     beforeEach(() => {
-      // A restart with the keeper alive: no login, no warm-up — the runs go as the queue lets them.
-      sessions.loggedIn = false;
+      // Starts within one login, the keeper alive: no login, no warm-up — the runs go as the queue lets them.
+      sessions.keeperStarted = false;
+      logins.loggedIn = false;
     });
 
     /** A job off across the 7:00 of Nov 18, 19 and 20: three missed runs, decided by its policy. */

@@ -22,7 +22,7 @@ import { createHistory, type History } from "./history";
 import type { HookFiring } from "./hooks";
 import { runTriggerWords, runWords, type ActiveRun, type RunRecord } from "./model";
 import { createRuns, LOOP_WORDS, type Runs } from "./runs";
-import { FakeSessions, FakeTurns, memoryStore, memorySwitch, script } from "./runs-fixture";
+import { FakeLogins, FakeSessions, FakeTurns, memoryStore, memorySwitch, script } from "./runs-fixture";
 import { DEFAULT_SETTINGS, type Settings } from "./settings";
 
 const ms = (local: string): number => new Date(local).getTime();
@@ -37,6 +37,7 @@ describe("hooks and chains", () => {
   let files: Record<string, string>;
   let snapshot: JobsSnapshot;
   let sessions: FakeSessions;
+  let logins: FakeLogins;
   let store: ReturnType<typeof memoryStore>;
   let switchStore: ReturnType<typeof memorySwitch>;
   let history: History;
@@ -64,6 +65,8 @@ describe("hooks and chains", () => {
       jobs: () => snapshot,
       settings: () => settings,
       servicesSettled: () => settled,
+      consoleLogin: logins.current,
+      logins,
       clock: { now: () => now },
       log: (line) => lines.push(line),
       history,
@@ -143,6 +146,7 @@ describe("hooks and chains", () => {
     };
     load();
     sessions = new FakeSessions(() => now.getTime(), dir);
+    logins = new FakeLogins();
     store = memoryStore();
     switchStore = memorySwitch();
     history = createHistory(recordsFolderOf(dir), stateFolderOf(dir), () => undefined);
@@ -403,13 +407,13 @@ describe("hooks and chains", () => {
       expect(spawned()).toEqual(["mount hook", "mount hook"]);
     });
 
-    it("a start that finds the keeper running — an update, a crash-restart of the scheduler — is no login: no login hooks, and caught-up runs need no warm-up", async () => {
+    it("a start at the same console login — an update, a crash-restart of the scheduler — is no login: no login hooks, and caught-up runs need no warm-up", async () => {
       await settle();
       files = { ...files, "report.md": script("Report", `schedule:\n  daily: { at: 13:30 }\n${free}`) };
       load();
-      sessions.loggedIn = false;
+      logins.loggedIn = false;
       await restart("2026-11-18T14:00:00");
-      expect(lines).toContain("start: the keeper was running — no login: no warm-up, no login hooks");
+      expect(lines).toContain(`start: the same console login (${logins.recorded ?? ""}) — no login: no warm-up, no login hooks`);
       expect(going("mount")).toEqual([]);
       // Down across 13:30: one caught-up run, at once.
       expect(going("report")).toEqual([expect.objectContaining({ state: "running", trigger: "caught-up" }) as ActiveRun]);
@@ -417,18 +421,73 @@ describe("hooks and chains", () => {
       expect(spawned()).toEqual(["mount hook", "report caught-up"]);
     });
 
+    it("a start at a new console login is a login although the keeper outlived the log-out: the login hooks fire once, after the warm-up, and the login is kept", async () => {
+      await settle();
+      sessions.keeperStarted = false;
+      await restart("2026-11-18T14:00:00");
+      expect(lines).toContain("login: a new console login (console 3) — the staged start begins; the login hooks run after the warm-up");
+      expect(going("mount")[0]?.waits).toEqual({ kind: "warm-up", until: ms("2026-11-18T14:02:00") });
+      expect(logins.recorded).toBe("console 3");
+      await awake("2026-11-18T14:02:00");
+      expect(spawned()).toEqual(["mount hook", "mount hook"]);
+      await end("mount");
+      // A crash-restart within that login.
+      logins.loggedIn = false;
+      await restart("2026-11-18T14:30:00");
+      await awake("2026-11-18T14:40:00", 60_000);
+      expect(spawned()).toEqual(["mount hook", "mount hook"]);
+    });
+
+    it("a start at the same console login is no login although the scheduler had to start the keeper", async () => {
+      await settle();
+      logins.loggedIn = false;
+      await restart("2026-11-18T14:00:00");
+      expect(lines.at(-1)).toMatch(/^start: the same console login \(console 2\) — no login/);
+      await awake("2026-11-18T14:10:00", 60_000);
+      expect(spawned()).toEqual(["mount hook"]);
+    });
+
+    it("with no console login kept — the first start after the update to Runner that keeps one — a start that finds the keeper running is no login, and keeps the console login", async () => {
+      await settle();
+      logins.recorded = null;
+      sessions.keeperStarted = false;
+      await restart("2026-11-18T14:00:00");
+      expect(lines).toContain("start: no console login acted on yet, and the keeper was running — no login: no warm-up, no login hooks");
+      expect(logins.recorded).toBe("console 3");
+      await awake("2026-11-18T14:10:00", 60_000);
+      expect(spawned()).toEqual(["mount hook"]);
+      // The next console login is a login.
+      await restart("2026-11-18T15:00:00");
+      await awake("2026-11-18T15:02:00");
+      expect(spawned()).toEqual(["mount hook", "mount hook"]);
+    });
+
+    it("a console login that cannot be told leaves it to the keeper, and keeps the one acted on", async () => {
+      await settle();
+      logins.current = () => Promise.resolve({ status: "unknown", why: "no loginwindow of this user runs" });
+      sessions.keeperStarted = false;
+      await restart("2026-11-18T14:00:00");
+      expect(lines).toContain("start: the console login cannot be told (no loginwindow of this user runs), and the keeper was running — no login: no warm-up, no login hooks");
+      sessions.keeperStarted = true;
+      await restart("2026-11-18T15:00:00");
+      expect(lines).toContain("login: the console login cannot be told (no loginwindow of this user runs), and no keeper was running — the staged start begins; the login hooks run after the warm-up");
+      await awake("2026-11-18T15:02:00");
+      expect(spawned()).toEqual(["mount hook", "mount hook"]);
+      expect(logins.recorded).toBe("console 2");
+    });
+
     it("decides only once the keeper is followed, and once per start", async () => {
       await settle();
-      const logins = (): number => lines.filter((line) => line.startsWith("login:")).length;
-      const before = logins();
+      const decided = (): number => lines.filter((line) => line.startsWith("login:")).length;
+      const before = decided();
       sessions.following = false;
       await restart("2026-11-18T14:00:00");
-      expect(logins()).toBe(before);
+      expect(decided()).toBe(before);
       sessions.following = true;
       await at("2026-11-18T14:00:01");
-      expect(logins()).toBe(before + 1);
+      expect(decided()).toBe(before + 1);
       await awake("2026-11-18T14:10:00", 60_000);
-      expect(logins()).toBe(before + 1);
+      expect(decided()).toBe(before + 1);
       expect(spawned()).toEqual(["mount hook", "mount hook"]);
     });
 

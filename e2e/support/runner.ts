@@ -53,9 +53,12 @@ export interface RunnerWorld {
   running(id: string, not?: RunnerSession): Promise<RunnerSession>;
   /** The program a session's shim runs (the shell running the command). */
   childOf(pid: number | null): number;
-  /** A log-out or a shutdown: the keeper ends, with what it runs, as macOS ends the user's
-   *  processes. Stop the schedulers first; the next one to start finds no keeper — a login. */
-  logOut(): Promise<void>;
+  /** A log-out and log-in: the next scheduler to start comes at a new console login
+   *  (`POMADE_RUNNER_CONSOLE_LOGIN`). The keeper outlives it, as on macOS. Stop the schedulers first. */
+  logOut(): void;
+  /** A Mac restart: the keeper ends, with what it runs, and the next scheduler to start comes at a
+   *  new console login. Stop the schedulers first. */
+  restartMac(): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -88,6 +91,8 @@ export async function createRunnerWorld(): Promise<RunnerWorld> {
     SHELL: "/bin/sh",
   });
   const started: SchedulerProcess[] = [];
+  /** The console login the next scheduler starts at. */
+  let consoleLogin = 1;
   /** Processes the keeper ran: killed in teardown should one outlive its keeper. */
   const pids: number[] = [];
 
@@ -107,13 +112,13 @@ export async function createRunnerWorld(): Promise<RunnerWorld> {
     jobs,
     env,
     startScheduler(extra = {}) {
-      const scheduler = startSchedulerProcess(process.execPath, join(build, manifest.backend.entry), { ...env, ...extra, POMADE_CLIENT: "backend" });
+      const scheduler = startSchedulerProcess(process.execPath, join(build, manifest.backend.entry), { ...env, POMADE_RUNNER_CONSOLE_LOGIN: `console ${consoleLogin}`, ...extra, POMADE_CLIENT: "backend" });
       started.push(scheduler);
       return scheduler;
     },
     async ready(scheduler) {
       await expect.poll(() => scheduler.output()).toMatch(/keeper: connected — version \w+, pid \d+\n/);
-      await expect.poll(() => scheduler.output()).toMatch(/(login: no keeper was running|start: the keeper was running) — /);
+      await expect.poll(() => scheduler.output()).toMatch(/(login|start): .* — (the staged start begins|no login)/);
     },
     writeJob: (path, text) => writeFile(join(jobs, path), text),
     command: (...args) => run(process.execPath, [join(build, "cli/pomade-runner.mjs"), ...args], { env: { ...env, POMADE_CLIENT: "command" }, cwd: tmp }),
@@ -146,8 +151,12 @@ export async function createRunnerWorld(): Promise<RunnerWorld> {
       pids.push(child);
       return child;
     },
-    async logOut() {
+    logOut() {
+      consoleLogin += 1;
+    },
+    async restartMac() {
       await stopKeeper(keeperSocket, pids.splice(0));
+      consoleLogin += 1;
     },
     async dispose() {
       for (const scheduler of started.splice(0)) await scheduler.kill();

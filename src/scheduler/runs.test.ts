@@ -19,7 +19,7 @@ import type { JobsSnapshot } from "../jobs/model";
 import { createHistory, keepOutputLog, type History } from "./history";
 import type { ActiveRun, RunRecord } from "./model";
 import { createRuns, fileRunsStore, runEnv, type Runs } from "./runs";
-import { FakeSessions, FakeTurns, memoryStore, memorySwitch, script } from "./runs-fixture";
+import { FakeLogins, FakeSessions, FakeTurns, memoryStore, memorySwitch, script } from "./runs-fixture";
 import { DEFAULT_SETTINGS } from "./settings";
 import { ON_TIME_MS } from "./triggers";
 
@@ -31,6 +31,7 @@ describe("runs", () => {
   let files: Record<string, string>;
   let snapshot: JobsSnapshot;
   let sessions: FakeSessions;
+  let logins: FakeLogins;
   let store: ReturnType<typeof memoryStore>;
   let switchStore: ReturnType<typeof memorySwitch>;
   let notices: NoticeParams[];
@@ -57,6 +58,8 @@ describe("runs", () => {
       jobs: () => snapshot,
       settings: () => DEFAULT_SETTINGS,
       servicesSettled: () => true,
+      consoleLogin: logins.current,
+      logins,
       clock: { now: () => now },
       log: (line) => lines.push(line),
       history,
@@ -123,6 +126,7 @@ describe("runs", () => {
     files = { "backup.md": script("Backup") };
     load();
     sessions = new FakeSessions(() => now.getTime(), dir);
+    logins = new FakeLogins();
     store = memoryStore();
     switchStore = memorySwitch();
     notices = [];
@@ -719,7 +723,7 @@ describe("runs", () => {
         "push.md": "---\nkind: git\nname: Push\ngit: { operation: push, repos: [notes] }\nafter: { job: notes }\n---\n",
       };
       load();
-      sessions.loggedIn = false;
+      sessions.keeperStarted = false;
       await runs.hook({ event: "login", project: null, agent: null, status: null, context: {} });
       expect(runs.active()).toMatchObject([{ job: "notes", trigger: "hook", state: "running" }]);
       await writeFile(resultFile(NOW), JSON.stringify(result("done")));

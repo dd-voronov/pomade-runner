@@ -20,6 +20,7 @@ import { fileStore } from "../keeper/supervisor";
 import { keeperSocketPath, pomadeGitPath, recordsFolderOf, schedulerSocketPath, stateFolder, userDataDir } from "../locations";
 import { notStartedMs } from "./agent-runs";
 import { clockFrom, quitGraceMs, systemClock, tickMs } from "./clock";
+import { consoleLoginOf } from "./console-login";
 import { createLog } from "./log";
 import { startScheduler, type StartResult } from "./scheduler";
 import { followWorkspace } from "./workspace-follow";
@@ -81,6 +82,7 @@ if (state === null || socketPath === null || userData === null) {
       turns: createAgentTurns({ socketPath: keeperSocket, log }),
       shell: loginShell(process.env),
       pomadeStart: () => pomadeStartOf(process.env),
+      consoleLogin: () => consoleLoginOf(process.env),
       quitGraceMs: quitGraceMs(process.env),
       notStartedMs: notStartedMs(process.env),
     });

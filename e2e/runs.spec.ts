@@ -222,9 +222,9 @@ test.describe("scheduled scripts", () => {
     expect(day).not.toContain(world.tmp);
     expect(await readFile(join(records, "runs.json"), "utf8")).not.toContain(world.tmp);
     // The state folder: the control socket, the keeper, the session records, the output being
-    // written, the projects heard, this Mac's service supervision and where it put the agent skill —
-    // nothing of the records.
-    expect((await readdir(state)).filter((name) => !["keeper", "output", "projects.json", "scheduler.sock", "services.json", "sessions.json", "skill.json"].includes(name))).toEqual([]);
+    // written, the projects heard, this Mac's service supervision, the console login acted on and
+    // where it put the agent skill — nothing of the records.
+    expect((await readdir(state)).filter((name) => !["keeper", "login.json", "output", "projects.json", "scheduler.sock", "services.json", "sessions.json", "skill.json"].includes(name))).toEqual([]);
   });
 
   test("a workspace copied to a fresh user-data folder shows the same History with its output, switch and Needs you; what it missed since its last alive time goes to each job's policy", async () => {

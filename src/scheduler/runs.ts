@@ -49,7 +49,7 @@
 //   it a Needs-you item, once — it keeps running. The record keeps the last lines of the output log,
 //   a git run's result per repo.
 // - **Hooks and chains.** An event fires the jobs whose hook it matches (`hooks.ts`): Runner's own
-//   `login` once per login — a scheduler start that finds no keeper running — and the platform's
+//   `login` once per console login (`console-login.ts`) — and the platform's
 //   events through `hook()`. A run that ends `done` or `failed` fires the jobs that follow it (`chains.ts`):
 //   a script or git job runs (trigger `chain`, linked to its parent), a service gets its action through the
 //   supervisor, recorded in the history. Every such firing passes the loop guard (`loop-guard.ts`)
@@ -84,6 +84,7 @@ import { liveOutputLogPath, runsRecordPath, type RecordsFolder, type StateFolder
 import { AGENT_EXIT_WAIT_MS, agentArgv, agentEnd, answeredEnd, KEYCHAIN_LOST, lookupWindow, NOT_STARTED_MS, pickSession, SESSION_LOOKUP_EVERY_MS, type TurnAnswer } from "./agent-runs";
 import { chainCause, followers, parentResult } from "./chains";
 import type { Clock } from "./clock";
+import { decideStart as decideLogin, type ConsoleLogin, type LoginRecord } from "./console-login";
 import { gitCommandLine, gitRunEnd, type SessionEnd } from "./git-runs";
 import { foundRecord, keptRecord, lastLines, type History } from "./history";
 import { hooked, LOGIN, type HookFiring } from "./hooks";
@@ -281,6 +282,10 @@ export interface RunsOptions {
   settings(): Settings;
   /** Whether the services' staged start is done: none waits for its first start or is starting. */
   servicesSettled(): boolean;
+  /** The Mac's console login now (`consoleLoginOf`). */
+  consoleLogin(): Promise<ConsoleLogin>;
+  /** The console login the scheduler last acted on. */
+  logins: LoginRecord;
   clock: Clock;
   log: Log;
   history: History;
@@ -444,6 +449,8 @@ export function createRuns(options: RunsOptions): Runs {
   let startDecided = false;
   /** A login: its hooks fire on the first reconcile that can run them. */
   let login = false;
+  /** The console login this start acts on, kept once its login hooks fired (at a login). */
+  let actedOn: string | null = null;
   /** Chain actions on services under way: each records its outcome in the lane when it answers. */
   const acting = new Set<Promise<void>>();
   /** Agent runs whose exit command was typed: by session, when Runner stops it if it has not ended
@@ -1302,24 +1309,25 @@ export function createRuns(options: RunsOptions): Runs {
     }
   }
 
-  /** A start is a login when the scheduler found no keeper running: the user's processes ended —
-   *  a log-out, a shutdown — so the user's session begins. An update or a restart of the scheduler
-   *  finds the keeper alive and is no login: no staged start, no login hooks. */
-  function decideStart(): void {
+  /** A start is a login when the Mac's console login is another than the one last acted on
+   *  (`console-login.ts`): a log-out and log-in, a Mac restart — whether or not the keeper outlived
+   *  it. An update or a restart of the scheduler within one login is no login: no staged start, no
+   *  login hooks. */
+  async function decideStart(): Promise<void> {
     if (startDecided) return;
     startDecided = true;
-    if (sessions.startedKeeper()) {
-      log("login: no keeper was running — the staged start begins; the login hooks run after the warm-up");
+    const decision = decideLogin(await options.consoleLogin(), await options.logins.last(), sessions.startedKeeper());
+    log(decision.line);
+    if (decision.login) {
       stage = { settledAt: null };
       login = true;
-    } else {
-      log("start: the keeper was running — no login: no warm-up, no login hooks");
     }
+    actedOn = decision.record;
   }
 
   async function reconcile(): Promise<void> {
     if (!sessions.followed()) return;
-    decideStart();
+    await decideStart();
     await collect();
     if (options.jobs().workspace === null) return;
     const at = now();
@@ -1333,6 +1341,10 @@ export function createRuns(options: RunsOptions): Runs {
     if (login) {
       login = false;
       await fireHook(LOGIN);
+    }
+    if (actedOn !== null) {
+      await options.logins.acted(actedOn);
+      actedOn = null;
     }
     await look(at);
     await enforce(at.getTime());

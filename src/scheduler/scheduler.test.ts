@@ -51,6 +51,7 @@ import { CONTROL_PROTOCOL } from "./control/protocol";
 import { isHistoryPage, isRunActionResult, isRunsReport, NEXT_UP_RUNS } from "./model";
 import { isEnvironmentReport } from "./environment";
 import { isSettingsReport } from "./settings";
+import type { ConsoleLogin } from "./console-login";
 import { FakeTurns } from "./runs-fixture";
 import { startScheduler, type Scheduler } from "./scheduler";
 
@@ -188,6 +189,8 @@ const supervision = { supervision: noStore, probe: () => Promise.resolve(false) 
 const noLaunch = (): Promise<LaunchResult> => Promise.resolve({ status: "failed", reason: "no Pomade in this test" });
 /** The Pomade start the tests run under. */
 const noStart = (): Promise<string | null> => Promise.resolve("start-1");
+/** The same console login at every start: the first start, with none acted on yet, is a login. */
+const aConsoleLogin = (): Promise<ConsoleLogin> => Promise.resolve({ status: "known", login: "console 1" });
 
 /** A client of the fake host: a frame of Runner, or its backend. */
 async function frame(fake: FakeHost, surface: Surface = "tab"): Promise<HostClient> {
@@ -221,7 +224,7 @@ describe("scheduler", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
+      pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart, consoleLogin: aConsoleLogin,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -252,7 +255,7 @@ describe("scheduler", () => {
       value: { version: APP_VERSION, pid: process.pid, startedAt: "2026-11-17T08:00:00.000Z", lastTickAt: null, pomade: "disconnected" },
     });
     expect(lines).toEqual(
-      expect.arrayContaining([`scheduler ${APP_VERSION} started (pid ${process.pid}, tick 1000 ms)`, "login: no keeper was running — the staged start begins; the login hooks run after the warm-up"]),
+      expect.arrayContaining([`scheduler ${APP_VERSION} started (pid ${process.pid}, tick 1000 ms)`, "login: no console login acted on yet, and no keeper was running — the staged start begins; the login hooks run after the warm-up"]),
     );
     expect((await stat(socketPath)).mode & 0o777).toBe(0o600);
   });
@@ -297,7 +300,7 @@ describe("scheduler", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
+      pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart, consoleLogin: aConsoleLogin,
     });
     expect(result).toEqual({ status: "already-running" });
     expect(second.refreshes).toBe(0);
@@ -359,7 +362,7 @@ describe("scheduler", () => {
 
   it("refuses a socket path macOS cannot bind", async () => {
     socketPath = join(dir, "x".repeat(120), "scheduler.sock");
-    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: join(dir, "ws"), sessions, ...supervision, state: stateFolderOf(join(dir, "ud")), postNotice, pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart });
+    const result = await startScheduler({ socketPath, clock: { now: () => now }, tickMs: 1000, log: () => undefined, linkPomade: () => ({ stop: () => undefined }), workspace: join(dir, "ws"), sessions, ...supervision, state: stateFolderOf(join(dir, "ud")), postNotice, pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart, consoleLogin: aConsoleLogin });
     expect(result.status).toBe("failed");
   });
 
@@ -403,7 +406,7 @@ describe("scheduler and the job files", () => {
       ...supervision,
       state: stateFolderOf(join(dir, "ud")),
       postNotice,
-      pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
+      pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart, consoleLogin: aConsoleLogin,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -618,7 +621,7 @@ describe("scheduler and runs", () => {
       sessions,
       ...supervision,
       postNotice: noticePoster(join(dir, "ud"), log),
-      pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart,
+      pomadeGit: "/nowhere/bin/pomade-git", skillSource: "/nowhere/SKILL.md", turns: new FakeTurns(), shell: "/bin/sh", launchPomade: noLaunch, pomadeStart: noStart, consoleLogin: aConsoleLogin,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);
     running.push(result.scheduler);
@@ -886,6 +889,7 @@ describe("scheduler and Pomade's hooks", () => {
       shell: "/bin/sh",
       launchPomade: noLaunch,
       pomadeStart: () => Promise.resolve(pomadeStart),
+      consoleLogin: aConsoleLogin,
       quitGraceMs: QUIT_GRACE,
     });
     if (result.status !== "started") throw new Error(`not started: ${result.status}`);

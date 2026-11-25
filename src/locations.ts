@@ -7,7 +7,7 @@
 // - **The state folder** — `<userData>/app-state/pomade-runner/` of the Pomade that hosts Runner:
 //   what describes this Mac's processes — the control socket, the keeper's state and its session
 //   records, the output a live run or a service is writing, service crash counts, Pomade's projects
-//   as last heard.
+//   as last heard, the console login the scheduler last acted on.
 //
 // A run's output log is written in the state folder while the run goes (`liveOutputLogPath`) and
 // kept in the records folder once it ended (`keptOutputLogPath`); a record names it by job and run
@@ -96,6 +96,11 @@ export function projectsRecordPath(state: StateFolder): string {
 /** The Pomade start each workspace's "Pomade started" hooks last fired for. */
 export function pomadeStartedRecordPath(state: StateFolder): string {
   return join(state, "pomade-started.json");
+}
+
+/** The Mac's console login the scheduler last acted on (`src/scheduler/console-login.ts`). */
+export function loginRecordPath(state: StateFolder): string {
+  return join(state, "login.json");
 }
 
 /** Where this Mac placed the agent skill's copy last (`src/jobs/skill/place.ts`), so a changed

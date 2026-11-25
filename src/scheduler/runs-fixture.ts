@@ -14,6 +14,7 @@ import type { KeychainCheck } from "../keeper/keychain";
 import type { SessionCommand, Sessions, StopReason } from "../keeper/sessions";
 import { liveOutputLogPath, stateFolderOf } from "../locations";
 import type { SwitchState } from "./model";
+import type { ConsoleLogin, LoginRecord } from "./console-login";
 import type { RunsRecords, RunsStore } from "./runs";
 import type { SwitchStore } from "./switch";
 
@@ -29,8 +30,8 @@ export class FakeSessions implements Sessions {
   readonly forgotten: string[] = [];
   refuse: string | null = null;
   following = true;
-  /** Whether the scheduler found no keeper and started it: a login. */
-  loggedIn = true;
+  /** Whether the scheduler found no keeper and started it. */
+  keeperStarted = true;
   link: KeeperLink = { state: "connected", version: "v1", pid: 1 };
 
   constructor(
@@ -42,7 +43,7 @@ export class FakeSessions implements Sessions {
   keeper = (): KeeperLink => this.link;
   list = (): RunnerSession[] => [...this.sessions.values()];
   followed = (): boolean => this.following;
-  startedKeeper = (): boolean => this.loggedIn;
+  startedKeeper = (): boolean => this.keeperStarted;
   report = () => ({ keeper: this.link, sessions: this.list() });
   refresh = (): Promise<void> => Promise.resolve();
 
@@ -126,6 +127,27 @@ export class FakeSessions implements Sessions {
     if (spawn === undefined) throw new Error(`no run of ${job}`);
     return sessionIdOf(spawn.owner) ?? "";
   }
+}
+
+/** The Mac's console login as a test plays it, and the one the scheduler last acted on, kept in
+ *  memory as `login.json` keeps it. */
+export class FakeLogins implements LoginRecord {
+  /** Whether each scheduler start comes at a new console login; `false`: at the one before. */
+  loggedIn = true;
+  recorded: string | null = null;
+  private count = 0;
+
+  current = (): Promise<ConsoleLogin> => {
+    if (this.loggedIn || this.count === 0) this.count += 1;
+    return Promise.resolve({ status: "known", login: `console ${this.count}` });
+  };
+
+  last = (): Promise<string | null> => Promise.resolve(this.recorded);
+
+  acted = (login: string): Promise<void> => {
+    this.recorded = login;
+    return Promise.resolve();
+  };
 }
 
 /** Records kept in memory, as `runs.json` keeps them. */

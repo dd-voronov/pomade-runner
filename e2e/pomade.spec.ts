@@ -89,6 +89,9 @@ test.describe("Runner in Pomade", () => {
 
   /** The scheduler, started the way the login item starts it: Pomade's runtime, the backend
    *  environment; it connects to Pomade unless `pomade: false` says Pomade is closed. */
+  /** The console login the next scheduler starts at. */
+  let consoleLogin = 1;
+
   async function startTheScheduler(options: { pomade: boolean } = { pomade: true }): Promise<SchedulerProcess> {
     const host = JSON.parse(await readFile(join(folders.home, "host.json"), "utf8")) as { socket: string };
     const started = startSchedulerProcess(
@@ -102,6 +105,7 @@ test.describe("Runner in Pomade", () => {
         POMADE_SOCKET: host.socket,
         POMADE_KEEPER_SOCKET: keeperSocket,
         POMADE_HOME: folders.home,
+        POMADE_RUNNER_CONSOLE_LOGIN: `console ${consoleLogin}`,
         // Sessions run `/bin/sh` as the login shell in a temp home: no user profile is read.
         HOME: join(tmp, "user"),
         SHELL: "/bin/sh",
@@ -978,12 +982,14 @@ test.describe("Runner in Pomade", () => {
     await expect.poll(async () => (await command("list")).stdout).toContain("Form mount");
     expect(await history("form-mount")).toEqual([]);
 
-    // A login: macOS ends the keeper with the user's processes; the login item starts the scheduler.
+    // A Mac restart: the keeper ends with the user's processes; the login item starts the scheduler
+    // at a new console login.
     pids.push(...(await sessionsReport(schedulerSocket())).sessions.map((session) => session.info.pid ?? 0));
     await scheduler.kill();
     await stopKeeper(keeperSocket, pids.splice(0));
+    consoleLogin += 1;
     const next = await startTheScheduler();
-    await expect.poll(() => next.output()).toContain("login: no keeper was running");
+    await expect.poll(() => next.output()).toContain("login: a new console login (console 2)");
     await expect.poll(() => history("form-mount"), { timeout: 30_000 }).toEqual([
       expect.objectContaining({ state: "done", trigger: "hook", cause: { kind: "hook", event: "login", context: {} }, lastLines: ["mounted hook"] }) as RunRecord,
     ]);
