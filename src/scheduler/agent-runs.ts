@@ -17,7 +17,7 @@ export const FREE_TEXT_OPTIONS: ReadonlySet<string> = new Set(["Type something."
 export const AGENT_EXIT_WAIT_MS = 15_000;
 
 /** How long an agent run's agent has, counted as its time limit counts, to start working: past it,
- *  at a screen the scanner does not name — a consent, a login, an onboarding step — the run waits
+ *  at a screen the scanner does not name — a login, an onboarding step — the run waits
  *  for the person, `not-started`. */
 export const NOT_STARTED_MS = 20_000;
 

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { APP_TAB_KEY_RE } from "pomade-kit/protocol";
+import { APP_TAB_KEY_RE, type GitRunOutput, type GitRunStep } from "pomade-kit/protocol";
 
 import { editRoute, jobsRoute, newRoute, outputRoute, outputTab, outputTabKey, parseRoute, promptRoute, runRoute } from "../integrations/runner-api";
 import { MAX_ENCODED_JOB_ID } from "../keeper/ids";
-import { chainEvent, clockTime, dayTime, durationWords, heldRowWords, hookCauseWords, isActiveRun, isHistoryPage, isMissedChoiceResult, isRunsReport, otherMissedRuns, parseRunRecord, runTriggerWords, runWords, type ActiveRun, type RunRecord } from "./model";
+import { chainEvent, clockTime, dayTime, durationWords, heldRowWords, hookCauseWords, isActiveRun, isHistoryPage, isMissedChoiceResult, isRunsReport, otherMissedRuns, parseRunRecord, pulledWords, runTriggerWords, runWords, type ActiveRun, type RunRecord } from "./model";
 
 const base = { job: "blog/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/blog", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1, agent: null, missed: null, series: null };
 const active: ActiveRun = {
@@ -249,5 +249,27 @@ describe("isRunsReport", () => {
     ]) {
       expect(isRunsReport(bad)).toBe(false);
     }
+  });
+});
+
+describe("what a git run pulled", () => {
+  const pull = (commits?: number, outcome: GitRunStep["outcome"] = "done"): GitRunStep => ({ step: "pull", outcome, detail: "pulled", ...(commits === undefined ? {} : { commits }) });
+  const output = (...steps: GitRunStep[][]): GitRunOutput => ({
+    op: "pull",
+    job: "Pull",
+    at: "2026-11-25T09:00:00.000Z",
+    results: steps.map((list, index) => ({ repo: `r${index}`, path: `/ws/r${index}`, op: "pull", status: "done", reason: null, steps: list, commit: null })),
+  });
+
+  it("summed over the repos' done pulls; unknown when any count is, or when none pulled", () => {
+    expect(pulledWords(output([pull(2)], [pull(3)]))).toBe("5 commits pulled");
+    expect(pulledWords(output([pull(1)]))).toBe("1 commit pulled");
+    expect(pulledWords(output([pull(0)], [pull(0)]))).toBe("up to date");
+    expect(pulledWords(output([pull(2)], [pull()]))).toBeNull();
+    // A skipped repo and a failed pull add nothing.
+    expect(pulledWords(output([pull(1)], [], [pull(undefined, "failed")]))).toBe("1 commit pulled");
+    expect(pulledWords(output([{ step: "fetch", outcome: "done", detail: "fetched" }]))).toBeNull();
+    expect(pulledWords(output())).toBeNull();
+    expect(pulledWords(null)).toBeNull();
   });
 });

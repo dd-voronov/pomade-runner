@@ -13,8 +13,10 @@
 // Needs-you card, the badge — and its notice, card and Running now row open its terminal tab at the
 // prompt; answered there, the run is done; a prompt that comes while the scheduler is down is read
 // from the session's screen when it is back. An agent stopped at a screen before it starts working
-// (the fake's consent screen) waits for you once its time to start is up — its time limit paused —
-// and goes on once accepted there; one stopped at it never started a session, as its card says. A keeper that cannot reach the macOS keychain — the
+// (the fake's login screen) waits for you once its time to start is up — its time limit paused —
+// and goes on once a choice is made there; one stopped at it never started a session, as its card
+// says. Claude's Bypass Permissions consent (the real screen) waits for you at once, in its own
+// words, in Full autonomy too; accepted there the run goes on, "No, exit" ends the run and the wait. A keeper that cannot reach the macOS keychain — the
 // check's command a script that fails as many times as the test says — is replaced before an agent
 // run, after the runs going, its services started again with no crash counted; a fresh keeper that
 // fails it too fails the run. An agent whose turn ends with background work going keeps its run
@@ -356,7 +358,7 @@ test.describe("agent runs in Pomade", () => {
     await openRunnerTab(runRoute("consent", waiting?.run ?? ""));
     await expect(tab().getByTestId("run-result")).toHaveText("Waiting for you");
     await expect(tab().getByTestId("run-waits")).toContainText("The agent has not started working");
-    await expect(tab().getByTestId("run-prompt")).toContainText("Yes, I accept");
+    await expect(tab().getByTestId("run-prompt")).toContainText("Select login method");
     await shoot(page, "pomade-not-started-card");
 
     // Needs you's card: amber, "Open at the prompt", which opens its terminal at the screen.
@@ -373,10 +375,10 @@ test.describe("agent runs in Pomade", () => {
     await card.getByRole("button", { name: "Open at the prompt" }).click();
     await expect.poll(() => attachedTabIds()).toHaveLength(1);
     const [tabId = ""] = await attachedTabIds();
-    await expect.poll(() => buffer(tabId)).toContain("Yes, I accept");
+    await expect.poll(() => buffer(tabId)).toContain("Select login method");
     await shoot(page, "pomade-not-started-tab");
 
-    // The agent accepted, it starts working: the wait ends and the run is done.
+    // A login method picked, the agent starts working: the wait ends and the run is done.
     await page.getByTestId(`attached-xterm-${tabId}`).click();
     await page.keyboard.press("2");
     await expect.poll(() => needsYou()).toEqual([]);
@@ -413,6 +415,70 @@ test.describe("agent runs in Pomade", () => {
     await expect(dialog).not.toContainText("cannot be read");
     await expect(dialog.getByRole("button", { name: "Run again" })).toBeVisible();
     await shoot(page, "pomade-never-started-card");
+  });
+
+  test("T-052 · an agent at Claude's Bypass Permissions consent waits for you at once in Full autonomy, in its own words — notice, Needs you, card — Runner never answers it; accepted in its terminal, the run goes on to done", async () => {
+    expect(await needsYou()).toEqual([]);
+    await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/bypass.md"), agentJob("Nightly cleanup", "claude", "Clean up the notes. [consent]", "mode: full-autonomy\n"));
+    expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "bypass"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+    await expect.poll(async () => (await going("bypass"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("consent");
+    const waiting = await going("bypass");
+    // At once: well inside the agent's time to start.
+    expect((waiting?.agent?.waiting?.since ?? Infinity) - (waiting?.startedAt ?? 0)).toBeLessThan(NOT_STARTED_MS);
+    expect(await needsYou()).toEqual([`waiting:bypass:${waiting?.run ?? ""}`]);
+    await expect.poll(() => runnerNotices()).toContain("Nightly cleanup needs your consent");
+
+    await openRunnerTab(runRoute("bypass", waiting?.run ?? ""));
+    await expect(tab().getByTestId("run-result")).toHaveText("Waiting for you");
+    await expect(tab().getByTestId("run-waits")).toHaveText('Claude asks you to accept its Bypass Permissions mode — Full autonomy — for this agent profile, once. Pick "Yes, I accept" in its terminal and the run goes on; "No, exit" ends it.');
+    await expect(tab().getByTestId("run-prompt")).toContainText("Yes, I accept");
+    await shoot(page, "pomade-consent-card");
+
+    await page.getByTestId(`strip-${STRIP_KEY}`).click();
+    await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
+    await drawn(page);
+    const card = panel().locator('[data-testid="needs-you-item"][data-kind="waiting"]');
+    await expect(card).toContainText("Nightly cleanup");
+    await expect(card.getByTestId("needs-you-words")).toHaveText("Waiting for you to accept Full autonomy for its agent profile.");
+    await page.mouse.move(1000, 600);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await shoot(page, "pomade-consent-panel");
+    // Past the agent's time to start, it still waits at the consent: no not-started wait takes over.
+    await new Promise((resolve) => setTimeout(resolve, NOT_STARTED_MS + 1000));
+    expect(await going("bypass")).toMatchObject({ state: "running", agent: { worked: false, waiting: { prompt: "consent" } } });
+
+    await card.getByRole("button", { name: "Open at the prompt" }).click();
+    await expect.poll(() => attachedTabIds()).toHaveLength(1);
+    const [tabId = ""] = await attachedTabIds();
+    await expect.poll(() => buffer(tabId)).toContain("Enter to confirm · Esc to cancel");
+    await shoot(page, "pomade-consent-tab");
+    await page.getByTestId(`attached-xterm-${tabId}`).click();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => needsYou()).toEqual([]);
+    await expect.poll(async () => (await history("bypass")).length, { timeout: 30_000 }).toBe(1);
+    expect((await history("bypass"))[0]).toMatchObject({ state: "done", agent: { mode: "full-autonomy", worked: true, waiting: null, answered: [] } });
+    await closeTab(tabId);
+  });
+
+  test("T-052 · \"No, exit\" at the consent ends the run and its wait: the screen stays as drawn, the agent's exit is the run's end", async () => {
+    expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "bypass"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+    await expect.poll(async () => (await going("bypass"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("consent");
+    const waiting = await going("bypass");
+    await openRunnerTab(runRoute("bypass", waiting?.run ?? ""));
+    await tab().getByRole("button", { name: "Open at the prompt" }).click();
+    await expect.poll(() => attachedTabIds()).toHaveLength(1);
+    const [tabId = ""] = await attachedTabIds();
+    await expect.poll(() => buffer(tabId)).toContain("Enter to confirm · Esc to cancel");
+    // Enter on the highlighted "No, exit".
+    await page.getByTestId(`attached-xterm-${tabId}`).click();
+    await page.keyboard.press("Enter");
+    await expect.poll(async () => (await history("bypass")).length, { timeout: 30_000 }).toBe(2);
+    const [record] = await history("bypass");
+    expect(record).toMatchObject({ run: waiting?.run, state: "failed", agent: { worked: false, waiting: null } });
+    // The wait is gone; the failure's own item is cleared by its card, open in the Runner tab.
+    await expect.poll(() => needsYou()).toEqual([]);
+    await closeTab(tabId);
   });
 
   test("3 · the done card shows the agent's last message; Open session resumes the session in a Pomade agent tab", async () => {

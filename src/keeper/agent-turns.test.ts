@@ -8,6 +8,8 @@
 // rule names is a wait once the agent has worked. An agent that works on after the exit command, or
 // waits at a prompt, did not take it: its turn is followed afresh.
 
+import { readFileSync } from "node:fs";
+
 import { AgentStateScanner, type AgentState } from "pomade-kit/scanners";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -83,6 +85,10 @@ const QUESTION_FORM = [
 ].join("\r\n");
 /** A dialog no rule names (Claude's plan approval), its own footer last. */
 const UNNAMED = `\x1b[2J${row(3, " Ready to code?")}${row(5, " ❯ 1. Yes, auto-accept edits")}${row(6, "   2. No, keep planning")}${row(8, " ctrl-g to edit in Vim")}`;
+
+/** Claude Code's Bypass Permissions consent screen, from a real run's output log: drawn before any
+ *  title, "❯ No, exit" highlighted. */
+const CONSENT = readFileSync(new URL("../../e2e/fixtures/claude-bypass-consent.log", import.meta.url), "utf8");
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -344,6 +350,23 @@ describe("an agent's turn", () => {
     await pause(30);
     await scanner.settled();
     expect(seen.told).toEqual(["working", "wait:unknown", "wait:none", "done"]);
+    scanner.dispose();
+  });
+
+  it("waits at claude's Bypass Permissions consent before the agent set any title or worked; accepted, its start screen ends the wait", async () => {
+    const seen = recorder();
+    const scanner = new AgentStateScanner({ agent: "claude", cols: 100, rows: 30, idleAfterMs: 10 }, turnTracker(seen.handlers).onState);
+    scanner.push(CONSENT);
+    await pause(30);
+    await scanner.settled();
+    expect(seen.told).toEqual(["wait:consent"]);
+    expect(seen.highlighted).toEqual([null]);
+    // "Yes, I accept": claude's start screen, its empty prompt under the idle title.
+    scanner.push(`\x1b[2J${COMPOSER}${title("✳ Claude Code")}`);
+    await pause(30);
+    await scanner.settled();
+    expect(seen.told).toEqual(["wait:consent", "wait:none"]);
+    expect(seen.done()).toBe(0);
     scanner.dispose();
   });
 

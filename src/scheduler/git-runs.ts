@@ -15,7 +15,6 @@
 
 import type { GitRunOutput, GitRunResult, GitRunStatus, GitRunStepName, RepoJob, RepoJobsParams } from "pomade-kit/protocol";
 
-import { stepCommits } from "../integrations/pomade-next";
 import { jobsRoute } from "../integrations/runner-api";
 import type { GitJob, JobsSnapshot } from "../jobs/model";
 import { jobTriggerWords } from "../jobs/words";
@@ -47,8 +46,8 @@ export function gitRepoLine(result: GitRunResult): string {
     if (step.outcome !== "done" || step.step === "agents") return [];
     if (step.step === "commit") return [result.commit === null ? "committed" : `committed ${result.commit.slice(0, 7)}`];
     if (step.step === "pull") {
-      const commits = stepCommits(step);
-      if (commits === null) return [STEP_DONE.pull];
+      const { commits } = step;
+      if (commits === undefined) return [STEP_DONE.pull];
       return [STEP_DONE.pull, commits === 0 ? "up to date" : `${commits} ${commits === 1 ? "commit" : "commits"}`];
     }
     return [STEP_DONE[step.step]];

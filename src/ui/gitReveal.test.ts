@@ -1,7 +1,7 @@
 import { WORKSPACE_PROJECT_ID, type GitRepoState, type ProjectRef } from "pomade-kit/protocol";
 import { describe, expect, it } from "vitest";
 
-import { repoRoot, revealProject } from "./gitReveal";
+import { repoRoot, revealProject, revealVerdict } from "./gitReveal";
 
 const project = (id: string, root: string): ProjectRef => ({ id, kind: "project", name: id, root });
 const repo = (root: string, absPath: string): GitRepoState => ({ name: root, root, absPath, remoteUrl: null, branch: "main", upstream: null, ahead: 0, behind: 0, hasCommits: true, changes: [] });
@@ -34,5 +34,18 @@ describe("Open in Git's project", () => {
     expect(repoRoot("/ws/Projects/blog/", repos)).toBe("Projects/blog");
     expect(repoRoot("/ws", repos)).toBe("");
     expect(repoRoot("/ws/Projects/shop", repos)).toBeNull();
+  });
+});
+
+describe("whether Pomade serves git.reveal", () => {
+  it("the probe's answer: refused params or a missing repo mean the call is there; unknown-method or no capability, not; anything else, not known yet", () => {
+    expect(revealVerdict({ ok: false, code: "invalid-params" })).toBe(true);
+    expect(revealVerdict({ ok: false, code: "not-found" })).toBe(true);
+    expect(revealVerdict({ ok: true })).toBe(true);
+    expect(revealVerdict({ ok: false, code: "unknown-method" })).toBe(false);
+    expect(revealVerdict({ ok: false, code: "capability-denied" })).toBe(false);
+    expect(revealVerdict({ ok: false, code: "not-ready" })).toBeNull();
+    expect(revealVerdict({ ok: false, code: "app-not-responding" })).toBeNull();
+    expect(revealVerdict({ ok: false, code: null })).toBeNull();
   });
 });

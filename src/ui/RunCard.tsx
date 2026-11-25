@@ -43,8 +43,7 @@ import { NO_SESSION, useLastMessage, type AgentsState } from "./useAgents";
 import { useRunningNow } from "./useNow";
 import { useRunOutput } from "./useRunOutput";
 import { useRun } from "./useRunnerApi";
-import { repoRoot, revealProject } from "./gitReveal";
-import { useGitReveal } from "./platformCalls";
+import { repoRoot, revealProject, useGitRevealServed } from "./gitReveal";
 
 /** A run's result card (the prototype's `cardHtml`), a dialog over History that Esc, the close
  *  button or a click outside closes back to History. Its head says the run's job, result, when,
@@ -515,8 +514,9 @@ const WAITING_SENTENCE: Record<AgentWait["prompt"], string> = {
   permission: "The agent stopped at a permission prompt and waits for your answer.",
   trust: "The agent stopped to ask whether it may trust its folder, and waits for your answer.",
   question: "The agent asks you a question and waits for you to pick an option.",
+  consent: 'Claude asks you to accept its Bypass Permissions mode — Full autonomy — for this agent profile, once. Pick "Yes, I accept" in its terminal and the run goes on; "No, exit" ends it.',
   unknown: "The agent stopped at a screen Runner does not know and waits for you. Look at its terminal.",
-  "not-started": "The agent has not started working: it stopped at a screen Runner does not know — a consent, a login, a first-run step. Look at its terminal.",
+  "not-started": "The agent has not started working: it stopped at a screen Runner does not know — a login, a first-run step. Look at its terminal.",
 };
 
 /** An agent run that waits for you: what it waits at — the end of its output, the prompt — and
@@ -566,11 +566,10 @@ function repoNotes(results: readonly GitRunResult[]): string[] {
 function GitBody({ host, record }: { host: HostClient; record: RunRecord }): React.JSX.Element {
   const results = record.git?.results ?? [];
   const toast = useToast();
-  const reveal = useGitReveal(results.some((result) => result.status === "failed"));
+  const served = useGitRevealServed(host, results.some((result) => result.status === "failed"));
   const openInGit = (result: GitRunResult): void => {
-    if (reveal === null) return;
     Promise.all([host.git.getState(), host.project.list()])
-      .then(([{ repos }, { projects }]) => reveal({ path: result.path, projectId: revealProject(repoRoot(result.path, repos), record.project, projects) }))
+      .then(([{ repos }, { projects }]) => host.git.reveal(result.path, revealProject(repoRoot(result.path, repos), record.project, projects)))
       .catch((err: unknown) =>
         toast(err instanceof HostError && err.code === "not-found" ? `Could not open ${result.repo} in Git: Pomade has no such repo or project now` : `Could not open ${result.repo} in Git: ${err instanceof Error ? err.message : String(err)}`),
       );
@@ -592,7 +591,7 @@ function GitBody({ host, record }: { host: HostClient; record: RunRecord }): Rea
                     {result.commit.slice(0, 7)}
                   </code>
                 )}
-                {result.status === "failed" && reveal !== null && (
+                {result.status === "failed" && served && (
                   <Button size="sm" className={styles.openInGit} data-help="c.git" onClick={() => openInGit(result)}>
                     Open in Git
                   </Button>

@@ -967,6 +967,40 @@ describe("agent runs", () => {
       expect(notices.map((notice) => notice.title)).toEqual(["Morning summary needs your approval", "Morning summary has not started"]);
     });
 
+    it("waits at Claude's consent to Bypass Permissions mode at once, in Normal and in Full autonomy — its own words, one notice — never answers it, and no not-started wait follows; the agent's exit at it ends the wait", async () => {
+      for (const mode of ["", "mode: full-autonomy\n"]) {
+        files = { "summary.md": agentFile(mode) };
+        load();
+        notices.length = 0;
+        const run = await runNow();
+        const session = run.session ?? "";
+        seconds(1);
+        turns.waits(session, "consent", "No, exit");
+        await runs.tick();
+        const since = now.getTime();
+        expect(runs.active()[0]?.agent).toMatchObject({ worked: false, waiting: { prompt: "consent", since } });
+        expect(runs.needsYou()).toEqual([{ id: `waiting:summary:${run.run}`, kind: "waiting", job: "summary", name: "Morning summary", project: null, run: run.run, prompt: "consent", at: since, detail: "waiting for you to accept Full autonomy for its agent profile" }]);
+        expect(notices).toEqual([
+          {
+            title: "Morning summary needs your consent",
+            body: 'Claude asks you to accept its Bypass Permissions mode for this agent profile, once. Open it and pick "Yes, I accept"; the time limit is paused meanwhile.',
+            action: { kind: "openApp", route: `prompt/summary/${run.run}` },
+          },
+        ]);
+        minutes(3);
+        await runs.tick();
+        expect(runs.active()[0]?.agent?.waiting).toEqual({ prompt: "consent", since });
+        expect(turns.pressed).toEqual([]);
+        expect(turns.typed).toEqual([]);
+        expect(notices).toHaveLength(1);
+        // "No, exit": the screen stays as drawn; the agent's exit ends the run and its wait.
+        sessions.end(session, "exited", 1);
+        await runs.tick();
+        expect(finished.at(-1)).toMatchObject({ run: run.run, state: "failed", agent: { worked: false, waiting: null, waitedMs: 3 * 60_000 } });
+        expect(runs.needsYou().filter((item) => item.kind === "waiting")).toEqual([]);
+      }
+    });
+
     it("frees its low-priority slot while it waits", async () => {
       settings = { ...DEFAULT_SETTINGS, maxLowPriorityRuns: 1 };
       files = { ...files, "other.md": agentFile().replace("name: Morning summary", "name: Other") };

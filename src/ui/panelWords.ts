@@ -66,6 +66,7 @@ const WAITING_TEXT: Record<AgentWait["prompt"], string> = {
   permission: "Waiting for approval at a permission prompt.",
   trust: "Waiting for you to trust its folder.",
   question: "Waiting for your answer to its question.",
+  consent: "Waiting for you to accept Full autonomy for its agent profile.",
   unknown: "Waiting at a screen Runner does not know.",
   "not-started": "Has not started — look at its terminal.",
 };
@@ -75,6 +76,7 @@ const WAITING_HELP: Record<AgentWait["prompt"], HelpKey> = {
   permission: "need.approval",
   trust: "need.approval",
   question: "need.question",
+  consent: "need.consent",
   unknown: "need.unknown",
   "not-started": "need.notstarted",
 };

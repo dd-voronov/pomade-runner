@@ -9,9 +9,14 @@
 // there; `[ask-late]` puts it up 5 s into the turn; `[no-answer]` ends the turn on an API error
 // ("Not logged in · Please run /login") with no answer — the record's last message stays `null`,
 // and the transcript's assistant record is the error one Claude Code writes (`isApiErrorMessage`);
-// `[stuck]` stops at a consent screen no scanner names before it starts (Claude's Bypass
-// Permissions one), with no session made: `2` accepts it and the agent starts as with no word,
-// `1` or Esc ends it with status 1. `[question]` puts up Claude's question form midway (its
+// `[stuck]` stops at a screen no scanner names before it starts (Claude's login method choice)
+// under the idle title, with no session made: `1`, `2` or Enter picks a method and the agent starts
+// as with no word, Esc ends it with status 1. `[consent]` stops at Claude's Bypass Permissions
+// consent screen before it sets any title, with no session made — the screen as Claude drew it,
+// from a real run's output log (`claude-bypass-consent.log`, its trailing terminal queries left
+// out) — "❯ No, exit" highlighted: ↓/↑ move the highlight, Enter picks it — "Yes, I accept" clears
+// the screen and the agent starts as with no word, "No, exit" ends it with status 1, leaving the
+// screen as drawn; Esc ends it so too. `[question]` puts up Claude's question form midway (its
 // AskUserQuestion tool: "☐ Format", options, footer "Enter to select · ↑/↓ to navigate · Esc to
 // cancel") under the idle title: Enter picks the highlighted option, `1`/`2` theirs, ↓/↑ move the
 // highlight, Esc declines; the turn goes on and its answer names the pick. `[unknown-dialog]` puts
@@ -77,8 +82,14 @@ const DIALOG =
     ? ["", "  Bash command", "    git mv drafts/2026-11-16-*.md published/", "", "  Do you want to proceed?", "  ❯ 1. Yes", "    2. Yes, and don't ask again for git mv", "    3. No, tell Claude what to do differently", "", "  Esc to cancel"]
     : ["", "  Would you like to run the following command?", "    $ git mv drafts/2026-11-16-*.md published/", "", "  › 1. Yes, proceed", "    2. No, and tell Codex what to do differently", "", "  Press enter to confirm or esc to cancel"];
 
-/** Claude Code's consent screen for Bypass Permissions mode, as a profile that never accepted it shows it. */
-const CONSENT = ["", "  WARNING: Claude Code running in Bypass Permissions mode", "", "  In Bypass Permissions mode, Claude Code will not ask for your approval before running", "  potentially dangerous commands.", "", "  ❯ 1. No, exit", "    2. Yes, I accept", "", "  Enter to confirm · Esc to exit"];
+/** Claude Code's consent screen for Bypass Permissions mode, as a profile that never accepted it
+ *  shows it: "No, exit" highlighted, and the same screen with "Yes, I accept" highlighted. */
+const CONSENT = readFileSync(new URL("claude-bypass-consent.log", import.meta.url), "utf8");
+const NO_HIGHLIGHTED = "\x1b[3G\x1b[38;5;105m❯\x1b[5GNo,\x1b[9Gexit\x1b[39m\r\r\n\x1b[5GYes,\x1b[10GI\x1b[12Gaccept\r\r\n";
+if (!CONSENT.includes(NO_HIGHLIGHTED)) throw new Error("fake-agent: the consent capture's option rows changed");
+const CONSENT_ACCEPT = CONSENT.replace(NO_HIGHLIGHTED, "\x1b[5GNo,\x1b[9Gexit\r\r\n\x1b[3G\x1b[38;5;105m❯\x1b[5GYes,\x1b[10GI\x1b[12Gaccept\x1b[39m\r\r\n");
+/** A screen no scanner names, before the agent starts: Claude's login method choice. */
+const LOGIN = ["", " Claude Code can be used with your Claude subscription or billed based on API usage", " through your Console account.", "", " Select login method:", "", " ❯ 1. Claude account with subscription · Pro, Max, Team, or Enterprise", "", "   2. Anthropic Console account · API usage billing"];
 
 /** Claude Code's footer while a background shell goes: the last row on screen, under the composer. */
 const SHELL_FOOTER = "  ⏵⏵ bypass permissions on · 1 shell · ↓ to manage";
@@ -146,7 +157,8 @@ const askOnExit = () => {
     };
   }, 15);
 };
-/** Whether the session has begun: a `[stuck]` agent's begins once its consent is accepted. */
+/** Whether the session has begun: a `[stuck]` agent's begins once a login method is picked, a
+ *  `[consent]` agent's once its consent is accepted. */
 let begun = false;
 /** While a permission prompt is up: what answering it does. */
 let answer = null;
@@ -171,10 +183,17 @@ const listen = () => {
       for (const key of data.match(/\x1b\[[AB]|[\s\S]/g) ?? []) if (form !== null) form(key);
       return;
     }
+    if (answer !== null && prompt.includes("[consent]") && !begun) {
+      if (data === "\x03") process.exit(130);
+      // Key by key, a sequence whole: an arrow in either cursor-key mode (`ESC [ B`, `ESC O B`); the
+      // focus reports the screen turned on (`ESC [ I`, `ESC [ O`) are no keys.
+      for (const key of data.match(/\x1b\[[0-?]*[ -/]*[@-~]|\x1bO[A-D]|[\s\S]/g) ?? []) if (answer !== null) answer(key.replace("\x1bO", "\x1b["));
+      return;
+    }
     if (answer !== null && prompt.includes("[stuck]") && !begun) {
       if (data === "\x03") process.exit(130);
       const key = data[0] ?? "";
-      const choice = key === "2" ? "accept" : ["1", "\x1b"].includes(key) ? "exit" : null;
+      const choice = ["1", "2", "\r"].includes(key) ? "accept" : key === "\x1b" ? "exit" : null;
       if (choice === null) return;
       const then = answer;
       answer = null;
@@ -230,10 +249,27 @@ if (resume !== null) {
   listen();
 } else if (prompt.includes("[stuck]")) {
   title(IDLE);
-  process.stdout.write(`${CONSENT.join("\r\n")}`);
+  process.stdout.write(LOGIN.join("\r\n"));
   answer = (choice) => {
     if (choice !== "accept") process.exit(1);
     process.stdout.write("\r\n\r\n");
+    begin();
+  };
+  listen();
+} else if (prompt.includes("[consent]")) {
+  process.stdout.write(CONSENT);
+  let accept = false;
+  answer = (key) => {
+    if (key === "\x1b[A" || key === "\x1b[B") {
+      accept = !accept;
+      process.stdout.write(`\x1b[2J\x1b[H${accept ? CONSENT_ACCEPT : CONSENT}`);
+      return;
+    }
+    if (key === "\x1b" || (key === "\r" && !accept)) process.exit(1);
+    // Any other sequence — a focus report — is no key.
+    if (key !== "\r") return;
+    answer = null;
+    process.stdout.write("\x1b[2J\x1b[H");
     begin();
   };
   listen();

@@ -1,7 +1,8 @@
 /** A run's output as Runner shows it: the text a terminal got, with the colours and bold the program
  *  printed kept, in the app's palette, and every other terminal code — cursor moves, window titles,
- *  links, screen clearing — removed. A line rewritten with `\r` (a progress bar) is the line it
- *  ended as. */
+ *  links, screen clearing — removed; a cursor move along the line (`CSI n C` forward, `CSI n G` to a
+ *  column), as Claude Code draws its words one move per word, leaves the blanks it skips. A line
+ *  rewritten with `\r` (a progress bar) is the line it ended as. */
 
 /** The colours output is shown in: the palette's six hues, and dim for the greys and white a
  *  program prints. Black and dark greys show in the text colour (`null`). */
@@ -139,8 +140,8 @@ function applySgr(pen: Pen, params: string): Pen {
 
 const sameStyle = (a: OutputStyle, b: OutputStyle): boolean => a.colour === b.colour && a.bold === b.bold && a.faint === b.faint;
 
-/** A terminal's output as lines of styled spans: the colours and bold kept, every other code
- *  removed, and a line rewritten with `\r` (a progress bar) as it ended up. A style the program
+/** A terminal's output as lines of styled spans: the colours and bold kept, a cursor move along the
+ *  line as the blanks it skips, every other code removed, and a line rewritten with `\r` (a progress bar) as it ended up. A style the program
  *  set runs on across lines until it changes it, as in the terminal. */
 export function outputLines(text: string): OutputLine[] {
   const lines: OutputLine[] = [];
@@ -169,6 +170,11 @@ export function outputLines(text: string): OutputLine[] {
       returned = false;
     } else if (code === "\r") returned = true;
     else if (match[2] === "m") pen = applySgr(pen, match[1] ?? "");
+    else if (match[2] === "C" || match[2] === "G") {
+      const n = Math.max(1, number(match[1] ?? ""));
+      const at = returned ? 0 : lineText(line).length;
+      add(" ".repeat(match[2] === "C" ? n : Math.max(0, n - 1 - at)));
+    }
   }
   add(text.slice(from));
   lines.push(line);

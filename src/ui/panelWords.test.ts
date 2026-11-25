@@ -84,6 +84,7 @@ describe("a Needs-you card's look", () => {
     const item: NeedsYouItem = { ...base, id: "waiting:job:r", kind: "waiting", run: "r", prompt: "permission", at: NOW - 17 * 60_000, detail: "waiting for approval" };
     expect(look(item)).toEqual({ tone: "warning", help: "need.approval", when: "17m", text: "Waiting for approval at a permission prompt." });
     expect(look({ ...item, prompt: "trust", at: NOW - 12_000 })).toEqual({ tone: "warning", help: "need.approval", when: "12s", text: "Waiting for you to trust its folder." });
+    expect(look({ ...item, prompt: "consent", at: NOW - 5_000 })).toEqual({ tone: "warning", help: "need.consent", when: "5s", text: "Waiting for you to accept Full autonomy for its agent profile." });
     expect(look({ ...item, prompt: "not-started", at: NOW - 40_000 })).toEqual({ tone: "warning", help: "need.notstarted", when: "40s", text: "Has not started — look at its terminal." });
   });
 

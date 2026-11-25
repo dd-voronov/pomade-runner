@@ -6,7 +6,6 @@
 
 import { isGitRunOutput, type GitRunOutput } from "pomade-kit/protocol";
 
-import { pulledCommits } from "../integrations/pomade-next";
 import { HOOK_EVENTS, JOB_KINDS, SERVICE_ACTIONS, SESSION_STATUS_WORDS, SESSION_STATUSES, type HookEvent, type JobKind, type ServiceAction } from "../jobs/model";
 import { isServiceStatus, LOOP_CRASHES, type ServiceStatus } from "../keeper/model";
 
@@ -120,15 +119,16 @@ export function waitsForBackground(run: { state: string; agent: AgentRun | null 
 export const BACKGROUND_WORDS = "running · waiting for the agent's background work";
 
 /** What an agent waits at — approval of a tool call, trust for the folder it started in, its
- *  question form, or a screen Runner does not know after it worked (`unknown`; the kit's
- *  `AgentPrompt`), or a screen it has not started working past (`not-started`) — and since when
+ *  question form, acceptance of Claude's Bypass Permissions mode for its profile (`consent`), or a
+ *  screen Runner does not know after it worked (`unknown`; the kit's `AgentPrompt`), or a screen it
+ *  has not started working past (`not-started`) — and since when
  *  (epoch ms, the scheduler's clock). */
 export interface AgentWait {
   prompt: AgentWaitKind;
   since: number;
 }
 
-export const AGENT_WAIT_KINDS = ["permission", "trust", "question", "unknown", "not-started"] as const;
+export const AGENT_WAIT_KINDS = ["permission", "trust", "question", "consent", "unknown", "not-started"] as const;
 export type AgentWaitKind = (typeof AGENT_WAIT_KINDS)[number];
 
 const isAgentWaitKind = (value: unknown): value is AgentWaitKind => AGENT_WAIT_KINDS.includes(value as AgentWaitKind);
@@ -1028,6 +1028,20 @@ export function runWords(view: RunView): string {
       if (view.event !== null) return serviceEventWords({ ...view, event: view.event });
       return view.limitHit === null ? `failed · ${failureWords(view)}` : limitWords(view.limitHit);
   }
+}
+
+/** The commits a git run pulled, summed over its repos' done pulls (`GitRunStep.commits`); `null` when
+ *  it made no done pull, or when any done pull's count is unknown — absent, as every Pomade before
+ *  the count prints it. */
+function pulledCommits(git: GitRunOutput | null): number | null {
+  const pulls = (git?.results ?? []).flatMap((result) => result.steps.filter((step) => step.step === "pull" && step.outcome === "done"));
+  if (pulls.length === 0) return null;
+  let sum = 0;
+  for (const step of pulls) {
+    if (step.commits === undefined) return null;
+    sum += step.commits;
+  }
+  return sum;
 }
 
 /** What a git run pulled, in words: "2 commits pulled", "1 commit pulled", "up to date" for none —

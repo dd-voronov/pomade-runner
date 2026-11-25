@@ -67,6 +67,22 @@ describe("outputLines", () => {
   });
 });
 
+describe("a cursor move along the line", () => {
+  const CONSENT_ROWS = "\x1b[3G\x1b[38;5;105m❯\x1b[5GNo,\x1b[9Gexit\x1b[39m\r\r\n\x1b[5GYes,\x1b[10GI\x1b[12Gaccept\r\r\nab\x1b[2Ccd\x1b[Ce";
+
+  it("leaves the blanks it skips, as Claude Code draws its words: in plain lines", () => {
+    expect(plainLines(CONSENT_ROWS)).toEqual(["  ❯ No, exit", "    Yes, I accept", "ab  cd e"]);
+    expect(plainLine("\x1b[2K\x1b[1Gdone")).toBe("done");
+    expect(plainLines("half 10%\rhalf\x1b[6G100%")).toEqual(["half 100%"]);
+  });
+
+  it("and in styled lines, the colour kept", () => {
+    const [first] = outputLines(CONSENT_ROWS);
+    expect(lineText(first ?? [])).toBe("  ❯ No, exit");
+    expect(first?.find((span) => span.text.includes("❯"))?.style.colour).not.toBeNull();
+  });
+});
+
 describe("styledText", () => {
   it("keeps a line as SGR codes of its palette colours, each span reset, and reads back the same", () => {
     const [line = []] = outputLines("a \x1b[1;38;2;220;40;40mbad\x1b[22m red\x1b[0m end");

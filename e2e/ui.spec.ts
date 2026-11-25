@@ -692,7 +692,7 @@ test.describe("runs", () => {
       { id: "blog", name: "Blog", root: "Projects/blog" },
     ]);
     const query = { route: `run/pull/${RUN}`, projects, repos: "blog=Projects/blog" };
-    await page.goto(harness({ ...query, gitReveal: "1" }));
+    await page.goto(harness(query));
     await setRuns(page, [git]);
     const repos = app(page).getByTestId("run-card").getByTestId("run-git-repo");
     await expect(repos).toHaveCount(4);
@@ -702,14 +702,14 @@ test.describe("runs", () => {
     await expect(open(2)).toBeVisible();
     await expect(app(page).getByRole("button", { name: "Open in Git" })).toHaveCount(3);
     // One probe for the UI session, its path empty — not a reveal.
-    expect(await page.evaluate(() => [window.gitRevealAsked, window.gitReveals.length])).toEqual([1, 0]);
+    expect(await page.evaluate(() => [window.gitRevealAsked, window.fakeHost.gitReveals.length])).toEqual([1, 0]);
     await open(1).hover();
     await expect(app(page).getByTestId("tooltip")).toContainText("Opens Pomade's Git panel at this repo");
     await shoot(page, "tab-run-git-open-in-git");
     await open(1).click();
-    await expect.poll(() => page.evaluate(() => window.gitReveals)).toEqual([{ path: "/fake/workspace/Projects/blog", projectId: "blog" }]);
+    await expect.poll(() => page.evaluate(() => window.fakeHost.gitReveals)).toEqual([{ path: "/fake/workspace/Projects/blog", projectId: "blog" }]);
     await open(2).click();
-    await expect.poll(() => page.evaluate(() => window.gitReveals.at(-1))).toEqual({ path: "/fake/workspace/notes", projectId: "__workspace__" });
+    await expect.poll(() => page.evaluate(() => window.fakeHost.gitReveals.at(-1))).toEqual({ path: "/fake/workspace/notes", projectId: "__workspace__" });
     // A repo Pomade does not have: the call says not-found, and the card says so.
     await open(3).click();
     await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCould not open gone in Git: Pomade has no such repo or project now");
@@ -719,8 +719,8 @@ test.describe("runs", () => {
     await expect(repos).toHaveCount(1);
     await expect(app(page).getByRole("button", { name: "Open in Git" })).toHaveCount(0);
 
-    // A Pomade without git.reveal (the fake host answers unknown-method): the failed repos have no button.
-    await page.goto(harness(query));
+    // A Pomade without git.reveal (it answers unknown-method): the failed repos have no button.
+    await page.goto(harness({ ...query, gitReveal: "0" }));
     await setRuns(page, [git]);
     await expect(repos).toHaveCount(4);
     await expect.poll(() => page.evaluate(() => window.gitRevealAsked)).toBe(1);

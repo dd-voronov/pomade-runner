@@ -704,6 +704,19 @@ hooks, chains, History, notices and Needs you.
   `idle` alone. Claude's question form (its AskUserQuestion tool: "☐ <header>", numbered options,
   "Enter to select · ↑/↓ to navigate · Esc to cancel") is the scanner's wait at prompt `question`,
   with the option it highlights.
+- **Claude's Bypass Permissions consent.** A profile that never accepted Bypass Permissions mode —
+  the mode Full autonomy runs Claude in — starts at Claude's consent screen ("WARNING: Claude Code
+  running in Bypass Permissions mode", "❯ No, exit" / "Yes, I accept", "Enter to confirm · Esc to
+  cancel"), drawn before Claude sets any title: the scanner's wait at prompt `consent`, the first
+  state such a run reports. It waits for you at once, in every mode, as a permission prompt does:
+  its wait `consent`, "waiting for you to accept Full autonomy for its agent profile", the notice
+  "<job> needs your consent", **Open at the prompt**. Runner never answers it. "Yes, I accept"
+  replaces it with Claude's start screen, which ends the wait, and the agent starts. Enter on the
+  highlighted "No, exit" ends the agent and leaves the screen as drawn, so the wait ends with the
+  run, when the agent's process exits: **failed**, "the agent exited before its turn was done", its
+  card "The agent never started a session". The acceptance is kept per agent profile
+  (`skipDangerousModePermissionPrompt` in the profile's `settings.json`), so the profile's next run
+  starts without it.
 - **Question forms.** In Normal the form waits for you as a permission prompt does (**Waiting for
   you**), worded as a question: "waiting for your answer to its question", the notice "<job> asks
   you a question"; each further question of the same form is the same wait. In Full autonomy
@@ -755,7 +768,7 @@ hooks, chains, History, notices and Needs you.
   cannot be asked — not answering, Pomade gone — or the run has no session id, the answer is unknown,
   not missing: the run is recorded **done**, the reason in the scheduler's log. The result card of
   such a run shows the reason and the last lines in place of the last message.
-- **Waiting for you.** A permission, trust or question prompt, or a screen Runner does not know,
+- **Waiting for you.** A permission, trust, question or consent prompt, or a screen Runner does not know,
   on the agent's screen (the scanner's `waiting`) makes the running run wait for you: `waiting` on its `AgentRun` — the prompt and since
   when — a Needs-you item and a notice. It holds no low-priority slot and its time limit pauses:
   `waitedMs` adds up its waits, which `ranFor` leaves out. Answered — the agent works or idles
@@ -769,14 +782,13 @@ hooks, chains, History, notices and Needs you.
   `waitedMs`. A record or a run going of an older build reads as one that never waited, whose agent
   started working and has no background work.
 - **An agent that has not started.** An agent can stop before it works at a screen the scanner
-  does not name — a consent (Claude's Bypass Permissions one, for a profile that never accepted
-  it), a login, an onboarding step. A running run whose agent has not worked
+  does not name — a login, an onboarding step. A running run whose agent has not worked
   `NOT_STARTED_MS` (20 s) into its run — `ranFor`, so its waits are left out — and waits at no
   prompt waits for you as at a prompt, its wait `not-started`: the same item, notice, badge,
   paused time limit and slot given up. A scheduler that follows the run afresh — a restart — gives
   the agent the same 20 s from then to be seen working, since it may have started while the
   scheduler was down. A screen the scanner names keeps its own words: a permission or trust prompt
-  that comes turns the wait into its own, since when it began; one before the 20 s is a prompt's
+  — or the consent — that comes turns the wait into its own, since when it began; one before the 20 s is a prompt's
   wait, and once answered the agent has its remaining time to start. A screen without a prompt
   does not end a `not-started` wait; the agent working does, or the run's end. Such an agent made
   no session: the Agents app answers `not-found` for the run's session id, and its ended card says
@@ -816,7 +828,7 @@ limit, Run now, hooks, chains, History, notices and Needs you.
 - **The record** keeps the `GitRunOutput` whole (`git`): per repo done / skipped / failed and the
   reason, the steps, the commit hash, and a done pull step's `commits` — the commits it got, 0 for
   up to date — when the Pomade that ran it prints one (`pomade:T-321`; absent means unknown, never
-  0; read by `stepCommits` in `src/integrations/pomade-next.ts`). Its last lines are one line per repo: "notes · committed
+  0; summed by `pulledWords` in `src/scheduler/model.ts`). Its last lines are one line per repo: "notes · committed
   a1b2c3d · pulled · pushed", "notes · skipped · agent working", "notes · failed · <the
   reason>" — a done pull with a `commits` count says what it got ("pulled · 2 commits", "pulled ·
   1 commit", "pulled · up to date"), without one plain "pulled" (`gitRepoLine`); without a result, the output log's last lines. The result file goes once the record
@@ -841,7 +853,7 @@ head is red, a run that waits for you amber. Its body, by what the run left:
 | Git, ended | each repo: its commit hash and its steps (✓ done, ✗ failed, faint skipped), and a reason a step does not say; a failed repo's top line ends with **Open in Git** (below) | **View output** · **Run again** |
 | Agent, ended | a failed run's reason in red; the agent's last message (`sessions.lastMessage` by the run's session, its Markdown drawn as text: paragraphs, lists, bold, emphasis, code), or why it cannot be read — no session known, none written yet, the Agents app not running; "The agent never started a session." when the Agents app has no such session (`not-found`), its raw error not shown; a run whose turn ended without an answer: the last lines in its place | **Open session** (not for a session the agent never started) (a Pomade agent tab resuming the session — `agentTabs.resume` in the job's project and folder — or the live tab already on it) · **View output** · **Run again** |
 | Running | the latest output, followed while it runs | **Open terminal** · **Stop run** |
-| Agent, waiting for you | what it waits at ("The agent stopped at a permission prompt and waits for your answer."; for an agent that has not started, that it stopped at a screen Runner does not know — a consent, a login, a first-run step — and to look at its terminal), **Waiting at**: the end of its output from the step that asks (`promptLines`), and that the time limit is paused | **Open at the prompt** (its terminal tab) · **Stop run** |
+| Agent, waiting for you | what it waits at ("The agent stopped at a permission prompt and waits for your answer."; for Claude's consent, 'Claude asks you to accept its Bypass Permissions mode — Full autonomy — for this agent profile, once. Pick "Yes, I accept" in its terminal and the run goes on; "No, exit" ends it.'; for an agent that has not started, that it stopped at a screen Runner does not know — a login, a first-run step — and to look at its terminal), **Waiting at**: the end of its output from the step that asks (`promptLines`), and that the time limit is paused | **Open at the prompt** (its terminal tab) · **Stop run** |
 | Queued | what it waits for, in a sentence — waiting for a slot, the low-priority runs holding the slots by name ("Two low-priority runs are going (Wiki lint, Photo backup). This one starts when one of them finishes.") | **Run now** |
 | Missed, waiting for you | when it was due — for more than one missed run, "This job missed 4 runs, 17:40–17:46." — and that its policy waits for you; **Run at…** opens a field that reads the time as it is typed | **Run now** · **Run at…** · **Skip**; for more than one **Run once** · **Run all N** · **Run at…** · **Skip** |
 | Skipped or missed | why it never started ("Missed 4 runs, 17:40–17:46 · skipped." for more than one) | **Run now** (scripts and git jobs) |
@@ -867,9 +879,9 @@ a failed repo's row in Pomade's Git panel, where the conflict is resolved: Host 
 job's own when its folder holds the repo; else the first project, by id, whose folder holds it;
 else the Workspace. A repo Pomade has no row for, or a project gone, answers `not-found`, and the
 card toasts "Could not open notes in Git: Pomade has no such repo or project now". The button is
-there only while Pomade serves the call: the kit's client has no method for it yet, so the frame
-sends it over its own transport (`src/ui/platformCalls.ts`), and the first card with a failed
-repo in a UI session probes once with an empty path — `invalid-params` or `not-found` means the
+there only while Pomade serves the call, which the SDK cannot tell beforehand: the first card with
+a failed repo in a UI session probes `host.git.reveal` once with an empty path
+(`useGitRevealServed`) — `invalid-params` or `not-found` means the
 call is served, `unknown-method` or `capability-denied` that it is not; nothing moves in Pomade
 either way. An answer that says neither is not kept, so the next card asks again.
 
@@ -1186,7 +1198,7 @@ to it, light theme only.
    | failed run | when it failed | "Failed: exit 1 · 2×" (the count when more than one) | Open · Run now · Dismiss |
    | service gave up | its last crash | "Crashed 5× in 1 min — gave up."; when its last start failed, "Gave up — could not start: <why>" | Start · View output (only when the service has a terminal session) |
    | missed run waits | when it was missed | "Missed — it waits for you to pick a time." ("Missed 4 runs, 17:40–17:46 — …" for more than one) | Run now · Run at… · Skip; for more than one Run once · Run all N · Run at… · Skip, wrapping to a second row in the panel |
-   | agent run waits for you | how long it has waited ("17m") | "Waiting for approval at a permission prompt." / "Waiting for you to trust its folder." / "Has not started — look at its terminal." | Open at the prompt |
+   | agent run waits for you | how long it has waited ("17m") | "Waiting for approval at a permission prompt." / "Waiting for you to trust its folder." / "Waiting for you to accept Full autonomy for its agent profile." / "Has not started — look at its terminal." | Open at the prompt |
    | long run | how long it has gone ("3h 02m") | "Running 3h — still expected?" | Open (its terminal) · Stop · Dismiss |
    | job paused by the loop guard | when it paused | "Paused: triggered 10× in 10 min." | Resume · Edit job |
 
@@ -1782,13 +1794,13 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
 | Platform (`pomade:E-033`) | Open session |
 | Platform (`pomade:E-034`) | attached terminals: the pane, `tabs.openAttached`, `attachedTab.action` |
 | `pomade-git` (`pomade:E-042`) | git operations, structured results; a done pull's `commits` (`pomade:T-321`) |
-| Platform (`pomade:T-320`) | `git.reveal`: Open in Git on a failed repo (`git.read`); declared in `src/integrations/pomade-next.ts` until `pomade-kit` v0.18.0 |
-| `pomade-kit` | SDK, schedule format, date phrases, agent scanners, the keeper library and attach protocol, the git runs contract |
+| Platform (`pomade:T-320`) | `git.reveal`: Open in Git on a failed repo (`git.read`) |
+| `pomade-kit` (v0.19.0) | SDK, schedule format, date phrases, agent scanners, the keeper library and attach protocol, the git runs contract |
 | `pomade-agents` (`calls`) | `roster.list`, `roster.launchSpec`, `roster.projectsFor`, `sessions.lastMessage`, `sessions.find` (`src/integrations/agents.ts`); events B `session.closed` and C `session.statusChanged` (`src/integrations/agent-events.ts`, the agents' hooks) |
 
 ## Stack
 
-TypeScript (strict) everywhere, on `pomade-kit` (`github:dd-voronov/pomade-kit#v0.16.0`).
+TypeScript (strict) everywhere, on `pomade-kit` (`github:dd-voronov/pomade-kit#v0.19.0`).
 
 | Part | Built with | Why |
 |---|---|---|

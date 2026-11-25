@@ -153,6 +153,7 @@ export const WAIT_WORDS: Record<AgentWait["prompt"], string> = {
   permission: "waiting for approval",
   trust: "waiting for you to trust its folder",
   question: "waiting for your answer to its question",
+  consent: "waiting for you to accept Full autonomy for its agent profile",
   unknown: "waiting at a screen Runner does not know — look at its terminal",
   "not-started": "has not started — look at its terminal",
 };
@@ -161,6 +162,7 @@ const WAIT_NOTICES: Record<AgentWait["prompt"], { title: string; body: string }>
   permission: { title: "needs your approval", body: "The agent waits at a permission prompt. Open it to answer; the time limit is paused meanwhile." },
   trust: { title: "needs your approval", body: "The agent asks whether to trust its folder. Open it to answer; the time limit is paused meanwhile." },
   question: { title: "asks you a question", body: "The agent asks you to pick an option. Open it to answer; the time limit is paused meanwhile." },
+  consent: { title: "needs your consent", body: 'Claude asks you to accept its Bypass Permissions mode for this agent profile, once. Open it and pick "Yes, I accept"; the time limit is paused meanwhile.' },
   unknown: { title: "waits at a screen Runner does not know", body: "The agent stopped at a screen Runner does not know. Open it to look; the time limit is paused meanwhile." },
   "not-started": { title: "has not started", body: "The agent stopped at a screen before it began working. Look at its terminal; the time limit is paused meanwhile." },
 };

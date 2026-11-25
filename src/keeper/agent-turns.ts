@@ -1,7 +1,8 @@
 // Following an agent run's turns: the scheduler attaches to the run's keeper session as a viewer
 // and replays its output into the kit's agent-state scanner (`pomade-kit/scanners`), which reads
 // the provider's own screen and window title. A permission or trust prompt on screen is a wait for
-// the person, told when it comes and when it goes — answered, the agent works again. Its question
+// the person, told when it comes and when it goes — answered, the agent works again; so is Claude's
+// Bypass Permissions consent, which comes before the agent sets any title. Its question
 // form is such a prompt, told with the option it highlights, each question once; so is a screen
 // the scanner does not name once the agent has worked (the scanner's `unknown` wait: the idle title
 // over anything but the agent's empty prompt). The agent working is told too: an agent that never
