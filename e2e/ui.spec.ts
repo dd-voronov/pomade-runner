@@ -2694,6 +2694,75 @@ test.describe("History and result cards", () => {
     await shoot(page, "t030-history-scrolled");
   });
 
+  test("T-056 · a History longer than the tab scrolls in the table's own area: the head stays at its top with the day under it, the sideways scrollbar's place at the tab's bottom, the page itself never scrolls", async ({ page }) => {
+    // Six runs a day over ten days: far longer than the 700 px tab.
+    const long = Array.from({ length: 60 }, (_, n): RunRecord => {
+      const due = at(Math.floor(n / 6), 20 - (n % 6) * 2, 0);
+      return { ...done, run: `20261117-0${String(n).padStart(5, "0")}-long${String(n).padStart(2, "0")}`, dueAt: due, startedAt: due, endedAt: due + 2000 };
+    });
+    await show(page, "history", { history: long });
+    await expect(app(page).getByTestId("history-row")).toHaveCount(60);
+    const table = app(page).getByTestId("resizable-table");
+    const head = table.locator("> div > div").first();
+    const frame = (await page.locator('iframe[data-frame="main"]').boundingBox())!;
+    const view = frame.y + frame.height;
+    // Wider than the tab: Trigger grows by 6 large steps.
+    const grip = app(page).locator('[data-testid="column-grip"][data-grip="trigger"]');
+    await grip.focus();
+    for (let step = 0; step < 6; step++) await page.keyboard.press("Shift+ArrowRight");
+    await grip.blur();
+    expect(await table.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeGreaterThan(200);
+    expect(await table.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(1000);
+    // The page's own scroll region has nothing to scroll; the table ends inside the tab.
+    expect(await table.evaluate((el) => (el.closest("main")!.lastElementChild as HTMLElement).scrollHeight - (el.closest("main")!.lastElementChild as HTMLElement).clientHeight)).toBeLessThanOrEqual(0);
+    const top = (await head.boundingBox())!.y;
+    const bottom = async (): Promise<number> => {
+      const box = (await table.boundingBox())!;
+      return box.y + box.height;
+    };
+    expect(await bottom()).toBeLessThanOrEqual(view);
+    expect(await bottom()).toBeGreaterThan(view - 40);
+
+    // A wheel over the rows scrolls the list, not the page: the head stays put, a day under it.
+    const rowBox = (await app(page).getByTestId("history-row").nth(3).boundingBox())!;
+    await page.mouse.move(rowBox.x + 100, rowBox.y + rowBox.height / 2);
+    // 700 px: three days (each its head, six rows and the gap: 232 px) and a little of the fourth.
+    await page.mouse.wheel(0, 700);
+    await expect.poll(() => table.evaluate((el) => el.scrollTop)).toBe(700);
+    expect((await head.boundingBox())!.y).toBeCloseTo(top, 0);
+    /** The day heads whose top is at the column head's bottom. */
+    const pinnedDays = async () => {
+      const headBox = (await head.boundingBox())!;
+      const boxes = await Promise.all((await app(page).getByTestId("history-day").all()).map(async (day) => (await day.boundingBox())!));
+      return boxes.filter((box) => Math.abs(box.y - (headBox.y + headBox.height)) < 1);
+    };
+    expect(await pinnedDays(), "a day head pinned right under the column head").toHaveLength(1);
+    // The head paints over the rows passing beneath it.
+    const hit = await head.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return el.contains(el.ownerDocument.elementFromPoint(box.left + 300, box.top + box.height / 2));
+    });
+    expect(hit).toBe(true);
+    expect(await bottom()).toBeLessThanOrEqual(view);
+
+    // Sideways too: the head and the rows move together, the head and the day stay at the top.
+    await table.evaluate((el) => void (el.scrollLeft = 160));
+    const first = app(page).getByTestId("history-row").nth(20);
+    await first.scrollIntoViewIfNeeded();
+    expect((await head.boundingBox())!.x).toBeCloseTo((await first.boundingBox())!.x, 0);
+    const trigger = (await first.getByTestId("history-trigger").boundingBox())!.x;
+    expect(trigger).toBeCloseTo((await head.locator(':scope > [data-col="trigger"]').boundingBox())!.x, 0);
+    expect((await head.boundingBox())!.y).toBeCloseTo(top, 0);
+    await shoot(page, "t056-history-scrolled");
+
+    // A row taking focus above the view comes into sight below the head and its day, not under them.
+    await table.evaluate((el) => void (el.scrollTop = el.scrollHeight));
+    const target = app(page).getByTestId("history-row").nth(13);
+    await target.focus();
+    const [stuck] = await pinnedDays();
+    expect((await target.boundingBox())!.y).toBeGreaterThanOrEqual(stuck!.y + stuck!.height - 1);
+  });
+
   test("T-030 · History's widths are kept on this Mac, and a double click on a grip puts them back to the default", async ({ page }) => {
     await show(page, "history", { active: [running], history: [done, failed] });
     const headCell = (id: string) => app(page).getByTestId("resizable-table").locator("> div > div").first().locator(`:scope > [data-col="${id}"]`);
@@ -4882,6 +4951,48 @@ test.describe("T-022 · T-030 · the Services table's columns", () => {
     await grip(page, "status").focus();
     await page.keyboard.press("ArrowLeft");
     expect((await headCell(page, "status").boundingBox())!.width).toBeCloseTo(status - 16, 0);
+  });
+
+  test("T-056 · a Services list longer than the tab scrolls in the table's own area: the head stays at its top, the sideways scrollbar's place at the tab's bottom, the page itself never scrolls", async ({ page }) => {
+    await open(page);
+    for (let n = 0; n < 16; n++) await writeJob(page, `more-${n}.md`, job(`More ${n}`, `${MID} --name more-${n}`));
+    await expect(app(page).getByTestId("service-row")).toHaveCount(21);
+    const frame = (await page.locator('iframe[data-frame="main"]').boundingBox())!;
+    const view = frame.y + frame.height;
+    await drag(page, "command", 500);
+    expect(await table(page).evaluate((el) => el.scrollWidth - el.clientWidth)).toBeGreaterThan(200);
+    expect(await table(page).evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(300);
+    expect(await table(page).evaluate((el) => (el.closest("main")!.lastElementChild as HTMLElement).scrollHeight - (el.closest("main")!.lastElementChild as HTMLElement).clientHeight)).toBeLessThanOrEqual(0);
+    const top = (await head(page).boundingBox())!.y;
+    const bottom = async (): Promise<number> => {
+      const box = (await table(page).boundingBox())!;
+      return box.y + box.height;
+    };
+    expect(await bottom()).toBeLessThanOrEqual(view);
+    expect(await bottom()).toBeGreaterThan(view - 40);
+
+    // A wheel over the rows scrolls the list, not the page: the head stays put and paints over the rows.
+    const rowBox = (await row(page, "mid").boundingBox())!;
+    await page.mouse.move(rowBox.x + 100, rowBox.y + rowBox.height / 2);
+    await page.mouse.wheel(0, 400);
+    await expect.poll(() => table(page).evaluate((el) => el.scrollTop)).toBeGreaterThan(300);
+    expect((await head(page).boundingBox())!.y).toBeCloseTo(top, 0);
+    expect(await head(page).evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return el.contains(el.ownerDocument.elementFromPoint(box.left + 200, box.top + box.height / 2));
+    })).toBe(true);
+    expect(await bottom()).toBeLessThanOrEqual(view);
+
+    // Sideways too: the cells stay under their head cells, the head at the top.
+    await scrollTo(page, 160);
+    const seen = app(page).locator('[data-testid="service-row"][data-job="more-12"]');
+    await seen.scrollIntoViewIfNeeded();
+    const at = async (locator: Locator): Promise<number> => (await locator.boundingBox())!.x;
+    expect(await at(seen.getByTestId("service-command"))).toBeCloseTo(await at(headCell(page, "command")), 0);
+    expect(await at(seen.getByTestId("service-status"))).toBeCloseTo(await at(headCell(page, "status")), 0);
+    expect((await head(page).boundingBox())!.y).toBeCloseTo(top, 0);
+    await page.mouse.move(0, 0);
+    await shoot(page, "t056-services-scrolled");
   });
 
   test("T-030 · the widths are kept on this Mac: the same after the tab is closed and opened again; a double click on a grip puts the table back to its default layout", async ({ page }) => {

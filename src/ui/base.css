@@ -14,9 +14,12 @@ body,
   margin: 0;
 }
 
+/* `--surface-bg` is the surface's background, which what stays put over scrolling rows (a table's
+   head, a pinned day) paints. */
 body {
+  --surface-bg: var(--bg);
   overflow: hidden;
-  background: var(--bg);
+  background: var(--surface-bg);
   color: var(--text);
   font-family: var(--font-ui);
   font-size: var(--fs-base);
@@ -27,7 +30,7 @@ body {
 
 /* The Runner tab sits on Pomade's pane surface; the side panel keeps the page background. */
 :root[data-surface="tab"] body {
-  background: var(--panel-raised);
+  --surface-bg: var(--panel-raised);
 }
 
 ::selection {

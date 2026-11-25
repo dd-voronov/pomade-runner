@@ -52,8 +52,9 @@ const COLUMNS: readonly Column[] = [
  *  failed ones (a service that gave up too) or the ones that never started; "This project" those of
  *  the project Pomade has open; "Service events", on by default, shows or hides the events; the tab keeps these two while the person visits other views.
  *  Older pages load as the list scrolls to its end.
- *  The columns are as wide as the viewer dragged them to, and the table scrolls sideways where they
- *  are wider than the tab. */
+ *  The columns are as wide as the viewer dragged them to; the table scrolls in its own area under
+ *  the filter row, sideways where the columns are wider than the tab, its head and the day it shows
+ *  staying at its top. */
 export function HistoryView({
   host,
   active,
@@ -138,7 +139,7 @@ export function HistoryView({
   const kept = settings.status === "ready" ? settings.value.settings.historyDays : null;
 
   return (
-    <section data-testid="history">
+    <section className={styles.view} data-testid="history">
       <ViewFilters summary={kept === null ? undefined : `kept ${kept} ${kept === 1 ? "day" : "days"}`}>
         {HISTORY_FILTERS.map((key) => (
           <Chip key={key} on={filter === key} check={false} count={key === "all" ? undefined : `${counts[key]}${more}`} onClick={() => setFilter(key)} data-testid={`history-filter-${key}`}>
@@ -154,7 +155,7 @@ export function HistoryView({
         </Chip>
         <Help k="hist.events" />
       </ViewFilters>
-      <ResizableTable sizing={sizing}>
+      <ResizableTable sizing={sizing} className={styles.table}>
         <TableHead columns={undefined}>
           <span>Time</span>
           <span />
@@ -172,20 +173,24 @@ export function HistoryView({
           </ColumnHead>
         </TableHead>
         <div className={styles.list}>
-          {days.map(({ day, key, runs }) => [
-            <GroupHead key={`day:${key}`} title={day} pinned testId="history-day" />,
-            ...runs.map((view) => <HistoryRow key={itemKey(view)} view={view} now={now} onOpen={() => open(isHeld(view) ? jobsRoute(view.job) : runRoute(view.job, view.run))} />),
-          ])}
+          {days.map(({ day, key, runs }) => (
+            <div key={key} className={styles.day}>
+              <GroupHead title={day} pinned testId="history-day" />
+              {runs.map((view) => (
+                <HistoryRow key={itemKey(view)} view={view} now={now} onOpen={() => open(isHeld(view) ? jobsRoute(view.job) : runRoute(view.job, view.run))} />
+              ))}
+            </div>
+          ))}
           {days.length === 0 && !ready.more && (
             <div className={styles.none} data-testid="history-none">
               No runs match this filter.
             </div>
           )}
         </div>
+        <div ref={end} className={styles.end} data-testid="history-end">
+          {ready.more && "Loading older runs…"}
+        </div>
       </ResizableTable>
-      <div ref={end} className={styles.end} data-testid="history-end">
-        {ready.more && "Loading older runs…"}
-      </div>
     </section>
   );
 }

@@ -1,12 +1,25 @@
-/* The table scrolls sideways when its columns together are wider than the view, and a row never
-   shows past the view's content edge — so no room at the sides: a focused row's ring is drawn inside
-   it (`Table.module.css`). The padding and the matching negative margin above and below leave the
-   scroller's vertical clip room for the controls' rings. */
+/* The table's own scroll area: as tall as its rows, at most what the view leaves under the filter
+   row, so the head stays at its top and the sideways scrollbar at the view's bottom however long the
+   list. A row never shows past the area's content edge — so no room at the sides: a focused row's
+   ring is drawn inside it (`Table.module.css`). The padding and the matching negative margin below
+   leave the area's clip room for the last row's controls' rings; the head, first, has its rings
+   inside its height (a sticky head would keep clear of a padding above it). `--table-head-h` is the
+   head row's height, under which the pinned rows (History's days, `--table-pinned-h` tall) stay; a
+   row that takes focus scrolls into view below both. */
 .scroller {
   --table-room: 2px;
-  margin: calc(-1 * var(--table-room)) 0;
-  padding: var(--table-room) 0;
-  overflow-x: auto;
+  --table-head-h: 24px;
+  flex: 0 1 auto;
+  min-height: 0;
+  margin-bottom: calc(-1 * var(--table-room));
+  padding-bottom: var(--table-room);
+  overflow: auto;
+  scroll-padding-top: calc(var(--table-head-h) + var(--table-pinned-h, 0px));
+}
+
+/* Scrolled down: a hairline under the head, above the rows passing beneath it. */
+.scroller[data-scrolled] {
+  --table-head-line: var(--border);
 }
 
 /* As wide as the view, or wider where the columns need it (`--table-min`: a view's own, else the

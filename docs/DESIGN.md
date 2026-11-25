@@ -1310,7 +1310,8 @@ to it, light theme only.
     Result, Duration and Trigger; the Time and the kind icon are fixed. At the default layout the
     Job, Result and Trigger columns share the tab (0.8 : 1.1 : 1, Trigger at least 86 px) and
     Duration is 62 px. A Job, Result or Trigger a column cuts with "…" shows whole in its tooltip —
-    above the help the Result and Trigger carry — on hover. A day head spans the whole table and
+    above the help the Result and Trigger carry — on hover. A day head spans the whole table, stays
+    under the table's head while its runs scroll beneath it — the next day's head pushes it up — and
     keeps its title at the left edge while the table is scrolled sideways.
 - **Services** (`src/ui/ServicesView.tsx`): the "This project" chip (the tab's, as in Jobs) with
   the open project's name, and the summary "Services on Mac startup outlive Pomade · the switch
@@ -1360,10 +1361,15 @@ to it, light theme only.
     column at the width it has that moment (whole px), then changes the dragged one; from then on
     every column has its own width, no column gives room to another, and what is left of the tab is
     empty at the table's right while the columns are narrower than the tab.
-  - **Scrolling.** When the columns, the gaps between them and the row padding together are wider
-    than the tab, the table scrolls sideways inside its view — head, rows, invalid rows and day heads
-    together, so every cell stays under its head cell at every scroll position; the page itself
-    never scrolls sideways. A day head's title stays at the table's left edge.
+  - **Scrolling.** The table scrolls in its own area under the view's filter row: as tall as its
+    rows, at most down to 12 px above the tab's bottom edge. A list longer than that scrolls inside
+    the area; the head stays at its top — a hairline under it while the list is scrolled down —
+    and History's day head under it, so the area's sideways scrollbar is always at the bottom of the
+    view and a row that takes focus comes into sight below them. When the columns, the gaps between
+    them and the row padding together are wider than the tab, the table scrolls sideways in the same
+    area — head, rows, invalid rows and day heads together, so every cell stays under its head cell
+    at every scroll position; the page itself never scrolls, down or sideways. A day head's title
+    stays at the table's left edge.
   - **Kept widths.** Each table's widths are kept on this Mac per viewer (`localStorage`: Services
     under `pomade-runner.services.column-widths`, History under `pomade-runner.history.column-widths`,
     one JSON object of column id to px) and are the same after the tab is closed and opened again.
@@ -1419,8 +1425,10 @@ chrome around them (the panel's header with its title and collapse, the tab bar)
 - **Runner tab shell** (`src/ui/shell/TabShell.tsx`): a 44 px header — the views Jobs · History ·
   Services · Settings, a count beside Jobs and Services, the current one underlined in the accent;
   the view's actions ("New job") at its right end — then the page in its own scroll region, 1040 px
-  at most. A view opens with its filter row (chips, a faint summary at the right). Runner's version
-  is at the foot of Settings.
+  at most. A view opens with its filter row (chips, a faint summary at the right). History's and
+  Services' pages fill the region instead: the filter row stays, and their table scrolls in its own
+  area under it ("Resizable tables"), so the region itself never scrolls. Runner's version is at the
+  foot of Settings.
 - **Side panel shell** (`src/ui/shell/PanelShell.tsx`): the switch pinned on top; Needs you ·
   Running now · Next up in the scroll region, each a collapsible section with its count (Needs
   you's a red badge while anything waits); Open Runner pinned at the bottom. With no jobs it says

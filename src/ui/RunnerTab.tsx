@@ -78,8 +78,9 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
       New job
     </Button>
   );
-  const shell = (testId: string, children: React.ReactNode): React.JSX.Element => (
-    <TabShell current={tabView(view)} counts={counts} open={open} testId={testId} actions={newJob("new-job")}>
+  // History and Services keep their tables' own scroll areas: their pages fill the tab.
+  const shell = (testId: string, children: React.ReactNode, fill = false): React.JSX.Element => (
+    <TabShell current={tabView(view)} counts={counts} open={open} testId={testId} actions={newJob("new-job")} fill={fill}>
       {children}
     </TabShell>
   );
@@ -133,9 +134,10 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
           {view.view !== "history" && <RunDialog key={`${view.job}/${view.run}`} host={host} job={view.job} run={view.run} needsYou={report?.needsYou ?? []} active={report?.active ?? []} jobs={report?.jobs ?? []} open={open} />}
           {view.view === "prompt" && <PromptOpener key={`${view.job}/${view.run}`} host={host} job={view.job} run={view.run} open={open} />}
         </>,
+        true,
       );
     case "services":
-      return shell("tab-services", <ServicesView host={host} jobs={entries} services={serviceStates} open={open} thisProject={thisProject} onThisProject={setThisProject} newJob={newJob} />);
+      return shell("tab-services", <ServicesView host={host} jobs={entries} services={serviceStates} open={open} thisProject={thisProject} onThisProject={setThisProject} newJob={newJob} />, true);
     case "settings":
       return shell(
         "tab-settings",

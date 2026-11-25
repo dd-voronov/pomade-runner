@@ -1,4 +1,21 @@
-/* History (the prototype's `viewHistory`): the table's columns are in `HistoryView.tsx`. */
+/* History (the prototype's `viewHistory`): the table's columns are in `HistoryView.tsx`. The view
+   fills the page: the filter row, then the table's own scroll area, a day head pinned under its head. */
+.view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.table {
+  --table-pinned-h: 28px;
+}
+
+/* A day: its head, pinned while its runs pass beneath it and pushed up by the next day's. */
+.day + .day {
+  margin-top: var(--space-3);
+}
+
 .chipGap {
   width: var(--space-2);
 }

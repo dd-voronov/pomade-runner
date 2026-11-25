@@ -14,12 +14,15 @@ export type TabView = (typeof TAB_VIEWS)[number]["view"];
 
 /** The Runner tab's frame: the header — the views (Jobs · History · Services · Settings, a count
  *  beside Jobs and Services, the current one underlined) and, at its right end, `actions` (where
- *  "New job" goes) — then the page in its scroll region, 1040 px at most. */
+ *  "New job" goes) — then the page in its scroll region, 1040 px at most. A `fill` page is as tall
+ *  as the region and its view keeps its own scroll area (History's and Services' tables), so the
+ *  region itself does not scroll. */
 export function TabShell({
   current,
   counts,
   open,
   actions,
+  fill = false,
   children,
   testId,
 }: {
@@ -29,6 +32,7 @@ export function TabShell({
   /** Navigates the tab to a route. */
   open: (route: string) => void;
   actions?: ReactNode | undefined;
+  fill?: boolean | undefined;
   children?: ReactNode | undefined;
   testId: string;
 }): React.JSX.Element {
@@ -46,7 +50,7 @@ export function TabShell({
         {actions !== undefined && <div className={styles.actions}>{actions}</div>}
       </header>
       <div className={styles.scroll}>
-        <div className={styles.page}>{children}</div>
+        <div className={fill ? `${styles.page} ${styles.fill}` : styles.page}>{children}</div>
       </div>
     </main>
   );

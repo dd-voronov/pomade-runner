@@ -89,10 +89,18 @@
   color: var(--text-muted);
 }
 
-/* In a table that scrolls sideways the title stays in view at the left edge. */
+/* A day in a table with its own scroll area: it stays under the table's head while its rows scroll
+   beneath it, and its title in view at the left edge while the table scrolls sideways. */
+.pinned {
+  position: sticky;
+  top: var(--table-head-h, 0px);
+  z-index: 1;
+  background: var(--surface-bg);
+}
+
 .pinned .title {
   position: sticky;
-  left: calc(var(--space-2) + var(--table-room, 0px));
+  left: var(--space-2);
 }
 
 .path {

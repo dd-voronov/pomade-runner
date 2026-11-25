@@ -69,7 +69,8 @@ export function PanelEmpty({ children }: { children: ReactNode }): React.JSX.Ele
 }
 
 /** A view's group head: a project's jobs, a History day — the title (help beside it), a faint path
- *  and a count at its end. `pinned` keeps the title at the left edge of a table that scrolls sideways. */
+ *  and a count at its end. `pinned` keeps it under the head of a table with its own scroll area (`ResizableTable`) while its
+ *  rows scroll beneath it, and its title at the table's left edge while the table scrolls sideways. */
 export function GroupHead({
   title,
   help,

@@ -59,15 +59,24 @@ const SizingContext = createContext<ColumnSizing | null>(null);
 /** Whether the table around is a resizable one: its head and rows lay out by its tracks. */
 export const useSized = (): boolean => useContext(SizingContext) !== null;
 
-/** A view's table whose every column with a grip is resized by the viewer. The columns together
- *  may be wider than the view: the table then scrolls sideways inside it, its head and rows
- *  together. The head and rows inside (`TableHead`, `TableRow`) take their tracks from it; a view's
- *  `className` may set `--cols` (other tracks), `--table-min` (another least width) and
- *  `--grip-display` for a width where the table cannot be resized. */
+/** A view's table whose every column with a grip is resized by the viewer, in its own scroll area:
+ *  the last thing of a view whose page fills the tab (`TabShell`'s `fill`), it is as tall as its
+ *  rows, at most what the view leaves, and scrolls down and sideways inside it — the head stays at
+ *  its top, the sideways scrollbar at the view's bottom, and the columns together may be wider than
+ *  the view. The head and rows inside (`TableHead`, `TableRow`) take their tracks from it; a view's
+ *  `className` may set `--cols` (other tracks), `--table-min` (another least width),
+ *  `--grip-display` for a width where the table cannot be resized and `--table-pinned-h`, the
+ *  height of its pinned rows (`GroupHead`'s `pinned`). */
 export function ResizableTable({ sizing, className, children }: { sizing: ColumnSizing; className?: string | undefined; children: ReactNode }): React.JSX.Element {
   return (
     <SizingContext value={sizing}>
-      <div ref={sizing.root} className={join(styles.scroller, className)} style={tableVars(sizing.columns, sizing.widths) as CSSProperties} data-testid="resizable-table">
+      <div
+        ref={sizing.root}
+        className={join(styles.scroller, className)}
+        style={tableVars(sizing.columns, sizing.widths) as CSSProperties}
+        data-testid="resizable-table"
+        onScroll={(event) => event.currentTarget.toggleAttribute("data-scrolled", event.currentTarget.scrollTop > 0)}
+      >
         <div className={styles.inner}>{children}</div>
       </div>
     </SizingContext>

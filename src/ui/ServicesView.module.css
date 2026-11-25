@@ -1,5 +1,10 @@
-/* The view is the container the columns answer to. */
+/* The view is the container the columns answer to. It fills the page: the filter row, then the
+   table's own scroll area. */
 .view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
   container-type: inline-size;
 }
 

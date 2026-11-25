@@ -80,6 +80,15 @@
   padding: var(--space-4) var(--space-5) var(--space-6);
 }
 
+/* A page as tall as the region, its view a column: the filter row, then the view's own scroll area,
+   which ends a little above the tab's bottom edge. */
+.fill {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding-bottom: var(--space-3);
+}
+
 /* A view's filter row: chips on the left, a faint summary at its end. */
 /* As tall as a chip, with or without one. */
 .filters {
