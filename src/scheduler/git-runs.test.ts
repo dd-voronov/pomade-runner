@@ -83,6 +83,15 @@ describe("a repo's line", () => {
     expect(gitRepoLine(result({ op: "push", steps: [{ step: "push", outcome: "skipped", detail: "nothing to push" }], commit: null }))).toBe("notes · nothing to do");
   });
 
+  it("says what a pull got when its step carries commits, else plain pulled", () => {
+    const pulling = (commits?: number) =>
+      result({ commit: null, steps: [{ step: "pull", outcome: "done", detail: "pulled", ...(commits === undefined ? {} : { commits }) } as GitRunResult["steps"][number]] });
+    expect(gitRepoLine(pulling(2))).toBe("notes · pulled · 2 commits");
+    expect(gitRepoLine(pulling(1))).toBe("notes · pulled · 1 commit");
+    expect(gitRepoLine(pulling(0))).toBe("notes · pulled · up to date");
+    expect(gitRepoLine(pulling())).toBe("notes · pulled");
+  });
+
   it("says skipped or failed with the reason", () => {
     expect(gitRepoLine(agentWorking)).toBe("blog · skipped · agent working");
     expect(gitRepoLine(conflict)).toBe(`notes · failed · ${CONFLICT}`);

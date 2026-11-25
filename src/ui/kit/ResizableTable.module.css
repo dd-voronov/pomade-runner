@@ -1,9 +1,11 @@
-/* The table scrolls sideways when its columns together are wider than the view. The padding and
-   the matching negative margin give a focus ring on a row at the table's edge room to show. */
+/* The table scrolls sideways when its columns together are wider than the view, and a row never
+   shows past the view's content edge — so no room at the sides: a focused row's ring is drawn inside
+   it (`Table.module.css`). The padding and the matching negative margin above and below leave the
+   scroller's vertical clip room for the controls' rings. */
 .scroller {
   --table-room: 2px;
-  margin: calc(-1 * var(--table-room));
-  padding: var(--table-room);
+  margin: calc(-1 * var(--table-room)) 0;
+  padding: var(--table-room) 0;
   overflow-x: auto;
 }
 

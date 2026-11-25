@@ -15,6 +15,7 @@
 
 import type { GitRunOutput, GitRunResult, GitRunStatus, GitRunStepName, RepoJob, RepoJobsParams } from "pomade-kit/protocol";
 
+import { stepCommits } from "../integrations/pomade-next";
 import { jobsRoute } from "../integrations/runner-api";
 import type { GitJob, JobsSnapshot } from "../jobs/model";
 import { jobTriggerWords } from "../jobs/words";
@@ -37,13 +38,19 @@ export function gitCommandLine(pomadeGit: string, job: GitJob, resultFile: strin
 
 const STEP_DONE: Record<Exclude<GitRunStepName, "agents" | "commit">, string> = { pull: "pulled", push: "pushed", fetch: "fetched" };
 
-/** One repo's result in a line: "notes · committed a1b2c3d · pulled · pushed", "notes ·
- *  skipped · agent working", "notes · failed · <the reason>". */
+/** One repo's result in a line: "notes · committed a1b2c3d · pulled · 2 commits · pushed", "notes ·
+ *  skipped · agent working", "notes · failed · <the reason>". A pull says what it got ("pulled · 2 commits",
+ *  "pulled · up to date") when its step carries `commits`, else plain "pulled". */
 export function gitRepoLine(result: GitRunResult): string {
   if (result.status !== "done") return [result.repo, result.status, result.reason].filter((part) => part !== null && part !== "").join(" · ");
   const done = result.steps.flatMap((step): string[] => {
     if (step.outcome !== "done" || step.step === "agents") return [];
     if (step.step === "commit") return [result.commit === null ? "committed" : `committed ${result.commit.slice(0, 7)}`];
+    if (step.step === "pull") {
+      const commits = stepCommits(step);
+      if (commits === null) return [STEP_DONE.pull];
+      return [STEP_DONE.pull, commits === 0 ? "up to date" : `${commits} ${commits === 1 ? "commit" : "commits"}`];
+    }
     return [STEP_DONE[step.step]];
   });
   return [result.repo, ...(done.length === 0 ? ["nothing to do"] : done)].join(" · ");

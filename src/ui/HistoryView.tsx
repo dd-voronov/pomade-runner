@@ -50,7 +50,8 @@ const COLUMNS: readonly Column[] = [
  *  each row its time, job, result, duration and what started it (an event: no duration, its cause);
  *  a row opens its result card, a held row its job. The result chips keep the runs going, the
  *  failed ones (a service that gave up too) or the ones that never started; "This project" those of
- *  the project Pomade has open; "Service events", on by default, shows or hides the events. Older pages load as the list scrolls to its end.
+ *  the project Pomade has open; "Service events", on by default, shows or hides the events; the tab keeps these two while the person visits other views.
+ *  Older pages load as the list scrolls to its end.
  *  The columns are as wide as the viewer dragged them to, and the table scrolls sideways where they
  *  are wider than the tab. */
 export function HistoryView({
@@ -60,6 +61,8 @@ export function HistoryView({
   open,
   thisProject,
   onThisProject,
+  events,
+  onEvents,
   newJob,
 }: {
   host: HostClient;
@@ -70,6 +73,9 @@ export function HistoryView({
   /** The "This project" chip, kept by the tab: it holds across the Jobs, History and Services views. */
   thisProject: boolean;
   onThisProject: (on: boolean) => void;
+  /** The "Service events" chip, kept by the tab like "This project": it holds while the person visits other views. */
+  events: boolean;
+  onEvents: (on: boolean) => void;
   /** The New job button the empty view offers. */
   newJob: (testId: string) => React.JSX.Element;
 }): React.JSX.Element {
@@ -79,7 +85,6 @@ export function HistoryView({
   const project = useActiveProject(host);
   const now = useRunningNow(runningSince(active), 10_000);
   const [filter, setFilter] = useState<HistoryFilter>(asked ?? "all");
-  const [events, setEvents] = useState(true);
   // The chip the route asked for turns on; the route goes back to plain History, so the next ask
   // is heard even when the person changed the chip meanwhile.
   useEffect(() => {
@@ -144,7 +149,7 @@ export function HistoryView({
         <Chip on={thisProject} count={project?.name ?? "…"} onClick={() => onThisProject(!thisProject)} data-testid="this-project">
           This project
         </Chip>
-        <Chip on={events} count={`${eventCount}${more}`} onClick={() => setEvents(!events)} data-testid="history-events">
+        <Chip on={events} count={`${eventCount}${more}`} onClick={() => onEvents(!events)} data-testid="history-events">
           Service events
         </Chip>
         <Help k="hist.events" />

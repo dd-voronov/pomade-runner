@@ -104,12 +104,14 @@ function shownRun(active: readonly ActiveRun[]): ActiveRun | undefined {
   return active.find((run) => run.state === "running") ?? active[0];
 }
 
-/** A job's Last result: a service's state (`serviceLook`); for any other job the run going — or
+/** A job's Last result: a service's state (`serviceLook`; `startsOn` is its start project's name, said by a service waiting for that project's first open); for any other job the run going — or
  *  queued, or missed and waiting — else the loop guard's pause (`pausedAt`, when it paused the job),
  *  else its latest finished run, else "never ran". */
-export function lastLook(job: Job, parts: { runs: JobRuns | undefined; active: readonly ActiveRun[]; service: ServiceStatus | undefined; pausedAt?: number | null }, now: number): LastLook {
+export function lastLook(job: Job, parts: { runs: JobRuns | undefined; active: readonly ActiveRun[]; service: ServiceStatus | undefined; startsOn?: string | null; pausedAt?: number | null }, now: number): LastLook {
   if (job.kind === "service") {
-    const look = serviceLook(parts.service ?? fallbackService(job), job.ready, now);
+    const status = parts.service ?? fallbackService(job);
+    if (status === null) return { tone: "hollow", live: false, words: "", help: null, sub: "", subHelp: null, run: null };
+    const look = serviceLook(status, job.ready, now, parts.startsOn ?? null);
     return { tone: look.tone, live: look.live, words: look.words, help: look.help, sub: look.sub, subHelp: look.subHelp, run: null };
   }
   const going = shownRun(parts.active);
@@ -123,20 +125,12 @@ export function lastLook(job: Job, parts: { runs: JobRuns | undefined; active: r
   return recordLook(last, now);
 }
 
-/** What a service's row says before the scheduler reports it. */
-export function fallbackService(job: ServiceJob): ServiceStatus {
-  return {
-    job: job.id,
-    name: job.name,
-    project: job.project,
-    state: job.enabled ? "queued" : "disabled",
-    session: null,
-    restarts: 0,
-    lastCrashAt: null,
-    retryAt: null,
-    needsRestart: false,
-    problem: null,
-  };
+/** What a service's row says before the scheduler reports it: a disabled file's "disabled" — the
+ *  file's own word — else nothing (`null`): no state is guessed, for a service bound to Pomade as
+ *  little as for any other. */
+export function fallbackService(job: ServiceJob): ServiceStatus | null {
+  if (job.enabled) return null;
+  return { job: job.id, name: job.name, project: job.project, state: "disabled", session: null, restarts: 0, lastCrashAt: null, retryAt: null, needsRestart: false, problem: null };
 }
 
 /** A moment ahead as the prototype writes it: "today 13:00", "tomorrow 7:00", "Wed 7:00" within the

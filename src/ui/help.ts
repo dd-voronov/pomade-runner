@@ -10,7 +10,7 @@ export const HELP = {
   'sw.running': ['Everything runs as scheduled.', 'Example: the normal position.'],
   'sw.low': ['Holds low-priority jobs; other jobs and services keep running.', 'Example: during a call — the agent summary waits, the notes commit still runs.'],
   'sw.all': ['Holds every scheduled job, hook and chain. Services keep running.', 'Example: a demo — nothing starts until you switch back.'],
-  'sw.held': ['A held run becomes a missed run and follows its own "If a run is missed" policy when you switch back — once per job, however many it held; the note counts them meanwhile.', 'Example: 4 runs held — the 13:00 commit is skipped; the morning summary catches up once, "missed 3 runs".'],
+  'sw.held': ['A held run becomes a missed run and follows its own "If a run is missed" policy when you switch back — once per job, however many it held; the note counts them meanwhile, and History shows each job\'s as a held row.', 'Example: 4 runs held — the 13:00 commit is skipped; the morning summary catches up once, "missed 3 runs".'],
   'st.running': ['The process is alive right now. Click the row to open its terminal.', 'Example: running · 3m.'],
   'st.up': ['How long the service has been running since its last start.', 'Example: up 3d 4h — it outlived two Pomade restarts.'],
   'st.restarted': ['The service crashed and Runner restarted it after a short wait.', 'Example: restarted 3× · last crash 14:02.'],

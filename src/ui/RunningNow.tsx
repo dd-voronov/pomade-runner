@@ -10,6 +10,7 @@ import { ActiveRunRow, goingRuns, placeWords } from "./ActiveRunsList";
 import { PanelEmpty, PanelRow, useToast } from "./kit";
 import { runningSince } from "./runLook";
 import { serviceLook } from "./serviceWords";
+import { useOpenRunTerminal } from "./useRunActions";
 import { useRunningNow } from "./useNow";
 import { useProjectNames } from "./useRunnerApi";
 
@@ -33,17 +34,16 @@ export function useOpenServiceTab(host: HostClient): (status: ServiceStatus) => 
   };
 }
 
-/** Opens a run's tab: a running run's terminal (its session, attached — Pomade focuses the one
- *  already open), a queued run's result card, which has no session yet. */
+/** Opens a run's tab: a running run's terminal (`useOpenRunTerminal`), a queued run's result card,
+ *  which has no session yet. */
 export function useOpenRun(host: HostClient): (run: ActiveRun) => void {
   const toast = useToast();
+  const openTerminal = useOpenRunTerminal(host);
   return (run) => {
-    const failed = (err: unknown): void => toast(`Could not open ${run.name}: ${err instanceof Error ? err.message : String(err)}`);
     if (run.state === "running") {
-      const session = run.session ?? sessionIdOf({ kind: "run", job: run.job, run: run.run }) ?? "";
-      host.tabs.openAttached({ session: { app: APP_ID, session }, title: run.name }).catch(failed);
+      openTerminal(run, run.session ?? sessionIdOf({ kind: "run", job: run.job, run: run.run }) ?? "");
     } else {
-      host.tabs.openApp({ route: runRoute(run.job, run.run) }).catch(failed);
+      host.tabs.openApp({ route: runRoute(run.job, run.run) }).catch((err: unknown) => toast(`Could not open ${run.name}: ${err instanceof Error ? err.message : String(err)}`));
     }
   };
 }

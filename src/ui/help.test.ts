@@ -28,4 +28,8 @@ describe("help texts say what the app does", () => {
   it("a stopped or failed service says Start brings it back — the button its rows offer", () => {
     for (const key of ["st.stopped", "st.svcfailed", "need.crashloop"] as const) expect(HELP[key][0] + HELP[key][1]).toMatch(/press Start/i);
   });
+
+  it("a held run's help says where the held runs are listed: History", () => {
+    expect(HELP["sw.held"][0]).toContain("History shows each job's as a held row");
+  });
 });

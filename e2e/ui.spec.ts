@@ -54,6 +54,21 @@ function copied(page: Page, key: string): Promise<string[]> {
   return page.locator(`iframe[data-frame="${key}"]`).contentFrame().locator("html").evaluate(() => window.copied);
 }
 
+/** Whether a row's cell shows in the strip just past the table's content edge — the left and the right: none must, however far the table is scrolled sideways. */
+async function rowPastEdge(table: Locator): Promise<boolean> {
+  return table.evaluate((el) => {
+    const parent = el.parentElement!;
+    const box = parent.getBoundingClientRect();
+    const style = getComputedStyle(parent);
+    const left = box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+    const right = box.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
+    const first = el.querySelector("[data-testid$=row]")!.getBoundingClientRect();
+    const y = first.top + first.height / 2;
+    const rowAt = (x: number): boolean => el.ownerDocument.elementsFromPoint(x, y).some((hit) => hit.closest("[data-testid$=row]") !== null);
+    return rowAt(left - 1) || rowAt(right + 1);
+  });
+}
+
 /** With `RUNNER_SHOTS`, save the page as `<name>.png`. */
 async function shoot(page: Page, name: string): Promise<void> {
   if (!SHOTS) return;
@@ -1220,6 +1235,11 @@ test.describe("hooks and chains", () => {
     await app(page).getByTestId("history-events").click();
     await expect(rows).toHaveCount(1);
     await expect(app(page).getByTestId("history-filter-failed")).toContainText("0");
+    // The chip is the tab's, like This project: it stays off while the person visits Jobs and comes back.
+    await app(page).getByTestId("nav-jobs").click();
+    await app(page).getByTestId("nav-history").click();
+    await expect(app(page).getByTestId("history-events")).toHaveAttribute("aria-pressed", "false");
+    await expect(rows).toHaveCount(1);
     await app(page).getByTestId("history-events").click();
 
     await app(page).locator('[data-event="started"]').click();
@@ -2314,6 +2334,49 @@ test.describe("services: Running now and the Services view", () => {
       await shoot(page, "tab-jobs-t021");
     });
 
+    test("a service waiting for its project's first open names the project in Jobs' Last result, as Services does", async ({ page }) => {
+      await services(page, { route: "services" });
+      await writeJob(page, "alpha/docs.md", "---\nkind: service\nname: Docs\nproject: alpha\nfolder: .\ncommand: ./docs.sh\nstart: project-first-open\nstart-project: alpha\n---\n");
+      await page.evaluate(() => window.setServiceStatus("alpha/docs", { state: "waiting", session: null }));
+      const sub = app(page).locator('[data-testid="service-row"][data-job="alpha/docs"]').getByTestId("service-sub");
+      await expect(sub).toHaveText("starts on first open of Alpha");
+      await page.evaluate(() => window.mounted.navigate(""));
+      const last = app(page).locator('[data-testid="job-row"][data-job="alpha/docs"]');
+      await expect(last.getByTestId("job-status")).toHaveText("waiting for first open");
+      await expect(last.getByTestId("job-last-sub")).toHaveText("starts on first open of Alpha");
+    });
+
+    test("an enabled service the scheduler has not reported says no state — no queued — and offers no Start or Stop, in Services and in Jobs; a Pomade-bound one too", async ({ page }) => {
+      await services(page, { route: "services" });
+      await writeJob(page, "fresh.md", "---\nkind: service\nname: Fresh\nfolder: .\ncommand: ./fresh.sh\n---\n");
+      await writeJob(page, "bound.md", "---\nkind: service\nname: Bound\nfolder: .\ncommand: ./bound.sh\nstart: pomade-started\n---\n");
+      await page.evaluate(() => {
+        window.setServiceUnreported("fresh", true);
+        window.setServiceUnreported("bound", true);
+      });
+      for (const id of ["fresh", "bound"]) {
+        const row = app(page).locator(`[data-testid="service-row"][data-job="${id}"]`);
+        await expect(row).toBeVisible();
+        await expect(row.getByTestId("service-status")).toHaveCount(0);
+        await expect(row).not.toContainText("queued");
+        await expect(row.getByRole("button", { name: "Start", exact: true })).toHaveCount(0);
+        await expect(row.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
+        await expect(row.getByRole("button", { name: "Edit" })).toBeVisible();
+      }
+      await shoot(page, "t053-services-unreported");
+      await page.evaluate(() => window.mounted.navigate(""));
+      for (const id of ["fresh", "bound"]) {
+        const row = app(page).locator(`[data-testid="job-row"][data-job="${id}"]`);
+        await expect(row).toBeVisible();
+        await expect(row.getByTestId("job-status")).toHaveCount(0);
+        await expect(row).not.toContainText("queued");
+        await expect(row.getByRole("button", { name: "Start service" })).toHaveCount(0);
+        await expect(row.getByRole("button", { name: "Stop service" })).toHaveCount(0);
+        await expect(row.getByRole("button", { name: "Run now" })).toHaveCount(0);
+      }
+      await shoot(page, "t053-jobs-unreported");
+    });
+
     test("the Services view: each service where it stands, its actions by state, an invalid file with its error; Start, Stop and Restart call Runner and toast", async ({ page }) => {
       await services(page, { route: "services" });
       const rows = app(page).getByTestId("service-row");
@@ -2621,11 +2684,12 @@ test.describe("History and result cards", () => {
       const t = (await trigger.boundingBox())!;
       const h = (await table.locator('> div > div').first().locator(':scope > [data-col="trigger"]').boundingBox())!;
       expect(t.x).toBeCloseTo(h.x, 0);
+      expect(await rowPastEdge(table), `a row past the edge at ${left}`).toBe(false);
     }
     const end = (await trigger.boundingBox())!;
     expect(end.x + end.width).toBeLessThanOrEqual(1040);
     const wide = (await first.boundingBox())!;
-    expect(wide.width).toBeCloseTo((await table.evaluate((el) => el.scrollWidth)) - 4, 0);
+    expect(wide.width).toBeCloseTo(await table.evaluate((el) => el.scrollWidth), 0);
     expect(wide.x + wide.width).toBeGreaterThanOrEqual(end.x + end.width);
     await shoot(page, "t030-history-scrolled");
   });
@@ -3730,7 +3794,7 @@ test.describe("the panel: Needs you, Next up, Running now", () => {
     const colours = await rows.evaluateAll((all) => all.map((row) => getComputedStyle(row.querySelector("span:nth-of-type(3)") ?? row).color));
     expect(colours[0]).not.toBe(colours[1]);
     await app(page).getByTestId("next-up-held").first().hover();
-    await expect(app(page).getByTestId("tooltip")).toHaveText('A held run becomes a missed run and follows its own "If a run is missed" policy when you switch back — once per job, however many it held; the note counts them meanwhile.Example: 4 runs held — the 13:00 commit is skipped; the morning summary catches up once, "missed 3 runs".');
+    await expect(app(page).getByTestId("tooltip")).toHaveText('A held run becomes a missed run and follows its own "If a run is missed" policy when you switch back — once per job, however many it held; the note counts them meanwhile, and History shows each job\'s as a held row.Example: 4 runs held — the 13:00 commit is skipped; the morning summary catches up once, "missed 3 runs".');
     await shoot(page, "panel-next-up-held");
   });
 
@@ -4800,6 +4864,7 @@ test.describe("T-022 · T-030 · the Services table's columns", () => {
       // The head cells keep their place over the rows.
       const rowBox = (await row(page, "mid").boundingBox())!;
       expect((await head(page).boundingBox())!.x).toBeCloseTo(rowBox.x, 0);
+      expect(await rowPastEdge(table(page)), `a row past the edge at ${left}`).toBe(false);
     }
     await scrollTo(page, room);
     const last = (await open_.boundingBox())!;
@@ -4807,7 +4872,7 @@ test.describe("T-022 · T-030 · the Services table's columns", () => {
     expect(last.x).toBeGreaterThan(0);
     // A row, with its hover tint and hairline, is as wide as the columns: it reaches past the last cell.
     const wide = (await row(page, "mid").boundingBox())!;
-    expect(wide.width).toBeCloseTo((await table(page).evaluate((el) => el.scrollWidth)) - 4, 0);
+    expect(wide.width).toBeCloseTo(await table(page).evaluate((el) => el.scrollWidth), 0);
     expect(wide.x + wide.width).toBeGreaterThanOrEqual(last.x + last.width);
     // The invalid row spans the same width as the others.
     expect((await app(page).getByTestId("service-invalid").boundingBox())!.width).toBeCloseTo((await row(page, "mid").boundingBox())!.width, 0);

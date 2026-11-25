@@ -818,7 +818,8 @@ limit, Run now, hooks, chains, History, notices and Needs you.
   up to date — when the Pomade that ran it prints one (`pomade:T-321`; absent means unknown, never
   0; read by `stepCommits` in `src/integrations/pomade-next.ts`). Its last lines are one line per repo: "notes · committed
   a1b2c3d · pulled · pushed", "notes · skipped · agent working", "notes · failed · <the
-  reason>"; without a result, the output log's last lines. The result file goes once the record
+  reason>" — a done pull with a `commits` count says what it got ("pulled · 2 commits", "pulled ·
+  1 commit", "pulled · up to date"), without one plain "pulled" (`gitRepoLine`); without a result, the output log's last lines. The result file goes once the record
   holds it. The run's folder is the workspace root (`""`).
 - A failed run is noticed by Runner as its job's `notify` says (default on failure), the notice's
   body the reason, and is its job's Needs-you item.
@@ -1232,7 +1233,8 @@ to it, light theme only.
     a git job's adds its operation and repos — a repo the workspace lacks is said in red), **Last
     result**, **Next run**, the actions, and the **Disable** toggle. A disabled row is dimmed.
   - **Last result** (`lastLook`, `src/ui/jobWords.ts`): a chip with the status's help over a sub line.
-    A service shows its state as the Services view does (`serviceLook`). Any other job shows the run
+    A service shows its state as the Services view does (`serviceLook`, with its start project's name
+    for "starts on first open of blog"; none while the scheduler has not reported it). Any other job shows the run
     going — "running" over how long so far ("3m", "3h 02m · manual"), amber "waiting for you" over
     "started 12:31 · 17m" for an agent run at a prompt, "queued · 1 ahead" over "since 12:46",
     "missed · waiting for you" over when it was due — else the loop guard's pause, amber "paused ·
@@ -1292,6 +1294,7 @@ to it, light theme only.
   result chips — All · Active · Failed · Skipped & missed, each but All with its count — and
   "This project" filter the list; **Service events** after it (with its help), on by default and
   counting the events in scope, shows or hides the event rows — the result chips' counts follow it.
+  The tab keeps **Service events** and "This project" while the person visits other views.
   An event row (`eventLook`): no duration, its cause as Trigger with that cause's help, and its
   result — "started" green, "stopped" a grey ring, "restarted" a green ring, after a crash
   "restarted 4× · exit 1, 137" with an amber dot in plain words, "gave up after 5 crashes" red and
@@ -1320,7 +1323,9 @@ to it, light theme only.
   when, "queued" over "starts when the one before it is up", "restarting" over its crashes or
   "again at 14:03", "waiting for first open" over "starts on first open of blog", "waiting for
   Pomade" over "starts when Pomade starts" or "starts on first open of blog", "disabled",
-  "stopping" over "its file is gone" — each with its help; **Restart · Stop** while it is up or
+  "stopping" over "its file is gone" — each with its help; an enabled service the scheduler has not
+  reported yet says no state at all (a disabled file's own "disabled" is known without it) and
+  offers neither Start nor Stop; **Restart · Stop** while it is up or
   starting, **Start** while Start would start it (its job enabled — the file's word, so a report a
   tick behind never offers it — and not invalid or gone; a service waiting for Pomade has none, since
   Start would be refused); then the icon

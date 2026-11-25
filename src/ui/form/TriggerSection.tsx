@@ -15,6 +15,7 @@ import { jobTriggerWords } from "../../jobs/words";
 import type { HelpKey } from "../help";
 import { Button, Check, Checks, DayButton, Field, FieldError, Help, Icon, IconButton, LinkButton, Segmented, Select, TextInput, Toggle, type SelectOption } from "../kit";
 import { useRoster } from "../useAgents";
+import { useNow } from "../useNow";
 import { useSettings } from "../useRunnerApi";
 import type { FormProps } from "./FolderField";
 import styles from "./JobForm.module.css";
@@ -41,13 +42,9 @@ import {
 import { ACTION_OPTIONS, agentPicks, CHAIN_CHOICE, chainJobOptions, EVENT_CHOICES, formOffersHook, hookBoxWords, isLoopError, projectPicks, RESULT_CHOICES, SERVICE_RESULT_OPTIONS, statusPicks } from "./triggerWords";
 
 /** The time now, a fresh one every minute: the next runs move on while the form is open. */
-function useNow(): Date {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 60_000);
-    return () => clearInterval(timer);
-  }, []);
-  return now;
+function useMinuteClock(): Date {
+  const at = useNow(60_000);
+  return useMemo(() => new Date(at), [at]);
 }
 
 const SHAPES: readonly { value: ScheduleShape; label: string; help: HelpKey }[] = [
@@ -329,7 +326,7 @@ interface ShapeProps {
 
 function ScheduleEditor(props: FormProps): React.JSX.Element {
   const { state, set, error, errorList, wouldBeText } = props;
-  const now = useNow();
+  const now = useMinuteClock();
   const { schedule } = state.values;
   const change = (next: Partial<ScheduleValues>): void => set("schedule", { ...schedule, ...next });
   const targets = new Set(errorList("schedule").map((one) => scheduleTarget(one.field)));

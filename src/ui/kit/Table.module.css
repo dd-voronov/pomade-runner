@@ -42,6 +42,11 @@
   cursor: pointer;
 }
 
+/* A resizable table clips at its content edge: a focused row's ring is drawn inside the row. */
+.row.sized:focus-visible {
+  outline-offset: -2px;
+}
+
 .row.invalid {
   margin: 2px 0;
   background: var(--danger-soft);

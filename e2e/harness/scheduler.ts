@@ -5,7 +5,7 @@
 // scheduler does through Pomade. It reads the fake workspace's jobs folder through the Host API and
 // checks it with the real validator, so the UI specs drive it by writing files
 // (`fakeHost.writeFile`). Every valid service runs; Restart is refused; a spec sets another state with
-// `window.setServiceStatus` (the projects opened since Pomade started with `window.setOpenedProjects`), the runs with `window.setRuns`, the settings with
+// `window.setServiceStatus` (a service left out of the report with `window.setServiceUnreported`; the projects opened since Pomade started with `window.setOpenedProjects`), the runs with `window.setRuns`, the settings with
 // `window.setSettings` (a setting written by the UI changes that text field-only: `window.settingsText`), the Mac with `window.setEnvironment`, and reads the actions the UI asked for in `window.runnerCalls`. Delete
 // removes the job's file — refused with `window.refuseDelete`'s reason while one is set; Run now and
 // Enable / Disable are refused with `window.refuseActions`'s. Any action is refused with
@@ -65,12 +65,14 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
 
   /** Services whose status a spec set, by job id. */
   const set = new Map<string, Partial<ServiceStatus>>();
+  /** The services the scheduler has not reported yet: left out of the report. */
+  const unreported = new Set<string>();
   /** The projects opened since Pomade started, as a spec set them. */
   let openedProjects: string[] = [];
   const services = (snapshot: JobsSnapshot): ServicesReport => ({
     keeper: { state: "connected", version: "e2e", pid: 1 },
     services: snapshot.jobs.flatMap((entry) =>
-      entry.valid && entry.job.kind === "service"
+      entry.valid && entry.job.kind === "service" && !unreported.has(entry.job.id)
         ? [{ job: entry.job.id, name: entry.job.name, project: entry.job.project, state: "running", session: null, restarts: 0, lastCrashAt: null, retryAt: null, needsRestart: false, problem: null, ...set.get(entry.job.id) }]
         : [],
     ),
@@ -251,6 +253,11 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
   });
   window.setServiceStatus = (job, status) => {
     set.set(job, status);
+    void host.events.publish(SERVICES_CHANGED_EVENT);
+  };
+  window.setServiceUnreported = (job, on) => {
+    if (on) unreported.add(job);
+    else unreported.delete(job);
     void host.events.publish(SERVICES_CHANGED_EVENT);
   };
   window.setOpenedProjects = (projects) => {

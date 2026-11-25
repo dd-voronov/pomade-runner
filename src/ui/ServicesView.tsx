@@ -145,10 +145,11 @@ export function ServicesView({
             }
             const { job } = entry;
             const status = services.find((candidate) => candidate.job === job.id) ?? fallbackService(job);
-            const look = serviceLook(status, job.ready, now, job.startProject === null ? null : projectName(job.startProject));
-            const offered = serviceActions(status, job.enabled);
+            const look = status === null ? null : serviceLook(status, job.ready, now, job.startProject === null ? null : projectName(job.startProject));
+            // A service the scheduler has not reported says no state and offers no Start or Stop yet.
+            const offered = status === null ? { toggle: null, terminal: false } : serviceActions(status, job.enabled);
             return (
-              <TableRow key={job.id} columns={undefined} className={styles.row} data-testid="service-row" data-job={job.id} data-state={status.state}>
+              <TableRow key={job.id} columns={undefined} className={styles.row} data-testid="service-row" data-job={job.id} data-state={status?.state}>
                 <KindCell icon="service" label="Service" />
                 <RowMain
                   name={job.name}
@@ -161,14 +162,18 @@ export function ServicesView({
                 <CommandCell command={job.command} />
                 <RowCell
                   sub={
-                    <span data-help={look.subHelp ?? undefined} className={look.subHelp === null ? undefined : styles.helped} data-testid="service-sub">
-                      {look.sub}
-                    </span>
+                    look === null ? undefined : (
+                      <span data-help={look.subHelp ?? undefined} className={look.subHelp === null ? undefined : styles.helped} data-testid="service-sub">
+                        {look.sub}
+                      </span>
+                    )
                   }
                 >
-                  <Status tone={look.tone} live={look.live} size="sm" help={look.help ?? undefined} testId="service-status">
-                    {look.words}
-                  </Status>
+                  {look !== null && (
+                    <Status tone={look.tone} live={look.live} size="sm" help={look.help ?? undefined} testId="service-status">
+                      {look.words}
+                    </Status>
+                  )}
                 </RowCell>
                 <div className={styles.actions}>
                   {offered.toggle === "stop" && (
@@ -187,7 +192,7 @@ export function ServicesView({
                     </Button>
                   )}
                   <span className={styles.gap} />
-                  {offered.terminal ? <IconButton icon="terminal" label="Open terminal" onClick={() => openTab(status)} /> : <span className={styles.slot} />}
+                  {offered.terminal && status !== null ? <IconButton icon="terminal" label="Open terminal" onClick={() => openTab(status)} /> : <span className={styles.slot} />}
                   <IconButton icon="edit" label="Edit" onClick={() => open(editRoute(job.id))} />
                   <IconButton icon="file" label="Open file" onClick={() => openFile(job.path)} />
                 </div>

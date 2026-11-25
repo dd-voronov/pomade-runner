@@ -57,6 +57,8 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
   const active = useActiveProject(host);
   // The "This project" chip is the tab's: on in Jobs, it is on in Services, and New job starts in the open project.
   const [thisProject, setThisProject] = useState(false);
+  // So is History's "Service events" chip: what the person chose holds while they visit other views.
+  const [serviceEvents, setServiceEvents] = useState(true);
   const openedProjects = useMemo(() => new Set(services.status === "ready" ? services.value.openedProjects : []), [services]);
   const view = parseRoute(route);
   const version = (
@@ -82,7 +84,7 @@ export function RunnerTab({ host }: { host: HostClient }): React.JSX.Element {
     </TabShell>
   );
 
-  const history = <HistoryView host={host} active={report?.active ?? []} asked={view.view === "history" ? view.filter : null} open={open} thisProject={thisProject} onThisProject={setThisProject} newJob={newJob} />;
+  const history = <HistoryView host={host} active={report?.active ?? []} asked={view.view === "history" ? view.filter : null} open={open} thisProject={thisProject} onThisProject={setThisProject} events={serviceEvents} onEvents={setServiceEvents} newJob={newJob} />;
 
   if (jobs.status === "loading") return shell("tab-loading", null);
   if (view.view === "new" || view.view === "edit") {

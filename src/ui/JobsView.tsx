@@ -175,14 +175,17 @@ function JobRow({
   const stopRun = useStopRun(host);
   const openRunTerminal = useOpenRunTerminal(host);
   const runs = report?.jobs.find((info) => info.job === job.id);
-  const last = lastLook(job, { runs, active, service, pausedAt: paused }, now);
+  const startsOn = job.kind === "service" && job.startProject !== null ? (names.project?.(job.startProject) ?? job.startProject) : null;
+  const last = lastLook(job, { runs, active, service, startsOn, pausedAt: paused }, now);
   const next = nextLook(job, runs, paused !== null, now);
   const trigger = jobTriggerWords(job, names, new Date(now));
   const git = job.kind === "git" ? gitDetail(job, repos) : null;
-  const status = job.kind === "service" ? (service ?? fallbackService(job)) : null;
-  const offered = status === null ? null : serviceActions(status, job.enabled);
+  const isService = job.kind === "service";
+  const status = isService ? (service ?? fallbackService(job)) : null;
+  // A service the scheduler has not reported offers no Start or Stop yet.
+  const offered = !isService ? null : status === null ? { toggle: null, terminal: false } : serviceActions(status, job.enabled);
   // A script, agent or git job with runs going: its row acts on the latest one.
-  const going = status === null ? latestGoing(active) : null;
+  const going = isService ? null : latestGoing(active);
   const goingSession = going?.session ?? null;
   return (
     <TableRow
@@ -228,9 +231,11 @@ function JobRow({
         {...(last.run === null ? {} : { onActivate: () => open(runRoute(job.id, last.run ?? "")), label: `Open ${job.name}'s latest run` })}
         testId="job-last"
       >
-        <Status tone={last.tone} live={last.live} size="sm" help={last.help ?? undefined} testId="job-status">
-          {last.words}
-        </Status>
+        {last.words !== "" && (
+          <Status tone={last.tone} live={last.live} size="sm" help={last.help ?? undefined} testId="job-status">
+            {last.words}
+          </Status>
+        )}
       </RowCell>
       <RowCell
         sub={
@@ -251,8 +256,8 @@ function JobRow({
         {next.words}
       </RowCell>
       <RowActions>
-        {status === null && (going === null || goingSession === null ? <span className={styles.slot} /> : <IconButton icon="terminal" label={terminalLabel(going)} onClick={() => openRunTerminal(going, goingSession)} />)}
-        {status === null && (going === null ? <span className={styles.slot} /> : <IconButton icon="stop" label="Stop run" onClick={() => stopRun(going)} />)}
+        {!isService && (going === null || goingSession === null ? <span className={styles.slot} /> : <IconButton icon="terminal" label={terminalLabel(going)} onClick={() => openRunTerminal(going, goingSession)} />)}
+        {!isService && (going === null ? <span className={styles.slot} /> : <IconButton icon="stop" label="Stop run" onClick={() => stopRun(going)} />)}
         {status !== null && offered?.terminal === true && <IconButton icon="terminal" label="Open terminal" onClick={() => openTab(status)} />}
         {offered === null && <IconButton icon="play" label="Run now" onClick={() => actions.runNow(job)} />}
         {offered?.toggle === "start" && <IconButton icon="play" label="Start service" onClick={() => act("start", job)} />}

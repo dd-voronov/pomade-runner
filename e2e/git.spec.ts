@@ -68,7 +68,7 @@ test.describe("git jobs", () => {
     expect(repos.git(repos.remote, "rev-parse", "main")).toBe(hash);
     expect(repos.git(repos.repo, "log", "-1", "--format=%B")).toMatch(MESSAGE);
     expect(repos.git(repos.repo, "status", "--porcelain")).toBe("");
-    const line = `notes · committed ${hash.slice(0, 7)} · pulled · pushed`;
+    const line = `notes · committed ${hash.slice(0, 7)} · pulled · up to date · pushed`;
     expect(record?.lastLines).toEqual([line]);
     expect((await world.command("history", "notes")).stdout).toContain(`\n    ${line}\n`);
     // The command logged the run where Pomade's Git panel reads it; Runner keeps no result file.

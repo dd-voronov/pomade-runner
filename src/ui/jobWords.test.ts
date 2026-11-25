@@ -162,8 +162,21 @@ describe("a job's last result", () => {
   it("says a service by its state, with no run to open", () => {
     const status: ServiceStatus = { job: "backup", name: "Backup", project: null, state: "failed", session: null, restarts: 4, lastCrashAt: at(17, 11, 20), retryAt: null, needsRestart: false, problem: null };
     expect(lastLook(service, { runs: undefined, active: [], service: status }, now)).toMatchObject({ tone: "danger", words: "failed · gave up", help: "st.svcfailed", run: null });
-    expect(lastLook(service, { runs: undefined, active: [], service: undefined }, now)).toMatchObject({ words: "queued", help: "st.svcqueued" });
     expect(lastLook({ ...service, enabled: false }, { runs: undefined, active: [], service: undefined }, now)).toMatchObject({ words: "disabled" });
+  });
+
+  it("says no state for an enabled service the scheduler has not reported — a Pomade-bound one included — and the file's disabled for a disabled one", () => {
+    const unreported = { tone: "hollow", live: false, words: "", help: null, sub: "", subHelp: null, run: null };
+    expect(lastLook(service, { runs: undefined, active: [], service: undefined }, now)).toEqual(unreported);
+    expect(lastLook({ ...service, start: "pomade-started" }, { runs: undefined, active: [], service: undefined }, now)).toEqual(unreported);
+    expect(lastLook({ ...service, start: "project-first-open", startProject: "alpha" }, { runs: undefined, active: [], service: undefined }, now)).toEqual(unreported);
+  });
+
+  it("says which project's first open a waiting service starts on", () => {
+    const waiting: ServiceStatus = { job: "backup", name: "Backup", project: null, state: "waiting", session: null, restarts: 0, lastCrashAt: null, retryAt: null, needsRestart: false, problem: null };
+    expect(lastLook(service, { runs: undefined, active: [], service: waiting, startsOn: "Alpha" }, now)).toMatchObject({ words: "waiting for first open", sub: "starts on first open of Alpha" });
+    expect(lastLook(service, { runs: undefined, active: [], service: waiting }, now)).toMatchObject({ sub: "starts on first open" });
+    expect(lastLook(service, { runs: undefined, active: [], service: { ...waiting, state: "waiting-for-pomade" }, startsOn: "Alpha" }, now)).toMatchObject({ sub: "starts on first open of Alpha" });
   });
 });
 
