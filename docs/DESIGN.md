@@ -1398,12 +1398,21 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   A picked project is `start-project:`; errors on either show under Starts.
 - **Git** (`GitSections` in `kinds.tsx`): the Trigger section as a script's, then **Git** —
   **Operation** (Commit & push · Pull · Push · Fetch), **Repositories** and **Project**, no folder
-  (`pomade-git` works in the repos). Repositories has a tick per repo of the workspace, in the order
-  Pomade's git state lists them (`git.read`, followed live), named as its Git panel names them; a
-  repo the file names that the workspace lacks stays, ticked, after them, with a red line saying so
-  that does not keep Save from writing. The file gets `git: { operation, repos }`, the repos in the
-  order they were ticked — the order `pomade-git` runs them in. Its policies are a script's, with
-  the kind's defaults (Skip, normal priority, On failure).
+  (`pomade-git` works in the repos). Repositories (`RepoPicker.tsx`, its order math in
+  `repoList.ts`) is the workspace's repos from Pomade's git state (`git.read`, followed live), named as
+  its Git panel names them, as a list of checkboxes in a box: grouped by top folder — **Top level**
+  first for the repos directly under the workspace root (the root's own repo reads "workspace root"),
+  then the folders by name — each group by name with the repo's workspace-relative path, and a head
+  with a checkbox for the whole group (mixed while some are picked) and "n of m". Above the list: "N of
+  M selected", Select all · Clear, and from 10 repos up a filter by name or path, with which the list
+  keeps its 292 px height and the actions read Select N shown · Clear shown. A repo the file names
+  that the workspace lacks stays picked, in a red **Not in this workspace** group at the bottom, with
+  a red line under the box that does not keep Save from writing. The file gets
+  `git: { operation, repos }`, the repos in the list's order whatever order they were ticked in —
+  `pomade-git` runs them one at a time in the file's order, so "Runs one repo at a time, top to bottom
+  in this list" holds. A file that lists them in another order says so in place of that line, with
+  "Use this list's order". Its policies are a script's, with the kind's defaults (Skip, normal
+  priority, On failure).
 - **Agent** (`AgentSections` in `kinds.tsx`, `pomade-agents` read through `src/ui/useAgents.ts`): the
   Trigger section as a script's, then **Agent** — who · where · how:
   - **Agent**: a choice of the roster's agents (`roster.list`), by name; one the file names that the

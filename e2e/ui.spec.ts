@@ -3932,9 +3932,10 @@ test.describe("the Git form (T-011)", () => {
     // The operation, Commit & push first; the repos as the Git panel names them; a project, no folder.
     await expect(git.getByRole("group", { name: "Operation" }).getByRole("button")).toHaveText(["Commit & push", "Pull", "Push", "Fetch"]);
     await expect(git.getByRole("button", { name: "Commit & push" })).toHaveAttribute("aria-pressed", "true");
-    const repos = git.getByRole("group", { name: "Repositories" }).getByRole("checkbox");
+    const repos = git.getByRole("group", { name: "Repositories" }).getByTestId("repo-name");
     await expect(repos).toHaveText(["blog", "notes", "shop"]);
     await expect(git.getByRole("combobox", { name: "Project" })).toHaveValue("");
+    await expect(git.getByRole("searchbox", { name: "Filter repositories" })).toHaveCount(0);
     await expect(form.getByRole("textbox", { name: "Folder", exact: true })).toHaveCount(0);
     await expect(form.getByRole("textbox", { name: "Command", exact: true })).toHaveCount(0);
     await expect(form.getByTestId("form-policies")).toContainText("defaults for Git");
@@ -3949,11 +3950,11 @@ test.describe("the Git form (T-011)", () => {
     await expect(app(page).getByTestId("form-error-count")).toHaveText("1 thing to fix before saving");
     await shoot(page, "tab-form-git-errors");
 
-    // Picked in the order they run; the project puts the file in its sub-folder.
+    // Picked; the project puts the file in its sub-folder.
     await git.getByRole("button", { name: "Pull" }).click();
-    await repos.filter({ hasText: "blog" }).click();
-    await repos.filter({ hasText: "notes" }).click();
-    await expect(repos.filter({ hasText: "blog" })).toHaveAttribute("aria-checked", "true");
+    await git.getByRole("checkbox", { name: "notes", exact: true }).click();
+    await git.getByRole("checkbox", { name: "blog", exact: true }).click();
+    await expect(git.getByRole("checkbox", { name: "blog", exact: true })).toBeChecked();
     await expect(git.getByRole("alert")).toHaveCount(0);
     await git.getByRole("combobox", { name: "Project" }).selectOption("blog");
     await expect(app(page).getByTestId("form-path")).toHaveText(`${JOBS}/blog/pull.md`);
@@ -3997,21 +3998,209 @@ test.describe("the Git form (T-011)", () => {
     const form = app(page).getByTestId("form-git");
     const git = form.getByRole("region", { name: "Git" });
     await expect(git.getByRole("button", { name: "Commit & push" })).toHaveAttribute("aria-pressed", "true");
-    const repos = git.getByRole("group", { name: "Repositories" }).getByRole("checkbox");
+    const repos = git.getByRole("group", { name: "Repositories" }).getByTestId("repo-name");
     await expect(repos).toHaveText(["blog", "notes", "shop", "Journal"]);
-    await expect(git.locator('[role="checkbox"][aria-checked="true"]')).toHaveText(["notes", "Journal"]);
-    await expect(git.getByTestId("repos-missing")).toHaveText("Journal is not in this workspace.");
+    await expect(git.locator('[data-testid="repo-row"]:has(input:checked) [data-testid="repo-name"]')).toHaveText(["notes", "Journal"]);
+    await expect(git.getByTestId("repos-missing")).toHaveText("Journal is not in this workspace — clear it, or bring the repo back.");
     await expect(git.getByRole("combobox", { name: "Project" })).toHaveValue("notes");
     await expect(app(page).getByTestId("form-save")).toHaveText("Saved");
     await shoot(page, "tab-form-git-edit");
 
-    await repos.filter({ hasText: "Journal" }).click();
+    await git.getByRole("checkbox", { name: "Journal", exact: true }).click();
     await expect(git.getByTestId("repos-missing")).toHaveCount(0);
     await expect(repos).toHaveText(["blog", "notes", "shop"]);
     await git.getByRole("button", { name: "Fetch" }).click();
     await app(page).getByTestId("form-save").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
     expect(await fileText(page, `${JOBS}/notes/commit-notes.md`)).toBe(HAND.replace("{ operation: commit-push, repos: [notes, Journal] }", "{ operation: fetch, repos: [notes] }"));
+  });
+});
+
+test.describe("the repository picker (T-049)", () => {
+  test.use({ viewport: { width: 1040, height: 760 } });
+  const JOBS = "Apps/pomade-runner/jobs";
+  /** A workspace of 30 repos, as Pomade's Git panel lists them (by path); notes is the harness's own. */
+  const WORKSPACE = [
+    "my-workspace=",
+    "Knowledge",
+    "archive-2019=Archive/archive-2019",
+    "old-blog=Archive/old-blog",
+    ...["AI Lab", "blog", "Coda-helper", "delta", "fantasy-league-helper", "landing", "Media-Library", "Pomade", "pomade-agents", "pomade-kit", "pomade-planner", "pomade-runner", "photo-tools", "recipes", "shop", "VoxApp"].map((name) => `${name}=Projects/${name}`),
+    ...["ai-book-club", "club-ops-hq", "cv"].map((name) => `${name}=Projects/Book-Club/${name}`),
+    ...["papers-reader", "Proto-research", "a-repo-with-a-rather-long-name-to-show-how-it-is-cut"].map((name) => `${name}=Projects/Research/a-deep-folder/that-goes/on-and-on/${name}`),
+    "mcp_whiteboard=Services/mcp_whiteboard",
+    "mcp-gateway=Services/mcp-gateway",
+    "search=Services/search",
+  ].join(",");
+  const ORDER = {
+    top: ["Knowledge", "my-workspace", "notes"],
+    archive: ["archive-2019", "old-blog"],
+    projects: ["a-repo-with-a-rather-long-name-to-show-how-it-is-cut", "AI Lab", "ai-book-club", "blog", "club-ops-hq", "Coda-helper", "cv", "delta", "fantasy-league-helper", "landing", "Media-Library", "papers-reader", "photo-tools", "Pomade", "pomade-agents", "pomade-kit", "pomade-planner", "pomade-runner", "Proto-research", "recipes", "shop", "VoxApp"],
+    services: ["mcp_whiteboard", "mcp-gateway", "search"],
+  };
+  const gitJob = (repos: string): string => `---\nkind: git\nname: Commit notes\nproject: notes\ngit: { operation: commit-push, repos: [${repos}] }\nschedule:\n  daily: { at: [13:00, 20:00] }\n---\n`;
+
+  async function open(page: Page, repos: string): Promise<Locator> {
+    await page.clock.setFixedTime(new Date(2026, 10, 17, 12, 48));
+    await page.goto(harness({ route: "edit/notes.commit-notes", projects: "prototype", repos: WORKSPACE }));
+    await page.waitForFunction(() => typeof window.setServiceStatus === "function" && typeof window.mounted === "object");
+    await page.evaluate(([p, t]) => window.fakeHost.writeFile(p, t), [`${JOBS}/notes/commit-notes.md`, gitJob(repos)] as const);
+    const picker = app(page).getByRole("group", { name: "Repositories" });
+    await expect(picker.getByTestId("repos-count")).toContainText("of 30 selected");
+    return picker;
+  }
+
+  const fileText = (page: Page): Promise<string> => page.evaluate((p) => window.fakeHost.readFile(p), `${JOBS}/notes/commit-notes.md`);
+  const gitSection = (page: Page): Locator => app(page).getByRole("region", { name: "Git" });
+  const picked = (picker: Locator): Locator => picker.locator('[data-testid="repo-row"]:has(input:checked) [data-testid="repo-name"]');
+
+  test("30 repos: grouped by top folder, Top level first, each group by name with its path; a box of fixed height where every repo is reachable", async ({ page }) => {
+    const picker = await open(page, "notes");
+    await expect(picker.getByTestId("repo-group-title")).toHaveText(["Top level", "Archive", "Projects", "Services"]);
+    await expect(picker.getByTestId("repo-group-count")).toHaveText(["1 of 3", "0 of 2", "0 of 22", "0 of 3"]);
+    await expect(picker.getByTestId("repo-name")).toHaveText([...ORDER.top, ...ORDER.archive, ...ORDER.projects, ...ORDER.services]);
+    const row = (name: string): Locator => picker.locator(`[data-testid="repo-row"][data-repo="${name}"]`);
+    await expect(row("my-workspace").getByTestId("repo-path")).toHaveText("workspace root");
+    await expect(row("cv").getByTestId("repo-path")).toHaveText("Projects/Book-Club/cv");
+    await expect(picker.getByTestId("repos-count")).toHaveText("1 of 30 selected");
+    await expect(picker.getByRole("checkbox", { name: "Top level" })).toBeChecked({ indeterminate: true });
+    await expect(picker.getByRole("checkbox", { name: "Archive", exact: true })).not.toBeChecked();
+    // The path says where the repo is.
+    await expect(picker.getByRole("checkbox", { name: "cv", exact: true })).toHaveAccessibleDescription("Projects/Book-Club/cv");
+
+    // A fixed height, whatever the list holds; the last repo scrolls into view and takes a click.
+    const list = picker.getByTestId("repo-list");
+    expect((await list.boundingBox())?.height).toBe(292);
+    await expect(row("search")).not.toBeInViewport();
+    await shoot(page, "tab-form-repos-30");
+    await row("search").scrollIntoViewIfNeeded();
+    await row("search").click();
+    await expect(picker.getByRole("checkbox", { name: "search", exact: true })).toBeChecked();
+    await expect(gitSection(page).getByTestId("repos-order")).toHaveText("Runs one repo at a time, top to bottom in this list.");
+    await expect(app(page).getByTestId("form-path")).toBeVisible();
+    // A long name and a long path are cut, the whole of them in the tooltip.
+    await row("a-repo-with-a-rather-long-name-to-show-how-it-is-cut").scrollIntoViewIfNeeded();
+    await shoot(page, "tab-form-repos-long");
+    const cut = await row("a-repo-with-a-rather-long-name-to-show-how-it-is-cut").getByTestId("repo-path").evaluate((el) => el.scrollWidth > el.clientWidth);
+    expect(cut).toBe(true);
+  });
+
+  test("Select all, then Clear: all, then none; Save refuses none, the box's border red; picks are written in the list's order, not the order they were ticked", async ({ page }) => {
+    const picker = await open(page, "notes");
+    const selectAll = picker.getByRole("button", { name: "Select all" });
+    const clear = picker.getByRole("button", { name: "Clear", exact: true });
+    await selectAll.click();
+    await expect(picker.getByTestId("repos-count")).toHaveText("30 of 30 selected");
+    await expect(picker.getByRole("checkbox", { checked: false })).toHaveCount(0);
+    await expect(selectAll).toBeDisabled();
+    await clear.click();
+    await expect(picker.getByTestId("repos-count")).toHaveText("0 of 30 selected");
+    await expect(picker.getByRole("checkbox", { checked: true })).toHaveCount(0);
+    await expect(clear).toBeDisabled();
+
+    await app(page).getByTestId("form-save").click();
+    await expect(gitSection(page).getByRole("alert")).toHaveText("git.repos — names no repos. Fix: list the repos by the name Pomade's Git panel shows: repos: [notes, blog].");
+    await expect(app(page).getByTestId("form-error-count")).toHaveText("1 thing to fix before saving");
+    const box = picker.getByTestId("repo-list").locator("..");
+    const danger = await box.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--danger").trim());
+    const rgb = await box.evaluate((el, color) => {
+      const probe = document.createElement("i");
+      probe.style.color = color;
+      document.body.append(probe);
+      const value = getComputedStyle(probe).color;
+      probe.remove();
+      return [getComputedStyle(el).borderTopColor, value];
+    }, danger);
+    expect(rgb[0]).toBe(rgb[1]);
+    await shoot(page, "tab-form-repos-none-saved");
+
+    // Ticked: pomade-kit, then notes, then all of Services, then Knowledge — written as the list runs them.
+    await picker.getByRole("checkbox", { name: "pomade-kit", exact: true }).click();
+    await picker.getByRole("checkbox", { name: "notes", exact: true }).click();
+    await picker.getByRole("checkbox", { name: "Services" }).click();
+    await picker.getByRole("checkbox", { name: "Knowledge", exact: true }).click();
+    await expect(gitSection(page).getByRole("alert")).toHaveCount(0);
+    await expect(picked(picker)).toHaveText(["Knowledge", "notes", "pomade-kit", ...ORDER.services]);
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page)).toBe(gitJob("Knowledge, notes, pomade-kit, mcp_whiteboard, mcp-gateway, search"));
+  });
+
+  test("the filter: by name or path; Select N shown and Clear shown act on what it shows; a head's checkbox takes its group, mixed while some are picked; Esc clears it", async ({ page }) => {
+    const picker = await open(page, "notes");
+    const filter = picker.getByRole("searchbox", { name: "Filter repositories" });
+    await expect(filter).toHaveAttribute("placeholder", "Filter by name or path");
+    await filter.fill("pomade");
+    await expect(picker.getByTestId("repo-name")).toHaveText(["Pomade", "pomade-agents", "pomade-kit", "pomade-planner", "pomade-runner"]);
+    await expect(picker.getByTestId("repo-group-title")).toHaveText(["Projects"]);
+    await expect(picker.getByTestId("repo-group-count")).toHaveText(["0 of 5"]);
+    expect((await picker.getByTestId("repo-list").boundingBox())?.height).toBe(292);
+    await expect(picker.getByRole("button", { name: "Clear shown" })).toBeDisabled();
+    await shoot(page, "tab-form-repos-filter");
+    await picker.getByRole("button", { name: "Select 5 shown" }).click();
+    await expect(picker.getByTestId("repos-count")).toHaveText("6 of 30 selected");
+    await expect(picker.getByRole("checkbox", { name: "Projects" })).toBeChecked();
+    await expect(picker.getByRole("button", { name: "Select 5 shown" })).toBeDisabled();
+
+    // By path: the Book-Club folder.
+    await filter.fill("book-club");
+    await expect(picker.getByTestId("repo-name")).toHaveText(["ai-book-club", "club-ops-hq", "cv"]);
+    await filter.fill("nothing-like-it");
+    await expect(picker.getByTestId("repo-row")).toHaveCount(0);
+    await expect(picker.getByText("No repo matches “nothing-like-it”.")).toBeVisible();
+
+    // Esc clears the filter; every repo is back, Projects mixed; its head takes all, then none.
+    await filter.press("Escape");
+    await expect(filter).toHaveValue("");
+    await expect(app(page).getByTestId("job-form")).toBeVisible();
+    await expect(picker.getByTestId("repo-row")).toHaveCount(30);
+    const projects = picker.getByRole("checkbox", { name: "Projects" });
+    await expect(projects).toBeChecked({ indeterminate: true });
+    await projects.click();
+    await expect(projects).toBeChecked();
+    await expect(picker.getByTestId("repo-group-count")).toHaveText(["1 of 3", "0 of 2", "22 of 22", "0 of 3"]);
+    await projects.click();
+    await expect(projects).not.toBeChecked();
+    await expect(picker.getByTestId("repos-count")).toHaveText("1 of 30 selected");
+
+    // The clear button; Clear shown leaves the others.
+    await filter.fill("mcp");
+    await picker.getByRole("button", { name: "Select 2 shown" }).click();
+    await picker.getByRole("button", { name: "Clear the filter" }).click();
+    await expect(filter).toHaveValue("");
+    await expect(picked(picker)).toHaveText(["notes", "mcp_whiteboard", "mcp-gateway"]);
+    await filter.fill("mcp_");
+    await picker.getByRole("button", { name: "Clear shown" }).click();
+    await filter.fill("");
+    await expect(picked(picker)).toHaveText(["notes", "mcp-gateway"]);
+
+    // The keyboard: a repo's checkbox takes focus and Space ticks it.
+    await picker.getByRole("checkbox", { name: "Knowledge", exact: true }).focus();
+    await page.keyboard.press("Space");
+    await expect(picked(picker)).toHaveText(["Knowledge", "notes", "mcp-gateway"]);
+  });
+
+  test("a file in another order says so, and one click puts it in the list's; a repo the workspace lacks keeps its red line, in a group of its own, and Clear takes it too", async ({ page }) => {
+    const picker = await open(page, "pomade-kit, notes, old-site, Knowledge");
+    await expect(gitSection(page).getByTestId("repos-order")).toHaveText("Runs one repo at a time, in the job file’s order: pomade-kit, notes, old-site, Knowledge.Use this list’s order");
+    await expect(gitSection(page).getByTestId("repos-missing")).toHaveText("old-site is not in this workspace — clear it, or bring the repo back.");
+    await expect(picker.getByTestId("repo-group-title")).toHaveText(["Top level", "Archive", "Projects", "Services", "Not in this workspace"]);
+    await expect(picker.getByTestId("repos-count")).toHaveText("3 of 30 selected");
+    await picker.locator('[data-repo="old-site"]').scrollIntoViewIfNeeded();
+    await expect(picker.locator('[data-repo="old-site"]').getByTestId("repo-path")).toHaveText("named in the job file");
+    await shoot(page, "tab-form-repos-missing");
+    await gitSection(page).getByRole("button", { name: "Use this list’s order" }).click();
+    await expect(gitSection(page).getByTestId("repos-order")).toHaveText("Runs one repo at a time, top to bottom in this list.");
+    await app(page).getByTestId("form-save").click();
+    await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
+    expect(await fileText(page)).toBe(gitJob("Knowledge, notes, pomade-kit, old-site"));
+
+    const again = await open(page, "notes, old-site");
+    await expect(again.getByTestId("repo-row")).toHaveCount(31);
+    await again.getByRole("button", { name: "Clear", exact: true }).click();
+    await expect(gitSection(page).getByTestId("repos-missing")).toHaveCount(0);
+    await expect(again.getByRole("checkbox", { checked: true })).toHaveCount(0);
+    await expect(again.getByTestId("repo-group-title")).toHaveText(["Top level", "Archive", "Projects", "Services"]);
   });
 });
 

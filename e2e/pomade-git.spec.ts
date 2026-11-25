@@ -150,9 +150,9 @@ test.describe("git jobs in Pomade", () => {
     await form.getByRole("button", { name: "Add time" }).click();
     await expect(form.getByRole("textbox", { name: "Time 2" })).toHaveValue("20:00");
     // Pomade's git state: the workspace's repos, by the names its Git panel shows.
-    const picks = form.getByRole("group", { name: "Repositories" }).getByRole("checkbox");
-    await expect(picks).toHaveText(["Journal", "notes"]);
-    await picks.filter({ hasText: "notes" }).click();
+    const picks = form.getByRole("group", { name: "Repositories" });
+    await expect(picks.getByTestId("repo-name")).toHaveText(["Journal", "notes"]);
+    await picks.getByRole("checkbox", { name: "notes", exact: true }).click();
     await expect(form.getByTestId("policy-summary")).toHaveText("If missed, skip · never overlaps itself · normal priority · no time limit · notifies on failure");
     await shoot(page, "pomade-git-form");
     await tab().getByTestId("form-save").click();

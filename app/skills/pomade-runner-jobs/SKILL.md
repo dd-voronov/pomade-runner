@@ -52,7 +52,7 @@ By kind:
 | `ready` | service | `{ port: 5173 }` or `{ url: http://localhost:5173/ }`; default: up = alive after 5 s |
 | `agent` | agent (required) | the agent's id, e.g. `claude` |
 | `mode` | agent | one of the agent's modes; default `normal` (`full-autonomy` skips every approval) |
-| `git` | git (required) | `{ operation: commit-push \| pull \| push \| fetch, repos: [notes, …] }` — repos by the name Pomade's Git panel shows; a git job's `name` is at most 100 characters (its commits carry it) |
+| `git` | git (required) | `{ operation: commit-push \| pull \| push \| fetch, repos: [notes, …] }` — repos by the name Pomade's Git panel shows, run one at a time in the order listed; a git job's `name` is at most 100 characters (its commits carry it) |
 
 An agent job's **body is its prompt** — it must not be empty.
 

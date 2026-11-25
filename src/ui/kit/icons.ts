@@ -20,6 +20,8 @@ export const ICONS = {
   expand: '<path d="M8.5 4l4 4-4 4M3.5 4l4 4-4 4" stroke-linejoin="round"/>',
   plus: '<path d="M8 3.5v9M3.5 8h9"/>',
   x: '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>',
+  search: '<circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2l3.3 3.3"/>',
+  dash: '<path d="M4 8h8" stroke-width="2"/>',
   check: '<path d="M3.5 8.4l3 3 6-6.6" stroke-linejoin="round"/>',
   clock: '<circle cx="8" cy="8" r="5.6"/><path d="M8 4.8V8l2.2 1.4" stroke-linejoin="round"/>',
   warn: '<path d="M8 2.6l5.8 10.2H2.2z" stroke-linejoin="round"/><path d="M8 6.6v3"/><circle cx="8" cy="11.2" r=".55" fill="currentColor" stroke="none"/>',

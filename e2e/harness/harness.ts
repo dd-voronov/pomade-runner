@@ -5,7 +5,7 @@
 // `?hostApi=<n>` makes the host speak another Host API version, so the handshake is refused;
 // `?scheduler=none` leaves out the stand-in scheduler that serves Runner's API; `?projects=prototype`
 // gives Pomade the prototype's projects and groups, `?projects=<json>` other projects
-// (`[{ id, name, root }]`), `?active=<id>` the one open, and `?repos=a,b` more git repos. The fake host is
+// (`[{ id, name, root }]`), `?active=<id>` the one open, and `?repos=…` more git repos (below). The fake host is
 // on `window.fakeHost` for the specs to read what the app did and to write job files, the mounted
 // frame on `window.mounted` to navigate it. A tab is one of the app's tabs in the fake tab strip;
 // each keyed tab the app opens gets a frame of its own, shown while that tab is focused. Frames are
@@ -43,14 +43,27 @@ const PROTOTYPE_PROJECTS = {
   ],
 };
 
+/** `?repos=`'s repos as `[name, root]`, after notes. */
+function harnessRepos(param: string | null): [string, string][] {
+  const listed = (param ?? "").split(",").filter((entry) => entry !== "");
+  return [
+    ["notes", "notes"],
+    ...listed.map((entry): [string, string] => {
+      const eq = entry.indexOf("=");
+      return eq < 0 ? [entry, entry] : [entry.slice(0, eq), entry.slice(eq + 1)];
+    }),
+  ];
+}
+
 const fakeHost = createFakeHost({
   manifest,
   pomadeVersion: "0.0.0-e2e",
   ...(projects === "prototype" ? PROTOTYPE_PROJECTS : { projects: projects === null ? [{ id: "alpha", name: "Alpha", root: "Projects/alpha" }] : (JSON.parse(projects) as { id: string; name: string; root: string }[]) }),
   activeProject: query.get("active") ?? "alpha",
   // The workspace's one repo, as Pomade's git state reads it: the name git jobs name it by.
-  // `?repos=a,b` names more, for the screenshots that compare with the prototype's.
-  git: ["notes", ...(query.get("repos")?.split(",") ?? [])].map((name) => ({ name, root: name, absPath: `/fake/workspace/${name}`, remoteUrl: null, branch: "main", upstream: null, ahead: 0, behind: 0, hasCommits: true, changes: [] })),
+  // `?repos=a,b` names more, each directly under the workspace root, or `name=root` at a
+  // workspace-relative root (`my-workspace=` is the workspace root's).
+  git: harnessRepos(query.get("repos")).map(([name, root]) => ({ name, root, absPath: root === "" ? "/fake/workspace" : `/fake/workspace/${root}`, remoteUrl: null, branch: "main", upstream: null, ahead: 0, behind: 0, hasCommits: true, changes: [] })),
   ...(hostApi === null ? {} : { hostApi: Number(hostApi) }),
   apps: agentsStandIn(query.get("agents")),
   roster: HARNESS_ROSTER,

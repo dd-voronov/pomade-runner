@@ -175,7 +175,10 @@ test.describe("Pomade opened for an agent run", () => {
     expect(at(/run backup \S+: started \(scheduled\)/)).toBeGreaterThan(-1);
     expect(at(/run backup \S+: started \(scheduled\)/)).toBeLessThan(at(/Pomade: up for agent runs/));
     expect([...output().matchAll(/run (summary|inbox) \S+: started \(scheduled\)\n/g)].map((match) => match[1])).toEqual(queued);
-    expect(at(/Pomade: up for agent runs/)).toBeLessThan(at(new RegExp(`run ${queued[0] ?? ""} \\S+: started`)));
+    // No agent run starts before Runner is connected to the Pomade it opened. ("up for agent runs" is
+    // logged when the opening resolves; another pass of the queue can see Pomade up and start a run
+    // before that line, so it is no marker of order.)
+    expect(at(/connected to Pomade/)).toBeLessThan(at(new RegExp(`run ${queued[0] ?? ""} \\S+: started`)));
 
     // The panel of the Pomade the scheduler opened shows them running, and the job's next run.
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);

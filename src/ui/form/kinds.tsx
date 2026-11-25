@@ -8,12 +8,12 @@ import { agentModes, FULL_AUTONOMY_MODE, modeWords } from "../../integrations/ag
 import { GIT_OPERATIONS, type GitOperation, type JobKind, type MissedPolicy, type Notify, type OverlapPolicy, type ServiceStart } from "../../jobs/model";
 import { GIT_OPERATION_WORDS } from "../../jobs/words";
 import type { HelpKey } from "../help";
-import { Check, Checks, Field, FieldError, Help, Icon, LinkButton, Segmented, Select, TextArea, TextInput, Toggle, type IconName, type SelectOption } from "../kit";
+import { Field, FieldError, Help, Icon, LinkButton, Segmented, Select, TextArea, TextInput, Toggle, type IconName, type SelectOption } from "../kit";
 import { useProjectsFor, useRoster } from "../useAgents";
-import { useRepos } from "../useRunnerApi";
 import { FolderField, type FormProps } from "./FolderField";
 import { FormSection } from "./FormSection";
 import styles from "./JobForm.module.css";
+import { RepoPicker } from "./RepoPicker";
 import { LOW_PRIORITY_WORDS, MISSED_WORDS, NOTIFY_WORDS, OVERLAP_WORDS, TIME_LIMIT_WORDS, type PolicyWords } from "./policies";
 import type { FormValues, TriggerKind, WorthUntil } from "./state";
 import { ServiceChainLine, TriggerSection } from "./TriggerSection";
@@ -357,47 +357,6 @@ function GitSections(props: FormProps): React.JSX.Element {
         </div>
       </FormSection>
     </>
-  );
-}
-
-/** The repos: a check per repo of the workspace, as Pomade's Git panel names them, followed live;
- *  one the file names that the workspace lacks stays, checked, and is said under them. A repo
- *  checked runs after the ones checked before it. */
-function RepoPicker({ host, state, set, error }: FormProps): React.JSX.Element {
-  const repos = useRepos(host);
-  const chosen = state.values.repos;
-  const known = repos.status === "ready" ? repos.value.map((repo) => repo.name) : [];
-  const missing = repos.status === "ready" ? chosen.filter((repo) => !known.includes(repo)) : [];
-  const shown = repos.status === "ready" ? [...known, ...missing] : chosen;
-  const toggle = (repo: string): void => set("repos", chosen.includes(repo) ? chosen.filter((name) => name !== repo) : [...chosen, repo]);
-  const hint =
-    repos.status === "loading" ? (
-      "Reading the workspace's repos…"
-    ) : repos.status !== "ready" ? (
-      <span className={styles.problem}>Could not read the workspace's repos: {repos.status === "failed" ? repos.message : "Pomade did not answer"}.</span>
-    ) : missing.length > 0 ? (
-      <span className={styles.problem} data-testid="repos-missing">
-        {missing.join(", ")} {missing.length === 1 ? "is" : "are"} not in this workspace.
-      </span>
-    ) : known.length === 0 ? (
-      "The workspace has no git repos."
-    ) : undefined;
-  return (
-    <Field label="Repositories" help="f.repos" error={error("repos")} hint={hint}>
-      {(id) => (
-        <div id={id} role="group" aria-label="Repositories" data-field="repos" data-testid="repo-picker">
-          {shown.length > 0 && (
-            <Checks>
-              {shown.map((repo) => (
-                <Check key={repo} on={chosen.includes(repo)} data-tip={missing.includes(repo) ? "Not in this workspace" : undefined} aria-invalid={missing.includes(repo) || undefined} onClick={() => toggle(repo)}>
-                  {repo}
-                </Check>
-              ))}
-            </Checks>
-          )}
-        </div>
-      )}
-    </Field>
   );
 }
 

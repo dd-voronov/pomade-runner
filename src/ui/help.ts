@@ -87,6 +87,7 @@ export const HELP = {
   'f.prompt': ['What the agent is asked to do, as its first message. Saved as the body of the job file; when the agent has answered and is idle, Runner ends the session.', 'Example: "Summarize today\'s plan and what ran overnight."'],
   'f.gitop': ['Pomade\'s git does the work and keeps its rails: it skips while an agent works in the repo and backs out of a conflict.', 'Example: Commit & push.'],
   'f.repos': ['One run covers every repo you pick; the result card shows each repo\'s steps.', 'Example: notes.'],
+  'f.repos.order': ['One run goes through the repos one at a time, top to bottom in this list — not in the order you ticked them.', 'Example: Knowledge, then notes, then Pomade.'],
   'p.missed': ['What to do when the Mac was asleep or off at the scheduled time.', 'Example: Morning summary — run on wake, until 12:00.'],
   'p.wake': ['Runs once after wake, however many runs were missed; its result card can run the others.', 'Example: three missed health checks → one run.'],
   'p.waitme': ['Never starts on its own: you get a card with Run now · Run at… · Skip — and Run all when it missed more than one.', 'Example: a heavy weekly job you want to time yourself.'],
