@@ -1,6 +1,6 @@
 {
   "name": "pomade-runner",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.0-rc.6",
   "description": "Runner — the Pomade app that runs services, scripts, git operations and agents on schedules and hooks",
   "private": true,
   "license": "UNLICENSED",

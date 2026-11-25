@@ -1,7 +1,7 @@
 {
   "id": "pomade-runner",
   "name": "Runner",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.0-rc.6",
   "hostApi": 0,
   "icon": "icon.svg",
   "capabilities": [
