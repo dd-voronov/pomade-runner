@@ -1,7 +1,7 @@
 ---
 doc: docs/user-guide/services.md
 audience: users
-holds: services — creating one, when it starts and counts as up, crashes and restarts, Start, Stop and Restart, services that wait for a project or for Pomade, when Pomade quits, the Services view, the service's terminal tab
+holds: services — creating one, when it starts and counts as up, crashes and restarts, Start, Stop and Restart, services that wait for a project or for Pomade, when Pomade quits, the Services view, the service's terminal tab, its starts and stops in History
 kind: reference
 ---
 
@@ -43,9 +43,10 @@ whose project you opened since Pomade started — and it starts within seconds; 
 
 ## How it starts
 
-- A valid, enabled `On Mac startup` service runs all the time. Runner starts each one that is not
-  running whenever its scheduler starts; at a Mac login that is all of them. A new or re-enabled service
-  file starts the same way.
+- A valid, enabled `On Mac startup` service runs all the time. Whenever its scheduler starts Runner
+  starts each one that is not running and leaves the running ones alone. After a Mac restart, which
+  ended them all, that is every one. A log-out and log-in does not end Runner's keeper, so the services
+  that run go on and none starts again. A new or re-enabled service file starts the same way.
 - A `While Pomade is running` service starts when Pomade starts, and at once when it is made, enabled or
   changed to that start while Pomade runs.
 - Services start **one at a time**, in a stable order: workspace jobs first, then each project's, each
@@ -155,6 +156,30 @@ Deleting its file stops it two seconds
 later (an editor that saves by deleting and rewriting stops nothing). [Jobs and the job
 form](jobs.md) describes Delete.
 
+## Starts, stops and crashes in History
+
+Every start, stop, restart and give-up of a service is a row in **History** (a **service event**), with
+the cause in the Trigger column: **Mac startup**, **Pomade started**, **first open** (of its project),
+**Pomade quit**, **you** (Start, Stop, Restart in Runner, its tab, Needs you or the command, or Ctrl+C
+or Stop in its terminal tab), **chain**, **crash**, **keeper** (the keeper that held its session
+ended and Runner started it again, or it was not due to start again) and **job file** (made or turned
+on, turned off, deleted, or moved with its project). A service that outlived a log-out, and a Runner
+update, write nothing: the service never stopped.
+
+- The result reads "started", "stopped", "restarted", or, for a chain's action with nothing to do or
+  refused, "restart skipped · it is not running" and "start failed · <the keeper's reason>".
+- The restarts after crashes are **one row**: its first restart writes "restarted · exit 1", each
+  further one updates it in place — "restarted 4× · exit 1, 137" (each distinct exit code or signal
+  once, "could not start" for a start the keeper refused). The row ends when the crash count resets
+  or the service gives up, which is its own row, "gave up after 5 crashes", **failed**.
+- An event has no duration and no output. Its card shows the cause, a crash's **Exit code**, and the
+  **Session** it started: "still going · up 3h 48m" with **Open terminal**, or "ended 11:20 — it
+  crashed". A service that gave up and does not run offers **Start**.
+- **Service events** in History's filter bar, on by default and counting the events in scope, shows or
+  hides them; the result chips follow it. A give-up is under **Failed**, a chain's skipped action under
+  **Skipped & missed**.
+- `pomade-runner history` prints them among the runs ([The command](command.md)).
+
 ## When a service gives up
 
 Needs you shows the service with "Crashed 5× in 1 min — gave up." and **Start** · **View output**, and
@@ -165,4 +190,4 @@ A service whose command could not start at all — its folder does not exist —
 Its card says why ("Gave up — could not start: no such folder: …") and has **Start** only, no **View
 output**; its name opens the job in the Jobs view.
 
-Tickets: T-006, T-013.
+Tickets: T-006, T-013, T-046, T-047.

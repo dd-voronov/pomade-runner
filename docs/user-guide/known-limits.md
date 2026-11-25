@@ -21,6 +21,16 @@ kind: reference
   turn looks done, and Runner notices it only when the agent answers the exit command with its
   "Background work is running" question — Runner declines it and waits for the turn's end, and a
   run still stopped at the question after 15 seconds is failed.
+- **Runner answers a question form only in Full autonomy, and only with the option the agent
+  highlights.** A form with no option highlighted, or at its free-text rows ("Type something.", "Chat
+  about this"), waits for you; so does every question in any other mode. Runner never types into a
+  screen it does not know, so an agent at a plan approval or a new dialog waits for you in every mode.
+- **A Mac login is read from the Mac's login session.** Runner tells a new login by the user's
+  `loginwindow` process. When it cannot be read — or on the first start after Runner is installed —
+  Runner falls back to the keeper: a start that had to start the keeper is a login, one that found it
+  running is none.
+- **A pull's commit count needs a Pomade that reports it.** With an older Pomade the run reads plain
+  "done", and Open in Git shows only where Pomade supports it.
 - **The keeper's loss of the keychain is not explained.** Runner detects a keeper that cannot reach the
   macOS keychain and replaces it before an agent run, but what cuts a keeper off from the keychain is
   not known, so it can happen again. The replacement waits for the runs going to end, because it ends

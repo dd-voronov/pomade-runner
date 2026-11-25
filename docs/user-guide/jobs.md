@@ -64,15 +64,17 @@ reads "N jobs", plus "· N invalid" when a file has errors. Columns:
 
 - **Job · trigger** — the kind icon, the name (with the job's description, when it has one, as its
   tooltip, line breaks kept) over the trigger in words ("weekdays at 7:00", "at Mac
-  login", "after Pull is done", "manual"; a service: "always on · starts on Mac startup", "while Pomade
-  is running", "from first open of blog while Pomade is running"). An agent job in Full autonomy carries an amber `Full autonomy` tag. A
+  login", "after Pull is done", "after Pull fails", "after Pull finishes either way", "manual"; a service: "always on · starts on Mac startup", "while Pomade
+  is running", "from first open of blog while Pomade is running", with its chain after it: "· restarts
+  after Pull is done"). An agent job in Full autonomy carries an amber `Full autonomy` tag. A
   git job's tooltip adds its operation and repos; a repo the workspace lacks is said in red.
 - **Last result** — the run going ("running", "running · waiting for the agent's background work",
   "waiting for you", "queued", "missed · waiting for you")
   or the latest finished one ("done", "failed · exit 1", "stopped: time limit, 45 min", "skipped · …",
   "missed · …", "stopped by you") over when it started and how long it took, with "· caught up" or
   "· manual" where that is how it started ("today 8:32 · 4m 12s · caught up") — a done git run shows
-  its commit instead. A run going shows how long so far, counted each second for the first minute; a queued run reads "queued · 1 ahead" over
+  its commit instead, and its chip says what its pulls got when Pomade reports it ("done · 2 commits
+  pulled", "done · 1 commit pulled", "done · up to date"; no pull, or no count, reads "done"). A run going shows how long so far, counted each second for the first minute; a queued run reads "queued · 1 ahead" over
   "since 12:46"; a job the loop guard paused reads amber "paused · looks like a loop" over when and
   "10× in 10 min". "never ran" for none. Click it to open the run's result card. A service shows its
   state as the Services view does.
@@ -108,7 +110,11 @@ head has a back arrow to Jobs, "Jobs / <name>", **Enabled** and — editing — 
    when you hover its name in Jobs"); a job that has a description shows the box filled. Emptying it keeps the
    box open; an empty description leaves the field out of the file.
 2. The kind's own sections — **Trigger** and **Runs** for a service and a script, **Trigger** and
-   **Agent** for an agent, **Trigger** and **Git** for a git job.
+   **Agent** for an agent, **Trigger** and **Git** for a git job. A git job's **Repositories** is a
+   grouped list of the workspace's repos with **Select all**, **Clear** and, from 10 repos, a filter; a run
+   goes through the picked repos one at a time, top to bottom in that list ([Git jobs](git-jobs.md)). Where
+   a job runs after another job, the result is chosen as **Is done**, **Fails** or **Finishes either way**
+   ([Hooks and chains](hooks-and-chains.md)).
 3. **Policies** — a one-sentence summary, the non-defaults in bold, until you press **Change**.
 
 **Folder** is typed or chosen with **Choose…**: a menu of **Workspace** (the workspace root), the
@@ -154,4 +160,4 @@ Each job that runs once per trigger carries these; each has an (i) help.
 A service's policies are Low priority and Notify me; a missed-run policy, overlap and a time limit
 apply to jobs that run once per trigger. A policy at its default is left out of the file.
 
-Tickets: T-007, T-009, T-041, T-043, T-044.
+Tickets: T-007, T-009, T-041, T-043, T-044, T-048, T-049, T-051.

@@ -16,7 +16,7 @@ choose `When something happens`, then pick from the **Event** list.
 
 | Event (the list's label) | Fires | Filters in the form |
 |---|---|---|
-| `Mac login` | once after you log in to the Mac, after the warm-up | none |
+| `Mac login` | once per login to the Mac — after a log-out and log-in or a Mac restart — after the warm-up | none |
 | `Pomade started` | when Pomade is ready (tabs restored), once per Pomade start | none |
 | `First open of a project since Pomade started` | the first time you open the project after Pomade starts; later opens do not. A job made after that open waits for the next Pomade start | **Project**: `Any project`, or one of Pomade's projects |
 | `Project opened (every time)` | every time the project becomes the one in front in Pomade, its first open since Pomade started included | **Project**: `Any project`, or one of Pomade's projects |
@@ -32,8 +32,11 @@ blog is opened", "Runs when a project is created", "Runs after Pull is done · A
 - Pomade's and the Agents app's events fire only while Pomade runs. One that happens while Pomade or
   Runner is not listening is not caught up. The form says so: "Fires only while Pomade is running, so
   there are no missed runs."
-- `Mac login` is a login, not an update or restart of Runner. It fires the login hooks once, after
-  the services are up and the warm-up has passed.
+- `Mac login` is a new login to the Mac — a log-out and log-in, or a restart of the Mac — not an
+  update or restart of Runner, sleep, or switching to another user and back. Runner tells it by the
+  Mac's own login session, which a new login replaces, so a log-out counts even though Runner's keeper
+  and the services in it live on. The first start after Runner is installed is a login too. It fires
+  the login hooks once, after the services are up and the warm-up has passed.
 - `Pomade started` fires once for each Pomade start; a restart of Pomade fires it again, a restart of
   the scheduler does not.
 - A session in the Workspace bucket has no project, so only a hook without a project filter takes it.
@@ -48,6 +51,8 @@ History shows a hook run as "hook: Mac login", "hook: Pomade started", "hook: fi
 it**: `Is done` · `Fails` · `Finishes either way`. Is done: the run ended without an error. Fails: an
 exit code, a signal, the time limit or a keeper crash. Finishes either way: both. A run you stopped,
 a skipped run and a missed run start nothing; the (i) beside the choice says so.
+The three results read the same everywhere — the form, the line under it ("Runs after Pull finishes
+either way"), Jobs, the command's `list` ("after Pull finishes either way") and the service chain's line.
 
 - Every follower fires, in id order, and joins the queue like any run: overlap applies and the switch
   holds it. A chain run never waits for the warm-up.
@@ -58,7 +63,7 @@ a skipped run and a missed run start nothing; the (i) beside the choice says so.
   "**Also** [restart it · start it · stop it] after [job] [is done · fails · finishes either way]". Restart
   restarts a running service and leaves one that is not running alone; start starts one that is not
   running; stop stops it until you Start it. A service acts at once: the switch and the warm-up never
-  hold it. Each action is a History record of the service. A service is never followed.
+  hold it. Each action is a service event in History, with the chain as its cause ([Services](services.md)). A service is never followed.
 
 ## What a run gets
 
@@ -105,4 +110,4 @@ after: { job: blog/pull, result: done, action: restart }   # on a service
 Events are `login`, `pomade-started`, `project-first-open`, `project-opened`, `project-created`,
 `session-finished` and `session-status`. The form writes the filters it offers and leaves the others as the file has them.
 
-Tickets: T-010, T-013, T-014.
+Tickets: T-010, T-013, T-014, T-046, T-047, T-048.
