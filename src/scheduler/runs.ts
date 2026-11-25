@@ -93,6 +93,7 @@ import { createLoopGuard, FIRING_LIMIT, FIRING_WINDOW_MS, parseLoopGuard, type L
 import { addMissed, decideMissed, missedOnce, parseRunAt, pastWords, type MissedDecision } from "./missed";
 import {
   clockTime,
+  chainEvent,
   dayTime,
   durationWords,
   isActiveRun,
@@ -587,7 +588,7 @@ export function createRuns(options: RunsOptions): Runs {
             missed: null,
             series: null,
             state: outcome.result,
-            action,
+            event: outcome.result === "done" ? chainEvent(action, outcome.session, outcome.ended) : chainEvent(action),
             reason: outcome.result === "done" ? null : outcome.reason,
             startedAt: null,
             endedAt: now().getTime(),
@@ -634,7 +635,7 @@ export function createRuns(options: RunsOptions): Runs {
   }
 
   /** A run's record: what it was, and how it ended. */
-  const ended = (run: ActiveRun, end: Omit<RunRecord, keyof Omit<ActiveRun, "state" | "startedAt" | "log" | "limitHit"> | "action">): RunRecord => ({
+  const ended = (run: ActiveRun, end: Omit<RunRecord, keyof Omit<ActiveRun, "state" | "startedAt" | "log" | "limitHit"> | "event">): RunRecord => ({
     job: run.job,
     name: run.name,
     kind: run.kind,
@@ -647,7 +648,7 @@ export function createRuns(options: RunsOptions): Runs {
     agent: run.agent,
     missed: run.missed,
     series: run.series,
-    action: null,
+    event: null,
     ...end,
   });
 

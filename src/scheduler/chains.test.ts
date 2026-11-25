@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { checkJobs } from "../jobs/check";
 import type { JobsSnapshot } from "../jobs/model";
 import { chainCause, followers, parentResult } from "./chains";
-import { RUN_RESULTS, type RunRecord } from "./model";
+import { chainEvent, RUN_RESULTS, type RunRecord } from "./model";
 
 const record = (state: RunRecord["state"], extra: Partial<RunRecord> = {}): RunRecord => ({
   job: "pull",
@@ -22,7 +22,7 @@ const record = (state: RunRecord["state"], extra: Partial<RunRecord> = {}): RunR
   missed: null,
   series: null,
   state,
-  action: null,
+  event: null,
   reason: null,
   startedAt: 1,
   endedAt: 2,
@@ -58,8 +58,8 @@ describe("chains", () => {
   });
 
   it("a chain's action on a service is no parent", () => {
-    expect(parentResult(record("done", { kind: "service", action: "restart", trigger: "chain" }))).toBeNull();
-    expect(parentResult(record("failed", { kind: "service", action: "start", trigger: "chain" }))).toBeNull();
+    expect(parentResult(record("done", { kind: "service", event: chainEvent("restart"), trigger: "chain" }))).toBeNull();
+    expect(parentResult(record("failed", { kind: "service", event: chainEvent("start"), trigger: "chain" }))).toBeNull();
   });
 
   it("links the parent: its job, name, run and result", () => {

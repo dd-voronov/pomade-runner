@@ -8,7 +8,7 @@ import { expect, test, type Browser, type FrameLocator, type Locator, type Page 
 
 import manifest from "../app/manifest.json" with { type: "json" };
 import type { ServiceStatus } from "../src/keeper/model";
-import type { ActiveRun, HeldRun, NeedsYouItem, RunRecord, RunsReport } from "../src/scheduler/model";
+import { chainEvent, type ActiveRun, type HeldRun, type NeedsYouItem, type RunRecord, type RunsReport, type ServiceEvent } from "../src/scheduler/model";
 import { HELP } from "../src/ui/help";
 import { APP_PORT, HARNESS_PORT } from "./support/ports";
 
@@ -315,7 +315,7 @@ test.describe("runs", () => {
     missed: null,
     series: null,
     state: "failed",
-    action: null,
+    event: null,
     reason: null,
     startedAt: at(13, 0),
     endedAt: at(13, 0) + 3000,
@@ -962,7 +962,7 @@ test.describe("missed runs and load", () => {
       { method: "runs.stop", params: { job: "summary", run: base.run } },
     ]);
 
-    const stopped: RunRecord = { ...base, state: "failed", action: null, reason: "stopped: time limit, 45 min", endedAt: at(7, 45), durationMs: 45 * 60_000, exitCode: null, signal: "SIGTERM", lastLines: ["still summarizing"], git: null, limitHit: 45 };
+    const stopped: RunRecord = { ...base, state: "failed", event: null, reason: "stopped: time limit, 45 min", endedAt: at(7, 45), durationMs: 45 * 60_000, exitCode: null, signal: "SIGTERM", lastLines: ["still summarizing"], git: null, limitHit: 45 };
     await page.evaluate((h) => window.setRuns({ report: { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null }, heldRuns: 0 }, history: h }), [stopped]);
     // The host still has the tab at this run's route: the card closed in the frame alone.
     await page.evaluate((route) => window.mounted.navigate(route), "history");
@@ -994,7 +994,7 @@ test.describe("missed runs and load", () => {
     await expect(dialog).toHaveCount(0);
 
     // A caught-up run that stood for 3, ended, its job's latest: Run the other 2.
-    const caught: RunRecord = { ...base, job: "weekly", name: "Weekly", run: "20261120-090000-cccccc", trigger: "caught-up", missed: counted(3), state: "done", action: null, reason: null, startedAt: at(9, 0), endedAt: at(9, 1), durationMs: 60_000, exitCode: 0, signal: null, lastLines: ["weekly done"], git: null, limitHit: null };
+    const caught: RunRecord = { ...base, job: "weekly", name: "Weekly", run: "20261120-090000-cccccc", trigger: "caught-up", missed: counted(3), state: "done", event: null, reason: null, startedAt: at(9, 0), endedAt: at(9, 1), durationMs: 60_000, exitCode: 0, signal: null, lastLines: ["weekly done"], git: null, limitHit: null };
     const latest = (record: RunRecord | null) => ({ job: "weekly", next: null, finished: false, last: record, held: false });
     const show = (records: RunRecord[], last: RunRecord | null, active: ActiveRun[] = []) =>
       page.evaluate((r) => window.setRuns(r), { report: { ...report, active, needsYou: [], jobs: [latest(last)] }, history: records });
@@ -1105,7 +1105,7 @@ test.describe("hooks and chains", () => {
     missed: null,
     series: null,
     state: "done",
-    action: null,
+    event: null,
     reason: null,
     startedAt: at(13, 0),
     endedAt: at(13, 0) + 2000,
@@ -1119,7 +1119,7 @@ test.describe("hooks and chains", () => {
   };
   const cause = { kind: "chain" as const, job: "pull", name: "Pull", run: pull.run, result: "done" as const };
   const tests: RunRecord = { ...pull, job: "tests", name: "Tests", run: "20261118-120002-bbbbbb", trigger: "chain", cause, dueAt: pull.endedAt, startedAt: pull.endedAt, endedAt: pull.endedAt + 5000, lastLines: ["12 passed"] };
-  const web: RunRecord = { ...pull, job: "web", name: "Web", kind: "service", run: "20261118-120002-cccccc", trigger: "chain", cause, dueAt: pull.endedAt, action: "restart", startedAt: null, durationMs: null, exitCode: null, log: null, lastLines: [], endedAt: pull.endedAt + 1000 };
+  const web: RunRecord = { ...pull, job: "web", name: "Web", kind: "service", run: "20261118-120002-cccccc", trigger: "chain", cause, dueAt: pull.endedAt, event: chainEvent("restart"), startedAt: null, durationMs: null, exitCode: null, log: null, lastLines: [], endedAt: pull.endedAt + 1000 };
   const mount: RunRecord = { ...pull, job: "mount", name: "Mount", run: "20261118-070000-dddddd", trigger: "hook", cause: { kind: "hook", event: "login", context: {} }, dueAt: at(8, 0), startedAt: at(8, 2), endedAt: at(8, 2) + 1000 };
   const paused: NeedsYouItem = { id: "loop-paused:lint", kind: "loop-paused", job: "lint", name: "Lint", project: null, at: at(14, 0), detail: "triggered 10× in 10 min — looks like a loop" };
   const quiet: RunsReport = { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null }, heldRuns: 0 };
@@ -1130,8 +1130,8 @@ test.describe("hooks and chains", () => {
     await page.evaluate((h) => window.setRuns({ report: { active: [], nextUp: [], jobs: [], needsYou: [], switch: { position: "running", since: null }, heldRuns: 0 }, history: h }), [tests, web, pull, mount]);
     const rows = app(page).getByTestId("history-row");
     await expect(rows).toHaveCount(4);
-    await expect(app(page).getByTestId("history-trigger")).toHaveText(["chain: after Pull", "chain: after Pull", "scheduled", "hook: Mac login"]);
-    await expect(app(page).locator('[data-testid="history-row"][data-job="web"]')).toContainText("done · restarted");
+    await expect(app(page).getByTestId("history-trigger")).toHaveText(["chain", "chain: after Pull", "scheduled", "hook: Mac login"]);
+    await expect(app(page).locator('[data-testid="history-row"][data-job="web"]')).toContainText("restarted");
     await shoot(page, "tab-history-chains");
 
     await app(page).locator('[data-testid="history-row"][data-job="tests"]').click();
@@ -1142,6 +1142,68 @@ test.describe("hooks and chains", () => {
     await expect(dialog.getByTestId("run-trigger")).toHaveText("scheduled");
     await expect(dialog.getByRole("button", { name: "Open Pull's run" })).toHaveCount(0);
     await expect(dialog.getByTestId("run-last-lines")).toHaveText("Already up to date.");
+  });
+
+  test("T-047 · a service's events are History rows: no duration, the cause as trigger; Service events hides them, gave up counts as failed; a card says the cause and the session, with Open terminal or Start", async ({ page }) => {
+    await page.goto(harness({ route: "history" }));
+    await page.waitForFunction(() => typeof window.setServiceStatus === "function");
+    await page.evaluate((text) => window.fakeHost.writeFile("Apps/pomade-runner/jobs/web.md", text), "---\nkind: service\nname: Web\nfolder: .\ncommand: ./web.sh\n---\n");
+    const live = Date.now() - 60_000;
+    const event = (run: string, what: ServiceEvent["what"], cause: ServiceEvent["cause"], more: Partial<ServiceEvent>, rest: Partial<RunRecord> = {}): RunRecord => ({
+      ...web,
+      run,
+      trigger: "manual",
+      cause: null,
+      dueAt: at(9, Number(run.slice(-2))),
+      endedAt: at(9, Number(run.slice(-2))),
+      event: { what, cause, detail: null, session: null, ended: [], restarts: 0, ends: [], ...more },
+      ...rest,
+    });
+    const started = event("20261118-090000-ev0010", "started", "you", { session: live });
+    const window_ = event("20261118-090000-ev0005", "restarted", "crash", { session: 2, ended: [1], restarts: 4, ends: [{ code: 1, signal: null }, { code: 137, signal: null }] }, { exitCode: 137 });
+    const gaveUp = event("20261118-090000-ev0006", "gave-up", "crash", { ended: [2] }, { state: "failed", exitCode: 1 });
+    await page.evaluate((runs) => window.setRuns(runs), { report: quiet, history: [started, gaveUp, window_, pull] });
+    await page.evaluate((startedAt) => window.setServiceStatus("web", { state: "running", session: { id: "svc:web", job: "web", kind: "service", run: null, log: null, info: { id: "svc:web", title: "Web", command: "./web.sh", cwd: "/fake/workspace", pid: 7, startedAt, cols: 80, rows: 24, state: "running", exit: null, clients: 0, actions: [] } } }), live);
+
+    const rows = app(page).getByTestId("history-row");
+    await expect(rows).toHaveCount(4);
+    await expect(app(page).locator('[data-testid="history-row"][data-event]').getByTestId("history-result")).toHaveText(["started", "gave up after 5 crashes", "restarted 4× · exit 1, 137"]);
+    await expect(app(page).locator('[data-testid="history-row"][data-event]').getByTestId("history-trigger")).toHaveText(["you", "crash", "crash"]);
+    await expect(app(page).locator('[data-testid="history-row"][data-event]').getByTestId("history-duration")).toHaveText(["", "", ""]);
+    await expect(app(page).getByTestId("history-events")).toHaveAttribute("aria-pressed", "true");
+    await expect(app(page).getByTestId("history-events")).toContainText("Service events3");
+    await expect(app(page).getByTestId("history-filter-failed")).toContainText("1");
+    await app(page).getByTestId("history-filter-failed").click();
+    await expect(rows).toHaveCount(1);
+    await app(page).getByTestId("history-filter-all").click();
+    await app(page).getByTestId("history-events").click();
+    await expect(rows).toHaveCount(1);
+    await expect(app(page).getByTestId("history-filter-failed")).toContainText("0");
+    await app(page).getByTestId("history-events").click();
+
+    await app(page).locator('[data-event="started"]').click();
+    const dialog = app(page).getByTestId("run-dialog");
+    await expect(dialog.getByTestId("run-result")).toHaveText("Started");
+    await expect(dialog.getByTestId("run-trigger")).toHaveText("by you");
+    await expect(dialog.getByTestId("event-cause")).toHaveText("You pressed Start.");
+    await expect(dialog.getByTestId("event-session")).toContainText("still going · up 1m");
+    await expect(dialog.getByRole("button", { name: "View output" })).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Open terminal" }).click();
+    await expect.poll(() => page.evaluate(() => window.fakeHost.openedTabs)).toEqual([expect.objectContaining({ kind: "attached", session: { app: "pomade-runner", session: "svc:web" }, title: "Web" })]);
+
+    await page.keyboard.press("Escape");
+    await app(page).locator('[data-event="gave-up"]').click();
+    await expect(dialog.getByTestId("run-result")).toHaveText("Gave up");
+    await expect(dialog.getByTestId("run-exit")).toHaveText("1");
+    await expect(dialog.getByRole("button", { name: "Start" })).toHaveCount(0);
+    await page.evaluate(() => window.setServiceStatus("web", { state: "failed" }));
+    await dialog.getByRole("button", { name: "Start" }).click();
+    await expect.poll(() => page.evaluate(() => window.runnerCalls)).toContainEqual({ method: "services.start", params: { job: "web" } });
+
+    await app(page).locator('[data-event="restarted"]').click();
+    await expect(dialog.getByTestId("run-result")).toHaveText("Restarted after a crash");
+    await expect(dialog.getByTestId("event-session")).toHaveText(/^ended .*9:06 — it crashed; Runner gave up$/);
+    await shoot(page, "tab-history-events-card");
   });
 
   test("a job the loop guard paused is in Needs you, with Resume", async ({ page }) => {
@@ -1507,7 +1569,7 @@ test.describe("the Jobs view", () => {
     missed: null,
     series: null,
     state,
-    action: null,
+    event: null,
     reason: null,
     startedAt: endedAt - 3000,
     endedAt,
@@ -2304,7 +2366,7 @@ test.describe("History and result cards", () => {
     missed: null,
     series: null,
     state: "done",
-    action: null,
+    event: null,
     reason: null,
     startedAt: at(0, 0, 10),
     endedAt: at(0, 0, 10) + 2000,
@@ -4297,7 +4359,7 @@ test.describe("agent jobs", () => {
     missed: null,
     series: null,
     state: "done",
-    action: null,
+    event: null,
     reason: null,
     startedAt: at(7, 0),
     endedAt: at(7, 4) + 12_000,

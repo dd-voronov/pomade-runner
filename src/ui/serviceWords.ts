@@ -105,7 +105,7 @@ export interface ServiceLook {
   newsHelp: HelpKey | null;
 }
 
-function readyWords(ready: Readiness): string {
+export function readyWords(ready: Readiness): string {
   switch (ready.kind) {
     case "port":
       return `waiting for port ${ready.port}`;

@@ -730,9 +730,9 @@ describe("scheduler and runs", () => {
     expect(ran).toMatchObject({ status: "ok", value: { run: { job: "backup", state: "running" } } });
     expect(await callScheduler(socketPath(), "run", { job: "backup" })).toEqual({ status: "failed", code: "refused", message: 'cannot run "backup": "Backup" is running, and its overlap is skip' });
     sessions.exit(lastRun().id, 2);
-    await vi.waitFor(async () => expect(await callScheduler(socketPath(), "history", { job: null, limit: 5 })).toMatchObject({ status: "ok", value: { records: [{ job: "backup", state: "failed" }] } }));
+    await vi.waitFor(async () => expect(await callScheduler(socketPath(), "history", { job: null, limit: 5 })).toMatchObject({ status: "ok", value: { records: [{ job: "backup", state: "failed" }, { job: "web", event: { what: "started", cause: "login" } }] } }));
     expect(await callScheduler(socketPath(), "history", { job: "Backup", limit: 5 })).toMatchObject({ status: "ok", value: { records: [{ job: "backup" }] } });
-    expect(await callScheduler(socketPath(), "history", { job: "web", limit: 5 })).toEqual({ status: "ok", value: { held: [], records: [], next: null } });
+    expect(await callScheduler(socketPath(), "history", { job: "web", limit: 5 })).toMatchObject({ status: "ok", value: { held: [], records: [{ job: "web", event: { what: "started", cause: "login" } }], next: null } });
     await vi.waitFor(async () => expect(await readdir(join(dir, "ud/notices/queue"))).toHaveLength(1));
     const [queued] = await readdir(join(dir, "ud/notices/queue"));
     expect(JSON.parse(await readFile(join(dir, "ud/notices/queue", queued ?? ""), "utf8"))).toMatchObject({ source: "pomade-runner", title: "Backup failed", action: { kind: "openApp", route: expect.stringMatching(/^run\/backup\//) as string } });
@@ -813,7 +813,14 @@ describe("scheduler and runs", () => {
     await vi.waitFor(() => expect(sessions.spawned.filter((spawn) => spawn.job === "after")).toHaveLength(10));
     expect(sessions.spawned.find((spawn) => spawn.job === "after")?.command.env).toMatchObject({ POMADE_TRIGGER: "chain", POMADE_PARENT_JOB: "backup", POMADE_PARENT_RESULT: "done" });
     expect(sessions.restarted.map((restart) => restart.job)).toHaveLength(10);
-    await vi.waitFor(async () => expect(await ui.apps.call("pomade-runner", HISTORY_LIST_METHOD, { job: "web", limit: 20 })).toMatchObject({ records: Array<unknown>(10).fill(expect.objectContaining({ kind: "service", trigger: "chain", action: "restart", state: "done", cause: expect.objectContaining({ job: "backup", name: "Backup" }) as unknown })) }));
+    await vi.waitFor(async () =>
+      expect(await ui.apps.call("pomade-runner", HISTORY_LIST_METHOD, { job: "web", limit: 20 })).toMatchObject({
+        records: [
+          ...Array<unknown>(10).fill(expect.objectContaining({ kind: "service", trigger: "chain", event: expect.objectContaining({ what: "restarted", cause: "chain" }) as unknown, state: "done", cause: expect.objectContaining({ job: "backup", name: "Backup" }) as unknown })),
+          expect.objectContaining({ event: expect.objectContaining({ what: "started", cause: "login" }) as unknown }),
+        ],
+      }),
+    );
     expect(lines).toContain("service web: Restart — chain: after Backup");
 
     const paused = { id: "loop-paused:after", kind: "loop-paused", job: "after", name: "After" };

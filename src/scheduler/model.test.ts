@@ -4,7 +4,7 @@ import { APP_TAB_KEY_RE } from "pomade-kit/protocol";
 
 import { editRoute, jobsRoute, newRoute, outputRoute, outputTab, outputTabKey, parseRoute, promptRoute, runRoute } from "../integrations/runner-api";
 import { MAX_ENCODED_JOB_ID } from "../keeper/ids";
-import { clockTime, dayTime, durationWords, heldRowWords, hookCauseWords, isActiveRun, isHistoryPage, isMissedChoiceResult, isRunsReport, otherMissedRuns, parseRunRecord, runTriggerWords, runWords, type ActiveRun, type RunRecord } from "./model";
+import { chainEvent, clockTime, dayTime, durationWords, heldRowWords, hookCauseWords, isActiveRun, isHistoryPage, isMissedChoiceResult, isRunsReport, otherMissedRuns, parseRunRecord, runTriggerWords, runWords, type ActiveRun, type RunRecord } from "./model";
 
 const base = { job: "blog/web", name: "Web", kind: "script" as const, project: "p1", folder: "Projects/blog", run: "20261117-120000-abcdef", trigger: "manual" as const, cause: null, dueAt: 1, agent: null, missed: null, series: null };
 const active: ActiveRun = {
@@ -22,7 +22,7 @@ const active: ActiveRun = {
   warningDismissed: false,
 };
 const queued: ActiveRun = { ...active, state: "queued", startedAt: null, session: null, log: null };
-const record: RunRecord = { ...base, state: "failed", action: null, reason: null, startedAt: 1, endedAt: 2, durationMs: 1, exitCode: 1, signal: null, log: "/o.log", lastLines: [], git: null, limitHit: null };
+const record: RunRecord = { ...base, state: "failed", event: null, reason: null, startedAt: 1, endedAt: 2, durationMs: 1, exitCode: 1, signal: null, log: "/o.log", lastLines: [], git: null, limitHit: null };
 
 const AGENT = { agent: "claude", name: "Claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: null, cwd: "/ws", startedAt: "2026-11-17T12:00:00.000Z", exit: "/exit", exitSentAt: null, worked: true, waiting: null, waitedMs: 0, background: null, answered: [], workedOn: false };
 
@@ -81,6 +81,24 @@ describe("runs in words", () => {
     expect(isMissedChoiceResult({ ok: true, at: null, runs: 0 })).toBe(true);
     expect(isMissedChoiceResult({ ok: false, reason: "no" })).toBe(true);
     for (const bad of [{ ok: true, at: 5 }, { ok: true, at: 5, runs: -1 }, { ok: true, at: 5, runs: 1.5 }]) expect(isMissedChoiceResult(bad)).toBe(false);
+  });
+
+  it("T-047 · a chain's action an older build kept by its `action` reads as the service event it stands for; a record without either is a run", () => {
+    const { event: _event, ...older } = record;
+    expect(parseRunRecord(older)).toEqual(record);
+    const action = { ...older, kind: "service", trigger: "chain", state: "done", action: "restart", startedAt: null };
+    expect(parseRunRecord(action)).toEqual({ ...record, kind: "service", trigger: "chain", state: "done", startedAt: null, event: chainEvent("restart") });
+    expect(parseRunRecord({ ...record, event: { ...chainEvent("stop"), what: "paused" } })).toBeNull();
+    expect(parseRunRecord({ ...record, event: { ...chainEvent("stop"), ends: [{ code: "1" }] } })).toBeNull();
+  });
+
+  it("T-047 · a service event's trigger is its cause; its words say what it did", () => {
+    const event = (more: Partial<RunRecord>): RunRecord => ({ ...record, kind: "service", startedAt: null, durationMs: null, exitCode: null, state: "done", ...more });
+    expect(runTriggerWords(event({ event: { ...chainEvent("start"), cause: "login" } }))).toBe("Mac startup");
+    expect(runTriggerWords(event({ trigger: "chain", cause: { kind: "chain", job: "pull", name: "Pull", run: "r", result: "done" }, event: chainEvent("restart") }))).toBe("chain: after Pull");
+    expect(runWords(event({ event: { ...chainEvent("restart"), cause: "crash", restarts: 2, ends: [{ code: null, signal: null }] } }))).toBe("restarted 2× · could not start");
+    expect(runWords(event({ event: { ...chainEvent("restart"), cause: "crash", restarts: 1, ends: [] } }))).toBe("restarted");
+    expect(runWords(event({ event: { ...chainEvent("restart"), cause: "crash", restarts: 3, ends: [{ code: null, signal: "SIGKILL" }] } }))).toBe("restarted 3× · SIGKILL");
   });
 
   it("T-026 · checks a run's series; a record of an older build reads with none", () => {

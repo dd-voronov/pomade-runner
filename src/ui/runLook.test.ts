@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ActiveRun, HeldRun, RunRecord, RunView } from "../scheduler/model";
+import type { ActiveRun, HeldRun, RunRecord, RunView, ServiceEvent } from "../scheduler/model";
 import { promptLines, byDay, dayWords, filterCounts, itemKey, keeps, runDuration, runLook, runningSince, runTime, shortDuration, slotHolders, TRIGGER_HELP, waitsSentence, whenWords, whyWords, type HistoryItem } from "./runLook";
 
 /** Tue 17 Nov 2026, 12:48 — the prototype's "now". */
@@ -21,7 +21,7 @@ const record = (extra: Partial<RunRecord> = {}): RunRecord => ({
   missed: null,
   series: null,
   state: "done",
-  action: null,
+  event: null,
   reason: null,
   startedAt: at(17, 12, 0),
   endedAt: at(17, 12, 0) + 2000,
@@ -98,8 +98,24 @@ describe("a run's status: tone, words, help, pill, chip", () => {
     });
   }
 
-  it("a chain's action on a service and a git run's commit say what was done", () => {
-    expect(runLook(record({ kind: "service", action: "restart", startedAt: null, durationMs: null })).words).toBe("done · restarted");
+  it("a service event looks as the prototype's: its dot, words, pill and chip", () => {
+    const event = (what: ServiceEvent["what"], cause: ServiceEvent["cause"], more: Partial<ServiceEvent> = {}, rest: Partial<RunRecord> = {}): RunRecord =>
+      record({ kind: "service", startedAt: null, durationMs: null, exitCode: null, event: { what, cause, detail: null, session: null, ended: [], restarts: 0, ends: [], ...more }, ...rest });
+    const look = (view: RunRecord): unknown => {
+      const { tone, words, label, pill, cardTone, filter, plain } = runLook(view);
+      return { tone, words, label, pill, cardTone, filter, plain };
+    };
+    expect(look(event("started", "you"))).toEqual({ tone: "ok", words: "started", label: "Started", pill: "ok", cardTone: undefined, filter: null, plain: undefined });
+    expect(look(event("stopped", "pomade-quit"))).toEqual({ tone: "hollow", words: "stopped", label: "Stopped", pill: "muted", cardTone: undefined, filter: null, plain: undefined });
+    expect(look(event("restarted", "chain"))).toEqual({ tone: "ring-ok", words: "restarted", label: "Restarted", pill: "accent", cardTone: undefined, filter: null, plain: undefined });
+    expect(look(event("restarted", "crash", { restarts: 1, ends: [{ code: 137, signal: null }] }))).toEqual({ tone: "warning", words: "restarted · exit 137", label: "Restarted after a crash", pill: "warning", cardTone: "warning", filter: null, plain: true });
+    expect(runLook(event("restarted", "crash", { restarts: 4, ends: [{ code: 1, signal: null }, { code: 137, signal: null }, { code: null, signal: "SIGKILL" }] })).words).toBe("restarted 4× · exit 1, 137, SIGKILL");
+    expect(look(event("gave-up", "crash", {}, { state: "failed", exitCode: 1 }))).toEqual({ tone: "danger", words: "gave up after 5 crashes", label: "Gave up", pill: "danger", cardTone: "danger", filter: "failed", plain: undefined });
+    expect(look(event("restarted", "chain", {}, { state: "skipped", reason: "it is not running" }))).toMatchObject({ tone: "hollow", words: "restart skipped · it is not running", filter: "missed" });
+    expect(look(event("started", "chain", {}, { state: "failed", reason: "no such folder" }))).toMatchObject({ tone: "danger", words: "start failed · no such folder", filter: "failed" });
+  });
+
+  it("a git run's commit says what was done", () => {
     const git = record({
       kind: "git",
       git: { op: "commit-push", job: "K", at: "2026-11-17T12:00:00Z", results: [{ repo: "K", path: "/k", op: "commit-push", status: "done", reason: null, steps: [], commit: "a1b2c3d4e5f6" }] },

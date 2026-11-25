@@ -210,7 +210,7 @@ describe("runs", () => {
         missed: null,
         series: null,
         state: "done",
-        action: null,
+        event: null,
         reason: null,
         startedAt: Date.parse("2026-11-18T12:00:00.000Z"),
         endedAt: Date.parse("2026-11-18T12:00:02.500Z"),

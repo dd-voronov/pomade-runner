@@ -1,5 +1,5 @@
 // A stand-in for Runner's scheduler in the fake host: another client of the app that serves
-// Runner's API — the jobs, the services, the runs, the history a page at a time, one run and its output, Run now,
+// Runner's API — the jobs, the services, the runs, the history a page at a time, one run and its output, the event that ended a session, Run now,
 // Enable / Disable, Needs you, a missed run's choice, Stop, the switch, Resume, the settings — and
 // announces `jobs.changed`, `services.changed`, `runs.changed` and `settings.changed`, as the real
 // scheduler does through Pomade. It reads the fake workspace's jobs folder through the Host API and
@@ -27,6 +27,7 @@ import {
   RUN_NOW_METHOD,
   RUN_OUTPUT_METHOD,
   RUN_STOP_METHOD,
+  SESSION_END_METHOD,
   RUNS_CHANGED_EVENT,
   RUNS_LIST_METHOD,
   SERVICE_METHODS,
@@ -159,6 +160,11 @@ export async function startFakeScheduler(fake: FakeHost): Promise<void> {
     [RUNS_LIST_METHOD]: () => json(runs.report),
     [HISTORY_LIST_METHOD]: (params) => json(historyPage(params)),
     [RUN_GET_METHOD]: (params) => json(find(params) ?? null),
+    [SESSION_END_METHOD]: (params) => {
+      const found = find(params);
+      const session = found !== undefined && "event" in found ? (found.event?.session ?? null) : null;
+      return json(session === null ? null : (runs.history.find((record) => record.job === found?.job && record.event?.ended.includes(session) === true) ?? null));
+    },
     [RUN_OUTPUT_METHOD]: () => json({ text: runs.output, truncated: false, missing: runs.outputMissing }),
     [RUN_NOW_METHOD]: action(RUN_NOW_METHOD, (params) => {
       const { job } = params as { job: string };

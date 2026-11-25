@@ -29,6 +29,10 @@ export interface RunnerSession {
   info: SessionInfo;
 }
 
+/** This many crashes within `LOOP_WINDOW_MS` make a crash loop: the service gives up, `failed`. */
+export const LOOP_CRASHES = 5;
+export const LOOP_WINDOW_MS = 60_000;
+
 /** What `pomade-runner sessions` shows. */
 export interface SessionsReport {
   keeper: KeeperLink;
@@ -168,9 +172,11 @@ export function isServiceStatus(value: unknown): value is ServiceStatus {
 /** The answer to Start, Stop or Restart: where the service stands after it, or why it was refused. */
 export type ServiceActionResult = { ok: true; service: ServiceStatus } | { ok: false; reason: string };
 
-/** What a chain's action did to a service: `done`, or `skipped` (nothing to do: "it is not
- *  running") or `failed` (the keeper refused) with the reason. */
-export type ChainActionOutcome = { result: "done" } | { result: "skipped" | "failed"; reason: string };
+/** What a chain's action did to a service: `done` — with the session it started (a start or
+ *  restart: the keeper's start stamp) and the one it stopped (a stop or restart), each `null` when
+ *  there was none — or `skipped` (nothing to do: "it is not running") or `failed` (the keeper
+ *  refused) with the reason. */
+export type ChainActionOutcome = { result: "done"; session: number | null; ended: number | null } | { result: "skipped" | "failed"; reason: string };
 
 export function isServiceActionResult(value: unknown): value is ServiceActionResult {
   if (!isRecord(value)) return false;

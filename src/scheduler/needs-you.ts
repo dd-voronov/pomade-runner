@@ -27,7 +27,7 @@ import type { ServicesReport, ServiceStatus } from "../keeper/model";
 import { needsYouRecordPath, type RecordsFolder } from "../locations";
 import type { Log } from "./log";
 import { FIRING_LIMIT, FIRING_WINDOW_MS } from "./loop-guard";
-import { ACTION_DONE_WORDS, dayTime, durationWords, failureWords, missedRunsWords, type ActiveRun, type AgentWait, type NeedsYouItem, type RunRecord } from "./model";
+import { dayTime, durationWords, failureWords, missedRunsWords, runWords, type ActiveRun, type AgentWait, type NeedsYouItem, type RunRecord } from "./model";
 
 /** A failed-run item as it is kept. */
 interface Failure {
@@ -117,9 +117,10 @@ export function runNotice(record: RunRecord, notify: Notify): NoticeParams | nul
   if (record.state !== "failed" && notify !== "always") return null;
   const action = { kind: "openApp" as const, route: runRoute(record.job, record.run) };
   const took = record.durationMs === null ? null : `took ${durationWords(record.durationMs)}`;
-  if (record.action !== null) {
+  if (record.event !== null) {
     // A chain's action on a service: done (noticed with `always`) or failed.
-    return record.state === "failed" ? { title: `${record.name}: ${record.action} failed`, body: failureWords(record), action } : { title: `${record.name} ${ACTION_DONE_WORDS[record.action]}`, action };
+    const words = runWords(record);
+    return record.state === "failed" ? { title: `${record.name}: ${words.replace(/ · .*$/, "")}`, body: failureWords(record), action } : { title: `${record.name} ${words}`, action };
   }
   switch (record.state) {
     case "failed": {

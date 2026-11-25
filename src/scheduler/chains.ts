@@ -9,7 +9,7 @@ import type { ParentResult, RunCause, RunRecord } from "./model";
 
 /** The result a chain sees in a finished run; `null` when the run fires no chain. */
 export function parentResult(record: RunRecord): ParentResult | null {
-  if (record.action !== null) return null;
+  if (record.event !== null) return null;
   return record.state === "done" || record.state === "failed" ? record.state : null;
 }
 

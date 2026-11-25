@@ -4,12 +4,12 @@
 
 import type { JobKind } from "../jobs/model";
 import {
-  ACTION_DONE_WORDS,
   caughtUpWords,
   heldRowWords,
   hookCauseWords,
   missedRunsWords,
   runWords,
+  serviceEventWords,
   SWITCH_WORDS,
   waitingAt,
   waitsForBackground,
@@ -18,6 +18,8 @@ import {
   type RunRecord,
   type RunTrigger,
   type RunView,
+  type ServiceEvent,
+  type ServiceEventCause,
   type Waits,
 } from "../scheduler/model";
 import type { HelpKey } from "./help";
@@ -44,6 +46,51 @@ export interface RunLook {
   /** The card's head: red for a failed run, amber for one that waits for you. */
   cardTone: "danger" | "warning" | undefined;
   filter: Exclude<HistoryFilter, "all"> | null;
+  /** The words keep the text colour whatever the dot's: a crash window's amber dot. */
+  plain?: true;
+}
+
+/** A service event's record. */
+export type EventRecord = RunRecord & { event: ServiceEvent };
+
+export function isEventRecord(item: HistoryItem): item is EventRecord {
+  return !isHeld(item) && isRecord(item) && item.event !== null;
+}
+
+/** The help of a service event's cause. */
+export const CAUSE_HELP: Record<ServiceEventCause, HelpKey> = {
+  login: "ev.startup",
+  "first-open": "ev.firstopen",
+  "pomade-started": "ev.pomadestart",
+  "pomade-quit": "ev.pomadequit",
+  you: "ev.you",
+  chain: "ev.chain",
+  crash: "ev.crash",
+  keeper: "ev.keeper",
+  "job-file": "ev.file",
+};
+
+/** How a service event looks (the prototype's `EVV`, `evDot`, `evTone`): started green; stopped a
+ *  ring; restarted a green ring, after a crash an amber dot with plain words and an amber card;
+ *  gave up red, under Failed. A chain's action that failed is a failed one; one with nothing to
+ *  do, a skipped one. */
+export function eventLook(view: EventRecord): RunLook {
+  const words = serviceEventWords(view);
+  const base = { live: false, words, help: "ev.row", filter: null } as const;
+  if (view.state === "skipped") return { ...base, tone: "hollow", help: "st.skipped", label: "Skipped", pill: "muted", cardTone: undefined, filter: "missed" };
+  if (view.state === "failed" && view.event.what !== "gave-up") return { ...base, tone: "danger", help: "st.failed", label: "Failed", pill: "danger", cardTone: "danger", filter: "failed" };
+  switch (view.event.what) {
+    case "started":
+      return { ...base, tone: "ok", label: "Started", pill: "ok", cardTone: undefined };
+    case "stopped":
+      return { ...base, tone: "hollow", label: "Stopped", pill: "muted", cardTone: undefined };
+    case "restarted":
+      return view.event.cause === "crash"
+        ? { ...base, tone: "warning", plain: true, label: "Restarted after a crash", pill: "warning", cardTone: "warning" }
+        : { ...base, tone: "ring-ok", label: "Restarted", pill: "accent", cardTone: undefined };
+    case "gave-up":
+      return { ...base, tone: "danger", label: "Gave up", pill: "danger", cardTone: "danger", filter: "failed" };
+  }
 }
 
 export function isRecord(view: RunView): view is RunRecord {
@@ -61,10 +108,10 @@ export function isHeld(item: HistoryItem): item is HeldRun {
  *  record that takes its place on release lands. */
 const HELD_LOOK = { tone: "warning", live: false, help: "sw.held", label: "Held", pill: "warning", cardTone: undefined, filter: "missed" } as const;
 
-/** A done run's words: a chain's action on a service ("done · restarted"), a git run's commit and
- *  what it pulled ("done · a1b2c3d", "done · 2 commits pulled"; `runWords`), else "done". */
+/** A done run's words: a git run's commit and what it pulled ("done · a1b2c3d", "done · 2 commits
+ *  pulled"; `runWords`), else "done". */
 function doneWords(view: RunRecord): string {
-  return view.action !== null ? `done · ${ACTION_DONE_WORDS[view.action]}` : runWords(view);
+  return runWords(view);
 }
 
 /** A run's look; with `now`, a running run that has become a long-run warning says so: "running ·
@@ -73,6 +120,7 @@ function doneWords(view: RunRecord): string {
  *  background work". */
 export function runLook(view: HistoryItem, now?: number): RunLook {
   if (isHeld(view)) return { ...HELD_LOOK, words: heldRowWords(view.missed) };
+  if (isEventRecord(view)) return eventLook(view);
   if (view.state === "running" && waitingAt(view) !== null) {
     return { tone: "warning", live: false, words: "waiting for you", help: "st.waiting", label: "Waiting for you", pill: "warning", cardTone: "warning", filter: "active" };
   }

@@ -2,17 +2,19 @@
 // in the workspace, and the run's output log beside it — moved there from the state folder, where
 // the keeper wrote it while the run went, when the run ends (`keepOutputLog`).
 //
-// - **Format.** Append-only JSON Lines, one file per day of the runs' ends (UTC):
-//   `history/YYYY-MM-DD.jsonl`. A record is written once, when its run ends, as one line; nothing
-//   is ever rewritten, so a crash can at worst leave a half line at the end of a file. A reader
-//   skips a line that is not a record, and the first append to a file that does not end with a
-//   newline starts a new line first, so a half line never swallows the next record.
+// - **Format.** JSON Lines, one file per day of the runs' ends (UTC): `history/YYYY-MM-DD.jsonl`. A
+//   record is written once, when its run ends, as one line appended, so a crash can at worst leave
+//   a half line at the end of a file. A reader skips a line that is not a record, and the first
+//   append to a file that does not end with a newline starts a new line first, so a half line never
+//   swallows the next record. The one record written again is a service's crash window's, as its
+//   restarts add up (`put`): its line is replaced where it stands, the day file written whole
+//   through a temporary file beside it, so no line moves and no reader sees half a file.
 // - **Pruning** is by whole days: a day's file and the output logs of runs that started that day
 //   go once the day is as many days behind as the settings keep (`history-days`); a log a session
 //   still writes stays.
 // - **Reading** is newest first, a page at a time; a page ends at a cursor (`<day>:<line>`) the next
-//   page starts before. Records are only appended and days only removed whole, so a cursor stays
-//   valid while new runs land.
+//   page starts before. Records are only appended or replaced in place and days only removed whole,
+//   so a cursor stays valid while new runs land.
 // - **Output.** A record keeps its output log by name (`keptRecord`: `output/<job>/<run>.log`), never
 //   by a path, so a workspace copied to another Mac carries none of the first's; read back, it names
 //   the log where it is found (`findOutputLog`): kept, else still in the state folder.
@@ -20,7 +22,7 @@
 //   across volumes), done before its record is written and safe to repeat: a reader never finds a
 //   record whose log it cannot resolve.
 
-import { access, appendFile, copyFile, mkdir, open, readdir, readFile, rename, rm, rmdir } from "node:fs/promises";
+import { access, appendFile, copyFile, mkdir, open, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
@@ -56,13 +58,20 @@ const DAY_FILE_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
 const RUN_FILE_RE = /^(\d{4})(\d{2})(\d{2})-\d{6}-[0-9a-f]{6}\.(?:log|json)$/;
 
 export interface History {
-  /** Write a finished run's record. Appends happen in order and never overlap. */
+  /** Write a finished run's record. Writes happen in order and never overlap. */
   append(record: RunRecord): Promise<void>;
+  /** Write a record that may be written already — a crash window's, as its restarts add up: the
+   *  line of the same job and run is replaced where it stands, in the newest day file that has it;
+   *  without one, the record is appended. */
+  put(record: RunRecord): Promise<void>;
   /** Records newest first, of every job or of `job` — and of the ids it had before (`formerly`) —
    *  starting before the cursor `before`. */
   page(options: { job: string | null; formerly?: readonly string[]; before: string | null; limit: number }): Promise<HistoryRecords>;
   /** A run's record; `null` when there is none (yet, or any more). */
   find(job: string, run: string): Promise<RunRecord | null>;
+  /** The service event that ended the session the event `run` of `job` started; `null` when there
+   *  is none (yet, or any more), or `run` started no session. */
+  sessionEnd(job: string, run: string): Promise<RunRecord | null>;
   /** Remove the days `keepDays` behind `now`, with their runs' output logs, kept or in the state
    *  folder — except the logs in `inUse`. */
   prune(now: Date, keepDays: number, inUse: ReadonlySet<string>): Promise<void>;
@@ -177,23 +186,66 @@ export function createHistory(records: RecordsFolder, state: StateFolder, log: L
     }
   }
 
+  async function appendNow(record: RunRecord): Promise<void> {
+    const day = dayOf(record.endedAt);
+    const file = join(folder, `${day}.jsonl`);
+    const line = `${JSON.stringify(keptRecord(record))}\n`;
+    await mkdir(folder, { recursive: true });
+    let text = line;
+    if (!checked.has(day)) {
+      if (await endsMidLine(file)) text = `\n${line}`;
+      checked.add(day);
+    }
+    await appendFile(file, text);
+  }
+
+  /** Replace the line of `record`'s job and run in the newest day file that has it; whether one did. */
+  async function replaceNow(record: RunRecord): Promise<boolean> {
+    const needle = JSON.stringify(record.run);
+    for (const day of (await days()).reverse()) {
+      const text = await lines(day);
+      for (let index = text.length - 1; index >= 0; index--) {
+        const line = text[index] ?? "";
+        if (!line.includes(needle)) continue;
+        const found = parseLine(line);
+        if (found?.job !== record.job || found.run !== record.run) continue;
+        text[index] = JSON.stringify(keptRecord(record));
+        const file = join(folder, `${day}.jsonl`);
+        await writeFile(`${file}.tmp`, text.join("\n"));
+        await rename(`${file}.tmp`, file);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async function find(job: string, run: string): Promise<RunRecord | null> {
+    const needle = JSON.stringify(run);
+    for (const day of (await days()).reverse()) {
+      const text = await lines(day);
+      for (let index = text.length - 1; index >= 0; index--) {
+        const line = text[index] ?? "";
+        if (!line.includes(needle)) continue;
+        const record = parseLine(line);
+        if (record?.job === job && record.run === run) return foundRecord(records, state, record);
+      }
+    }
+    return null;
+  }
+
+  /** Run `work` after every write before it; a write that fails is logged. */
+  function write(work: () => Promise<void>): Promise<void> {
+    writing = writing.then(work).catch((err: unknown) => log(`history: cannot write to ${folder}: ${errorText(err)}`));
+    return writing;
+  }
+
   return {
-    append(record) {
-      const day = dayOf(record.endedAt);
-      const file = join(folder, `${day}.jsonl`);
-      const line = `${JSON.stringify(keptRecord(record))}\n`;
-      const done = writing.then(async () => {
-        await mkdir(folder, { recursive: true });
-        let text = line;
-        if (!checked.has(day)) {
-          if (await endsMidLine(file)) text = `\n${line}`;
-          checked.add(day);
-        }
-        await appendFile(file, text);
-      });
-      writing = done.catch((err: unknown) => log(`history: cannot write ${file}: ${errorText(err)}`));
-      return writing;
-    },
+    append: (record) => write(() => appendNow(record)),
+
+    put: (record) =>
+      write(async () => {
+        if (!(await replaceNow(record))) await appendNow(record);
+      }),
 
     async page({ job, formerly = [], before, limit }) {
       const ids = job === null ? null : new Set([job, ...formerly]);
@@ -215,15 +267,19 @@ export function createHistory(records: RecordsFolder, state: StateFolder, log: L
       return { records: await Promise.all(found.map((each) => foundRecord(records, state, each))), next: null };
     },
 
-    async find(job, run) {
-      const needle = JSON.stringify(run);
+    find,
+
+    async sessionEnd(job, run) {
+      const session = (await find(job, run))?.event?.session ?? null;
+      if (session === null) return null;
+      const needle = JSON.stringify(job);
       for (const day of (await days()).reverse()) {
         const text = await lines(day);
         for (let index = text.length - 1; index >= 0; index--) {
           const line = text[index] ?? "";
           if (!line.includes(needle)) continue;
           const record = parseLine(line);
-          if (record?.job === job && record.run === run) return foundRecord(records, state, record);
+          if (record?.job === job && record.event?.ended.includes(session) === true) return record;
         }
       }
       return null;

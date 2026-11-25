@@ -31,7 +31,8 @@ import { MessageText } from "./MessageText";
 import { Button, Dialog, DialogBody, DialogFoot, DialogHead, Help, Icon, LinkButton, Pill, useToast } from "./kit";
 import styles from "./RunCard.module.css";
 import { terminalLabel } from "./rowRun";
-import { dayWords, isRecord, KIND_WORDS, promptLines, runDuration, runLook, runningSince, runTime, shortDuration, slotHolders, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
+import { EventCard } from "./EventCard";
+import { dayWords, eventLook, isRecord, KIND_WORDS, promptLines, runDuration, runLook, runningSince, runTime, shortDuration, slotHolders, TRIGGER_HELP, waitsSentence, whenWords, whyWords } from "./runLook";
 import { useOpenRunTerminal, useStopRun } from "./useRunActions";
 import { shortClock, upWords } from "./serviceWords";
 import { aheadMoment } from "./panelWords";
@@ -93,6 +94,14 @@ export function RunDialog({
             </DialogBody>
           </>
         )}
+      </Dialog>
+    );
+  }
+  if (isRecord(value) && value.event !== null) {
+    const event = { ...value, event: value.event };
+    return (
+      <Dialog onClose={close} testId="run-dialog" tone={eventLook(event).cardTone}>
+        <EventCard host={host} view={event} open={open} close={close} />
       </Dialog>
     );
   }
@@ -288,7 +297,7 @@ function RunCard({
             <WaitingBody host={host} view={view} wait={wait} />
           ) : view.state === "running" ? (
             <RunningBody host={host} view={view} />
-          ) : record === null ? null : record.action !== null || !started ? (
+          ) : record === null ? null : !started ? (
             <p data-testid="run-reason">{neverWords(record)}</p>
           ) : record.git !== null ? (
             <GitBody host={host} record={record} />
@@ -325,14 +334,8 @@ function RunCard({
   );
 }
 
-/** A run that never started, or a chain's action on a service, in a sentence. */
+/** A run that never started, in a sentence. */
 function neverWords(record: RunRecord): string {
-  if (record.action !== null) {
-    const done = { restart: "Restarted", start: "Started", stop: "Stopped" }[record.action];
-    const parent = record.cause?.kind === "chain" ? ` after ${record.cause.name}` : "";
-    if (record.state === "done") return `${done} by a chain${parent}.`;
-    return `${capital(record.state === "skipped" ? "skipped" : "failed")}: ${record.reason ?? "the chain did not act"}.`;
-  }
   // A record of more than one missed run says how many: "Missed 4 runs, 17:40–17:46 · skipped."
   if (record.state === "missed" && missedRunsWords(record.missed) !== null) return `${capital(runWords(record))}.`;
   return `${capital(record.reason ?? (record.state === "missed" ? "missed" : "it never started"))}.`;

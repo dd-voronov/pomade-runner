@@ -47,7 +47,7 @@ const record = (state: RunRecord["state"], extra: Partial<RunRecord> = {}): RunR
   missed: null,
   series: null,
   state,
-  action: null,
+  event: null,
   reason: null,
   startedAt: at(17, 11, 17),
   endedAt: at(17, 11, 20),

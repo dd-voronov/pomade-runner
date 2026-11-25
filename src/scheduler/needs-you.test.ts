@@ -12,7 +12,7 @@ import { checkJobs } from "../jobs/check";
 import { needsYouRecordPath, recordsFolderOf } from "../locations";
 import type { Notify } from "../jobs/model";
 import type { RunnerSession, ServicesReport, ServiceStatus } from "../keeper/model";
-import type { RunRecord } from "./model";
+import { chainEvent, type RunRecord } from "./model";
 import { createNeedsYou, fileNeedsYouStore, gaveUpNotice, loopNotice, runNotice, type NeedsYou, type NeedsYouStore } from "./needs-you";
 
 const T0 = Date.parse("2026-11-17T12:00:00.000Z");
@@ -32,7 +32,7 @@ function record(state: RunRecord["state"], extra: Partial<RunRecord> = {}): RunR
     missed: null,
     series: null,
     state,
-    action: null,
+    event: null,
     reason: state === "skipped" ? "previous run still going" : null,
     startedAt: state === "skipped" ? null : T0,
     endedAt: T0 + 12_000,
@@ -92,7 +92,7 @@ describe("runNotice", () => {
 
   it("a chain's action on a service: failed is noticed with its reason; done only with always", () => {
     const action = (state: RunRecord["state"], reason: string | null = null): RunRecord =>
-      record(state, { kind: "service", job: "web", name: "Web", trigger: "chain", action: "restart", reason, startedAt: null, durationMs: null, exitCode: null, lastLines: [] });
+      record(state, { kind: "service", job: "web", name: "Web", trigger: "chain", event: chainEvent("restart"), reason, startedAt: null, durationMs: null, exitCode: null, lastLines: [] });
     const webRoute = "run/web/20261117-120000-abcdef";
     expect(runNotice(action("failed", "no such folder"), "on-failure")).toEqual({ title: "Web: restart failed", body: "no such folder", action: { kind: "openApp", route: webRoute } });
     expect(runNotice(action("done"), "on-failure")).toBeNull();

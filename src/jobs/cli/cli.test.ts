@@ -6,7 +6,7 @@ import { APP_VERSION } from "../../app";
 import type { RunnerSession, ServicesReport, ServiceStatus, SessionsReport } from "../../keeper/model";
 import type { ControlCallResult } from "../../scheduler/control/client";
 import type { ControlMethod, ControlMethods, JobEnabled, JobResumed, MissedSettled, RunStarted, SchedulerStatus } from "../../scheduler/control/protocol";
-import { dayTime, type ActiveRun, type HistoryPage, type JobListing, type RunRecord, type RunsReport, type SwitchState } from "../../scheduler/model";
+import { chainEvent, dayTime, type ActiveRun, type HistoryPage, type JobListing, type RunRecord, type RunsReport, type SwitchState } from "../../scheduler/model";
 import type { ProjectRecord } from "../model";
 import { runCli, USAGE } from "./cli";
 
@@ -356,7 +356,7 @@ describe("pomade-runner", () => {
   describe("runs", () => {
     const at = (time: string): number => Date.parse(`2026-11-17T${time}.000Z`);
     const base = { job: "backup", name: "Backup", kind: "script" as const, project: null, folder: "", run: "20261117-120000-abcdef", trigger: "scheduled" as const, cause: null, dueAt: at("12:00:00"), agent: null, missed: null, series: null };
-    const failed = { ...base, state: "failed" as const, action: null, reason: null, startedAt: at("12:00:00"), endedAt: at("12:00:03"), durationMs: 3000, exitCode: 1, signal: null, log: "/ud/output/backup/r.log", lastLines: [], git: null, limitHit: null };
+    const failed = { ...base, state: "failed" as const, event: null, reason: null, startedAt: at("12:00:00"), endedAt: at("12:00:03"), durationMs: 3000, exitCode: 1, signal: null, log: "/ud/output/backup/r.log", lastLines: [], git: null, limitHit: null };
     const listing: JobListing = { job: "backup", name: "Backup", kind: "script", enabled: true, trigger: "daily at 13:00", problem: null, next: at("13:00:00"), finished: false, last: failed, service: null };
     const fresh = { lowPriority: true, runAt: null, deadline: null, waits: null, limitHit: null, warnedAt: null, warningDismissed: false };
 
@@ -451,20 +451,26 @@ describe("pomade-runner", () => {
 
     it("history prints the latest runs, of every job or one — a git run with a line per repo", async () => {
       const calls: { method: ControlMethod; params: unknown }[] = [];
-      const chained = { ...failed, job: "web", name: "Web", kind: "service" as const, trigger: "chain" as const, cause: { kind: "chain" as const, job: "x", name: "X", run: "r0", result: "done" as const }, state: "done" as const, action: "restart" as const, startedAt: null, durationMs: null, exitCode: null, log: null };
+      const chained = { ...failed, job: "web", name: "Web", kind: "service" as const, trigger: "chain" as const, cause: { kind: "chain" as const, job: "x", name: "X", run: "r0", result: "done" as const }, state: "done" as const, event: chainEvent("restart"), startedAt: null, durationMs: null, exitCode: null, log: null };
       const records = [
         failed,
         { ...failed, job: "x", name: "X", trigger: "manual" as const, state: "done" as const, exitCode: 0, log: null },
         chained,
-        { ...chained, job: "mount", name: "Mount", kind: "script" as const, trigger: "hook" as const, cause: { kind: "hook" as const, event: "login" as const, context: {} }, action: null },
+        { ...chained, job: "mount", name: "Mount", kind: "script" as const, trigger: "hook" as const, cause: { kind: "hook" as const, event: "login" as const, context: {} }, event: null },
+        { ...chained, job: "dev", name: "Dev", trigger: "manual" as const, cause: null, endedAt: at("12:00:40"), exitCode: 137, event: { what: "restarted" as const, cause: "crash" as const, detail: null, session: 9, ended: [1, 2], restarts: 2, ends: [{ code: 1, signal: null }, { code: 137, signal: null }] } },
+        { ...chained, job: "dev", name: "Dev", trigger: "manual" as const, cause: null, state: "failed" as const, event: { what: "gave-up" as const, cause: "crash" as const, detail: null, session: null, ended: [9], restarts: 0, ends: [] } },
+        { ...chained, job: "tick", name: "Tick", trigger: "manual" as const, cause: null, event: { what: "started" as const, cause: "login" as const, detail: null, session: 3, ended: [], restarts: 0, ends: [] } },
         { ...failed, job: "copied", name: "Copied", log: "/elsewhere/output/copied/r.log" },
       ];
       const r = await run(["history"], undefined, { history: { status: "ok", value: { held: [], records, next: null } }, calls });
       expect(r.out).toBe(
         "backup  Backup  scheduled  failed · exit 1, 2026-11-17T12:00:03.000Z, took 3 s  output /ud/output/backup/r.log\n" +
           "x  X  manual  done, 2026-11-17T12:00:03.000Z, took 3 s\n" +
-          "web  Web  chain: after X  restarted, 2026-11-17T12:00:03.000Z\n" +
+          "web  Web  service · chain: after X  restarted, 2026-11-17T12:00:00.000Z\n" +
           "mount  Mount  hook: Mac login  done, 2026-11-17T12:00:03.000Z\n" +
+          "dev  Dev  service · crash  restarted 2× · exit 1, 137, 2026-11-17T12:00:00.000Z, last 2026-11-17T12:00:40.000Z\n" +
+          "dev  Dev  service · crash  gave up after 5 crashes, 2026-11-17T12:00:00.000Z\n" +
+          "tick  Tick  service · Mac startup  started, 2026-11-17T12:00:00.000Z\n" +
           "copied  Copied  scheduled  failed · exit 1, 2026-11-17T12:00:03.000Z, took 3 s  output not on this Mac\n",
       );
       expect(calls).toEqual([{ method: "history", params: { job: null, limit: 20 } }]);

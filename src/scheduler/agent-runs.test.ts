@@ -1046,7 +1046,7 @@ describe("agent runs", () => {
     await writeFile(runsRecordPath(records), JSON.stringify({ active: [{ ...run, agent: older }], last: {} }));
     const [going] = (await fileRunsStore(records, stateFolderOf(dir), () => undefined).load()).active;
     expect(going?.agent).toEqual({ ...older, worked: true, waiting: null, waitedMs: 0, background: null, answered: [], workedOn: false });
-    const record = parseRunRecord({ ...run, state: "done", action: null, reason: null, endedAt: 1, durationMs: 1, exitCode: 0, signal: null, lastLines: [], git: null, agent: older });
+    const record = parseRunRecord({ ...run, state: "done", event: null, reason: null, endedAt: 1, durationMs: 1, exitCode: 0, signal: null, lastLines: [], git: null, agent: older });
     expect(record?.agent).toEqual({ ...older, worked: true, waiting: null, waitedMs: 0, background: null, answered: [], workedOn: false });
   });
 

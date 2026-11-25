@@ -27,7 +27,7 @@ workspace-level app: one list of every job, filterable to the current project.
 | **UI** | the Runner side panel and the Runner tab, in Pomade (`pomade-app://pomade-runner/`) | hidden-not-unmounted, like every pane |
 | **Scheduler** | the always-on backend: loads job files; supervises the services; evaluates triggers; applies missed-run, queue and load policies; starts the keeper and starts runs through it as its owner; writes history; posts notices; publishes events; serves Runner's API | a login item (launchd) that keeps running when Pomade quits; updated and restarted freely; reconnects to the keeper and its running sessions on restart |
 | **Keeper** | `pomade-kit/keeper`, run as Runner's own detached process (`backend/keeper.mjs`): holds every service's and run's terminal session (PTY); serves the attach protocol Pomade tabs use; reports exits | started by the scheduler (`startKeeper`), and started again when it dies; does not notice a scheduler restart or update; a keeper update hands the open PTYs to the new keeper process, so sessions keep running |
-| **`pomade-runner` command** | `check [file…]` validates job files and the settings file · `projects` lists the project ids and jobs sub-folders · `list` prints every job with its kind, trigger in words, next run and last result · `run <job>` runs a job now — a script's or git job's run, a service's Start · `history [job]` prints the jobs the switch holds and the latest runs, each result in History's words ("done · 2 commits pulled") · `runs` prints the switch, the runs going with what each queued one waits for, and Needs you · `pause [low\|all]` · `resume` set the switch · `resume-job <job>` lifts the loop guard's pause of a job · `missed <job> run-once|run-all|run-at <time>|skip` settles a job's missed runs · `enable <job>` · `disable <job>` · `services` shows every service and where it stands · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions | on `PATH` via `~/.pomade/bin`; reads the job files and the settings and talks to the scheduler directly, so it works with Pomade closed |
+| **`pomade-runner` command** | `check [file…]` validates job files and the settings file · `projects` lists the project ids and jobs sub-folders · `list` prints every job with its kind, trigger in words, next run and last result · `run <job>` runs a job now — a script's or git job's run, a service's Start · `history [job]` prints the jobs the switch holds and the latest runs and service events, each result in History's words ("done · 2 commits pulled") · `runs` prints the switch, the runs going with what each queued one waits for, and Needs you · `pause [low\|all]` · `resume` set the switch · `resume-job <job>` lifts the loop guard's pause of a job · `missed <job> run-once|run-all|run-at <time>|skip` settles a job's missed runs · `enable <job>` · `disable <job>` · `services` shows every service and where it stands · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions | on `PATH` via `~/.pomade/bin`; reads the job files and the settings and talks to the scheduler directly, so it works with Pomade closed |
 | **Skill** | `pomade-runner-jobs` teaches agents the job format and location | master in `app/skills/pomade-runner-jobs/SKILL.md`, shipped in the build at `skills/pomade-runner-jobs` (the manifest's `skills`); the scheduler keeps a copy in the workspace's skills folder, and gives it to no agent |
 
 **What Runner tracks:** only jobs created in Runner. A terminal opened by hand, inside Pomade or
@@ -307,11 +307,13 @@ disk.
   - `start` starts one that is not running — clearing stopped by you or failed, as Start does —
     and skips a running one;
   - `stop` stops it as Stop does: it stays stopped until Start.
-  - Each action is a History record of the service, with trigger `chain`, its parent in `cause`
-    and its `action`: **done** ("restarted"), **skipped** with the reason ("it is not running"), or
-    **failed** with the keeper's. A failed one is noticed and is a Needs-you item as the service's
-    `notify` says. An action is no run: it never started (`startedAt` is `null`), publishes no
-    `run.started` or `run.finished`, and fires no chain.
+  - Each action is a service event of the service ("Service events"), cause `chain`, with trigger
+    `chain` and its parent in `cause`: **done** ("restarted", with the session it started and the
+    one it ended, which the supervisor's outcome names), **skipped** with the reason ("restart
+    skipped · it is not running"), or **failed** with the keeper's. The runs write it; the
+    supervisor writes none for a chain's action. A failed one is noticed and is a Needs-you item as
+    the service's `notify` says. An action is no run: it never started (`startedAt` is `null`),
+    publishes no `run.started` or `run.finished`, and fires no chain.
 - A run that ended while the scheduler was down fires its chains when the next scheduler records
   it. A record already in the history fired them then, and fires nothing again.
 
@@ -585,10 +587,50 @@ the keeper reports updates the service's record.
     `services.json` in the records folder (`{ "stoppedByYou": [...] }`), written only when that
     list changes;
   - what describes this Mac's processes — crash counts, a restart due, a service given up on
-    (`failed`), the last start's problem — in `services.json` in the state folder. A service that
-    crash-looped on one Mac is started afresh on another.
+    (`failed`), the last start's problem, the crash window going (`window`: its History row's id,
+    first restart, restarts, crash ends, the sessions they ended and the one its latest restart
+    started) — in `services.json` in the state folder. A service that crash-looped on one Mac is
+    started afresh on another.
 - Without a known workspace, or while the scheduler does not follow the keeper, supervision does
   nothing.
+
+**Service events** (`src/keeper/supervisor.ts` `onEvent`, the record in `src/scheduler/model.ts`
+`ServiceEvent`). Every start, stop, restart and give-up of a service is a History record of its
+own: what happened (`what`: `started` · `stopped` · `restarted` · `gave-up`) and its cause, the
+Trigger History shows:
+
+| Cause (`cause`) | Trigger | When |
+|---|---|---|
+| `login` | Mac startup | a `login` service started by the scheduler's first supervision — at a Mac login; a service that outlived a log-out keeps running and writes nothing |
+| `pomade-started` | Pomade started | a `pomade-started` service started once Pomade runs |
+| `first-open` | first open | a first-open service started at its project's first open (`detail`: the project's name) |
+| `pomade-quit` | Pomade quit | a Pomade-bound service stopped when Pomade quit, or found running while Pomade is closed |
+| `you` | you | Start, Stop, Restart — from Runner, its tab's header, Needs you, the command — or Ctrl+C or Stop in its tab (`detail` `tab`) |
+| `chain` | chain | a chain's action ("Chains") |
+| `crash` | crash | the restarts of a crash window, and giving up |
+| `keeper` | keeper | the keeper that held its session ended (crashed, or replaced): restarted when it is due, else stopped |
+| `job-file` | job file | its file made or turned on (started, `created`), turned off (`disabled`) or deleted (`removed`) — stopped —, or its project moved (`moved`: restarted under its new id) |
+
+A Runner update writes nothing: the scheduler reattaches the services and the keeper hands their
+sessions on. The cause of a staged start is taken when the service becomes due and kept until it
+starts.
+- **The record** is a `RunRecord` with `event` (`ServiceEvent`: `what`, `cause`, `detail`, the
+  session it started by the keeper's start stamp (`session`), the sessions it ended (`ended`), a
+  crash window's `restarts` and distinct crash `ends`); `startedAt` and `durationMs` `null`;
+  `dueAt` when it happened, `endedAt` when it was last written; `state` `done`, `failed` for giving
+  up and a chain's action the keeper refused, `skipped` for a chain's with nothing to do; `trigger`
+  `chain` for a chain's, else `manual`; `exitCode` and `signal` a crash's; `reason` a chain's skip
+  or failure, or why the last start of one that gave up failed. A record an older build wrote for a
+  chain's action (`action`) reads as its event.
+- **A crash window** is one row: its first restart writes it ("restarted · exit 1"), each further
+  restart writes it again in place ("restarted 4× · exit 1, 137" — each distinct exit code, signal,
+  or "could not start" once). The window is kept in the service's supervision record, so a
+  scheduler restarted mid-window goes on updating the same row. It ends when the crash count
+  resets — 10 minutes up, Start, turned off, its Pomade start over — or when the service gives up,
+  which is its own row ("gave up after 5 crashes", **failed**). A crash then Stop before the restart
+  writes the stop alone.
+- **The session's end.** The card of an event that started a session finds the event that ended it
+  (`history.sessionEnd`): the one whose `ended` holds that session.
 
 **Agent runs** (`src/scheduler/runs.ts`, the rules in `agent-runs.ts`, the turns in
 `src/keeper/agent-turns.ts`, the client of `pomade-agents` in `src/integrations/agents.ts`). Runner
@@ -801,7 +843,8 @@ head is red, a run that waits for you amber. Its body, by what the run left:
 | Agent, waiting for you | what it waits at ("The agent stopped at a permission prompt and waits for your answer."; for an agent that has not started, that it stopped at a screen Runner does not know — a consent, a login, a first-run step — and to look at its terminal), **Waiting at**: the end of its output from the step that asks (`promptLines`), and that the time limit is paused | **Open at the prompt** (its terminal tab) · **Stop run** |
 | Queued | what it waits for, in a sentence — waiting for a slot, the low-priority runs holding the slots by name ("Two low-priority runs are going (Wiki lint, Photo backup). This one starts when one of them finishes.") | **Run now** |
 | Missed, waiting for you | when it was due — for more than one missed run, "This job missed 4 runs, 17:40–17:46." — and that its policy waits for you; **Run at…** opens a field that reads the time as it is typed | **Run now** · **Run at…** · **Skip**; for more than one **Run once** · **Run all N** · **Run at…** · **Skip** |
-| Skipped or missed; a chain's action on a service | why it never started ("Missed 4 runs, 17:40–17:46 · skipped." for more than one), or what the chain did | **Run now** (scripts and git jobs) |
+| Skipped or missed | why it never started ("Missed 4 runs, 17:40–17:46 · skipped." for more than one) | **Run now** (scripts and git jobs) |
+| A service event (`EventCard.tsx`, words in `eventWords.ts`) | its head: the pill ("Started", "Stopped", "Restarted", "Restarted after a crash" amber, "Gave up" red), the time and the cause ("by you", "first open of shop", "chain · after Pull: done" whose name opens Pull's run); **Cause** in a sentence with the cause's help, **Exit code** of a crash, **Session**: "still going · up 3h 48m" (or "starting, waiting for port 4000") while the session it started runs, else "ended 11:20 — it crashed" from the event that ended it; no duration, no View output | **Open terminal** while that session runs; a service that gave up and does not run, **Start** |
 
 **Open in Git** (`src/ui/RunCard.tsx`, the project in `src/ui/gitReveal.ts`) takes the person to
 a failed repo's row in Pomade's Git panel, where the conflict is resolved: Host API `git.reveal`
@@ -824,8 +867,8 @@ confirm "Run 25 runs?" — Runner runs the job 25 times, one after another; stop
 — whose button is the one clicked; Cancel or Esc closes it alone and runs nothing.
 
 **History** (`src/scheduler/history.ts`). One record per run that ended or never started
-(`RunRecord`), and per chain's action on a service: the job's id, name and kind, project, folder,
-run id, trigger and — a hook or chain run — its cause, a service's chain `action`, when it was due,
+(`RunRecord`), and per service event ("Service events"): the job's id, name and kind, project, folder,
+run id, trigger and — a hook or chain run — its cause, a service event (`event`), when it was due,
 started and ended, how long it ran, the result and its reason, exit code and signal, the output
 log, the last 20 lines of the output as plain text, a git run's result (`git`), and — a run
 stopped at its time limit — that limit in minutes (`limitHit`). A record of an older build reads with the
@@ -836,11 +879,12 @@ fields it lacks at their defaults.
   finish). A log in neither — removed, or a record whose log stayed on another Mac — reads as
   missing: the output tab says "This run's output is not on this Mac." and `pomade-runner history`
   says `output not on this Mac`; the record's last lines still show.
-- **Format:** append-only JSON Lines, one file per day of the runs' ends (UTC):
-  `history/YYYY-MM-DD.jsonl`. A record is one line, written once, when the run ends; nothing is
-  rewritten, so a crash can at worst leave a half line at a file's end. A reader skips a line that
-  is not a record, and the first append to a file that ends mid-line starts a new line, so a half
-  line never swallows the next record. A restarted scheduler reads it as it is.
+- **Format:** JSON Lines, one file per day of the runs' ends (UTC): `history/YYYY-MM-DD.jsonl`. A
+  record is one line, appended once, when the run ends, so a crash can at worst leave a half line
+  at a file's end. A reader skips a line that is not a record, and the first append to a file that
+  ends mid-line starts a new line, so a half line never swallows the next record. A crash window's
+  record is the one written again (`put`): its line is replaced where it stands — the day file
+  written whole through a temporary file — so no line moves. A restarted scheduler reads it as it is.
 - **Reading:** newest first, a page at a time (at most 200); a page ends at a cursor
   (`<day>:<line>`) the next page starts before, valid while new runs land.
 - **Retention:** whole days, as many as the settings keep (`history-days`, default 30): a day's file
@@ -1220,7 +1264,7 @@ to it, light theme only.
   agent run at a prompt amber, "waiting for you" — queued with what they wait for, missed and
   waiting for you), the held rows (`history.list`'s `held`: amber, "held · 2 runs so far,
   17:40–17:42", at the latest held run, no duration, trigger "scheduled", kept by **Skipped &
-  missed**; one opens its job in Jobs) and every record, one list newest
+  missed**; one opens its job in Jobs) and every record — service events too — one list newest
   first by when each started — or, one that has not, was due — under day heads (Today, Yesterday,
   "Sun 15 Nov"). Each row: the time, the kind icon, the job, the result (`runLook`: dot and words
   — "failed · exit 1", "done · restarted", a done git run's commit and what it pulled ("done ·
@@ -1231,7 +1275,14 @@ to it, light theme only.
   (scheduled · caught up · "missed 4 runs, 17:40–17:46 · caught up once" · manual · hook: Mac
   login · chain: after Pull), with its help. The
   result chips — All · Active · Failed · Skipped & missed, each but All with its count — and
-  "This project" filter the list; the summary says how many days History keeps. History loads a
+  "This project" filter the list; **Service events** after it (with its help), on by default and
+  counting the events in scope, shows or hides the event rows — the result chips' counts follow it.
+  An event row (`eventLook`): no duration, its cause as Trigger with that cause's help, and its
+  result — "started" green, "stopped" a grey ring, "restarted" a green ring, after a crash
+  "restarted 4× · exit 1, 137" with an amber dot in plain words, "gave up after 5 crashes" red and
+  kept by **Failed**; a chain's skipped action by **Skipped & missed**. A record the newest page
+  brings again (a crash window's) takes the place of the one loaded. The summary says how many days
+  History keeps. History loads a
   page of 100 records, the newest page again on every `runs.changed`, and the next older page
   each time the list's end comes into sight (`useHistoryPages`); while older pages remain, a
   count is of the runs loaded and says so ("3+"). A row — click, Enter or Space — opens the run's
@@ -1638,7 +1689,9 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
     connects.
   - **`history.list`** `{ job?, before?, limit? }` → `HistoryPage` (`isHistoryPage`): the records,
     newest first, and the cursor of the next older page; the newest page (no `before`) leads with
-    the held rows (`held: HeldRun[]` — of `job` when one is asked for; `[]` on older pages); **`runs.get`** `{ job, run }` →
+    the held rows (`held: HeldRun[]` — of `job` when one is asked for; `[]` on older pages);
+    **`history.sessionEnd`** `{ job, run }` → `RunRecord` or `null`: the service event that ended
+    the session the event `run` started; **`runs.get`** `{ job, run }` →
     `RunView` or `null`; **`runs.output`** `{ job, run }` → `RunOutput`: the end of its log, at
     most 1 MiB.
   - From Runner's own frames only: **`jobs.run`** `{ job }` → `RunActionResult` (Run now) ·

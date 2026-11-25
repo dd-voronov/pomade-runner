@@ -56,6 +56,21 @@
   margin: 0;
 }
 
+/* A service event's card: its lines further apart, as the prototype's. */
+.kv.event {
+  row-gap: 6px;
+}
+
+.session {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ended {
+  color: var(--text-muted);
+}
+
 .kv .code {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);

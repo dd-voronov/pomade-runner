@@ -163,7 +163,7 @@ describe("jobs.forRepo", () => {
     missed: null,
     series: null,
     state: "done",
-    action: null,
+    event: null,
     reason: null,
     startedAt: new Date("2026-11-18T13:00:00").getTime(),
     endedAt: new Date("2026-11-18T13:00:04").getTime(),

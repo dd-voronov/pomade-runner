@@ -156,7 +156,7 @@ describe("hooks and chains", () => {
     notices = [];
     finished = [];
     actions = [];
-    outcome = () => Promise.resolve({ result: "done" });
+    outcome = () => Promise.resolve({ result: "done", session: 1, ended: 0 });
     randoms = 0;
     await open();
     // Past the staged start's warm-up.
@@ -178,7 +178,7 @@ describe("hooks and chains", () => {
       expect(envOf("on-done")).toMatchObject({ POMADE_TRIGGER: "chain", POMADE_PARENT_JOB: "pull", POMADE_PARENT_RUN_ID: parent?.run, POMADE_PARENT_RESULT: "done" });
       await end("on-done");
       const [chained] = await records("on-done");
-      expect(chained).toMatchObject({ state: "done", trigger: "chain", cause, action: null });
+      expect(chained).toMatchObject({ state: "done", trigger: "chain", cause, event: null });
       expect(chained === undefined ? "" : runTriggerWords(chained)).toBe("chain: after Pull");
       expect(lines).toContain(`run on-done ${chained?.run ?? ""}: started (chain)`);
     });
@@ -312,7 +312,7 @@ describe("hooks and chains", () => {
       await runs.tick();
       const [record] = await records("web");
       const [parent] = await records("pull");
-      expect(record).toMatchObject({ kind: "service", trigger: "chain", action: "restart", state: "done", reason: null, startedAt: null, cause: { kind: "chain", job: "pull", run: parent?.run, result: "done" } });
+      expect(record).toMatchObject({ kind: "service", trigger: "chain", event: { what: "restarted", cause: "chain", session: 1, ended: [0] }, state: "done", reason: null, startedAt: null, cause: { kind: "chain", job: "pull", run: parent?.run, result: "done" } });
       expect(record === undefined ? [] : [runWords(record), runTriggerWords(record)]).toEqual(["restarted", "chain: after Pull"]);
       expect(finished.map((done) => done.job)).toContain("web");
       expect(lines).toContain("service web: restart (chain: after Pull) — done");
@@ -327,10 +327,10 @@ describe("hooks and chains", () => {
       outcome = () => Promise.reject(new Error("keeper gone"));
       await runAndEnd("pull");
       await runs.tick();
-      expect((await records()).filter((record) => record.kind === "service").map((record) => [record.job, record.action, runWords(record)])).toEqual([
-        ["web", "restart", "failed · keeper gone"],
-        ["api", "stop", "failed · no such folder"],
-        ["web", "restart", "skipped · it is not running"],
+      expect((await records()).filter((record) => record.kind === "service").map((record) => [record.job, record.event?.what, runWords(record)])).toEqual([
+        ["web", "restarted", "restart failed · keeper gone"],
+        ["api", "stopped", "stop failed · no such folder"],
+        ["web", "restarted", "restart skipped · it is not running"],
       ]);
     });
 
@@ -343,7 +343,7 @@ describe("hooks and chains", () => {
       expect(await records("web")).toEqual([]);
       expect(answers).toHaveLength(2);
       const closing = runs.close();
-      for (const answer of answers) answer({ result: "done" });
+      for (const answer of answers) answer({ result: "done", session: null, ended: null });
       await closing;
       expect(await records("web")).toHaveLength(2);
     });

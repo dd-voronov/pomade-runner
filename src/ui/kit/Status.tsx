@@ -3,8 +3,9 @@ import type { ReactNode } from "react";
 import type { HelpKey } from "../help";
 import styles from "./Status.module.css";
 
-/** A status dot's tone. `hollow` is a ring: queued, skipped, missed, stopped. */
-export type DotTone = "neutral" | "ok" | "danger" | "warning" | "accent" | "hollow";
+/** A status dot's tone. `hollow` is a ring: queued, skipped, missed, stopped; `ring-ok` a green
+ *  ring: a service restarted by you or a chain. */
+export type DotTone = "neutral" | "ok" | "danger" | "warning" | "accent" | "hollow" | "ring-ok";
 
 /** A 7 px status dot; `live` haloes it (a run going right now). */
 export function Dot({ tone = "neutral", live = false, className }: { tone?: DotTone | undefined; live?: boolean | undefined; className?: string | undefined }): React.JSX.Element {
@@ -22,9 +23,10 @@ function textTone(tone: DotTone): string | undefined {
 
 /** A status: its dot and words ("running · up 3d 4h", "failed · exit 1"). `size="xs"` is the panel's,
  *  `sm` a view column's; `help` shows that status's help text on hover and focus; `cutTip` adds the
- *  whole words to it while a column cuts them. */
+ *  whole words to it while a column cuts them; `plain` keeps the words out of the dot's colour. */
 export function Status({
   tone,
+  plain = false,
   live = false,
   size = "xs",
   help,
@@ -33,6 +35,7 @@ export function Status({
   testId,
 }: {
   tone: DotTone;
+  plain?: boolean | undefined;
   live?: boolean | undefined;
   size?: "xs" | "sm";
   help?: HelpKey | undefined;
@@ -40,7 +43,7 @@ export function Status({
   children: ReactNode;
   testId?: string | undefined;
 }): React.JSX.Element {
-  const names = [styles.status, size === "sm" && styles.sm, textTone(tone)].filter(Boolean).join(" ");
+  const names = [styles.status, size === "sm" && styles.sm, !plain && textTone(tone)].filter(Boolean).join(" ");
   return (
     <span className={names} data-help={help} data-tip-cut={cutTip ? "" : undefined} data-testid={testId}>
       <Dot tone={tone} live={live} />

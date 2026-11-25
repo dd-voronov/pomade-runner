@@ -68,6 +68,9 @@ async function until(world: RunnerWorld, local: string, timeout = 30_000): Promi
   await expect.poll(() => schedulerTime(world), { timeout }).toBeGreaterThan(madrid(local));
 }
 
+/** The history's runs, the service events left out. */
+const runsOf = async (world: RunnerWorld): Promise<RunRecord[]> => (await world.history()).filter((record) => record.event === null);
+
 test.describe("missed runs and load", () => {
   let world: RunnerWorld;
 
@@ -133,9 +136,9 @@ test.describe("missed runs and load", () => {
     const runs = await world.command("runs");
     expect(runs.stdout).toMatch(/\nc {2}C {2}run \S+ {2}queued · 1 ahead\n/);
     await expect.poll(async () => (await runsReport(world)).active.find((run) => run.job === "c")?.state, { timeout: 10_000 }).toBe("running");
-    await expect.poll(() => world.history(), { timeout: 15_000 }).toHaveLength(3);
+    await expect.poll(() => runsOf(world), { timeout: 15_000 }).toHaveLength(3);
     const [c] = await world.history("c");
-    const ended = Math.min(...(await world.history()).filter((record) => record.job !== "c").map((record) => record.endedAt));
+    const ended = Math.min(...(await runsOf(world)).filter((record) => record.job !== "c").map((record) => record.endedAt));
     expect(c?.startedAt ?? 0).toBeGreaterThanOrEqual(ended);
   });
 
@@ -280,8 +283,8 @@ test.describe("missed runs and load", () => {
 
     const login: SchedulerProcess = world.startScheduler(clock("2026-11-18T07:30:00"));
     await world.ready(login);
-    await expect.poll(() => world.history(), { timeout: 20_000 }).toHaveLength(2);
-    expect((await world.history()).map((record) => [record.job, record.trigger, record.state]).sort()).toEqual([
+    await expect.poll(() => runsOf(world), { timeout: 20_000 }).toHaveLength(2);
+    expect((await runsOf(world)).map((record) => [record.job, record.trigger, record.state]).sort()).toEqual([
       ["report", "caught-up", "done"],
       ["summary", "caught-up", "done"],
     ]);
@@ -291,6 +294,6 @@ test.describe("missed runs and load", () => {
     expect(log.indexOf("service web: up")).toBeLessThan(settled);
     expect(log.search(/run report \S+: started \(caught-up\)/)).toBeGreaterThan(log.indexOf("warm-up: over"));
     const warmUpOver = warmUpEnd(logBefore(login, /run \S+ \S+: started \(caught-up\)/));
-    for (const record of await world.history()) expect(record.startedAt ?? 0).toBeGreaterThanOrEqual(warmUpOver);
+    for (const record of await runsOf(world)) expect(record.startedAt ?? 0).toBeGreaterThanOrEqual(warmUpOver);
   });
 });

@@ -8,7 +8,7 @@ import { isGitRunOutput, type GitRunOutput } from "pomade-kit/protocol";
 
 import { pulledCommits } from "../integrations/pomade-next";
 import { HOOK_EVENTS, JOB_KINDS, SERVICE_ACTIONS, SESSION_STATUS_WORDS, SESSION_STATUSES, type HookEvent, type JobKind, type ServiceAction } from "../jobs/model";
-import { isServiceStatus, type ServiceStatus } from "../keeper/model";
+import { isServiceStatus, LOOP_CRASHES, type ServiceStatus } from "../keeper/model";
 
 /** What started a run: its schedule on time · `caught-up`, a missed run run late, once however many
  *  were missed · Run now · a hook's event · a chain: another job finished. */
@@ -212,13 +212,56 @@ export interface ActiveRun extends RunBase {
   warningDismissed: boolean;
 }
 
-/** A finished run: one history record. A chain's action on a service is a record too, with its
- *  `action`: `done` once the service was restarted, started or stopped, `skipped` or `failed` with
- *  the reason; it never started a run (`startedAt` is `null`). */
+/** What happened to a service (docs/DESIGN.md "Service events"): it started, stopped, was
+ *  restarted — by you, a chain, after a crash, after its keeper ended, or as its project moved — or
+ *  gave up after a crash loop. */
+export const SERVICE_EVENT_KINDS = ["started", "stopped", "restarted", "gave-up"] as const;
+export type ServiceEventKind = (typeof SERVICE_EVENT_KINDS)[number];
+
+/** Why it happened — the History row's Trigger: `login` a Mac login (Mac startup) · `first-open`
+ *  its project's first open since Pomade started · `pomade-started` · `pomade-quit` · `you` Start,
+ *  Stop or Restart (Runner, its tab, the command), or Ctrl+C in its tab · `chain` another job
+ *  finished (the record's `cause` names it) · `crash` it ended by itself · `keeper` the keeper that
+ *  held its session ended (it crashed, or was replaced) · `job-file` its job file was made, turned on
+ *  or off, deleted, or moved with its project. */
+export const SERVICE_EVENT_CAUSES = ["login", "first-open", "pomade-started", "pomade-quit", "you", "chain", "crash", "keeper", "job-file"] as const;
+export type ServiceEventCause = (typeof SERVICE_EVENT_CAUSES)[number];
+
+/** How a crashed session ended: its exit code, or the signal that ended it; both `null` for a start
+ *  the keeper refused. */
+export interface CrashEnd {
+  code: number | null;
+  signal: string | null;
+}
+
+/** A service event: a History record of its own (`RunRecord.event`). */
+export interface ServiceEvent {
+  what: ServiceEventKind;
+  cause: ServiceEventCause;
+  /** More about the cause: `first-open` — the project's name; `job-file` — `created` (made or
+   *  turned on), `disabled`, `removed` or `moved`; `you` — `tab` for a stop in its terminal tab
+   *  (Ctrl+C, the tab's Stop); else `null`. */
+  detail: string | null;
+  /** The session it started, by the keeper's start stamp (epoch ms, the system clock): a start or
+   *  restart; `null` for any other event, and for one that started none. */
+  session: number | null;
+  /** The sessions it ended, by their start stamps: a stop's, a restart's, a crash window's. */
+  ended: number[];
+  /** A crash window's restarts so far; 0 for any other event. */
+  restarts: number;
+  /** A crash window's crash ends, each distinct one once, in the order first seen. */
+  ends: CrashEnd[];
+}
+
+/** A finished run: one history record. A service event is a record too, with its `event` (docs/DESIGN.md
+ *  "Service events"): it never started a run (`startedAt` is `null`), `dueAt` is when it happened
+ *  — a crash window's first restart — and `endedAt` when it was last written; `state` is `done`, or
+ *  `failed` for one that gave up and a chain's action the keeper refused, or `skipped` for a chain's
+ *  action with nothing to do; `trigger` is `chain` for a chain's, else `manual`. */
 export interface RunRecord extends RunBase {
   state: RunResult;
-  /** A chain's action on a service; `null` for a run. */
-  action: ServiceAction | null;
+  /** A service event; `null` for a run. */
+  event: ServiceEvent | null;
   /** A failed or skipped run's reason in words ("previous run still going", "lost in a keeper
    *  crash"); `null` when the exit code says it all. */
   reason: string | null;
@@ -489,6 +532,8 @@ const RESULTS: readonly string[] = RUN_RESULTS;
 const POSITIONS: readonly string[] = SWITCH_POSITIONS;
 const EVENTS: readonly string[] = HOOK_EVENTS;
 const ACTIONS: readonly string[] = SERVICE_ACTIONS;
+const EVENT_KINDS: readonly string[] = SERVICE_EVENT_KINDS;
+const EVENT_CAUSES: readonly string[] = SERVICE_EVENT_CAUSES;
 const PARENTS: readonly string[] = PARENT_RESULTS;
 const nullableString = (value: unknown): boolean => value === null || typeof value === "string";
 const nullableNumber = (value: unknown): boolean => value === null || (typeof value === "number" && Number.isFinite(value));
@@ -613,13 +658,37 @@ export function isSwitchState(value: unknown): value is SwitchState {
   return isRecord(value) && typeof value.position === "string" && POSITIONS.includes(value.position) && nullableNumber(value.since);
 }
 
+function isCrashEnd(value: unknown): value is CrashEnd {
+  return isRecord(value) && nullableNumber(value.code) && nullableString(value.signal);
+}
+
+export function isServiceEvent(value: unknown): value is ServiceEvent {
+  if (!isRecord(value)) return false;
+  const { what, cause, detail, session, ended, restarts, ends } = value;
+  return (
+    typeof what === "string" &&
+    EVENT_KINDS.includes(what) &&
+    typeof cause === "string" &&
+    EVENT_CAUSES.includes(cause) &&
+    nullableString(detail) &&
+    nullableNumber(session) &&
+    Array.isArray(ended) &&
+    ended.every(finite) &&
+    typeof restarts === "number" &&
+    Number.isSafeInteger(restarts) &&
+    restarts >= 0 &&
+    Array.isArray(ends) &&
+    ends.every(isCrashEnd)
+  );
+}
+
 export function isRunRecord(value: unknown): value is RunRecord {
   if (!isRecord(value) || !isRunBase(value)) return false;
-  const { state, action, reason, startedAt, endedAt, durationMs, exitCode, signal, log, lastLines, git } = value;
+  const { state, event, reason, startedAt, endedAt, durationMs, exitCode, signal, log, lastLines, git } = value;
   return (
     typeof state === "string" &&
     RESULTS.includes(state) &&
-    (action === null || (typeof action === "string" && ACTIONS.includes(action))) &&
+    (event === null || isServiceEvent(event)) &&
     nullableString(reason) &&
     nullableNumber(startedAt) &&
     finite(endedAt) &&
@@ -640,12 +709,24 @@ export function withAgentDefaults(agent: unknown): unknown {
   return isRecord(agent) ? { worked: true, waiting: null, waitedMs: 0, background: null, answered: [], workedOn: false, ...agent } : (agent ?? null);
 }
 
-/** A history record as a file keeps it; a field a record of an older build lacks gets its default. */
+/** A history record as a file keeps it; a field a record of an older build lacks gets its default —
+ *  and a chain's action on a service an older build kept by its `action` is the service event it
+ *  stands for. */
 export function parseRunRecord(value: unknown): RunRecord | null {
   if (!isRecord(value)) return null;
-  const record = { cause: null, action: null, git: null, limitHit: null, missed: null, series: null, ...value, agent: withAgentDefaults(value.agent) };
+  const { action, ...rest } = value;
+  const legacy = typeof action === "string" && ACTIONS.includes(action) ? chainEvent(action as ServiceAction) : null;
+  const record = { cause: null, event: legacy, git: null, limitHit: null, missed: null, series: null, ...rest, agent: withAgentDefaults(value.agent) };
   return isRunRecord(record) ? record : null;
 }
+
+/** What a chain's action on a service is as a service event, the sessions aside. */
+export function chainEvent(action: ServiceAction, session: number | null = null, ended: number | null = null): ServiceEvent {
+  return { what: ACTION_EVENT[action], cause: "chain", detail: null, session, ended: ended === null ? [] : [ended], restarts: 0, ends: [] };
+}
+
+/** The event a chain's action on a service is. */
+const ACTION_EVENT: Record<ServiceAction, ServiceEventKind> = { restart: "restarted", start: "started", stop: "stopped" };
 
 export function isRunView(value: unknown): value is RunView {
   return isActiveRun(value) || isRunRecord(value);
@@ -833,10 +914,11 @@ export function caughtUpWords(series: RunSeries | null): string {
 }
 
 /** What started a run, in words, with its cause: "scheduled", "hook: Mac login", "chain: after
- *  Backup", "caught up" — "missed 4 runs, 17:40–17:46 · caught up once" for one that stands for
+ *  Backup", "caught up"; a service event's cause: "Mac startup", "you", "crash" — "missed 4 runs, 17:40–17:46 · caught up once" for one that stands for
  *  more than one missed run; a run of a Run all stands for one of them: "caught up 2 of 4". */
-export function runTriggerWords(run: { trigger: RunTrigger; cause: RunCause | null; missed?: MissedRuns | null; series?: RunSeries | null }): string {
+export function runTriggerWords(run: { trigger: RunTrigger; cause: RunCause | null; missed?: MissedRuns | null; series?: RunSeries | null; event?: ServiceEvent | null }): string {
   if (run.cause?.kind === "chain") return `chain: after ${run.cause.name}`;
+  if (run.event != null) return SERVICE_CAUSE_WORDS[run.event.cause];
   if (run.cause?.kind === "hook") return `hook: ${hookCauseWords(run.cause)}`;
   if (run.trigger === "caught-up" && run.series != null) return caughtUpWords(run.series);
   const missed = run.trigger === "caught-up" ? missedRunsWords(run.missed ?? null) : null;
@@ -852,8 +934,50 @@ export function otherMissedRuns(view: RunView, latest: RunRecord | null, active:
   return view.missed.count - 1;
 }
 
-/** A chain's action on a service, done, in words. */
-export const ACTION_DONE_WORDS: Record<ServiceAction, string> = { restart: "restarted", start: "started", stop: "stopped" };
+/** A service event's cause, as History's Trigger column says it. */
+export const SERVICE_CAUSE_WORDS: Record<ServiceEventCause, string> = {
+  login: "Mac startup",
+  "first-open": "first open",
+  "pomade-started": "Pomade started",
+  "pomade-quit": "Pomade quit",
+  you: "you",
+  chain: "chain",
+  crash: "crash",
+  keeper: "keeper",
+  "job-file": "job file",
+};
+
+/** What a service event did, as a verb a chain's skipped or failed action names: "restart". */
+const EVENT_VERBS: Record<ServiceEventKind, string> = { started: "start", stopped: "stop", restarted: "restart", "gave-up": "give up" };
+
+/** A crash window's crash ends in words: "exit 1", "exit 1, 137", "exit 1, SIGKILL", "SIGKILL",
+ *  "could not start" — each distinct one once. */
+export function crashEndsWords(ends: readonly CrashEnd[]): string {
+  const codes = ends.flatMap((end) => (end.code === null ? [] : [String(end.code)]));
+  const signals = ends.flatMap((end) => (end.code === null && end.signal !== null ? [end.signal] : []));
+  const parts = [...(codes.length > 0 ? [`exit ${codes.join(", ")}`] : []), ...signals];
+  if (ends.some((end) => end.code === null && end.signal === null)) parts.push("could not start");
+  return parts.join(", ");
+}
+
+/** A service event's result in words, as History and `pomade-runner history` say it: "started",
+ *  "stopped", "restarted", "restarted 4× · exit 1", "gave up after 5 crashes"; a chain's action with
+ *  nothing to do or refused, "restart skipped · it is not running", "start failed · no such folder". */
+export function serviceEventWords(record: RunRecord & { event: ServiceEvent }): string {
+  const { event } = record;
+  if (record.state === "skipped" || (record.state === "failed" && event.what !== "gave-up")) return `${EVENT_VERBS[event.what]} ${record.state} · ${record.reason ?? "the chain did not act"}`;
+  if (event.what === "gave-up") return `gave up after ${LOOP_CRASHES} crashes`;
+  if (event.what === "restarted" && event.cause === "crash") {
+    const ends = crashEndsWords(event.ends);
+    return [event.restarts > 1 ? `restarted ${event.restarts}×` : "restarted", ...(ends === "" ? [] : [ends])].join(" · ");
+  }
+  return event.what;
+}
+
+/** Whether a record is a service event. */
+export function isServiceEventRecord(record: RunRecord): record is RunRecord & { event: ServiceEvent } {
+  return record.event !== null;
+}
 
 /** The switch's position in words. */
 export const SWITCH_WORDS: Record<SwitchPosition, string> = { running: "Running", "pause-low": "Pause low-priority", "pause-all": "Pause all" };
@@ -891,14 +1015,16 @@ export function runWords(view: RunView): string {
     case "running":
       return waitingAt(view) !== null ? "waiting for you" : waitsForBackground(view) ? BACKGROUND_WORDS : "running";
     case "done":
-      return "action" in view && view.action !== null ? ACTION_DONE_WORDS[view.action] : "git" in view ? gitDoneWords(view.git) : "done";
+      return "event" in view && view.event !== null ? serviceEventWords({ ...view, event: view.event }) : "git" in view ? gitDoneWords(view.git) : "done";
     case "stopped-by-you":
       return "stopped by you";
     case "skipped":
+      if ("event" in view && view.event !== null) return serviceEventWords({ ...view, event: view.event });
       return view.reason === null ? "skipped" : `skipped · ${view.reason}`;
     case "missed":
       return view.reason === null ? missed : `${missed} · ${view.reason}`;
     case "failed":
+      if (view.event !== null) return serviceEventWords({ ...view, event: view.event });
       return view.limitHit === null ? `failed · ${failureWords(view)}` : limitWords(view.limitHit);
   }
 }

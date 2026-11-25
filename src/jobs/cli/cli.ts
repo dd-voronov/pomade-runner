@@ -7,7 +7,7 @@ import { exitWords, type KeeperLink, type RunnerSession, type ServiceStatus } fr
 import type { ControlCallResult } from "../../scheduler/control/client";
 import type { ControlMethod, ControlMethods, ControlParams } from "../../scheduler/control/protocol";
 import { gitRepoLine } from "../../scheduler/git-runs";
-import { dayTime, durationWords, heldRowWords, heldRunsWords, runTriggerWords, runWords, SWITCH_WORDS, TRIGGER_WORDS, type ActiveRun, type JobListing, type NeedsYouItem, type RunRecord, type SwitchPosition, type SwitchState } from "../../scheduler/model";
+import { dayTime, durationWords, heldRowWords, heldRunsWords, runTriggerWords, runWords, SWITCH_WORDS, TRIGGER_WORDS, type ActiveRun, type JobListing, type NeedsYouItem, type RunRecord, type ServiceEvent, type SwitchPosition, type SwitchState } from "../../scheduler/model";
 import { checkSettings, SETTINGS_PATH } from "../../scheduler/settings";
 import { checkJobs, projectJobsFolder } from "../check";
 import { formatJobError } from "../format";
@@ -63,8 +63,9 @@ Usage:
   ${COMMAND} run <job>            run a job now, by its id or name: a script or git job runs (or
                                  queues behind its run going, as its overlap says); a service
                                  starts — one stopped by you or failed too
-  ${COMMAND} history [job]        the latest ${HISTORY_LIMIT} finished runs, newest first: of every job, or one;
-                                 first, each job the switch holds: held · N runs so far
+  ${COMMAND} history [job]        the latest ${HISTORY_LIMIT} finished runs and service events, newest
+                                 first: of every job, or one; first, each job the switch holds:
+                                 held · N runs so far
   ${COMMAND} runs                 the runs going — running, queued and what each waits for — the
                                  switch, and what needs you
   ${COMMAND} pause [low|all]      hold scheduled runs: of low-priority jobs, or all (the default);
@@ -307,11 +308,23 @@ async function history(job: string | null, deps: CliDeps): Promise<number> {
   // The jobs the switch holds lead: a held row is the record their release writes, shown till then.
   for (const row of held) deps.out(`${row.job}  ${row.name}  ${TRIGGER_WORDS.scheduled}  ${heldRowWords(row.missed)}\n`);
   for (const record of records) {
+    if (record.event !== null) {
+      deps.out(`${eventLine({ ...record, event: record.event })}\n`);
+      continue;
+    }
     const output = record.log === null ? "" : deps.exists(record.log) ? `  output ${record.log}` : `  ${OUTPUT_NOT_HERE}`;
     deps.out(`${record.job}  ${record.name}  ${runTriggerWords(record)}  ${runLine(record)}${output}\n`);
     for (const result of record.git?.results ?? []) deps.out(`    ${gitRepoLine(result)}\n`);
   }
   return EXIT_OK;
+}
+
+/** A service event in one line, its cause after "service": `web  Web  service · you  started,
+ *  2026-11-17T12:00:00.000Z`; a crash window's says when its latest restart was: `…  service · crash
+ *  restarted 4× · exit 1, 2026-…Z, last 2026-…Z`. */
+function eventLine(record: RunRecord & { event: ServiceEvent }): string {
+  const last = record.event.restarts > 1 ? `, last ${iso(record.endedAt)}` : "";
+  return `${record.job}  ${record.name}  service · ${runTriggerWords(record)}  ${runWords(record)}, ${iso(record.dueAt)}${last}`;
 }
 
 /** A run going in one line: `backup  Backup  run 20261118-…  queued · 1 ahead`. */

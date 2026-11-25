@@ -179,6 +179,9 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
     probe: options.probe,
     pomade: () => ({ state: pomadeState, opened }),
     onChange: () => publish(SERVICES_CHANGED_EVENT),
+    // A service event lands in History; the frames ask for it again.
+    onEvent: (record, put) => void (put ? history.put(record) : history.append(record)).then(() => publish(RUNS_CHANGED_EVENT)),
+    projectName: (project) => projects.list().find((known) => known.id === project)?.name ?? null,
   });
   const projects = projectsMemory(state, log);
   const starts = pomadeStarts(state, log);
@@ -602,6 +605,7 @@ export async function startScheduler(options: SchedulerOptions): Promise<StartRe
         repoJobs: (repo) => repoJobs(jobs.snapshot(), runs.jobRuns(), repo),
         history: historyPage,
         run: (job, run) => runs.find(job, run),
+        sessionEnd: (job, run) => history.sessionEnd(job, run),
         output: async (job, run) => {
           const view = await runs.find(job, run);
           if (view?.log == null) return { text: "", truncated: false, missing: false };

@@ -70,14 +70,15 @@ test.describe("chains and login hooks", () => {
 
     expect((await world.command("run", "a")).code).toBe(0);
     await expect.poll(() => world.history("web"), { timeout: 15_000 }).toEqual([
-      expect.objectContaining({ kind: "service", trigger: "chain", action: "restart", state: "done", cause: expect.objectContaining({ kind: "chain", job: "a", name: "A", result: "done" }) as unknown }) as RunRecord,
+      expect.objectContaining({ kind: "service", trigger: "chain", event: expect.objectContaining({ what: "restarted", cause: "chain", session: expect.any(Number) as unknown, ended: [first.info.startedAt] }) as unknown, state: "done", cause: expect.objectContaining({ kind: "chain", job: "a", name: "A", result: "done" }) as unknown }) as RunRecord,
+      expect.objectContaining({ kind: "service", event: expect.objectContaining({ what: "started", cause: "login", session: first.info.startedAt }) as unknown }) as RunRecord,
     ]);
     const [parent] = await world.history("a");
     expect((await world.history("web"))[0]?.cause).toMatchObject({ run: parent?.run });
     const again = await world.running("svc:web", first);
     expect(again.info.startedAt).toBeGreaterThan(first.info.startedAt);
     expect(await world.service("web")).toMatchObject({ state: expect.stringMatching(/^(starting|running)$/) as unknown, restarts: 0 });
-    expect((await world.command("history", "web")).stdout).toMatch(/^web {2}Web {2}chain: after A {2}restarted, \S+\n$/);
+    expect((await world.command("history", "web")).stdout).toMatch(/^web {2}Web {2}service · chain: after A {2}restarted, \S+\nweb {2}Web {2}service · Mac startup {2}started, \S+\n$/);
     expect(scheduler.output()).toContain("service web: Restart — chain: after A\n");
   });
 

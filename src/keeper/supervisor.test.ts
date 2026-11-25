@@ -14,6 +14,7 @@ import { recordsFolderOf, stateFolderOf, type RecordsFolder, type StateFolder } 
 import { sessionIdOf } from "./ids";
 import type { KeychainCheck } from "./keychain";
 import type { KeeperLink, RunnerSession, ServicesReport, ServiceStatus } from "./model";
+import { runWords, type RunRecord } from "../scheduler/model";
 import type { NetworkReadiness } from "./readiness";
 import type { SessionCommand, Sessions, StopReason } from "./sessions";
 import {
@@ -188,6 +189,9 @@ describe("service supervision", () => {
   /** Where Pomade stands, as the scheduler tells it. */
   let pomade: PomadeState;
   let supervisor: Supervisor;
+  /** The service events written, a crash window's row replaced as it is put again. */
+  let events: RunRecord[];
+  let randoms: number;
 
   function load(): void {
     snapshot = checkJobs(
@@ -207,6 +211,13 @@ describe("service supervision", () => {
       probe: (ready) => new Promise((resolve) => probes.push({ ready, answer: resolve })),
       pomade: () => ({ state: pomade, opened }),
       onChange: (report) => reports.push(report),
+      onEvent: (record, put) => {
+        const at = events.findIndex((known) => known.run === record.run);
+        if (put && at !== -1) events[at] = record;
+        else events.push(record);
+      },
+      projectName: (project) => (project === "blog" ? "Blog" : null),
+      random: () => String(randoms++).padStart(6, "0"),
     });
     await created.load();
     supervisor = created;
@@ -251,6 +262,8 @@ describe("service supervision", () => {
     probes = [];
     opened = new Set();
     pomade = "running";
+    events = [];
+    randoms = 0;
     load();
     await open();
   });
@@ -998,7 +1011,10 @@ describe("service supervision", () => {
     it("restart restarts a running service with its file as it is now", async () => {
       files["web.md"] = service("Web").replace("./web.sh", "./web2.sh");
       load();
-      expect(await supervisor.chainAction("web", "restart", why)).toEqual({ result: "done" });
+      // It says which session it ended and which it started, for the runs' record; it writes none itself.
+      now = T0 + ALIVE_MS + 1;
+      expect(await supervisor.chainAction("web", "restart", why)).toEqual({ result: "done", session: T0 + ALIVE_MS + 1, ended: T0 });
+      expect(events.filter((event) => event.event?.cause !== "login")).toEqual([]);
       expect(sessions.restarted).toEqual(["web"]);
       expect(sessions.spawned.at(-1)?.command.command).toBe("./web2.sh");
       expect(lines).toContain("service web: Restart — chain: after Pull");
@@ -1017,15 +1033,17 @@ describe("service supervision", () => {
       expect(await supervisor.chainAction("web", "start", why)).toEqual({ result: "skipped", reason: "it is running already" });
       await supervisor.stop("web");
       await at(ALIVE_MS + 1000);
-      expect(await supervisor.chainAction("web", "start", why)).toEqual({ result: "done" });
-      expect(await supervisor.chainAction("one/later", "start", why)).toEqual({ result: "done" });
+      expect(await supervisor.chainAction("web", "start", why)).toEqual({ result: "done", session: T0 + ALIVE_MS + 1000, ended: null });
+      expect(await supervisor.chainAction("one/later", "start", why)).toEqual({ result: "done", session: T0 + ALIVE_MS + 1000, ended: null });
       expect(states()).toMatchObject({ web: "starting", "one/later": "starting" });
     });
 
     it("stop stops it as Stop does: it stays stopped until Start", async () => {
-      expect(await supervisor.chainAction("web", "stop", why)).toEqual({ result: "done" });
+      expect(await supervisor.chainAction("web", "stop", why)).toEqual({ result: "done", session: null, ended: T0 });
       expect(sessions.stops).toEqual([{ id: "svc:web", reason: "stopped-by-you" }]);
       await at(60_000);
+      // The stop's end, heard later, is the chain's: no "stopped · you".
+      expect(events.map((event) => event.event?.what)).toEqual(["started"]);
       expect(status("web").state).toBe("stopped-by-you");
     });
 
@@ -1166,6 +1184,186 @@ describe("service supervision", () => {
     });
   });
 
+  describe("service events", () => {
+    /** Each event as History has it: what, cause, its words and its row's id. */
+    const said = (): [string, string, string, string][] => events.map((record) => [record.job, record.event?.what ?? "", record.event?.cause ?? "", runWords(record)]);
+    /** Crash `job` at `t` ms with `code`, then tick through its back-off to its restart. */
+    async function crash(job: string, t: number, code: number): Promise<number> {
+      now = T0 + t;
+      sessions.end(job, "crashed", code);
+      await at(t);
+      const { retryAt } = status(job);
+      if (retryAt === null) return t;
+      const back = retryAt - T0;
+      await at(back);
+      return back;
+    }
+
+    it("a Mac login starts every always-on service with one event each: started · Mac startup; a file made later starts as its job file's", async () => {
+      files = { "a.md": service("A"), "b.md": service("B") };
+      load();
+      await at(0);
+      await at(ALIVE_MS);
+      expect(said()).toEqual([
+        ["a", "started", "login", "started"],
+        ["b", "started", "login", "started"],
+      ]);
+      expect(events[0]).toMatchObject({ kind: "service", name: "A", state: "done", trigger: "manual", startedAt: null, durationMs: null, dueAt: T0, event: { session: T0, ended: [] } });
+      files = { ...files, "c.md": service("C") };
+      load();
+      await at(2 * ALIVE_MS);
+      expect(said().at(-1)).toEqual(["c", "started", "job-file", "started"]);
+      expect(events.at(-1)?.event?.detail).toBe("created");
+    });
+
+    it("a restarted scheduler that finds its services running writes nothing", async () => {
+      files = { "a.md": service("A") };
+      load();
+      await at(0);
+      await supervisor.close();
+      events = [];
+      await open();
+      await at(ALIVE_MS);
+      expect(events).toEqual([]);
+    });
+
+    it("Start, Stop and Restart each leave one event by you; Ctrl+C in its tab is a stop by you in its tab", async () => {
+      files = { "web.md": service("Web") };
+      load();
+      await at(0);
+      await at(ALIVE_MS);
+      events = [];
+      now = T0 + 10_000;
+      await supervisor.stop("web");
+      await at(10_100);
+      await supervisor.start("web");
+      now = T0 + 20_000;
+      await supervisor.restart("web");
+      await at(20_100);
+      sessions.end("web", "stopped-by-you", 130);
+      await at(20_200);
+      expect(said()).toEqual([
+        ["web", "stopped", "you", "stopped"],
+        ["web", "started", "you", "started"],
+        ["web", "restarted", "you", "restarted"],
+        ["web", "stopped", "you", "stopped"],
+      ]);
+      expect(events.map((record) => [record.event?.detail, record.event?.session, record.event?.ended])).toEqual([
+        [null, null, [T0]],
+        [null, T0 + 10_100, []],
+        [null, T0 + 20_000, [T0 + 10_100]],
+        ["tab", null, [T0 + 20_000]],
+      ]);
+    });
+
+    it("four crashes in one window are one row, updated as they add up, with each distinct exit; the fifth gives up in a row of its own", async () => {
+      files = { "web.md": service("Web") };
+      load();
+      await at(0);
+      await at(ALIVE_MS);
+      events = [];
+      let t = 60_000;
+      const codes = [1, 137, 1, 1, 1];
+      t = await crash("web", t, codes[0]!);
+      expect(said()).toEqual([["web", "restarted", "crash", "restarted · exit 1"]]);
+      const row = events[0]?.run;
+      for (const code of codes.slice(1, 4)) t = await crash("web", t + 100, code);
+      expect(said()).toEqual([["web", "restarted", "crash", "restarted 4× · exit 1, 137"]]);
+      expect(events[0]).toMatchObject({ run: row, dueAt: T0 + 61_000, endedAt: T0 + t, exitCode: 1, event: { restarts: 4, ends: [{ code: 1, signal: null }, { code: 137, signal: null }] } });
+      expect(events[0]?.event?.ended).toHaveLength(4);
+      t = await crash("web", t + 100, 2);
+      expect(status("web").state).toBe("failed");
+      expect(said()).toEqual([
+        ["web", "restarted", "crash", "restarted 4× · exit 1, 137"],
+        ["web", "gave-up", "crash", "gave up after 5 crashes"],
+      ]);
+      expect(events[1]).toMatchObject({ state: "failed", exitCode: 2, event: { ended: [events[0]?.event?.session] } });
+
+      // Start after giving up: a start by you, and a new window for the next crash.
+      await supervisor.start("web");
+      await crash("web", t + 120_000, 3);
+      expect(said().slice(2)).toEqual([
+        ["web", "started", "you", "started"],
+        ["web", "restarted", "crash", "restarted · exit 3"],
+      ]);
+      expect(events[3]?.run).not.toBe(row);
+    });
+
+    it("a scheduler restarted mid-window goes on updating the window's row", async () => {
+      files = { "web.md": service("Web") };
+      load();
+      await at(0);
+      await at(ALIVE_MS);
+      events = [];
+      const t = await crash("web", 60_000, 1);
+      await supervisor.close();
+      await open();
+      await crash("web", t + 100, 1);
+      expect(said()).toEqual([["web", "restarted", "crash", "restarted 2× · exit 1"]]);
+    });
+
+    it("10 minutes up ends the window: the next crash starts a new row", async () => {
+      files = { "web.md": service("Web") };
+      load();
+      await at(0);
+      await at(ALIVE_MS);
+      events = [];
+      let t = await crash("web", 60_000, 1);
+      await at(t + ALIVE_MS);
+      t += RESET_UPTIME_MS + ALIVE_MS;
+      await at(t);
+      await crash("web", t + 1000, 1);
+      expect(said()).toEqual([
+        ["web", "restarted", "crash", "restarted · exit 1"],
+        ["web", "restarted", "crash", "restarted · exit 1"],
+      ]);
+      expect(events[0]?.run).not.toBe(events[1]?.run);
+    });
+
+    it("Pomade's start, a project's first open and Pomade's quit are the causes of a Pomade-bound service's start and stop", async () => {
+      pomade = "unsure";
+      files = { "watch.md": service("Watch", "start: pomade-started\n"), "docs.md": service("Docs", "start: project-first-open\nstart-project: blog\n") };
+      load();
+      await at(0);
+      expect(events).toEqual([]);
+      pomade = "running";
+      await at(1000);
+      await firstOpen("blog");
+      await at(1000 + ALIVE_MS);
+      await at(1000 + 2 * ALIVE_MS);
+      pomade = "closed";
+      opened = new Set();
+      await supervisor.pomadeEnded();
+      expect(said()).toEqual([
+        ["watch", "started", "pomade-started", "started"],
+        ["docs", "started", "first-open", "started"],
+        ["docs", "stopped", "pomade-quit", "stopped"],
+        ["watch", "stopped", "pomade-quit", "stopped"],
+      ]);
+      expect(events[1]?.event?.detail).toBe("Blog");
+    });
+
+    it("turned off in its file, it stops as its job file's; a session the keeper lost starts again as a restart", async () => {
+      files = { "web.md": service("Web"), "api.md": service("Api") };
+      load();
+      await at(0);
+      await at(ALIVE_MS);
+      await at(2 * ALIVE_MS);
+      events = [];
+      files = { ...files, "web.md": service("Web", "enabled: false\n") };
+      load();
+      await at(2 * ALIVE_MS + 100);
+      sessions.end("api", "lost-in-keeper-crash", null);
+      await at(2 * ALIVE_MS + 200);
+      expect(said()).toEqual([
+        ["web", "stopped", "job-file", "stopped"],
+        ["api", "restarted", "keeper", "restarted"],
+      ]);
+      expect(events.map((record) => record.event?.detail)).toEqual(["disabled", null]);
+      expect(events[1]?.event?.ended).toEqual([T0]);
+    });
+  });
+
   describe("the report", () => {
     it("is published when it changes, and only then", async () => {
       files = { "web.md": service("Web") };
@@ -1209,8 +1407,8 @@ describe("the records on disk", () => {
   it("keep this Mac's crash counts in the state folder and the services you stopped in the workspace, and read both back", async () => {
     const store = fileStore(state, records, () => undefined);
     expect(await store.load()).toEqual(new Map());
-    const failed: SupervisionRecord = { hold: "failed", restarts: 4, lastCrashAt: 5, crashes: [1, 2, 3, 4, 5], retryAt: null, problem: "p" };
-    const stopped: SupervisionRecord = { hold: "stopped-by-you", restarts: 1, lastCrashAt: 3, crashes: [3], retryAt: null, problem: null };
+    const failed: SupervisionRecord = { hold: "failed", restarts: 4, lastCrashAt: 5, crashes: [1, 2, 3, 4, 5], retryAt: null, problem: "p", window: { run: "20261117-080000-abcdef", at: 2, restarts: 4, ends: [{ code: 1, signal: null }, { code: null, signal: "SIGKILL" }], last: { code: 1, signal: null }, ended: [1, 2, 3, 4], session: 5 } };
+    const stopped: SupervisionRecord = { hold: "stopped-by-you", restarts: 1, lastCrashAt: 3, crashes: [3], retryAt: null, problem: null, window: null };
     store.save(new Map([["blog/web", failed], ["api", stopped]]));
     await store.flush();
     expect(await read(join(dir, "ud/app-state/pomade-runner/services.json"))).toEqual({ services: { "blog/web": failed, api: { ...stopped, hold: null } } });
@@ -1220,14 +1418,14 @@ describe("the records on disk", () => {
 
   it("carry the services you stopped to a Mac that has no crash counts for them, and only those", async () => {
     const first = fileStore(stateFolderOf(join(dir, "mac-a")), records, () => undefined);
-    first.save(new Map([["api", { hold: "stopped-by-you", restarts: 0, lastCrashAt: null, crashes: [], retryAt: null, problem: null }], ["web", { hold: "failed", restarts: 5, lastCrashAt: 9, crashes: [9], retryAt: null, problem: null }]]));
+    first.save(new Map([["api", { hold: "stopped-by-you", restarts: 0, lastCrashAt: null, crashes: [], retryAt: null, problem: null, window: null }], ["web", { hold: "failed", restarts: 5, lastCrashAt: 9, crashes: [9], retryAt: null, problem: null, window: null }]]));
     await first.flush();
-    expect(await fileStore(state, records, () => undefined).load()).toEqual(new Map([["api", { hold: "stopped-by-you", restarts: 0, lastCrashAt: null, crashes: [], retryAt: null, problem: null }]]));
+    expect(await fileStore(state, records, () => undefined).load()).toEqual(new Map([["api", { hold: "stopped-by-you", restarts: 0, lastCrashAt: null, crashes: [], retryAt: null, problem: null, window: null }]]));
   });
 
   it("write the workspace's file only when the services you stopped change", async () => {
     const store = fileStore(state, records, () => undefined);
-    const record = (restarts: number): SupervisionRecord => ({ hold: "stopped-by-you", restarts, lastCrashAt: null, crashes: [], retryAt: null, problem: null });
+    const record = (restarts: number): SupervisionRecord => ({ hold: "stopped-by-you", restarts, lastCrashAt: null, crashes: [], retryAt: null, problem: null, window: null });
     store.save(new Map([["api", record(0)]]));
     await store.flush();
     const holds = join(dir, "ws/Apps/pomade-runner/records/services.json");
@@ -1244,7 +1442,7 @@ describe("the records on disk", () => {
     const machine = join(dir, "ud/app-state/pomade-runner/services.json");
     await mkdir(dirname(machine), { recursive: true });
     await writeFile(machine, JSON.stringify({ services: { a: { hold: "maybe", restarts: -1, crashes: [1, "x"], retryAt: "soon" }, b: 7 } }));
-    expect(await fileStore(state, records, () => undefined).load()).toEqual(new Map([["a", { hold: null, restarts: 0, lastCrashAt: null, crashes: [1], retryAt: null, problem: null }]]));
+    expect(await fileStore(state, records, () => undefined).load()).toEqual(new Map([["a", { hold: null, restarts: 0, lastCrashAt: null, crashes: [1], retryAt: null, problem: null, window: null }]]));
     await writeFile(machine, "{ nope");
     const lines: string[] = [];
     expect(await fileStore(state, records, (line) => lines.push(line)).load()).toEqual(new Map());

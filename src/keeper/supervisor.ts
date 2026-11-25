@@ -14,12 +14,21 @@
 // Every action — a tick, Start, Stop, Restart — runs in one lane, one after another. Time comes from
 // the clock and the network checks from `probe`, both given, so every rule is tested without waiting.
 //
+// Every start, stop, restart and give-up is a service event (`onEvent`, docs/DESIGN.md "Service
+// events"), written to History with its cause: what made a staged start due — the Mac login, Pomade's
+// start, its project's first open, its job file — is kept until it starts; Start, Stop and Restart
+// are yours, or a chain's (whose record the runs write); a stop in its tab is heard as its session's
+// end. A crash window's restarts are one event, kept in the service's record with the row's id so a
+// restarted scheduler goes on updating the same row; the window ends when the crash count resets
+// (10 minutes up, Start, turned off, its Pomade start over) or the service gives up — its own event.
+//
 // One timebase: the scheduler's clock. The keeper stamps a session's start and end on the system
 // clock; supervision takes each stamp onto its own clock once, when it first hears of it — its clock's
 // now, less how long ago it was on the system clock — and measures every age, back-off and crash
 // window there. In production both clocks are the system's and a stamp stays as it is; under a test
 // clock, a session started a moment ago is a moment old whatever the real date.
 
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -30,7 +39,9 @@ import { entryId, pomadeBound } from "../jobs/model";
 import { serviceHoldsPath, supervisionRecordPath, type RecordsFolder, type StateFolder } from "../locations";
 import type { Clock } from "../scheduler/clock";
 import type { Log } from "../scheduler/log";
-import type { ChainActionOutcome, RunnerSession, ServiceActionResult, ServicesReport, ServiceState, ServiceStatus } from "./model";
+import type { CrashEnd, RunRecord, RunResult, ServiceEventCause, ServiceEventKind } from "../scheduler/model";
+import { newRunId } from "./ids";
+import { LOOP_CRASHES, LOOP_WINDOW_MS, type ChainActionOutcome, type RunnerSession, type ServiceActionResult, type ServicesReport, type ServiceState, type ServiceStatus } from "./model";
 import type { NetworkReadiness } from "./readiness";
 import { findService, jobIdOf, RESTART_ACTION, serviceCommand, START_ACTION } from "./services";
 import type { Sessions } from "./sessions";
@@ -45,9 +56,7 @@ export const ALIVE_MS = 5_000;
 export const START_CAP_MS = 30_000;
 /** The wait before restarting after the 1st, 2nd, … crash since the count last reset; the last repeats. */
 export const BACKOFF_MS: readonly number[] = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000];
-/** This many crashes within `LOOP_WINDOW_MS` make a crash loop: the service gives up, `failed`. */
-export const LOOP_CRASHES = 5;
-export const LOOP_WINDOW_MS = 60_000;
+export { LOOP_CRASHES, LOOP_WINDOW_MS };
 /** After this much uptime the crash count and the last crash reset. */
 export const RESET_UPTIME_MS = 10 * 60_000;
 /** A service whose file is gone is stopped once it has been gone this long: an editor that saves by
@@ -68,6 +77,25 @@ export interface SupervisionRecord {
   retryAt: number | null;
   /** Why its last start failed. */
   problem: string | null;
+  /** The crash window going: its History row, written at each restart; `null` when none goes. */
+  window: CrashWindow | null;
+}
+
+/** A crash window: the crashes since the crash count last reset and the restarts after them, one
+ *  History row (`run`) updated as they add up. */
+export interface CrashWindow {
+  /** The row's id. */
+  run: string;
+  /** Its first restart (epoch ms, the scheduler's clock): the row's time; `null` before it. */
+  at: number | null;
+  /** Restarts so far. */
+  restarts: number;
+  /** The crashes' ends, each distinct one once; the latest crash's. */
+  ends: CrashEnd[];
+  last: CrashEnd | null;
+  /** The sessions the crashes ended, by their start stamps; the one the latest restart started. */
+  ended: number[];
+  session: number | null;
 }
 
 /** Where Pomade stands, as the scheduler tells it: `running` — ready, its start known · `closed` —
@@ -84,7 +112,7 @@ export interface PomadeView {
 /** Why Start is refused for a Pomade-bound service while Pomade does not run. */
 export const NOT_WITH_POMADE = "starts with Pomade; Pomade is not running";
 
-const freshRecord = (): SupervisionRecord => ({ hold: null, restarts: 0, lastCrashAt: null, crashes: [], retryAt: null, problem: null });
+const freshRecord = (): SupervisionRecord => ({ hold: null, restarts: 0, lastCrashAt: null, crashes: [], retryAt: null, problem: null, window: null });
 
 /** Where the records are kept. */
 export interface SupervisionStore {
@@ -101,16 +129,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const epoch = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
 
+const count = (value: unknown): number => (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0);
+
+function parseEnd(value: unknown): CrashEnd | null {
+  if (!isRecord(value)) return null;
+  return { code: epoch(value.code), signal: typeof value.signal === "string" ? value.signal : null };
+}
+
+function parseWindow(value: unknown): CrashWindow | null {
+  if (!isRecord(value) || typeof value.run !== "string") return null;
+  return {
+    run: value.run,
+    at: epoch(value.at),
+    restarts: count(value.restarts),
+    ends: Array.isArray(value.ends) ? value.ends.map(parseEnd).filter((end) => end !== null) : [],
+    last: parseEnd(value.last),
+    ended: Array.isArray(value.ended) ? value.ended.map(epoch).filter((at) => at !== null) : [],
+    session: epoch(value.session),
+  };
+}
+
 function parseRecord(value: unknown): SupervisionRecord | null {
   if (!isRecord(value)) return null;
-  const { hold, restarts, lastCrashAt, crashes, retryAt, problem } = value;
+  const { hold, restarts, lastCrashAt, crashes, retryAt, problem, window } = value;
   return {
     hold: hold === "stopped-by-you" || hold === "failed" ? hold : null,
-    restarts: typeof restarts === "number" && Number.isSafeInteger(restarts) && restarts >= 0 ? restarts : 0,
+    restarts: count(restarts),
     lastCrashAt: epoch(lastCrashAt),
     crashes: Array.isArray(crashes) ? crashes.map(epoch).filter((at) => at !== null) : [],
     retryAt: epoch(retryAt),
     problem: typeof problem === "string" ? problem : null,
+    window: parseWindow(window),
   };
 }
 
@@ -202,6 +251,13 @@ export interface SupervisorOptions {
   pomade(): PomadeView;
   /** The report changed. */
   onChange(report: ServicesReport): void;
+  /** A service event to write to History; `put` — a crash window's row, written again as its
+   *  restarts add up — replaces the record of the same run. */
+  onEvent(record: RunRecord, put: boolean): void;
+  /** A project's name, for a first open's event; `null` when it is not known. */
+  projectName?(project: string): string | null;
+  /** The six hex digits of an event's id; random by default. */
+  random?: () => string;
 }
 
 export interface Supervisor {
@@ -238,7 +294,8 @@ export interface Supervisor {
   restart(ref: string): Promise<ServiceActionResult>;
   /** A chain's action on a service (`why` says which chain, for the log): `restart` restarts a
    *  running service and skips one that is not running · `start` starts one that is not running,
-   *  as Start does, and skips a running one · `stop` stops it as Stop does. */
+   *  as Start does, and skips a running one · `stop` stops it as Stop does. Its event is the runs'
+   *  to write, from the outcome: supervision writes none for it. */
   chainAction(ref: string, action: ServiceAction, why: string): Promise<ChainActionOutcome>;
   /** Stop listening for ends; resolves once the records are written. */
   close(): Promise<void>;
@@ -287,6 +344,19 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
   let queuedTick: Promise<void> | null = null;
   let published = "";
   let settled = false;
+  const random = options.random ?? ((): string => randomBytes(3).toString("hex"));
+  /** What made each service due to start, kept until it starts or is due no more: its event's cause. */
+  const dueCauses = new Map<string, { cause: ServiceEventCause; detail: string | null }>();
+  /** Whether a reconcile has run: the services due at the first are the Mac login's. */
+  let booted = false;
+  /** Where Pomade stood, and the projects opened since it started, at the latest reconcile. */
+  let pomadeBefore: PomadeState | null = null;
+  let openedBefore: ReadonlySet<string> = new Set();
+  /** Services whose session the keeper lost, by that session's start: started again, a restart. */
+  const lost = new Map<string, number>();
+  /** Sessions whose stop is written already (Stop) or is a chain's, by the session start: their
+   *  end, heard later, writes nothing. */
+  const announced = new Map<string, number>();
 
   const now = (): number => clock.now().getTime();
   const systemNow = options.systemNow ?? Date.now;
@@ -404,6 +474,62 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     return { keeper: sessions.keeper(), services: entries().map((entry) => statusOf(entry, at)), openedProjects: [...options.pomade().opened] };
   }
 
+  /** The service `job` now, as `entries()` has it. */
+  const entryById = (job: string): Entry | undefined => entries().find((candidate) => candidate.job === job);
+
+  /** Write a service event of `entry` (docs/DESIGN.md "Service events"): `at` its time (default
+   *  now), `run` its row's id (default a new one), `put` to replace the row of that id. */
+  function emit(
+    entry: Entry,
+    what: ServiceEventKind,
+    cause: ServiceEventCause,
+    more: { detail?: string | null; session?: number | null; ended?: number[]; state?: RunResult; reason?: string | null; exit?: CrashEnd | null; restarts?: number; ends?: CrashEnd[]; run?: string; at?: number; put?: boolean } = {},
+  ): void {
+    const written = now();
+    const at = more.at ?? written;
+    options.onEvent(
+      {
+        job: entry.job,
+        name: entry.name,
+        kind: "service",
+        project: entry.project,
+        folder: entry.service?.folder ?? "",
+        run: more.run ?? newRunId(new Date(at), random),
+        trigger: "manual",
+        cause: null,
+        dueAt: at,
+        agent: null,
+        missed: null,
+        series: null,
+        state: more.state ?? "done",
+        event: { what, cause, detail: more.detail ?? null, session: more.session ?? null, ended: more.ended ?? [], restarts: more.restarts ?? 0, ends: more.ends ?? [] },
+        reason: more.reason ?? null,
+        startedAt: null,
+        endedAt: written,
+        durationMs: null,
+        exitCode: more.exit?.code ?? null,
+        signal: more.exit?.signal ?? null,
+        log: null,
+        lastLines: [],
+        git: null,
+        limitHit: null,
+      },
+      more.put ?? false,
+    );
+  }
+
+  /** Why a service not started by a crash is due: the Mac login (the first reconcile's), Pomade's
+   *  start, its project's first open — else its job file, made or turned on. */
+  function dueCause(service: ServiceJob): { cause: ServiceEventCause; detail: string | null } {
+    if (!booted && service.start === "login") return { cause: "login", detail: null };
+    if (service.start === "pomade-started" && pomadeBefore !== "running") return { cause: "pomade-started", detail: null };
+    const project = service.startProject;
+    if (service.start === "project-first-open" && project !== null && options.pomade().opened.has(project) && !openedBefore.has(project)) {
+      return { cause: "first-open", detail: options.projectName?.(project) ?? null };
+    }
+    return { cause: "job-file", detail: "created" };
+  }
+
   function publish(): void {
     const next = report();
     const text = JSON.stringify(next);
@@ -412,17 +538,25 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     options.onChange(next);
   }
 
-  /** A crash (or a start the keeper refused) at `at`: a restart after the back-off, or — the 5th
-   *  within a minute — `failed`. */
-  function crashed(job: string, record: SupervisionRecord, at: number, what: string): void {
+  /** A crash (or a start the keeper refused: `stamp` `null`) at `at`, ended `end`: a restart
+   *  after the back-off — the crash joins the crash window — or, the 5th within a minute, `failed`
+   *  and its own event. */
+  function crashed(job: string, record: SupervisionRecord, at: number, what: string, end: CrashEnd, stamp: number | null): void {
     record.crashes = [...record.crashes.filter((when) => at - when < LOOP_WINDOW_MS), at];
     record.lastCrashAt = at;
     if (record.crashes.length >= LOOP_CRASHES) {
       record.hold = "failed";
       record.retryAt = null;
+      record.window = null;
       log(`service ${job}: ${what}; failed — ${LOOP_CRASHES} crashes within a minute, no restarts until Start`);
+      const entry = entryById(job);
+      if (entry !== undefined) emit(entry, "gave-up", "crash", { state: "failed", ended: stamp === null ? [] : [stamp], exit: end, reason: stamp === null ? record.problem : null });
       return;
     }
+    const window = (record.window ??= { run: newRunId(new Date(at), random), at: null, restarts: 0, ends: [], last: null, ended: [], session: null });
+    if (!window.ends.some((known) => known.code === end.code && known.signal === end.signal)) window.ends.push(end);
+    window.last = end;
+    if (stamp !== null) window.ended.push(stamp);
     const wait = BACKOFF_MS[Math.min(record.restarts, BACKOFF_MS.length - 1)] ?? 0;
     record.retryAt = at + wait;
     log(`service ${job}: ${what}; restarting in ${seconds(wait)}`);
@@ -437,16 +571,17 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     starts.delete(job);
     stopping.delete(job);
     if (current?.job === job) current = null;
+    const stamp = session.info.startedAt;
     switch (exit.reason) {
       case "crashed":
       case "exited": {
         const record = recordOf(job);
-        if (record.hold === null) crashed(job, record, at, exit.reason === "exited" ? "exited on its own" : "crashed");
+        if (record.hold === null) crashed(job, record, at, exit.reason === "exited" ? "exited on its own" : "crashed", { code: exit.code, signal: exit.signal }, stamp);
         break;
       }
       case "stopped-by-you": {
         // A Stop that ends after the service let go of its hold holds nothing.
-        if (released.get(job) === session.info.startedAt) {
+        if (released.get(job) === stamp) {
           released.delete(job);
           return;
         }
@@ -454,11 +589,23 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
         record.hold = "stopped-by-you";
         record.retryAt = null;
         log(`service ${job}: stopped by you; it stays stopped until Start`);
+        // Stop wrote its event, and a chain's is the runs'; Ctrl+C or Stop in its tab is heard here.
+        if (announced.get(job) === stamp) {
+          announced.delete(job);
+        } else {
+          const entry = entryById(job);
+          if (entry !== undefined) emit(entry, "stopped", "you", { detail: "tab", ended: [stamp] });
+        }
         break;
+      }
+      case "lost-in-keeper-crash": {
+        // Not its fault: due, it starts again — a restart; not due, it stopped (both in `reconcile`).
+        const service = entryById(job)?.service;
+        if (service != null && service.enabled) lost.set(job, stamp);
+        return;
       }
       case "stopped":
       case "time-limit":
-      case "lost-in-keeper-crash":
         return;
     }
     save();
@@ -477,15 +624,34 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     }
   }
 
-  /** The staged start's next service. */
+  /** The staged start's next service, and its event: a crash window's restart, a restart after
+   *  the keeper lost its session or its project moved, else a start for what made it due. */
   async function startNext(entry: Entry, service: ServiceJob, workspace: string, at: number): Promise<void> {
     const record = recordOf(entry.job);
     const restart = record.retryAt !== null;
     const started = await spawn(entry, service, workspace, record);
     if (typeof started === "string") {
-      crashed(entry.job, record, at, `cannot start — ${started}`);
+      crashed(entry.job, record, at, `cannot start — ${started}`, { code: null, signal: null }, null);
     } else {
-      if (restart) record.restarts++;
+      const session = started.info.startedAt;
+      const lostStamp = lost.get(entry.job);
+      if (restart) {
+        record.restarts++;
+        const window = (record.window ??= { run: newRunId(new Date(at), random), at: null, restarts: 0, ends: [], last: null, ended: [], session: null });
+        window.restarts++;
+        window.at ??= at;
+        window.session = session;
+        emit(entry, "restarted", "crash", { run: window.run, at: window.at, session, ended: [...window.ended], restarts: window.restarts, ends: [...window.ends], exit: window.last, put: true });
+      } else if (lostStamp !== undefined) {
+        emit(entry, "restarted", "keeper", { session, ended: [lostStamp] });
+      } else if (owed.has(entry.job)) {
+        emit(entry, "restarted", "job-file", { detail: "moved", session });
+      } else {
+        const due = dueCauses.get(entry.job) ?? dueCause(service);
+        emit(entry, "started", due.cause, { detail: due.detail, session });
+      }
+      lost.delete(entry.job);
+      dueCauses.delete(entry.job);
       record.retryAt = null;
       owed.delete(entry.job);
       startOf(entry.job, started);
@@ -521,12 +687,14 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     );
   }
 
-  async function stopSession(entry: Entry, session: RunnerSession, why: string): Promise<void> {
+  /** Stop a running service for `why`, Runner's own stop, and write its event for `cause`. */
+  async function stopSession(entry: Entry, session: RunnerSession, why: string, cause: ServiceEventCause, detail: string | null = null): Promise<void> {
     if (stopping.get(entry.job) === session.info.startedAt) return;
     stopping.set(entry.job, session.info.startedAt);
     log(`service ${entry.job}: ${why}; stopping it`);
     try {
       await sessions.stop(session.id, "stopped");
+      emit(entry, "stopped", cause, { detail, ended: [session.info.startedAt] });
     } catch (err) {
       stopping.delete(entry.job);
       log(`service ${entry.job}: cannot stop — ${errorText(err)}`);
@@ -564,7 +732,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
         goneSince.set(job, since);
         if (at - since < REMOVED_GRACE_MS) continue;
         if (runs !== null) {
-          await stopSession(entry, runs, "its file is gone");
+          await stopSession(entry, runs, "its file is gone", "job-file", "removed");
         } else if (session !== null) {
           try {
             await sessions.forget(session.id);
@@ -585,18 +753,18 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
           if (session !== null) released.set(job, session.info.startedAt);
           changed = true;
         }
-        if (runs !== null) await stopSession(entry, runs, "disabled in its file");
+        if (runs !== null) await stopSession(entry, runs, "disabled in its file", "job-file", "disabled");
         continue;
       }
       if (!pomadeLets(service) && options.pomade().state === "closed") {
-        if (runs !== null) await stopSession(entry, runs, "it runs with Pomade, and Pomade is not running");
+        if (runs !== null) await stopSession(entry, runs, "it runs with Pomade, and Pomade is not running", "pomade-quit");
         continue;
       }
       if (runs !== null) {
         checkReady(entry, service, runs, at);
         const record = records.get(job);
-        if (record !== undefined && isUp(entry) && at - startOf(job, runs) >= RESET_UPTIME_MS && (record.restarts > 0 || record.lastCrashAt !== null || record.crashes.length > 0)) {
-          Object.assign(record, { restarts: 0, lastCrashAt: null, crashes: [] });
+        if (record !== undefined && isUp(entry) && at - startOf(job, runs) >= RESET_UPTIME_MS && (record.restarts > 0 || record.lastCrashAt !== null || record.crashes.length > 0 || record.window !== null)) {
+          Object.assign(record, { restarts: 0, lastCrashAt: null, crashes: [], window: null });
           changed = true;
         }
         continue;
@@ -604,8 +772,24 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
       const record = records.get(job);
       if (record?.hold != null) continue;
       if (record?.retryAt != null && record.retryAt > at) continue;
-      if (startsNow(job, service) || (record?.retryAt != null && pomadeLets(service))) due.push({ entry, service });
+      if (record?.retryAt == null && startsNow(job, service)) {
+        if (!dueCauses.has(job)) dueCauses.set(job, dueCause(service));
+        due.push({ entry, service });
+      } else if (record?.retryAt != null && pomadeLets(service)) {
+        due.push({ entry, service });
+      }
     }
+    // What is due no more forgets why it was; a lost session not due to start again stopped.
+    for (const job of dueCauses.keys()) if (!due.some((one) => one.entry.job === job)) dueCauses.delete(job);
+    for (const [job, stamp] of lost) {
+      if (due.some((one) => one.entry.job === job)) continue;
+      lost.delete(job);
+      const entry = list.find((candidate) => candidate.job === job);
+      if (entry !== undefined && live(entry.session) === null) emit(entry, "stopped", "keeper", { ended: [stamp] });
+    }
+    booted = true;
+    pomadeBefore = options.pomade().state;
+    openedBefore = new Set(options.pomade().opened);
     // A record outlives its file for the grace period, so a hold survives a save by delete and write.
     const listed = new Set(list.filter((entry) => entry.file !== "gone").map((entry) => entry.job));
     for (const job of records.keys()) {
@@ -650,7 +834,8 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     return entry === undefined ? { ok: false, reason: `no service "${job}"` } : { ok: true, service: statusOf(entry, now()) };
   };
 
-  async function startNow(ref: string, fresh: boolean): Promise<ServiceActionResult> {
+  /** Start a service now, by you or a chain (whose event the runs write). */
+  async function startNow(ref: string, fresh: boolean, by: "you" | "chain"): Promise<ServiceActionResult> {
     const found = findService(options.jobs(), ref);
     if (!found.ok) return found;
     const { job: service, workspace } = found;
@@ -662,19 +847,24 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     const record = recordOf(service.id);
     const started = await spawn(entry, service, workspace, record);
     if (typeof started !== "string") {
-      if (fresh) Object.assign(record, { restarts: 0, lastCrashAt: null, crashes: [] });
+      if (fresh) Object.assign(record, { restarts: 0, lastCrashAt: null, crashes: [], window: null });
       record.hold = null;
       record.retryAt = null;
       owed.delete(service.id);
+      lost.delete(service.id);
+      dueCauses.delete(service.id);
+      if (by === "you") emit(entry, "started", "you", { session: started.info.startedAt });
     }
     save();
     if (typeof started === "string") return { ok: false, reason: started };
     return done(service.id);
   }
 
-  /** Stop a service as stopped by you: it stays stopped until Start. */
-  async function stopNow(entry: Entry): Promise<ServiceActionResult> {
+  /** Stop a service as stopped by you: it stays stopped until Start. Its event is written now — a
+   *  service waiting to restart after a crash stops too — unless a chain stops it. */
+  async function stopNow(entry: Entry, by: "you" | "chain"): Promise<ServiceActionResult> {
     const record = recordOf(entry.job);
+    const restarting = record.retryAt !== null;
     record.hold = "stopped-by-you";
     record.retryAt = null;
     save();
@@ -688,21 +878,27 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
         stopping.delete(entry.job);
         return { ok: false, reason: errorText(err) };
       }
+      announced.set(entry.job, session.info.startedAt);
+      if (by === "you") emit(entry, "stopped", "you", { ended: [session.info.startedAt] });
+    } else if (session === null && restarting && by === "you") {
+      emit(entry, "stopped", "you");
     }
     return done(entry.job);
   }
 
   /** Restart a running service with its file as it is now; one that does not run is started. */
-  async function restartNow(service: ServiceJob, workspace: string): Promise<ServiceActionResult> {
+  async function restartNow(service: ServiceJob, workspace: string, by: "you" | "chain"): Promise<ServiceActionResult> {
     const entry = entries().find((candidate) => candidate.job === service.id);
-    if (entry === undefined || live(entry.session) === null) return startNow(service.id, false);
+    const running = entry === undefined ? null : live(entry.session);
+    if (entry === undefined || running === null) return startNow(service.id, false, by);
     if (!service.enabled) return { ok: false, reason: `"${service.name}" is disabled in its file; enable it first` };
     const record = recordOf(service.id);
     record.hold = null;
     record.retryAt = null;
     try {
-      await sessions.restartService(service.id, serviceCommand(service, workspace));
+      const fresh = await sessions.restartService(service.id, serviceCommand(service, workspace));
       record.problem = null;
+      if (by === "you") emit(entry, "restarted", "you", { session: fresh.info.startedAt, ended: [running.info.startedAt] });
     } catch (err) {
       record.problem = errorText(err);
       save();
@@ -734,7 +930,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
     start: (ref) =>
       inLane(async () => {
         log(`service ${ref}: Start`);
-        return startNow(ref, true);
+        return startNow(ref, true, "you");
       }),
 
     stop: (ref) =>
@@ -742,7 +938,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
         const entry = entryOf(ref);
         if (entry === undefined) return { ok: false, reason: `no service "${ref}"` };
         log(`service ${entry.job}: Stop`);
-        return stopNow(entry);
+        return stopNow(entry, "you");
       }),
 
     restart: (ref) =>
@@ -750,7 +946,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
         const found = findService(options.jobs(), ref);
         if (!found.ok) return found;
         log(`service ${found.job.id}: Restart`);
-        return restartNow(found.job, found.workspace);
+        return restartNow(found.job, found.workspace, "you");
       }),
 
     pomadeEnded: () =>
@@ -762,9 +958,10 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
           if (record !== undefined) records.set(entry.job, { ...freshRecord(), problem: record.problem });
           if (entry.session !== null) released.set(entry.job, entry.session.info.startedAt);
           owed.delete(entry.job);
+          lost.delete(entry.job);
           if (current?.job === entry.job) current = null;
           const runs = live(entry.session);
-          if (runs !== null) await stopSession(entry, runs, "its Pomade start is over");
+          if (runs !== null) await stopSession(entry, runs, "its Pomade start is over", "pomade-quit");
         }
         save();
         await reconcile();
@@ -840,8 +1037,11 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
         if (action === "restart" && !running) return { result: "skipped", reason: "it is not running" };
         if (action === "start" && running) return { result: "skipped", reason: "it is running already" };
         log(`service ${service.id}: ${ACTION_WORDS[action]} — ${why}`);
-        const answer = action === "restart" ? await restartNow(service, workspace) : action === "start" ? await startNow(service.id, true) : entry === undefined ? null : await stopNow(entry);
-        return answer === null || answer.ok ? { result: "done" } : { result: "failed", reason: answer.reason };
+        const before = entry === undefined ? null : (live(entry.session)?.info.startedAt ?? null);
+        const answer = action === "restart" ? await restartNow(service, workspace, "chain") : action === "start" ? await startNow(service.id, true, "chain") : entry === undefined ? null : await stopNow(entry, "chain");
+        if (answer !== null && !answer.ok) return { result: "failed", reason: answer.reason };
+        const after = answer === null || action === "stop" ? null : (live(answer.service.session)?.info.startedAt ?? null);
+        return { result: "done", session: after, ended: action === "start" ? null : before };
       }),
 
     async close() {

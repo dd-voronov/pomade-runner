@@ -3,14 +3,16 @@ import { WORKSPACE_PROJECT_ID } from "pomade-kit/protocol";
 import type { HostClient } from "pomade-kit/sdk";
 
 import { jobsRoute, runRoute } from "../integrations/runner-api";
-import { runTriggerWords, type ActiveRun } from "../scheduler/model";
+import { runTriggerWords, SERVICE_CAUSE_WORDS, type ActiveRun } from "../scheduler/model";
 import styles from "./HistoryView.module.css";
 import { Chip, ColumnHead, EmptyBlock, GroupHead, Help, KindCell, ResizableTable, Status, TableHead, TableRow, useColumnSizing, type Column } from "./kit";
 import {
   byDay,
+  CAUSE_HELP,
   FILTER_WORDS,
   filterCounts,
   HISTORY_FILTERS,
+  isEventRecord,
   isHeld,
   itemKey,
   keeps,
@@ -44,10 +46,11 @@ const COLUMNS: readonly Column[] = [
 ];
 
 /** History: the runs going, the jobs the switch holds — a row each, with the runs held so far — and
- *  every run that ended or never started, newest first, in their days — each row its time, job,
- *  result, duration and what started it; a row opens its result card, a held row its job.
- *  The result chips keep the runs going, the failed ones or the ones that never started; "This
- *  project" those of the project Pomade has open. Older pages load as the list scrolls to its end.
+ *  every run that ended or never started, and every service event, newest first, in their days —
+ *  each row its time, job, result, duration and what started it (an event: no duration, its cause);
+ *  a row opens its result card, a held row its job. The result chips keep the runs going, the
+ *  failed ones (a service that gave up too) or the ones that never started; "This project" those of
+ *  the project Pomade has open; "Service events", on by default, shows or hides the events. Older pages load as the list scrolls to its end.
  *  The columns are as wide as the viewer dragged them to, and the table scrolls sideways where they
  *  are wider than the tab. */
 export function HistoryView({
@@ -76,6 +79,7 @@ export function HistoryView({
   const project = useActiveProject(host);
   const now = useRunningNow(runningSince(active), 10_000);
   const [filter, setFilter] = useState<HistoryFilter>(asked ?? "all");
+  const [events, setEvents] = useState(true);
   // The chip the route asked for turns on; the route goes back to plain History, so the next ask
   // is heard even when the person changed the chip meanwhile.
   useEffect(() => {
@@ -96,7 +100,7 @@ export function HistoryView({
     });
     observer.observe(target);
     return () => observer.disconnect();
-  }, [ready, filter, thisProject]);
+  }, [ready, filter, thisProject, events]);
 
   if (history.status === "loading") return <section data-testid="history-loading" />;
   if (ready === null) {
@@ -116,7 +120,9 @@ export function HistoryView({
     );
   }
   const projectId = project === null || project.id === WORKSPACE_PROJECT_ID ? null : project.id;
-  const inScope = thisProject ? all.filter((view) => view.project === projectId) : all;
+  const inProject = thisProject ? all.filter((view) => view.project === projectId) : all;
+  const eventCount = inProject.filter(isEventRecord).length;
+  const inScope = events ? inProject : inProject.filter((view) => !isEventRecord(view));
   const counts = filterCounts(inScope);
   const days = byDay(
     inScope.filter((view) => keeps(filter, view)),
@@ -138,6 +144,10 @@ export function HistoryView({
         <Chip on={thisProject} count={project?.name ?? "…"} onClick={() => onThisProject(!thisProject)} data-testid="this-project">
           This project
         </Chip>
+        <Chip on={events} count={`${eventCount}${more}`} onClick={() => setEvents(!events)} data-testid="history-events">
+          Service events
+        </Chip>
+        <Help k="hist.events" />
       </ViewFilters>
       <ResizableTable sizing={sizing}>
         <TableHead columns={undefined}>
@@ -176,10 +186,12 @@ export function HistoryView({
 }
 
 /** One run: its time, kind, job, result — the status explains itself on hover — duration and
- *  trigger; a click, Enter or Space opens its result card. */
+ *  trigger; a service event has no duration, and its cause for a trigger. A click, Enter or Space
+ *  opens its result card. */
 function HistoryRow({ view, now, onOpen }: { view: HistoryItem; now: number; onOpen: () => void }): React.JSX.Element {
   const look = runLook(view, now);
   const duration = runDuration(view, now);
+  const event = isEventRecord(view) ? view.event : null;
   return (
     <TableRow
       columns={undefined}
@@ -195,6 +207,7 @@ function HistoryRow({ view, now, onOpen }: { view: HistoryItem; now: number; onO
       data-testid="history-row"
       data-state={view.state}
       data-job={view.job}
+      data-event={event?.what}
     >
       <span className={styles.time}>{shortClock(runTime(view))}</span>
       <KindCell icon={view.kind} label={KIND_WORDS[view.kind]} />
@@ -202,13 +215,13 @@ function HistoryRow({ view, now, onOpen }: { view: HistoryItem; now: number; onO
         {view.name}
       </span>
       <span className={styles.result}>
-        <Status tone={look.tone} live={look.live} size="sm" help={look.help} cutTip testId="history-result">
+        <Status tone={look.tone} plain={look.plain} live={look.live} size="sm" help={look.help} cutTip testId="history-result">
           {look.words}
         </Status>
       </span>
-      <span className={styles.duration} data-testid="history-duration">{duration === null ? "—" : view.state === "running" ? upWords(duration) : shortDuration(duration)}</span>
-      <span className={styles.trigger} data-help={TRIGGER_HELP[isHeld(view) ? "scheduled" : view.trigger]} data-tip-cut="" data-testid="history-trigger">
-        {runTriggerWords(isHeld(view) ? { trigger: "scheduled", cause: null } : view)}
+      <span className={styles.duration} data-testid="history-duration">{event !== null ? "" : duration === null ? "—" : view.state === "running" ? upWords(duration) : shortDuration(duration)}</span>
+      <span className={styles.trigger} data-help={event !== null ? CAUSE_HELP[event.cause] : TRIGGER_HELP[isHeld(view) ? "scheduled" : view.trigger]} data-tip-cut="" data-testid="history-trigger">
+        {event !== null ? SERVICE_CAUSE_WORDS[event.cause] : runTriggerWords(isHeld(view) ? { trigger: "scheduled", cause: null } : view)}
       </span>
     </TableRow>
   );

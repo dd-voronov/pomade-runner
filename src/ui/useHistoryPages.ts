@@ -1,7 +1,8 @@
 // History, a page at a time (`history.list` with `before` and `limit`): the newest page, asked again
 // whenever the scheduler announces `runs.changed`, and the older pages the person scrolls to, each
-// asked once — a record is written once and never changes, and a page's cursor stays valid while
-// new runs land. The held rows come with the newest page, so they are as fresh as it is.
+// asked once — a page's cursor stays valid while new runs land. A record the newest page brings
+// again takes the place of the one loaded: a crash window's row is written again as its restarts
+// add up. The held rows come with the newest page, so they are as fresh as it is.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HostError, type HostClient } from "pomade-kit/sdk";
@@ -43,11 +44,13 @@ interface Loaded {
 }
 
 /** The newest page merged into what is loaded: alone, it is the whole list; with older pages
- *  loaded, it adds the records that landed since. */
+ *  loaded, it adds the records that landed since and takes the place of those it brings again. */
 function withHead(loaded: Loaded | null, head: HistoryPage): Loaded {
   if (loaded === null || !loaded.older) return { held: head.held, records: head.records, next: head.next, older: false };
+  const fresh = new Map(head.records.map((record) => [keyOf(record), record]));
+  const older = loaded.records.map((record) => fresh.get(keyOf(record)) ?? record);
   const known = new Set(loaded.records.map(keyOf));
-  return { ...loaded, held: head.held, records: [...head.records.filter((record) => !known.has(keyOf(record))), ...loaded.records] };
+  return { ...loaded, held: head.held, records: [...head.records.filter((record) => !known.has(keyOf(record))), ...older] };
 }
 
 export function useHistoryPages(host: HostClient): HistoryPages {

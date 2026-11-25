@@ -24,6 +24,7 @@ import {
   type ResumeResult,
   type RunActionResult,
   type RunOutput,
+  type RunRecord,
   type RunsReport,
   type RunStopResult,
   type RunView,
@@ -39,6 +40,7 @@ import {
   MISSED_METHOD,
   RESUME_METHOD,
   RUN_GET_METHOD,
+  SESSION_END_METHOD,
   RUN_NOW_METHOD,
   RUN_OUTPUT_METHOD,
   RUN_STOP_METHOD,
@@ -111,6 +113,8 @@ export interface RunnerOffer {
   run(job: string, run: string): Promise<RunView | null>;
   /** The end of a run's output log. */
   output(job: string, run: string): Promise<RunOutput>;
+  /** The service event that ended the session the event `run` started (`SESSION_END_METHOD`). */
+  sessionEnd(job: string, run: string): Promise<RunRecord | null>;
   /** Run now. */
   runNow(job: string): Promise<RunActionResult>;
   /** Enable or Disable a job. */
@@ -244,6 +248,10 @@ export async function offerRunner(host: HostClient, offer: RunnerOffer): Promise
       [RUN_GET_METHOD]: async (params) => {
         const { job, run } = runParams(RUN_GET_METHOD, params);
         return asJson(await offer.run(job, run));
+      },
+      [SESSION_END_METHOD]: async (params) => {
+        const { job, run } = runParams(SESSION_END_METHOD, params);
+        return asJson(await offer.sessionEnd(job, run));
       },
       [RUN_OUTPUT_METHOD]: async (params) => {
         const { job, run } = runParams(RUN_OUTPUT_METHOD, params);

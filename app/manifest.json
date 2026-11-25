@@ -66,6 +66,7 @@
     "runs.get",
     "runs.output",
     "history.list",
+    "history.sessionEnd",
     "jobs.run",
     "jobs.setEnabled",
     "needsYou.dismiss",

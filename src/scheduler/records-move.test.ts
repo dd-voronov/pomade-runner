@@ -107,8 +107,8 @@ describe("the records' move into the workspace", () => {
     expect((await fileRunsStore(records, state, () => undefined).load()).lookedAt).toBe(1000);
     expect(await fileStore(state, records, () => undefined).load()).toEqual(
       new Map([
-        ["api", { hold: "stopped-by-you", restarts: 0, lastCrashAt: null, crashes: [], retryAt: null, problem: null }],
-        ["web", { hold: "failed", restarts: 5, lastCrashAt: 9, crashes: [9], retryAt: null, problem: null }],
+        ["api", { hold: "stopped-by-you", restarts: 0, lastCrashAt: null, crashes: [], retryAt: null, problem: null, window: null }],
+        ["web", { hold: "failed", restarts: 5, lastCrashAt: 9, crashes: [9], retryAt: null, problem: null, window: null }],
       ]),
     );
   });

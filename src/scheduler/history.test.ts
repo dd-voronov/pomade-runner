@@ -1,6 +1,7 @@
-// The history store on a temp folder: append-only day files, pages newest first with a cursor that
-// stays valid, a half line left by a crash, finding a run, pruning by day with the output logs, and
-// a run's output as plain last lines.
+// The history store on a temp folder: day files appended to — a crash window's record put again in
+// place — pages newest first with a cursor that stays valid, a half line left by a crash, finding a
+// run and the event that ended a session, pruning by day with the output logs, and a run's output as
+// plain last lines.
 
 import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -30,7 +31,7 @@ function record(job: string, run: string, endedAt: number, extra: Partial<RunRec
     missed: null,
     series: null,
     state: "done",
-    action: null,
+    event: null,
     reason: null,
     startedAt: endedAt - 1000,
     endedAt,
@@ -73,6 +74,35 @@ describe("history", () => {
     expect(first).toHaveLength(3);
     expect(first[2]).toBe("");
     expect(JSON.parse(first[0] ?? "")).toEqual(record("a", "r1", T0));
+  });
+
+  it("puts a crash window's record again where it stands — a later day too — and appends one not written yet", async () => {
+    const event = (restarts: number, endedAt: number): RunRecord =>
+      record("web", "w1", endedAt, { kind: "service", startedAt: null, durationMs: null, event: { what: "restarted", cause: "crash", detail: null, session: restarts, ended: [], restarts, ends: [] } });
+    await history.put(event(1, T0));
+    await history.append(record("a", "r1", T0 + 1000));
+    const before = await history.page({ job: null, before: null, limit: 1 });
+    await history.put(event(2, T0 + 2000));
+    await history.put(event(3, T0 + DAY));
+    const text = (await readFile(join(records, "history/2026-11-17.jsonl"), "utf8")).split("\n");
+    expect(text).toHaveLength(3);
+    expect(JSON.parse(text[0] ?? "")).toEqual(event(3, T0 + DAY));
+    expect(await readdir(join(records, "history"))).toEqual(["2026-11-17.jsonl"]);
+    // No line moved: the cursor of a page read before still holds.
+    expect((await history.page({ job: null, before: before.next, limit: 5 })).records).toEqual([event(3, T0 + DAY)]);
+    expect(await history.find("web", "w1")).toEqual(event(3, T0 + DAY));
+  });
+
+  it("finds the event that ended the session an event started", async () => {
+    const event = (run: string, at: number, session: number | null, ended: number[]): RunRecord =>
+      record("web", run, at, { kind: "service", startedAt: null, durationMs: null, event: { what: session === null ? "stopped" : "started", cause: "you", detail: null, session, ended, restarts: 0, ends: [] } });
+    await history.append(event("e1", T0, 7, []));
+    await history.append(record("other", "x", T0 + 500, { event: null }));
+    expect(await history.sessionEnd("web", "e1")).toBeNull();
+    await history.append(event("e2", T0 + DAY, null, [7]));
+    expect(await history.sessionEnd("web", "e1")).toEqual(event("e2", T0 + DAY, null, [7]));
+    expect(await history.sessionEnd("web", "e2")).toBeNull();
+    expect(await history.sessionEnd("web", "none")).toBeNull();
   });
 
   it("pages newest first, of every job or one, and the cursor holds while runs land", async () => {

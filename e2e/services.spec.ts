@@ -122,6 +122,13 @@ test.describe("service supervision", () => {
     expect(first.output()).toContain("service flaky: crashed; failed — 5 crashes within a minute, no restarts until Start\n");
     expect(starts(first.output(), "flaky")).toBe(5);
     expect(await world.service("flaky")).toMatchObject({ restarts: 4, retryAt: null });
+    // History: the Mac startup's start, one row for the window's four restarts, and the give-up.
+    const events = (text: string): string[] => text.split("\n").filter((line) => line !== "").map((line) => line.replace(/, \d{4}-\S+$/, "").replace(/, \d{4}-\S+, last \S+$/, ""));
+    expect(events((await world.command("history", "flaky")).stdout)).toEqual([
+      "flaky  Flaky  service · crash  gave up after 5 crashes",
+      "flaky  Flaky  service · crash  restarted 4× · exit 3",
+      "flaky  Flaky  service · Mac startup  started",
+    ]);
     // Giving up is noticed once; with Pomade closed the notice waits in its queue.
     await expect.poll(async () => (await world.queuedNotices()).map((notice) => notice.title)).toEqual(["Flaky gave up"]);
     await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -140,6 +147,7 @@ test.describe("service supervision", () => {
     expect(run).toMatchObject({ code: 0, stderr: "" });
     expect(run.stdout).toMatch(/^flaky {2}Flaky {2}starting, pid \d+, since \S+\n$/);
     expect(second.output()).toContain("service flaky: Start\n");
+    expect(events((await world.command("history", "flaky")).stdout)[0]).toBe("flaky  Flaky  service · you  started");
   });
 
   test("a service whose folder does not exist never gets a session: it gives up with the reason, and its Needs-you item has no session to open", async () => {
@@ -198,6 +206,12 @@ test.describe("service supervision", () => {
     expect(await world.command("stop", "Web")).toMatchObject({ code: 0, stdout: "web  Web  stopped by you\n" });
     await expect.poll(async () => (await world.service("web"))?.session?.info.state).toBe("exited");
     expect(await world.service("web")).toMatchObject({ state: "stopped-by-you", session: { info: { exit: { reason: "stopped-by-you" } } } });
+    // Each leaves one History row by you, after the Mac startup's start.
+    expect((await world.command("history", "web")).stdout.split("\n").filter((line) => line !== "").map((line) => line.replace(/, \d{4}-\S+$/, ""))).toEqual([
+      "web  Web  service · you  stopped",
+      "web  Web  service · you  restarted",
+      "web  Web  service · Mac startup  started",
+    ]);
 
     expect(await world.command("restart", "backup")).toEqual({ code: 1, stdout: "", stderr: 'pomade-runner restart: cannot restart "backup": "backup" is a script job, not a service.\n' });
     expect(await world.command("stop", "nothing")).toEqual({ code: 1, stdout: "", stderr: 'pomade-runner stop: cannot stop "nothing": no service "nothing".\n' });

@@ -40,6 +40,10 @@ export const HISTORY_LIST_METHOD = "history.list";
 /** `{ job, run }` → `RunView | null` (`isRunView`): one run, going or finished. */
 export const RUN_GET_METHOD = "runs.get";
 
+/** `{ job, run }` → `RunRecord | null` (`isRunRecord`): the service event that ended the session
+ *  the event `run` started — a crash, a stop, a restart; `null` while it goes, or when none says. */
+export const SESSION_END_METHOD = "history.sessionEnd";
+
 /** `{ job, run }` → `RunOutput` (`isRunOutput`): the end of a run's output log. */
 export const RUN_OUTPUT_METHOD = "runs.output";
 

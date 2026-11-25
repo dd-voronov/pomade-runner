@@ -18,6 +18,7 @@ import {
   JOBS_CHANGED_EVENT,
   JOBS_LIST_METHOD,
   RUN_GET_METHOD,
+  SESSION_END_METHOD,
   RUN_OUTPUT_METHOD,
   RUNS_CHANGED_EVENT,
   RUNS_LIST_METHOD,
@@ -29,7 +30,7 @@ import {
 } from "../integrations/runner-api";
 import type { JobsSnapshot } from "../jobs/model";
 import { isServicesReport, type ServicesReport } from "../keeper/model";
-import { isHistoryPage, isRunOutput, isRunsReport, isRunView, type HistoryPage, type RunOutput, type RunsReport, type RunView } from "../scheduler/model";
+import { isHistoryPage, isRunOutput, isRunRecord, isRunsReport, isRunView, type HistoryPage, type RunOutput, type RunRecord, type RunsReport, type RunView } from "../scheduler/model";
 import { isEnvironmentReport, type EnvironmentReport } from "../scheduler/environment";
 import { isSettingsReport, type SettingsReport } from "../scheduler/settings";
 import { useToast } from "./kit";
@@ -94,6 +95,13 @@ export function useHistory(host: HostClient, limit: number): LiveState<HistoryPa
 }
 
 const isRunOrNone = (value: unknown): value is RunView | null => value === null || isRunView(value);
+const isRecordOrNone = (value: unknown): value is RunRecord | null => value === null || isRunRecord(value);
+
+/** The service event that ended the session the event `run` started, asked again as runs change;
+ *  `null` while that session goes, or when no event says. */
+export function useSessionEnd(host: HostClient, job: string, run: string): LiveState<RunRecord | null> {
+  return useLive(host, SESSION_END_METHOD, RUNS_CHANGED_EVENT, isRecordOrNone, "a session's end", { job, run });
+}
 
 /** One run, going or finished; `null` when there is none. */
 export function useRun(host: HostClient, job: string, run: string): LiveState<RunView | null> {
