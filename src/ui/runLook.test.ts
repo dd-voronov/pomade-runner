@@ -62,7 +62,7 @@ const active = (extra: Partial<ActiveRun> = {}): ActiveRun => ({
   ...extra,
 });
 
-const AGENT = { agent: "claude", name: "claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-17T11:31:00.000Z", exit: "/exit", exitSentAt: null, worked: true, waitedMs: 0, background: null };
+const AGENT = { agent: "claude", name: "claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-17T11:31:00.000Z", exit: "/exit", exitSentAt: null, worked: true, waitedMs: 0, background: null, answered: [], workedOn: false };
 
 describe("a run's status: tone, words, help, pill, chip", () => {
   const cases: [string, RunView, Partial<ReturnType<typeof runLook>>][] = [

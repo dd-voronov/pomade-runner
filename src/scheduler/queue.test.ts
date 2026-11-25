@@ -47,7 +47,7 @@ function fates(active: ActiveRun[], s: QueueState = state()): Record<string, unk
   return Object.fromEntries(active.filter((r) => r.state === "queued").map((r) => [r.job, plan.start.includes(r) ? "start" : plan.waits.get(r)]));
 }
 
-const waitingAgent = { agent: "claude", name: "Claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: null, cwd: "/ws", startedAt: "", exit: "/exit", exitSentAt: null, worked: true, waiting: { prompt: "permission" as const, since: 0 }, waitedMs: 0, background: null };
+const waitingAgent = { agent: "claude", name: "Claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: null, cwd: "/ws", startedAt: "", exit: "/exit", exitSentAt: null, worked: true, waiting: { prompt: "permission" as const, since: 0 }, waitedMs: 0, background: null, answered: [], workedOn: false };
 
 describe("the queue", () => {
   it("while Pomade is not up, agent runs wait for it, in their order and holding no slot; scripts and git runs go on", () => {

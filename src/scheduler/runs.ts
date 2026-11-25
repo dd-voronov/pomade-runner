@@ -71,7 +71,7 @@ import { dirname, join } from "node:path";
 import { isGitRunOutput, type GitRunOutput, type NoticeParams } from "pomade-kit/protocol";
 import { nextOccurrence } from "pomade-kit/schedule";
 
-import { agentMode, modeWords, type AgentsApi } from "../integrations/agents";
+import { agentMode, FULL_AUTONOMY_MODE, modeWords, type AgentsApi } from "../integrations/agents";
 import type { PomadeForRuns } from "../integrations/pomade-open";
 import { entryId, type AgentJob, type GitJob, type Job, type JobsSnapshot, type ScriptJob, type ServiceAction, type ServiceJob } from "../jobs/model";
 import { KIND_DEFAULTS } from "../jobs/parse";
@@ -81,7 +81,7 @@ import type { ChainActionOutcome, RunnerSession } from "../keeper/model";
 import { jobIdOf } from "../keeper/services";
 import type { Sessions } from "../keeper/sessions";
 import { liveOutputLogPath, runsRecordPath, type RecordsFolder, type StateFolder } from "../locations";
-import { AGENT_EXIT_WAIT_MS, agentArgv, agentEnd, answeredEnd, KEYCHAIN_LOST, lookupWindow, NOT_STARTED_MS, pickSession, SESSION_LOOKUP_EVERY_MS, type TurnAnswer } from "./agent-runs";
+import { AGENT_EXIT_WAIT_MS, agentArgv, FREE_TEXT_OPTIONS, agentEnd, answeredEnd, KEYCHAIN_LOST, lookupWindow, NOT_STARTED_MS, pickSession, SESSION_LOOKUP_EVERY_MS, type TurnAnswer } from "./agent-runs";
 import { chainCause, followers, parentResult } from "./chains";
 import type { Clock } from "./clock";
 import { decideStart as decideLogin, type ConsoleLogin, type LoginRecord } from "./console-login";
@@ -721,7 +721,7 @@ export function createRuns(options: RunsOptions): Runs {
         command: spec.line,
         argv: agentArgv(options.shell, spec.line),
         cwd,
-        agent: { agent: agent.id, name: agent.name, provider: agent.provider, mode: mode.id, modeName: mode.name, sessionId: spec.sessionId, cwd, startedAt: new Date().toISOString(), exit: spec.exit, exitSentAt: null, worked: false, waiting: null, waitedMs: 0, background: null },
+        agent: { agent: agent.id, name: agent.name, provider: agent.provider, mode: mode.id, modeName: mode.name, sessionId: spec.sessionId, cwd, startedAt: new Date().toISOString(), exit: spec.exit, exitSentAt: null, workedOn: false, worked: false, waiting: null, waitedMs: 0, background: null, answered: [] },
       };
     } catch (err) {
       return `cannot start — ${errorText(err)}`;
@@ -1081,16 +1081,59 @@ export function createRuns(options: RunsOptions): Runs {
    *  that ends with background work going waits for that work; once the turn is done, its exit
    *  command is typed, and the background-work question that may answer it is declined. */
   function follow(run: ActiveRun, agent: AgentRun): void {
-    if (run.session === null || agent.exitSentAt !== null) return;
+    if (run.session === null || (agent.exitSentAt !== null && !agent.workedOn)) return;
     const { job, run: id } = run;
     if (!followedSince.has(run.session)) followedSince.set(run.session, now().getTime());
     options.turns.watch(run.session, agent.provider, {
       onWorking: () => void inLane(async () => working(job, id)),
       onTurnDone: () => void inLane(async () => endTurn(job, id)),
-      onWaiting: (prompt) => void inLane(async () => waitAt(job, id, prompt)),
+      onWaiting: (prompt, highlighted) => void inLane(async () => (prompt === "question" && answer(job, id, highlighted) ? undefined : waitAt(job, id, prompt))),
       onBackground: (going) => void inLane(async () => backgroundWork(job, id, going)),
       onBackgroundQuestion: () => void inLane(async () => declineExit(job, id)),
+      onWorksAgain: (by) => void inLane(async () => (by === "working" ? worksOn(job, id) : notTaken(job, id))),
     });
+  }
+
+  /** In Full autonomy Runner answers the agent's question form itself: Enter picks the option the
+   *  form highlights, kept on the run's agent (`answered`). Whether it did: it does not in another
+   *  mode, with no option highlighted, or at the form's own free-text rows — those wait for you. */
+  function answer(job: string, id: string, highlighted: string | null): boolean {
+    const run = active.find((candidate) => candidate.job === job && candidate.run === id && candidate.state === "running");
+    const agent = run?.agent;
+    if (agent == null || run?.session == null || agent.mode !== FULL_AUTONOMY_MODE || highlighted === null || FREE_TEXT_OPTIONS.has(highlighted)) return false;
+    agent.answered.push(highlighted);
+    save();
+    options.onChange();
+    log(`run ${job} ${id}: the agent asks a question; Runner answered: ${highlighted}`);
+    options.turns.press(run.session, "\r");
+    return true;
+  }
+
+  /** The agent works on after the exit command, past its own moment of work: no stop after the exit
+   *  wait. The command stays typed — an exit of its own, before any idle or prompt, is still the
+   *  command's (a slow exit hook) — and the turn's next end types it again (`workedOn`). */
+  function worksOn(job: string, id: string): void {
+    const run = active.find((candidate) => candidate.job === job && candidate.run === id && candidate.state === "running");
+    if (run?.agent == null || run.session === null || run.agent.exitSentAt === null || run.agent.workedOn) return;
+    run.agent.workedOn = true;
+    exitDeadlines.delete(run.session);
+    save();
+    options.onChange();
+    log(`run ${job} ${id}: the agent works on after ${run.agent.exit}; following its turn`);
+  }
+
+  /** The agent waits at a prompt for the person after the exit command: it did not take it. The
+   *  command's time and exit wait are cleared; it is typed again once the turn is done. */
+  function notTaken(job: string, id: string): void {
+    const run = active.find((candidate) => candidate.job === job && candidate.run === id && candidate.state === "running");
+    if (run?.agent == null || run.session === null || run.agent.exitSentAt === null) return;
+    run.agent.exitSentAt = null;
+    run.agent.workedOn = false;
+    run.agent.background = null;
+    exitDeadlines.delete(run.session);
+    save();
+    options.onChange();
+    log(`run ${job} ${id}: the agent did not take ${run.agent.exit}: it waits at a prompt; following its turn`);
   }
 
   /** An agent run's wait for the person came (`prompt`) or went (`null`): it waits for you — a
@@ -1143,8 +1186,9 @@ export function createRuns(options: RunsOptions): Runs {
    *  it for its background work and went idle (`backgroundWork`). */
   function endTurn(job: string, id: string): void {
     const run = active.find((candidate) => candidate.job === job && candidate.run === id && candidate.state === "running");
-    if (run?.agent == null || run.session === null || run.agent.exitSentAt !== null) return;
+    if (run?.agent == null || run.session === null || (run.agent.exitSentAt !== null && !run.agent.workedOn)) return;
     run.agent.exitSentAt = now().getTime();
+    run.agent.workedOn = false;
     run.agent.background = null;
     exitDeadlines.set(run.session, performance.now() + AGENT_EXIT_WAIT_MS);
     save();
@@ -1164,6 +1208,7 @@ export function createRuns(options: RunsOptions): Runs {
     if (going) {
       if (agent.exitSentAt !== null) {
         agent.exitSentAt = null;
+        agent.workedOn = false;
         exitDeadlines.delete(run.session);
         log(`run ${job} ${id}: the agent stays with its background work; waiting for its turn's end`);
       } else {
@@ -1233,7 +1278,7 @@ export function createRuns(options: RunsOptions): Runs {
       follow(run, run.agent);
       waitIfNotStarted(run, run.agent, run.session, now().getTime());
       await lookUp(run, run.agent);
-      if (run.agent.exitSentAt === null) continue;
+      if (run.agent.exitSentAt === null || run.agent.workedOn) continue;
       const deadline = exitDeadlines.get(run.session);
       if (deadline === undefined) exitDeadlines.set(run.session, performance.now() + AGENT_EXIT_WAIT_MS);
       else if (performance.now() >= deadline) {

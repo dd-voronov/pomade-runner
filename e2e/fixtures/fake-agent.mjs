@@ -1,7 +1,8 @@
 // A scripted stand-in for an agent CLI, run in a terminal as Claude Code or Codex would be: it puts
 // up the provider's idle title, works on the prompt (the provider's working title, a few lines of
-// output), goes idle again with its answer on screen, and ends on the exit command typed into it
-// (`/exit`, then Enter) — or on Ctrl+C. Words in the prompt script it: `[exit-early]` ends it with
+// output), goes idle again with its answer on screen above its empty prompt — Claude's composer, a
+// "❯" row between two rules over its footer; Codex's "›" row with its faint placeholder over its
+// footer — and ends on the exit command typed into it (`/exit`, then Enter) — or on Ctrl+C. Words in the prompt script it: `[exit-early]` ends it with
 // status 0 while it works; `[slow]` makes the turn last 4 s, `[long]` 15 s; `[ask]` puts up a permission prompt
 // midway — the provider's dialog, as the kit's scanner reads it — and waits for the answer: `1` or
 // Enter allows it and the turn goes on, Esc (or the provider's "No") denies it and the turn ends
@@ -10,7 +11,14 @@
 // and the transcript's assistant record is the error one Claude Code writes (`isApiErrorMessage`);
 // `[stuck]` stops at a consent screen no scanner names before it starts (Claude's Bypass
 // Permissions one), with no session made: `2` accepts it and the agent starts as with no word,
-// `1` or Esc ends it with status 1.
+// `1` or Esc ends it with status 1. `[question]` puts up Claude's question form midway (its
+// AskUserQuestion tool: "☐ Format", options, footer "Enter to select · ↑/↓ to navigate · Esc to
+// cancel") under the idle title: Enter picks the highlighted option, `1`/`2` theirs, ↓/↑ move the
+// highlight, Esc declines; the turn goes on and its answer names the pick. `[unknown-dialog]` puts
+// up a dialog no scanner names midway (Claude's plan approval: "Ready to code?", "❯ 1. Yes…",
+// "ctrl-g to edit in Vim") under the idle title: Enter or `1` goes on, `2` or Esc stops the turn
+// there. `[works-again]`: the first exit command does not end it — it works 18 s more and ends that
+// turn again; the next exit command ends it.
 // Background work, as Claude Code shows it: `[background]` ends the turn with a background shell
 // going — the footer under the composer, the last row on screen, counts it ("· 1 shell") — which
 // ends 3 s later (`[background-long]`: 120 s); the footer's count goes and the agent takes a
@@ -77,13 +85,48 @@ const SHELL_FOOTER = "  ⏵⏵ bypass permissions on · 1 shell · ↓ to manage
 /** Its dialog answering an exit command while background work goes. */
 const BACKGROUND_DIALOG = ["▔".repeat(40), "  Background work is running", "  The following will stop when you exit:", "", "  shell · sleep", "", "  ❯ 1. Exit and stop tasks", "    2. Stay", "", "  Enter to confirm · Esc to cancel"];
 
+/** The rules of Claude's composer. */
+const RULE = "─".repeat(40);
+/** Claude's question form: the rule over it, the header, the question, the options, the footer last. */
+const QUESTION_OPTIONS = ["Markdown (Recommended)", "Plain text"];
+const questionForm = (highlighted) => [
+  RULE,
+  " ☐ Format",
+  "",
+  "Which format should the notes use?",
+  "",
+  ...QUESTION_OPTIONS.flatMap((option, i) => [`${i === highlighted ? "❯" : " "} ${i + 1}. ${option}`, i === 0 ? "     Headings and lists" : "     No markup"]),
+  "  3. Type something.",
+  "",
+  "Enter to select · ↑/↓ to navigate · Esc to cancel",
+];
+/** A dialog no scanner names: Claude's plan approval. */
+const UNNAMED_DIALOG = [RULE, " Ready to code?", "", " Here is Claude's plan: tidy the notes.", "", " ❯ 1. Yes, auto-accept edits", "   2. No, keep planning", "", " ctrl-g to edit in Vim"];
+
 let input = "";
 /** The background work going: whether the footer counts it; `null` for none. */
 let background = null;
 /** While the background-work dialog is up: what a key does to it. */
 let exitQuestion = null;
-/** The composer, with the footer under it while it counts a background shell; the cursor after "> ". */
-const composer = () => process.stdout.write(background?.counted === true ? `> \r\n${SHELL_FOOTER}\x1b[1A\r\x1b[2C` : "> ");
+/** Whether the composer is on screen, the cursor in it. */
+let composed = false;
+/** The empty prompt, the footer under it — counting a background shell while one goes — the last
+ *  row; the cursor after the prompt mark. */
+const composer = () => {
+  composed = true;
+  if (provider === "claude") {
+    const footer = background?.counted === true ? SHELL_FOOTER : "  ⏵⏵ bypass permissions on (shift+tab to cycle)";
+    process.stdout.write(`${RULE}\r\n❯ \r\n${RULE}\r\n${footer}\x1b[2A\r\x1b[2C`);
+  } else {
+    process.stdout.write(`› \x1b[2mAsk Codex to do anything\x1b[22m\r\n\r\n  fake-model · ~/notes\x1b[2A\r\x1b[2C`);
+  }
+};
+/** The composer goes — output takes its place, from its first row down. */
+const leaveComposer = () => {
+  if (!composed) return;
+  composed = false;
+  process.stdout.write(provider === "claude" ? "\x1b[1A\r\x1b[J" : "\r\x1b[J");
+};
 /** An exit command while background work goes: a moment of work, then the dialog under the idle title. */
 const askOnExit = () => {
   title(`${WORKING[0]} Working`);
@@ -107,6 +150,12 @@ const askOnExit = () => {
 let begun = false;
 /** While a permission prompt is up: what answering it does. */
 let answer = null;
+/** While the question form or the unnamed dialog is up: what a key does to it. */
+let form = null;
+/** Exit commands `[works-again]` has not taken yet. */
+let notTaken = prompt.includes("[works-again]") ? 1 : 0;
+/** `[works-again]`'s further work after an exit command it did not take: set by `begin`. */
+let again = () => {};
 const listen = () => {
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   process.stdin.setEncoding("utf8");
@@ -114,6 +163,12 @@ const listen = () => {
     if (exitQuestion !== null) {
       if (data === "\x03") process.exit(130);
       exitQuestion(data[0] ?? "");
+      return;
+    }
+    if (form !== null) {
+      if (data === "\x03") process.exit(130);
+      // Key by key: an arrow and Enter can arrive in one read.
+      for (const key of data.match(/\x1b\[[AB]|[\s\S]/g) ?? []) if (form !== null) form(key);
       return;
     }
     if (answer !== null && prompt.includes("[stuck]") && !begun) {
@@ -143,10 +198,16 @@ const listen = () => {
       if (ch === "\r" || ch === "\n") {
         const line = input.trim();
         input = "";
-        process.stdout.write("\r\n");
+        leaveComposer();
         if (line === "/exit") {
           if (background !== null) {
             askOnExit();
+            continue;
+          }
+          if (notTaken > 0) {
+            notTaken--;
+            process.stdout.write("● Not yet: one more pass over the notes.\r\n");
+            again();
             continue;
           }
           process.stdout.write("Bye.\r\n");
@@ -164,7 +225,8 @@ const listen = () => {
 if (resume !== null) {
   const record = JSON.parse(readFileSync(recordFile, "utf8"));
   title(IDLE);
-  process.stdout.write(`resumed session ${id}\r\n● ${record.lastMessage}\r\n> `);
+  process.stdout.write(`resumed session ${id}\r\n● ${record.lastMessage}\r\n`);
+  composer();
   listen();
 } else if (prompt.includes("[stuck]")) {
   title(IDLE);
@@ -218,9 +280,9 @@ function begin() {
       // The footer's count goes; the agent goes on — unless its dialog is up, until it closes.
       const goOn = () => {
         if (exitQuestion !== null) return setTimeout(goOn, 100);
-        if (background.counted) process.stdout.write("\x1b7\x1b[1B\r\x1b[2K\x1b8");
         background = null;
-        process.stdout.write("\r\x1b[2K● The background work ended.\r\n");
+        leaveComposer();
+        process.stdout.write("● The background work ended.\r\n");
         work();
         setTimeout(() => finish(`**Done.** After the background work: ${prompt.split("\n")[0]}`), 1200);
       };
@@ -234,6 +296,49 @@ function begin() {
       if (prompt.includes("[background-hidden]")) return leave(false, prompt.includes("[esc-ignored]") ? 60_000 : 4000);
       finish(`**Done.** ${prompt.split("\n")[0]}`);
     }, prompt.includes("[long]") ? 15000 : prompt.includes("[slow]") ? 4000 : 1200);
+  again = () => {
+    work();
+    setTimeout(() => finish(`**Done.** After the exit command: ${prompt.split("\n")[0]}`), 18_000);
+  };
+  /** Claude's question form, under the idle title: a pick goes on with the turn. */
+  const ask = () => {
+    clearInterval(spin);
+    let highlighted = 0;
+    const rows = questionForm(0).length;
+    process.stdout.write(`● Asking which format to use\r\n${questionForm(highlighted).join("\r\n")}`);
+    title(IDLE);
+    const redraw = () => process.stdout.write(`\x1b[${rows - 1}A\r\x1b[J${questionForm(highlighted).join("\r\n")}`);
+    form = (data) => {
+      if (data === "\x1b[B" || data === "\x1b[A") {
+        highlighted = (highlighted + 1) % QUESTION_OPTIONS.length;
+        return redraw();
+      }
+      const pick = data === "\r" ? highlighted : data === "1" ? 0 : data === "2" ? 1 : data === "\x1b" ? null : undefined;
+      if (pick === undefined) return;
+      form = null;
+      process.stdout.write(`\x1b[${rows - 1}A\r\x1b[J`);
+      if (pick === null) return finish("You declined to pick a format.");
+      process.stdout.write(`● Answered: ${QUESTION_OPTIONS[pick]}\r\n`);
+      work();
+      setTimeout(() => finish(`**Done.** Picked ${QUESTION_OPTIONS[pick]}: ${prompt.split("\n")[0]}`), 1200);
+    };
+  };
+  /** A dialog no scanner names, under the idle title: Enter or 1 goes on, 2 or Esc stops there. */
+  const planApproval = () => {
+    clearInterval(spin);
+    process.stdout.write(`● Planned the tidy-up\r\n${UNNAMED_DIALOG.join("\r\n")}`);
+    title(IDLE);
+    form = (data) => {
+      const key = data[0] ?? "";
+      if (!["\r", "1", "2", "\x1b"].includes(key)) return;
+      form = null;
+      process.stdout.write(`\x1b[${UNNAMED_DIALOG.length - 1}A\r\x1b[J`);
+      if (key === "2" || key === "\x1b") return finish("Kept planning, as you said.");
+      process.stdout.write("● Going ahead with the plan\r\n");
+      work();
+      setTimeout(() => finish(`**Done.** After the plan: ${prompt.split("\n")[0]}`), 1200);
+    };
+  };
   setTimeout(() => {
     work();
     process.stdout.write(`● Working on: ${prompt}\r\n`);
@@ -248,9 +353,18 @@ function begin() {
         if (provider === "claude") {
           appendFileSync(transcript, `${JSON.stringify({ type: "assistant", sessionId: id, cwd, timestamp: new Date().toISOString(), isApiErrorMessage: true, message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text: error }] } })}\n`);
         }
-        process.stdout.write(`  ⎿  ${error}\r\n> `);
+        process.stdout.write(`  ⎿  ${error}\r\n`);
+        composer();
         title(IDLE);
       }, 1200);
+      return;
+    }
+    if (prompt.includes("[question]")) {
+      setTimeout(ask, 400);
+      return;
+    }
+    if (prompt.includes("[unknown-dialog]")) {
+      setTimeout(planApproval, 400);
       return;
     }
     const late = prompt.includes("[ask-late]");

@@ -24,7 +24,7 @@ const active: ActiveRun = {
 const queued: ActiveRun = { ...active, state: "queued", startedAt: null, session: null, log: null };
 const record: RunRecord = { ...base, state: "failed", action: null, reason: null, startedAt: 1, endedAt: 2, durationMs: 1, exitCode: 1, signal: null, log: "/o.log", lastLines: [], git: null, limitHit: null };
 
-const AGENT = { agent: "claude", name: "Claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: null, cwd: "/ws", startedAt: "2026-11-17T12:00:00.000Z", exit: "/exit", exitSentAt: null, worked: true, waiting: null, waitedMs: 0, background: null };
+const AGENT = { agent: "claude", name: "Claude", provider: "claude" as const, mode: "normal", modeName: "Normal", sessionId: null, cwd: "/ws", startedAt: "2026-11-17T12:00:00.000Z", exit: "/exit", exitSentAt: null, worked: true, waiting: null, waitedMs: 0, background: null, answered: [], workedOn: false };
 
 describe("runs in words", () => {
   it("says each state", () => {

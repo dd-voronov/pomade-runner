@@ -88,6 +88,10 @@ export interface AgentRun {
   exit: string;
   /** When Runner typed `exit` once the turn was done (epoch ms, the scheduler's clock); `null` before. */
   exitSentAt: number | null;
+  /** The agent works on past the exit command's own moment of work (`WORKS_AGAIN_MS`) with no idle
+   *  and no prompt for the person seen since: the exit wait does not stop it, and an exit of its own
+   *  still ends the run as the command's. Its turn's next end types the command again. */
+  workedOn: boolean;
   /** Whether the agent has started working: the scanner has seen it work once. */
   worked: boolean;
   /** What the agent waits at for the person now; `null` while it does not wait. */
@@ -98,6 +102,9 @@ export interface AgentRun {
    *  the background still goes, and the run waits for that work; `asked` — it answered Runner's exit
    *  command with its background-work question; `null` — none read. Never a wait for the person. */
   background: AgentBackground | null;
+  /** The options Runner picked at the agent's question forms, in order: in Full autonomy it answers
+   *  a question form itself with the option the agent highlights. */
+  answered: string[];
 }
 
 export const AGENT_BACKGROUND = ["idle", "asked"] as const;
@@ -111,15 +118,16 @@ export function waitsForBackground(run: { state: string; agent: AgentRun | null 
 /** A run's state while its agent's background work goes. */
 export const BACKGROUND_WORDS = "running · waiting for the agent's background work";
 
-/** What an agent waits at — approval of a tool call or trust for the folder it started in (the
- *  kit's `AgentPrompt`), or a screen it has not started working past (`not-started`) — and since
- *  when (epoch ms, the scheduler's clock). */
+/** What an agent waits at — approval of a tool call, trust for the folder it started in, its
+ *  question form, or a screen Runner does not know after it worked (`unknown`; the kit's
+ *  `AgentPrompt`), or a screen it has not started working past (`not-started`) — and since when
+ *  (epoch ms, the scheduler's clock). */
 export interface AgentWait {
   prompt: AgentWaitKind;
   since: number;
 }
 
-export const AGENT_WAIT_KINDS = ["permission", "trust", "not-started"] as const;
+export const AGENT_WAIT_KINDS = ["permission", "trust", "question", "unknown", "not-started"] as const;
 export type AgentWaitKind = (typeof AGENT_WAIT_KINDS)[number];
 
 const isAgentWaitKind = (value: unknown): value is AgentWaitKind => AGENT_WAIT_KINDS.includes(value as AgentWaitKind);
@@ -509,9 +517,11 @@ function isAgentWait(value: unknown): value is AgentWait {
 
 function isAgentRun(value: unknown): value is AgentRun {
   if (!isRecord(value)) return false;
-  const { agent, name, provider, mode, modeName, sessionId, cwd, startedAt, exit, exitSentAt, worked, waiting, waitedMs, background } = value;
+  const { agent, name, provider, mode, modeName, sessionId, cwd, startedAt, exit, exitSentAt, workedOn, worked, waiting, waitedMs, background, answered } = value;
   return (
     typeof worked === "boolean" &&
+    Array.isArray(answered) &&
+    answered.every((option) => typeof option === "string") &&
     (background === null || AGENT_BACKGROUND.includes(background as AgentBackground)) &&
     (waiting === null || isAgentWait(waiting)) &&
     finite(waitedMs) &&
@@ -524,7 +534,8 @@ function isAgentRun(value: unknown): value is AgentRun {
     typeof cwd === "string" &&
     typeof startedAt === "string" &&
     typeof exit === "string" &&
-    nullableNumber(exitSentAt)
+    nullableNumber(exitSentAt) &&
+    typeof workedOn === "boolean"
   );
 }
 
@@ -623,9 +634,9 @@ export function isRunRecord(value: unknown): value is RunRecord {
 }
 
 /** A run's agent as a file keeps it; a field a record of an older build lacks gets its default — its
- *  agent counts as one that started working, with no background work read. */
+ *  agent counts as one that started working, with no background work read and no question answered. */
 export function withAgentDefaults(agent: unknown): unknown {
-  return isRecord(agent) ? { worked: true, waiting: null, waitedMs: 0, background: null, ...agent } : (agent ?? null);
+  return isRecord(agent) ? { worked: true, waiting: null, waitedMs: 0, background: null, answered: [], workedOn: false, ...agent } : (agent ?? null);
 }
 
 /** A history record as a file keeps it; a field a record of an older build lacks gets its default. */

@@ -180,7 +180,8 @@ export function memorySwitch(): SwitchStore & { saved: SwitchState } {
  *  off, then `works(session)` is it starting; `done(session)` is the agent's turn completing,
  *  `waits(session, prompt)` a prompt coming up for the person and `waits(session, null)` it
  *  answered, `background(session, going)` the agent idle with background work going or working
- *  again, `asks(session)` its background-work question answering the exit command; what Runner
+ *  again, `asks(session)` its background-work question answering the exit command, `worksAgain(session)`
+ *  the agent working on after it; what Runner
  *  typed is in `typed`, the keys it pressed in `pressed`. */
 export class FakeTurns implements AgentTurns {
   readonly followed = new Map<string, TurnHandlers>();
@@ -220,9 +221,10 @@ export class FakeTurns implements AgentTurns {
     this.followed.get(session)?.onTurnDone();
   }
 
-  /** The agent of `session` waits at `prompt` for the person; `null`: the prompt was answered. */
-  waits(session: string, prompt: PersonPrompt | null): void {
-    this.followed.get(session)?.onWaiting(prompt);
+  /** The agent of `session` waits at `prompt` for the person — a question form with the option it
+   *  highlights (`highlighted`) — `null`: the prompt was answered. */
+  waits(session: string, prompt: PersonPrompt | null, highlighted: string | null = null): void {
+    this.followed.get(session)?.onWaiting(prompt, highlighted);
   }
 
   /** The agent of `session` is idle with background work going (`true`), or works again (`false`). */
@@ -233,6 +235,11 @@ export class FakeTurns implements AgentTurns {
   /** The agent of `session` answers the exit command with its background-work question. */
   asks(session: string): void {
     this.followed.get(session)?.onBackgroundQuestion();
+  }
+
+  /** After the exit command the agent of `session` works on (`working`) or waits at a prompt (`prompt`). */
+  worksAgain(session: string, by: "working" | "prompt" = "working"): void {
+    this.followed.get(session)?.onWorksAgain(by);
   }
 }
 

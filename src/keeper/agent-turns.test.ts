@@ -3,22 +3,26 @@
 // wait for the person, told when it comes and when it goes; a fresh snapshot's screen without a
 // prompt ends a wait. A turn that ends with background work going is told, and done once that work
 // ended; after the exit command, the agent's moment of work is the command's, and its
-// background-work question is told — idle after it, the turn's end is waited for afresh.
+// background-work question is told — idle after it, the turn's end is waited for afresh. Idle is
+// the agent's empty prompt: a question form is a wait told with its highlighted option, a screen no
+// rule names is a wait once the agent has worked. An agent that works on after the exit command, or
+// waits at a prompt, did not take it: its turn is followed afresh.
 
 import { AgentStateScanner, type AgentState } from "pomade-kit/scanners";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { turnTracker, type TurnHandlers } from "./agent-turns";
+import { turnTracker, WORKS_AGAIN_MS, type TurnHandlers } from "./agent-turns";
 
 const title = (text: string): string => `\x1b]0;${text}\x07`;
 
 /** Claude Code's permission dialog as it draws it: the question, the options, the footer last. */
 const DIALOG = ["", " Bash command", "   git mv drafts/*.md published/", "", " Do you want to proceed?", " ❯ 1. Yes", "   2. Yes, and don't ask again for git mv", "   3. No, tell Claude what to do differently", "", " Esc to cancel"].join("\r\n");
 
-function recorder(): { handlers: TurnHandlers; done: () => number; worked: () => number; waits: (string | null)[]; told: string[] } {
+function recorder(): { handlers: TurnHandlers; done: () => number; worked: () => number; waits: (string | null)[]; highlighted: (string | null)[]; told: string[] } {
   let done = 0;
   let worked = 0;
   const waits: (string | null)[] = [];
+  const highlighted: (string | null)[] = [];
   /** Everything told, in order. */
   const told: string[] = [];
   return {
@@ -31,16 +35,19 @@ function recorder(): { handlers: TurnHandlers; done: () => number; worked: () =>
         done++;
         told.push("done");
       },
-      onWaiting: (prompt) => {
+      onWaiting: (prompt, option) => {
         waits.push(prompt);
+        highlighted.push(option);
         told.push(`wait:${prompt ?? "none"}`);
       },
       onBackground: (going) => told.push(going ? "background" : "back to work"),
       onBackgroundQuestion: () => told.push("question"),
+      onWorksAgain: (by) => told.push(by === "working" ? "works again" : "not taken"),
     },
     done: () => done,
     worked: () => worked,
     waits,
+    highlighted,
     told,
   };
 }
@@ -60,13 +67,30 @@ const turnEnd = (footer: string): string => `\x1b[2J${row(1, "⏺ Timer's runnin
 /** Its "Background work is running" dialog, as it answers /exit while that work goes. */
 const BACKGROUND_DIALOG = `\x1b[2J${row(2, "▔".repeat(80))}${row(3, " Background work is running")}${row(4, " The following will stop when you exit:")}${row(6, " shell · Wait 3 minutes")}${row(8, " ❯ 1. Exit and stop tasks")}${row(9, "   2. Stay")}${row(11, " Enter to confirm · Esc to cancel")}`;
 
+/** Claude Code's question form (its AskUserQuestion tool), as claude 2.1.332 draws it: the header,
+ *  the question, the options, the footer last. */
+const QUESTION_FORM = [
+  "─".repeat(80),
+  " ☐ Permission",
+  "",
+  'May I append the line "asked" to notes.md?',
+  "",
+  "❯ 1. Yes, append (Recommended)",
+  "  2. No, cancel",
+  "  3. Type something.",
+  "",
+  "Enter to select · ↑/↓ to navigate · Esc to cancel",
+].join("\r\n");
+/** A dialog no rule names (Claude's plan approval), its own footer last. */
+const UNNAMED = `\x1b[2J${row(3, " Ready to code?")}${row(5, " ❯ 1. Yes, auto-accept edits")}${row(6, "   2. No, keep planning")}${row(8, " ctrl-g to edit in Vim")}`;
+
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("an agent's turn", () => {
   it("is done once, when the agent goes from working to idle", async () => {
     const seen = recorder();
     const scanner = new AgentStateScanner({ agent: "claude", cols: 80, rows: 24, idleAfterMs: 10 }, turnTracker(seen.handlers).onState);
-    scanner.push(title("✳ Claude Code"));
+    scanner.push(COMPOSER + title("✳ Claude Code"));
     await pause(30);
     await scanner.settled();
     expect(seen.done()).toBe(0);
@@ -98,7 +122,7 @@ describe("an agent's turn", () => {
     scanner.push(`\r\n\r\n● Allowed\r\n${title("◑ Working")}`);
     await scanner.settled();
     expect(seen.waits).toEqual(["permission", null]);
-    scanner.push(`● Done.\r\n> ${title("✳ Claude Code")}`);
+    scanner.push(`\x1b[2J● Done.${COMPOSER}${title("✳ Claude Code")}`);
     await pause(30);
     await scanner.settled();
     expect(seen.done()).toBe(1);
@@ -266,5 +290,113 @@ describe("an agent's turn", () => {
     expect(seen.told).toEqual(["working", "background", "back to work", "done", "question", "background"]);
     expect(seen.waits).toEqual([]);
     scanner.dispose();
+  });
+
+  it("waits at claude's question form under the idle title, told with its highlighted option, and is not done; answered, it works and then is done", async () => {
+    const seen = recorder();
+    const scanner = new AgentStateScanner({ agent: "claude", cols: 80, rows: 24, idleAfterMs: 10 }, turnTracker(seen.handlers).onState);
+    scanner.push(`${title("◐ Working")}● Asking`);
+    await scanner.settled();
+    scanner.push(`${title("✳ Claude Code")}\x1b[2J${QUESTION_FORM}`);
+    await pause(30);
+    await scanner.settled();
+    expect(seen.told).toEqual(["working", "wait:question"]);
+    expect(seen.highlighted).toEqual(["Yes, append (Recommended)"]);
+    scanner.push(`\x1b[2J● Appended${title("◑ Working")}`);
+    await scanner.settled();
+    scanner.push(`${COMPOSER}${title("✳ Claude Code")}`);
+    await pause(30);
+    await scanner.settled();
+    expect(seen.told).toEqual(["working", "wait:question", "wait:none", "done"]);
+    scanner.dispose();
+  });
+
+  it("tells every question of a question form, each with its highlighted option", () => {
+    const seen = recorder();
+    const track = turnTracker(seen.handlers);
+    track.onState(WORKING);
+    track.onState({ kind: "waiting", prompt: "question", lines: ["☐ Format"], highlighted: "Markdown" });
+    track.onState({ kind: "waiting", prompt: "question", lines: ["☐ File"], highlighted: "notes.md" });
+    expect(seen.waits).toEqual(["question", "question"]);
+    expect(seen.highlighted).toEqual(["Markdown", "notes.md"]);
+    track.onState(WORKING);
+    expect(seen.waits).toEqual(["question", "question", null]);
+  });
+
+  it("waits at a screen the scanner does not name once the agent worked — never done there; before it worked, no wait", async () => {
+    const seen = recorder();
+    const scanner = new AgentStateScanner({ agent: "claude", cols: 80, rows: 24, idleAfterMs: 10 }, turnTracker(seen.handlers).onState);
+    scanner.push(`${UNNAMED}${title("✳ Claude Code")}`);
+    await pause(30);
+    await scanner.settled();
+    expect(seen.told).toEqual([]);
+    scanner.push(title("◐ Working"));
+    await scanner.settled();
+    scanner.push(`${UNNAMED}${title("✳ Claude Code")}`);
+    await pause(30);
+    await scanner.settled();
+    expect(seen.told).toEqual(["working", "wait:unknown"]);
+    expect(seen.done()).toBe(0);
+    // Answered: the agent works, then ends its turn at its empty prompt.
+    scanner.push(`\x1b[2J${title("◑ Working")}`);
+    await scanner.settled();
+    scanner.push(`${COMPOSER}${title("✳ Claude Code")}`);
+    await pause(30);
+    await scanner.settled();
+    expect(seen.told).toEqual(["working", "wait:unknown", "wait:none", "done"]);
+    scanner.dispose();
+  });
+
+  describe("after the exit command", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("an agent that works on WORKS_AGAIN_MS did not take it: told, and its next turn's end is done again", () => {
+      vi.useFakeTimers();
+      const seen = recorder();
+      const track = turnTracker(seen.handlers);
+      track.onState(WORKING);
+      track.onState(IDLE);
+      track.onState(WORKING);
+      vi.advanceTimersByTime(WORKS_AGAIN_MS - 1);
+      expect(seen.told).toEqual(["working", "done"]);
+      vi.advanceTimersByTime(1);
+      expect(seen.told).toEqual(["working", "done", "works again"]);
+      track.onState(IDLE);
+      expect(seen.told).toEqual(["working", "done", "works again", "done"]);
+    });
+
+    it("the command's own moment of work is not working again: the agent's exit (its title cleared) ends it", () => {
+      vi.useFakeTimers();
+      const seen = recorder();
+      const track = turnTracker(seen.handlers);
+      track.onState(WORKING);
+      track.onState(IDLE);
+      track.onState(WORKING);
+      vi.advanceTimersByTime(300);
+      track.onState({ kind: "unknown" });
+      vi.advanceTimersByTime(WORKS_AGAIN_MS * 2);
+      expect(seen.told).toEqual(["working", "done"]);
+    });
+
+    it("a prompt for the person after it: the agent did not take it, and waits", () => {
+      const seen = recorder();
+      const track = turnTracker(seen.handlers);
+      track.onState(WORKING);
+      track.onState(IDLE);
+      track.onState(WORKING);
+      track.onState({ kind: "waiting", prompt: "question", lines: [], highlighted: "Yes" });
+      expect(seen.told).toEqual(["working", "done", "not taken", "wait:question"]);
+    });
+
+    it("a screen the scanner does not name after it is the command's: no wait, the exit wait ends it", () => {
+      const seen = recorder();
+      const track = turnTracker(seen.handlers);
+      track.onState(WORKING);
+      track.onState(IDLE);
+      track.onState({ kind: "waiting", prompt: "unknown", lines: ["Bye."] });
+      expect(seen.told).toEqual(["working", "done"]);
+    });
   });
 });

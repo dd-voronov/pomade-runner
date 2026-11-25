@@ -20,7 +20,11 @@
 // fails it too fails the run. An agent whose turn ends with background work going keeps its run
 // running — History, Running now and its card say it waits for that work — until its further turn
 // ends without it, or its time limit; its exit command answered by the background-work question is
-// declined with Escape, and an agent stopped at that question fails. `RUNNER_SHOTS=<dir>` saves
+// declined with Escape, and an agent stopped at that question fails. Runner types the exit command
+// only at the agent's empty prompt: a question form or a dialog no rule names after the agent
+// worked waits for you, each in its own words; in Full autonomy Runner answers the question form
+// with the highlighted option and the card says so; an agent that works again after the exit
+// command is followed to its real last turn. `RUNNER_SHOTS=<dir>` saves
 // screenshots of the form, the rows and the cards.
 
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
@@ -545,6 +549,105 @@ test.describe("agent runs in Pomade", () => {
       expect(record).toMatchObject({ state: "failed", reason: "the agent still had background work when Runner ended it", agent: { background: "asked" } });
       expect(said("hello-stuck", record.run)).toContain(`run hello-stuck ${record.run}: the agent did not end after /exit, its background-work question still up; stopping its session`);
       await expect.poll(() => needsYou()).toContain("run-failed:hello-stuck");
+    });
+  });
+
+  test.describe("T-045 · Runner types the exit command only at the agent's empty prompt", () => {
+    /** The scheduler's lines about `run` of `job`, without their time. */
+    const said = (job: string, run: string): string[] =>
+      (scheduler?.output() ?? "")
+        .split("\n")
+        .map((line) => line.replace(/^\S+ /, ""))
+        .filter((line) => line.startsWith(`run ${job} ${run}: `));
+    const exits = (job: string, run: string): number => said(job, run).filter((line) => line.endsWith("typing /exit")).length;
+    /** The Needs-you items of runs waiting for you; earlier tests' failures aside. */
+    const waits = async (): Promise<string[]> => (await needsYou()).filter((id) => id.startsWith("waiting:"));
+
+    /** Answer the wait of `job` in its terminal tab, opened from its Needs-you card: `keys` there. */
+    async function answerInTab(job: string, words: string, shot: string, keys: string[]): Promise<void> {
+      await page.getByTestId(`strip-${STRIP_KEY}`).click();
+      await expect(page.getByTestId(`panel-frame-${STRIP_KEY}`)).toBeVisible();
+      await drawn(page);
+      const card = panel().locator('[data-testid="needs-you-item"][data-kind="waiting"]');
+      await expect(card.getByTestId("needs-you-words")).toHaveText(words);
+      await page.mouse.move(1000, 600);
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await shoot(page, `${shot}-panel`);
+      await card.getByRole("button", { name: "Open at the prompt" }).click();
+      await expect.poll(() => attachedTabIds()).toHaveLength(1);
+      const [tabId = ""] = await attachedTabIds();
+      await expect(page.getByTestId(`attached-xterm-${tabId}`)).toBeVisible();
+      await shoot(page, `${shot}-tab`);
+      await page.getByTestId(`attached-xterm-${tabId}`).click();
+      for (const key of keys) await page.keyboard.press(key);
+      await expect.poll(() => waits()).toEqual([]);
+      await expect.poll(async () => (await history(job)).length, { timeout: 30_000 }).toBe(1);
+      await closeTab(tabId);
+    }
+
+    test("1 · a question form after the agent worked: no exit command — the run waits for you, worded as a question — and answered, the agent works and the run is done", async () => {
+      expect(await waits()).toEqual([]);
+      await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/ask-format.md"), agentJob("Ask format", "claude", "Pick the notes' format. [question]", "time-limit: 30m\n"));
+      expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "ask-format"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+      await expect.poll(async () => (await going("ask-format"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("question");
+      const waiting = await going("ask-format");
+      // Past the half second idle took to type the exit command into the form, nothing is typed.
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      expect(await going("ask-format")).toMatchObject({ state: "running", agent: { exitSentAt: null, waiting: { prompt: "question" } } });
+      expect(exits("ask-format", waiting?.run ?? "")).toBe(0);
+      expect(await waits()).toEqual([`waiting:ask-format:${waiting?.run ?? ""}`]);
+      await expect.poll(() => runnerNotices()).toContain("Ask format asks you a question");
+      await openRunnerTab(runRoute("ask-format", waiting?.run ?? ""));
+      await expect(tab().getByTestId("run-result")).toHaveText("Waiting for you");
+      await expect(tab().getByTestId("run-waits")).toHaveText("The agent asks you a question and waits for you to pick an option.");
+      await shoot(page, "T-045-question-card");
+      // The person moves the highlight to Plain text and picks it.
+      await answerInTab("ask-format", "Waiting for your answer to its question.", "T-045-question", ["ArrowDown", "Enter"]);
+      const [record] = await history("ask-format");
+      expect(record).toMatchObject({ run: waiting?.run, state: "done", reason: null, exitCode: 0, agent: { waiting: null, answered: [], workedOn: false } });
+      expect((await agents.session(record?.agent?.sessionId ?? "")).lastMessage).toBe("**Done.** Picked Plain text: Pick the notes' format. [question]");
+      expect(exits("ask-format", record?.run ?? "")).toBe(1);
+    });
+
+    test("2 · a dialog no rule names after the agent worked: the same wait, worded as a screen Runner does not know", async () => {
+      await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/plan.md"), agentJob("Plan tidy", "claude", "Plan the tidy-up. [unknown-dialog]", "time-limit: 30m\n"));
+      expect((await run(join(folders.home, "bin", "pomade-runner"), ["run", "plan"], { env: cleanEnv({ HOME: user }), cwd: tmp })).stderr).toBe("");
+      await expect.poll(async () => (await going("plan"))?.agent?.waiting?.prompt, { timeout: 15_000 }).toBe("unknown");
+      const waiting = await going("plan");
+      expect(exits("plan", waiting?.run ?? "")).toBe(0);
+      await expect.poll(() => runnerNotices()).toContain("Plan tidy waits at a screen Runner does not know");
+      await openRunnerTab(runRoute("plan", waiting?.run ?? ""));
+      await expect(tab().getByTestId("run-waits")).toHaveText("The agent stopped at a screen Runner does not know and waits for you. Look at its terminal.");
+      await shoot(page, "T-045-unknown-card");
+      await answerInTab("plan", "Waiting at a screen Runner does not know.", "T-045-unknown", ["Enter"]);
+      const [record] = await history("plan");
+      expect(record).toMatchObject({ state: "done", exitCode: 0 });
+      expect((await agents.session(record?.agent?.sessionId ?? "")).lastMessage).toBe("**Done.** After the plan: Plan the tidy-up. [unknown-dialog]");
+    });
+
+    test("5 · in Full autonomy Runner answers the question form with the highlighted option — no wait — and the card says what it answered", async () => {
+      await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/ask-auto.md"), agentJob("Ask auto", "claude", "Pick the notes' format. [question]", "mode: full-autonomy\n"));
+      const record = await runToEnd("ask-auto");
+      expect(record).toMatchObject({ state: "done", exitCode: 0, agent: { mode: "full-autonomy", waitedMs: 0, answered: ["Markdown (Recommended)"] } });
+      expect((await agents.session(record.agent?.sessionId ?? "")).lastMessage).toBe("**Done.** Picked Markdown (Recommended): Pick the notes' format. [question]");
+      expect(said("ask-auto", record.run)).toContain(`run ask-auto ${record.run}: the agent asks a question; Runner answered: Markdown (Recommended)`);
+      expect(await runnerNotices()).not.toContain("Ask auto asks you a question");
+      await openRunnerTab(runRoute("ask-auto", record.run));
+      const dialog = tab().getByTestId("run-dialog");
+      await expect(dialog.getByTestId("run-answered")).toHaveText("Runner answered: Markdown (Recommended)");
+      await shoot(page, "T-045-answered-card");
+    });
+
+    test("3 · an agent that works again after the exit command is not stopped after the exit wait: done after its real last turn", async () => {
+      test.setTimeout(90_000);
+      await writeFile(join(folders.workspace, "Apps/pomade-runner/jobs/once-more.md"), agentJob("Once more", "claude", "Tidy the notes. [works-again]"));
+      const record = await runToEnd("once-more");
+      expect(record).toMatchObject({ state: "done", reason: null, exitCode: 0, signal: null });
+      expect((await agents.session(record.agent?.sessionId ?? "")).lastMessage).toBe("**Done.** After the exit command: Tidy the notes. [works-again]");
+      expect(exits("once-more", record.run)).toBe(2);
+      expect(said("once-more", record.run)).toContain(`run once-more ${record.run}: the agent works on after /exit; following its turn`);
+      expect(said("once-more", record.run).some((line) => line.includes("stopping its session"))).toBe(false);
+      expect(record.durationMs).toBeGreaterThan(18_000);
     });
   });
 

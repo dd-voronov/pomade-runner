@@ -18,6 +18,7 @@ import {
   waitingAt,
   waitsForBackground,
   type ActiveRun,
+  type AgentRun,
   type AgentWait,
   type JobRuns,
   type NeedsYouItem,
@@ -402,6 +403,18 @@ function EndedBody({ record }: { record: RunRecord }): React.JSX.Element {
   );
 }
 
+/** What Runner answered for the agent at its question forms (Full autonomy), one line each. */
+function Answered({ agent }: { agent: AgentRun | null }): React.JSX.Element | null {
+  if (agent === null || agent.answered.length === 0) return null;
+  return (
+    <div data-testid="run-answered">
+      {agent.answered.map((option, index) => (
+        <p key={index}>Runner answered: {option}</p>
+      ))}
+    </div>
+  );
+}
+
 /** An agent run that ended: why it failed, when it did — its time limit, its reason, its exit — and
  *  the agent's last message in the session, from the Agents app (`message`). A turn that ended
  *  without an answer has none to read: its last lines show instead, the agent's screen with what
@@ -431,6 +444,7 @@ function AgentBody({ record, unanswered, message }: { record: RunRecord; unanswe
           </dd>
         </dl>
       )}
+      <Answered agent={record.agent} />
       <div>
         <h5 className={styles.label}>
           Last message <Help k="c.lastmsg" />
@@ -472,6 +486,7 @@ function RunningBody({ host, view }: { host: HostClient; view: ActiveRun }): Rea
     return (
       <>
         {background}
+        <Answered agent={view.agent} />
         <p className={styles.note}>{output.status === "loading" ? "Reading its output…" : output.status === "failed" ? output.message : "Runner's scheduler is not running."}</p>
       </>
     );
@@ -480,6 +495,7 @@ function RunningBody({ host, view }: { host: HostClient; view: ActiveRun }): Rea
   return (
     <>
       {background}
+      <Answered agent={view.agent} />
       <Lines lines={lines.slice(-LAST_LINES)} title="Latest output" testId="run-last-lines" />
     </>
   );
@@ -489,6 +505,8 @@ function RunningBody({ host, view }: { host: HostClient; view: ActiveRun }): Rea
 const WAITING_SENTENCE: Record<AgentWait["prompt"], string> = {
   permission: "The agent stopped at a permission prompt and waits for your answer.",
   trust: "The agent stopped to ask whether it may trust its folder, and waits for your answer.",
+  question: "The agent asks you a question and waits for you to pick an option.",
+  unknown: "The agent stopped at a screen Runner does not know and waits for you. Look at its terminal.",
   "not-started": "The agent has not started working: it stopped at a screen Runner does not know — a consent, a login, a first-run step. Look at its terminal.",
 };
 

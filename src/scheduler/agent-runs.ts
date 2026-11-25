@@ -8,6 +8,10 @@ import type { FoundSession } from "../integrations/agents";
 import type { AgentRun } from "./model";
 import type { SessionEnd } from "./git-runs";
 
+/** The rows of Claude's question form that take the person's own words, not an option the agent
+ *  wrote: Runner never answers with them. */
+export const FREE_TEXT_OPTIONS: ReadonlySet<string> = new Set(["Type something.", "Chat about this"]);
+
 /** How long the agent has to end once Runner typed its exit command; past it, Runner stops the
  *  session — the turn was done, so the run is done all the same. */
 export const AGENT_EXIT_WAIT_MS = 15_000;

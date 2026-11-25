@@ -166,7 +166,7 @@ describe("agent runs", () => {
     const cwd = await realpath(join(workspace, "Projects/x"));
     const line = `claude '--session-id' '${sessionId}' 'Write my morning summary.'`;
     expect(spawn?.command).toMatchObject({ title: "Morning summary", argv: ["/bin/zsh", "-l", "-i", "-c", line], cwd, background: true });
-    expect(run.agent).toEqual({ agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId, cwd, startedAt: new Date(now).toISOString(), exit: "/exit", exitSentAt: null, worked: true, waiting: null, waitedMs: 0, background: null });
+    expect(run.agent).toEqual({ agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId, cwd, startedAt: new Date(now).toISOString(), exit: "/exit", exitSentAt: null, worked: true, waiting: null, waitedMs: 0, background: null, answered: [], workedOn: false });
     expect(turns.watched()).toEqual([run.session]);
   });
 
@@ -544,6 +544,157 @@ describe("agent runs", () => {
     expect(finished[0]).toMatchObject({ state: "done", agent: { waiting: null, waitedMs: 5 * 60_000 } });
   });
 
+  it("waits for you at a question form in Normal — its own words, one notice — and goes on once answered", async () => {
+    const run = await runNow();
+    const session = run.session ?? "";
+    turns.waits(session, "question", "Yes, append (Recommended)");
+    await runs.tick();
+    expect(turns.pressed).toEqual([]);
+    expect(runs.active()[0]?.agent).toMatchObject({ waiting: { prompt: "question", since: now.getTime() }, answered: [], workedOn: false });
+    expect(runs.needsYou()).toMatchObject([{ kind: "waiting", prompt: "question", detail: "waiting for your answer to its question" }]);
+    expect(notices).toEqual([
+      {
+        title: "Morning summary asks you a question",
+        body: "The agent asks you to pick an option. Open it to answer; the time limit is paused meanwhile.",
+        action: { kind: "openApp", route: `prompt/summary/${run.run}` },
+      },
+    ]);
+    // The form's next question is the same wait: no second notice.
+    turns.waits(session, "question", "notes.md");
+    await runs.tick();
+    expect(notices).toHaveLength(1);
+    turns.waits(session, null);
+    turns.done(session);
+    await runs.tick();
+    expect(runs.active()[0]?.agent?.waiting ?? null).toBeNull();
+    expect(turns.typed).toEqual([{ session, text: "/exit" }]);
+  });
+
+  it("in Full autonomy answers a question form itself — Enter on the highlighted option, kept on the run and its record — and waits for no one", async () => {
+    files = { "summary.md": agentFile("mode: full-autonomy\n") };
+    load();
+    const run = await runNow();
+    const session = run.session ?? "";
+    turns.waits(session, "question", "Yes, append (Recommended)");
+    await runs.tick();
+    turns.waits(session, "question", "notes.md");
+    await runs.tick();
+    expect(turns.pressed).toEqual([
+      { session, data: "\r" },
+      { session, data: "\r" },
+    ]);
+    expect(runs.active()[0]?.agent).toMatchObject({ waiting: null, answered: ["Yes, append (Recommended)", "notes.md"] });
+    expect(runs.needsYou()).toEqual([]);
+    expect(notices).toEqual([]);
+    expect(lines).toContain(`run summary ${run.run}: the agent asks a question; Runner answered: Yes, append (Recommended)`);
+    turns.done(session);
+    await runs.tick();
+    sessions.end(session, "exited", 0);
+    await runs.tick();
+    expect(finished[0]).toMatchObject({ state: "done", agent: { answered: ["Yes, append (Recommended)", "notes.md"] } });
+  });
+
+  it("in Full autonomy a question form with no option highlighted, or at its free-text rows, waits for you; so does a screen Runner does not know", async () => {
+    files = { "summary.md": agentFile("mode: full-autonomy\n") };
+    load();
+    const run = await runNow();
+    const session = run.session ?? "";
+    for (const highlighted of [null, "Type something.", "Chat about this"]) {
+      turns.waits(session, "question", highlighted);
+      await runs.tick();
+      expect(runs.active()[0]?.agent?.waiting?.prompt).toBe("question");
+      turns.waits(session, null);
+      await runs.tick();
+    }
+    turns.waits(session, "unknown");
+    await runs.tick();
+    expect(turns.pressed).toEqual([]);
+    expect(runs.active()[0]?.agent).toMatchObject({ waiting: { prompt: "unknown" }, answered: [], workedOn: false });
+    expect(runs.needsYou()).toMatchObject([{ kind: "waiting", prompt: "unknown", detail: "waiting at a screen Runner does not know — look at its terminal" }]);
+    expect(notices.map((notice) => notice.title)).toEqual([
+      "Morning summary asks you a question",
+      "Morning summary asks you a question",
+      "Morning summary asks you a question",
+      "Morning summary waits at a screen Runner does not know",
+    ]);
+  });
+
+  it("an agent that works on after its exit command is not stopped after the exit wait: its turn's next end types the command again, and its exit then is done", async () => {
+    let clock = 1_000;
+    vi.spyOn(performance, "now").mockImplementation(() => clock);
+    const run = await runNow();
+    const session = run.session ?? "";
+    turns.done(session);
+    await runs.tick();
+    expect(runs.active()[0]?.agent?.exitSentAt).toBe(now.getTime());
+    turns.worksAgain(session);
+    await runs.tick();
+    expect(runs.active()[0]?.agent).toMatchObject({ exitSentAt: now.getTime(), workedOn: true });
+    clock += AGENT_EXIT_WAIT_MS * 2;
+    await runs.tick();
+    expect(sessions.stops).toEqual([]);
+    expect(runs.active()[0]?.state).toBe("running");
+    turns.done(session);
+    await runs.tick();
+    expect(turns.typed).toEqual([
+      { session, text: "/exit" },
+      { session, text: "/exit" },
+    ]);
+    sessions.end(session, "exited", 0);
+    await runs.tick();
+    expect(finished[0]).toMatchObject({ state: "done" });
+  });
+
+  it("an agent that works on after its exit command and then exits by itself — no idle, no prompt since — is done: a slow exit", async () => {
+    let clock = 1_000;
+    vi.spyOn(performance, "now").mockImplementation(() => clock);
+    const run = await runNow();
+    const session = run.session ?? "";
+    turns.done(session);
+    await runs.tick();
+    turns.worksAgain(session, "working");
+    clock += AGENT_EXIT_WAIT_MS * 2;
+    await runs.tick();
+    expect(sessions.stops).toEqual([]);
+    sessions.end(session, "exited", 0);
+    await runs.tick();
+    expect(turns.typed).toEqual([{ session, text: "/exit" }]);
+    expect(finished[0]).toMatchObject({ state: "done", reason: null, exitCode: 0, agent: { workedOn: true } });
+  });
+
+  it("an agent that waits at a prompt after its exit command did not take it: answered, its turn's end types the command again and the run is done; an exit of its own before that fails", async () => {
+    const run = await runNow();
+    const session = run.session ?? "";
+    turns.done(session);
+    await runs.tick();
+    turns.worksAgain(session, "prompt");
+    turns.waits(session, "permission");
+    await runs.tick();
+    expect(runs.active()[0]?.agent).toMatchObject({ exitSentAt: null, workedOn: false, waiting: { prompt: "permission" } });
+    turns.waits(session, null);
+    turns.done(session);
+    await runs.tick();
+    expect(turns.typed).toEqual([
+      { session, text: "/exit" },
+      { session, text: "/exit" },
+    ]);
+    sessions.end(session, "exited", 0);
+    await runs.tick();
+    expect(finished[0]).toMatchObject({ state: "done", reason: null });
+
+    const second = await runNow();
+    const other = second.session ?? "";
+    turns.done(other);
+    await runs.tick();
+    turns.worksAgain(other, "prompt");
+    turns.waits(other, "permission");
+    turns.waits(other, null);
+    await runs.tick();
+    sessions.end(other, "exited", 0);
+    await runs.tick();
+    expect(finished[1]).toMatchObject({ state: "failed", reason: "the agent exited before its turn was done" });
+  });
+
   it("pauses the time limit while it waits for you", async () => {
     files = { "summary.md": agentFile("time-limit: 10m\n") };
     load();
@@ -894,9 +1045,9 @@ describe("agent runs", () => {
     await mkdir(dirname(runsRecordPath(records)), { recursive: true });
     await writeFile(runsRecordPath(records), JSON.stringify({ active: [{ ...run, agent: older }], last: {} }));
     const [going] = (await fileRunsStore(records, stateFolderOf(dir), () => undefined).load()).active;
-    expect(going?.agent).toEqual({ ...older, worked: true, waiting: null, waitedMs: 0, background: null });
+    expect(going?.agent).toEqual({ ...older, worked: true, waiting: null, waitedMs: 0, background: null, answered: [], workedOn: false });
     const record = parseRunRecord({ ...run, state: "done", action: null, reason: null, endedAt: 1, durationMs: 1, exitCode: 0, signal: null, lastLines: [], git: null, agent: older });
-    expect(record?.agent).toEqual({ ...older, worked: true, waiting: null, waitedMs: 0, background: null });
+    expect(record?.agent).toEqual({ ...older, worked: true, waiting: null, waitedMs: 0, background: null, answered: [], workedOn: false });
   });
 
   it("follows a running agent run's turns again after a restart", async () => {
@@ -911,7 +1062,7 @@ describe("agent runs", () => {
 });
 
 describe("agent run rules", () => {
-  const agent: AgentRun = { agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-18T11:00:00.000Z", exit: "/exit", exitSentAt: null, worked: true, waiting: null, waitedMs: 0, background: null };
+  const agent: AgentRun = { agent: "claude", name: "Claude", provider: "claude", mode: "normal", modeName: "Normal", sessionId: "s1", cwd: "/ws", startedAt: "2026-11-18T11:00:00.000Z", exit: "/exit", exitSentAt: null, worked: true, waiting: null, waitedMs: 0, background: null, answered: [], workedOn: false };
   const end = { state: "done" as const, reason: null, exitCode: 0, signal: null, limitHit: null };
 
   it("runs the line in the shell, interactive and login", () => {

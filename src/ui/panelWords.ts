@@ -65,7 +65,18 @@ export interface NeedLook {
 const WAITING_TEXT: Record<AgentWait["prompt"], string> = {
   permission: "Waiting for approval at a permission prompt.",
   trust: "Waiting for you to trust its folder.",
+  question: "Waiting for your answer to its question.",
+  unknown: "Waiting at a screen Runner does not know.",
   "not-started": "Has not started — look at its terminal.",
+};
+
+/** A waiting run's Needs-you (i) help, by what it waits at. */
+const WAITING_HELP: Record<AgentWait["prompt"], HelpKey> = {
+  permission: "need.approval",
+  trust: "need.approval",
+  question: "need.question",
+  unknown: "need.unknown",
+  "not-started": "need.notstarted",
 };
 
 const capital = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
@@ -80,7 +91,7 @@ export function needLook(item: NeedsYouItem, now: number): NeedLook {
       // One run: "Missed — …"; more: "Missed 4 runs, 17:40–17:46 — …".
       return { tone: "warning", help: "need.waitforme", when: pastWhen(item.at, now), text: `${capital(missedRunsWords(item.missed) ?? "missed")} — it waits for you to pick a time.` };
     case "waiting":
-      return { tone: "warning", help: item.prompt === "not-started" ? "need.notstarted" : "need.approval", when: upWords(now - item.at), text: WAITING_TEXT[item.prompt] };
+      return { tone: "warning", help: WAITING_HELP[item.prompt], when: upWords(now - item.at), text: WAITING_TEXT[item.prompt] };
     case "long-run": {
       const ran = now - item.startedAt;
       const hours = Math.floor(ran / 3_600_000);

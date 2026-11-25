@@ -635,8 +635,9 @@ hooks, chains, History, notices and Needs you.
   has no Full autonomy mode"); a folder that does not exist.
 - **The run's agent** (`AgentRun` on the run and its record): the agent's id and name, provider,
   mode and its name, the session id, `cwd`, `startedAt` — the session's start on this Mac's clock,
-  ISO 8601 — the spec's `exit`, when Runner typed it, and whether the agent has started working
-  (`worked`: the scanner has seen it work once).
+  ISO 8601 — the spec's `exit`, when Runner typed it, whether the agent has started working
+  (`worked`: the scanner has seen it work once), and the options Runner answered its question
+  forms with (`answered`, Full autonomy).
 - **Session id.** The spec's `sessionId`: the one Runner made, when the provider pre-assigns it; when
   it is `null` (Codex) the run's session is looked up with `sessions.find` — `cwd`, the agent, and
   10 s around `startedAt` — every 5 s while it runs and once more at its end; of several, the one
@@ -651,8 +652,40 @@ hooks, chains, History, notices and Needs you.
   **done**; an agent still there 15 s later is stopped (reason `stopped`) and the run is **done** all
   the same. An end before the exit was typed is **failed**, "the agent exited before its turn was
   done", a status 0 included; a crash after it **failed** with its exit code; Stop, the time limit
-  and a lost session read as a script's. A permission or trust prompt is no finished turn: the run
-  waits for you.
+  and a lost session read as a script's. A permission, trust or question prompt, or a screen Runner
+  does not know, is no finished turn: the run waits for you.
+- **The exit command goes only into the agent's empty prompt.** Its Enter confirms whatever the
+  screen highlights, so Runner types it only on positive evidence that the screen is the agent's
+  empty prompt: the scanner reports `idle` only there — Claude's composer, its "❯" row with nothing
+  typed in it alone between its two rules; Codex's "›" row with nothing but its faint placeholder
+  — and the idle title over any other screen as a wait at prompt `unknown`. A turn ends on that
+  `idle` alone. Claude's question form (its AskUserQuestion tool: "☐ <header>", numbered options,
+  "Enter to select · ↑/↓ to navigate · Esc to cancel") is the scanner's wait at prompt `question`,
+  with the option it highlights.
+- **Question forms.** In Normal the form waits for you as a permission prompt does (**Waiting for
+  you**), worded as a question: "waiting for your answer to its question", the notice "<job> asks
+  you a question"; each further question of the same form is the same wait. In Full autonomy
+  Runner answers it itself: it presses Enter on the option the agent highlights, each question
+  once, keeps the option on the run's agent (`answered`, in order; a record of an older build has
+  none) and in the scheduler's log ("Runner answered: <option>"), and the run's card says "Runner
+  answered: <option>" — going and ended. No wait, no notice. A form with no option highlighted, or
+  highlighting its own free-text rows ("Type something.", "Chat about this"), waits for you in Full
+  autonomy too.
+- **A screen Runner does not know** — the idle title over a screen that is neither the agent's
+  empty prompt nor a prompt the scanner names: Claude's plan approval, a dialog a new version adds
+  or rewords — once the agent has worked waits for you in every mode, as a permission prompt does:
+  its wait `unknown`, "waiting at a screen Runner does not know", the notice "<job> waits at a
+  screen Runner does not know", **Open at the prompt**. Before the agent worked such a screen is
+  the not-started case (**An agent that has not started**); after the exit command it is the
+  command's own (the agent exiting), left to the exit wait.
+- **An agent that works on after the exit command** — 3 s (`WORKS_AGAIN_MS`) past the command's
+  own moment of work — is not stopped after the exit wait (`workedOn` on its `AgentRun`): the run
+  follows the turn afresh and types the command again once that turn is done. The command stays
+  typed meanwhile, so an agent that then exits by itself — no idle and no prompt for the person seen
+  since, as a slow exit hook does — is **done**. One that waits at a prompt for the person after the
+  command did not take it: the command's time and its exit wait are cleared, an exit of its own
+  before the turn's next end is **failed** as any early exit, and the command is typed again once
+  the turn is done.
 - **Background work.** A turn can end with work the agent put in the background still going — a
   shell it left running (the scanner's `idle` with `background`: Claude's footer counts it, "· 1
   shell"). That turn is not done: the run stays **running** and waits for that work —
@@ -680,8 +713,8 @@ hooks, chains, History, notices and Needs you.
   cannot be asked — not answering, Pomade gone — or the run has no session id, the answer is unknown,
   not missing: the run is recorded **done**, the reason in the scheduler's log. The result card of
   such a run shows the reason and the last lines in place of the last message.
-- **Waiting for you.** A permission or trust prompt on the agent's screen (the scanner's
-  `waiting`) makes the running run wait for you: `waiting` on its `AgentRun` — the prompt and since
+- **Waiting for you.** A permission, trust or question prompt, or a screen Runner does not know,
+  on the agent's screen (the scanner's `waiting`) makes the running run wait for you: `waiting` on its `AgentRun` — the prompt and since
   when — a Needs-you item and a notice. It holds no low-priority slot and its time limit pauses:
   `waitedMs` adds up its waits, which `ranFor` leaves out. Answered — the agent works or idles
   again — the wait ends, the item goes, and the turn finishes as any turn. A prompt that turns into
