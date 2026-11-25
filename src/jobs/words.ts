@@ -46,7 +46,9 @@ function projectWords(project: string | null, names: WordNames): string {
   return project === null ? "a project" : (names.project?.(project) ?? project);
 }
 
-const RESULT_WORDS: Record<Chain["result"], string> = { done: "is done", failed: "fails", any: "finishes" };
+/** A chain's three results as every place says them — the forms, the line under the editor, Jobs and
+ *  History: "after Pull is done", "after Pull fails", "after Pull finishes either way". */
+export const RESULT_WORDS: Record<Chain["result"], string> = { done: "is done", failed: "fails", any: "finishes either way" };
 const ACTION_WORDS: Record<ServiceAction, string> = { restart: "restarts", start: "starts", stop: "stops" };
 
 /** A chain in words: "after backup is done". */

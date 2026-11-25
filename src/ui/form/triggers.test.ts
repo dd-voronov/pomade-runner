@@ -246,7 +246,7 @@ describe("triggerWords", () => {
     const chain = { ...login, trigger: "chain" as const };
     expect(hookBoxWords(chain, SNAPSHOT, 2, PROJECTS)).toEqual({ title: "Runs after another job finishes", sub: "A chain. History will show “chain: after …”." });
     expect(hookBoxWords({ ...chain, chainJob: "backup", chainResult: "failed" }, SNAPSHOT, 2, PROJECTS)).toEqual({ title: "Runs after Backup fails", sub: "A chain. History will show “chain: after Backup”." });
-    expect(hookBoxWords({ ...chain, chainJob: "gone", chainResult: "any" }, SNAPSHOT, 2, PROJECTS).title).toBe("Runs after gone finishes");
+    expect(hookBoxWords({ ...chain, chainJob: "gone", chainResult: "any" }, SNAPSHOT, 2, PROJECTS).title).toBe("Runs after gone finishes either way");
   });
 
   it("a loop is told from the checker's other chain errors", () => {

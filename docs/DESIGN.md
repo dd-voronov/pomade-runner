@@ -1361,7 +1361,7 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   first) and **Only agent** (Any agent first, then the roster's ids; one the roster lacks stays,
   with a red line under it); without the Agents app the box says so. A chain picks, in a box under
   it, the **Job** (every valid job but services and the job itself, by name; one the file names
-  that is not among them stays, by its id) and **When it**: Is done · Fails · Either. Under them,
+  that is not among them stays, by its id) and **When it**: Is done · Fails · Finishes either way (the one result wording, `RESULT_WORDS` in `jobs/words.ts`, which the service's sentence, the line under the editor, Jobs and History also use; one help text explains the three and the ends that start nothing). Under them,
   the trigger in words: "Runs at Mac login · Once per login, after the 2-minute warm-up" (the
   warm-up as the settings say it); "Runs when Pomade starts", "Runs on first open of blog", "Runs whenever blog is opened",
   "Runs when a project is created", "Runs after a claude session finishes in Pomade", "Runs when a
@@ -1416,7 +1416,7 @@ policies show as one sentence, non-defaults in bold, until **Change**.
   Its policies are a script's, with the kind's defaults (Run on wake, low priority, Always).
 - **A service's chain** (`ServiceChainLine` in `TriggerSection.tsx`) ends the service's Trigger
   section: **+ Restart, start or stop it after another job**, then the line "**Also** [restart it ·
-  start it · stop it] after [job] [is done · fails · finishes]" with **×** to remove it; the file
+  start it · stop it] after [job] [is done · fails · finishes either way]" with **×** to remove it; the file
   gets `after: { job, result, action }`.
 - **Policies** (`policies.ts` their words, pure; `kinds.tsx` their rows). Each kind lists its
   policies in the sentence's order; a policy's words come from the values, a non-default's in bold.

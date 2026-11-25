@@ -5,7 +5,7 @@ import { LOOP_PROBLEM } from "../../jobs/check";
 import type { RosterAgent } from "pomade-kit/protocol";
 
 import { SESSION_STATUS_WORDS, SESSION_STATUSES, type ChainResult, type JobError, type JobsSnapshot, type ProjectRecord, type ServiceAction } from "../../jobs/model";
-import { chainWords, hookWords } from "../../jobs/words";
+import { chainWords, hookWords, RESULT_WORDS } from "../../jobs/words";
 import type { HelpKey } from "../help";
 import type { SelectOption } from "../kit";
 import type { FormValues } from "./state";
@@ -30,12 +30,10 @@ export function formOffersHook(event: string): boolean {
   return event !== CHAIN_CHOICE && EVENT_CHOICES.some((choice) => choice.value === event);
 }
 
-/** A script's chain result, as its choice says it. */
-export const RESULT_CHOICES: readonly { value: ChainResult; label: string }[] = [
-  { value: "done", label: "Is done" },
-  { value: "failed", label: "Fails" },
-  { value: "any", label: "Either" },
-];
+const RESULTS: readonly ChainResult[] = ["done", "failed", "any"];
+
+/** A script's chain result, as its choice says it: "Is done · Fails · Finishes either way". */
+export const RESULT_CHOICES: readonly { value: ChainResult; label: string }[] = RESULTS.map((value) => ({ value, label: RESULT_WORDS[value].replace(/^./, (first) => first.toUpperCase()) }));
 
 /** A service's chain, as its line reads: "Also restart it after Pull is done". */
 export const ACTION_OPTIONS: readonly { value: ServiceAction; label: string }[] = [
@@ -43,11 +41,7 @@ export const ACTION_OPTIONS: readonly { value: ServiceAction; label: string }[] 
   { value: "start", label: "start it" },
   { value: "stop", label: "stop it" },
 ];
-export const SERVICE_RESULT_OPTIONS: readonly { value: ChainResult; label: string }[] = [
-  { value: "done", label: "is done" },
-  { value: "failed", label: "fails" },
-  { value: "any", label: "finishes" },
-];
+export const SERVICE_RESULT_OPTIONS: readonly { value: ChainResult; label: string }[] = RESULTS.map((value) => ({ value, label: RESULT_WORDS[value] }));
 
 /** A job's name by its id in the snapshot; `null` when no job has it. */
 export function jobName(snapshot: JobsSnapshot, id: string): string | null {

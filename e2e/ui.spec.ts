@@ -1097,7 +1097,7 @@ test.describe("hooks and chains", () => {
     await writeJob(page, "mount.md", "---\nkind: script\nname: Mount\nfolder: .\ncommand: ./mount.sh\nhook: { event: login }\n---\n");
     await writeJob(page, "web.md", "---\nkind: service\nname: Web\nfolder: .\ncommand: ./web.sh\nafter: { job: pull }\n---\n");
     // By path: Mount, Pull, Tests, Web.
-    await expect(app(page).getByTestId("job-trigger")).toHaveText(["at Mac login", "daily at 13:00", "after Pull finishes", "always on · starts on Mac startup · restarts after Pull is done"]);
+    await expect(app(page).getByTestId("job-trigger")).toHaveText(["at Mac login", "daily at 13:00", "after Pull finishes either way", "always on · starts on Mac startup · restarts after Pull is done"]);
     await expect(app(page).getByTestId("job-next")).toHaveText(["on event", "—", "on event", "always on"]);
     await shoot(page, "tab-jobs-chains");
   });

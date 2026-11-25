@@ -2,6 +2,10 @@
 // example. `Help` (the (i) icon) and any element's `data-help` show them in the tooltip. A later
 // screen adds its keys here; the texts are the approved prototype's, verbatim.
 
+/** What a chain's three results mean — the one text on the result control in the script, agent, git and
+ *  service forms. */
+const RESULT_HELP = 'Is done: the run ended without an error. Fails: an exit code, a signal, the time limit or a keeper crash. Finishes either way: both. A run you stopped, a skipped run and a missed run start nothing.';
+
 export const HELP = {
   'sw.running': ['Everything runs as scheduled.', 'Example: the normal position.'],
   'sw.low': ['Holds low-priority jobs; other jobs and services keep running.', 'Example: during a call — the agent summary waits, the notes commit still runs.'],
@@ -54,7 +58,7 @@ export const HELP = {
   'f.command': ['Runs in the folder below, in your login-shell environment — same PATH and keys as your terminals.', 'Example: ./start.sh'],
   'f.start': ['When Runner starts the service, and how long it lives: from Mac startup it outlives Pomade; while Pomade is running, or from a project\'s first open, it stops when Pomade quits. Services start one by one, never all at once.', 'Example: On first open of a project — blog\'s docs server, only once you work in blog.'],
   'f.ready': ['How Runner knows the service is up before it starts the next one.', 'Example: Port 5173 is open. Default: still alive after 5 s.'],
-  'f.after': ['A chain: act on this service when another job finishes.', 'Example: restart Dev server after Pull is done.'],
+  'f.after': [`A chain: act on this service when another job finishes with the result you pick. ${RESULT_HELP}`, 'Example: restart Dev server after Pull is done.'],
   'f.trigger': ['A schedule fires at times you pick. A hook fires when something happens in Pomade or on the Mac. A manual job never runs by itself: only Run now starts it.', 'Example: weekdays at 7:00 · when a project is created · manually.'],
   'sh.once': ['One run at a date and time, then the job shows as finished.', 'Example: tonight 23:00 · in 2 hours.'],
   'sh.every': ['Repeats every N minutes or hours, optionally only between two times of day.', 'Example: every 30 min, 9:00–21:00.'],
@@ -72,7 +76,7 @@ export const HELP = {
   'hk.session-finished': ['Fires when an agent session you started ends. Sessions started by Runner never fire it, so it can\'t loop. The script gets POMADE_SESSION_ID and POMADE_SESSION_TRANSCRIPT, the session\'s transcript file.', 'Example: lint + test after every claude session in Pomade.'],
   'hk.session-status': ['Fires when you change a session\'s status in the Agents app. The script gets POMADE_SESSION_ID, POMADE_SESSION_STATUS and POMADE_SESSION_TRANSCRIPT, the session\'s transcript file.', 'Example: marked Done → run the Session Analyzer on $POMADE_SESSION_TRANSCRIPT.'],
   'hk.job-finished': ['A chain: fires when another job finishes with the result you pick.', 'Example: after Tidy drafts is done → Wiki lint.'],
-  'hk.result': ['Which outcome of the other job starts this one.', 'Example: Failed — run the cleanup script only when Tidy drafts fails.'],
+  'hk.result': [`Which outcome of the other job starts this one. ${RESULT_HELP}`, 'Example: Fails — run the cleanup script only when Tidy drafts fails.'],
   'hk.loop': ['A chain that leads back to its own start would run forever, so Runner refuses to save it.', 'Example: A → B → A.'],
   'f.folder': ['The working folder the command starts in, relative to the workspace.', 'Example: Projects/blog'],
   'f.project': ['Groups the job under a project and binds it by the project\'s id, so a rename doesn\'t orphan it.', 'Example: blog. "Workspace" = no project.'],

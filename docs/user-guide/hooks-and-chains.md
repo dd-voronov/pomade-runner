@@ -45,8 +45,9 @@ History shows a hook run as "hook: Mac login", "hook: Pomade started", "hook: fi
 ## Chains
 
 `Another job finished` picks a **Job** — any valid job but a service and the job itself — and **When
-it**: `Is done` · `Fails` · `Either`. A failure is any failure: an exit code, a signal, a time limit.
-A run you stopped, skipped or missed fires nothing.
+it**: `Is done` · `Fails` · `Finishes either way`. Is done: the run ended without an error. Fails: an
+exit code, a signal, the time limit or a keeper crash. Finishes either way: both. A run you stopped,
+a skipped run and a missed run start nothing; the (i) beside the choice says so.
 
 - Every follower fires, in id order, and joins the queue like any run: overlap applies and the switch
   holds it. A chain run never waits for the warm-up.
@@ -54,7 +55,7 @@ A run you stopped, skipped or missed fires nothing.
 - A chain that leads back to itself is refused when you save ("the chain loops back: a → b → a"),
   with an (i) on why.
 - A **service** can follow a job: **+ Restart, start or stop it after another job** adds the line
-  "**Also** [restart it · start it · stop it] after [job] [is done · fails · finishes]". Restart
+  "**Also** [restart it · start it · stop it] after [job] [is done · fails · finishes either way]". Restart
   restarts a running service and leaves one that is not running alone; start starts one that is not
   running; stop stops it until you Start it. A service acts at once: the switch and the warm-up never
   hold it. Each action is a History record of the service. A service is never followed.

@@ -65,12 +65,12 @@ describe("a job's trigger in words", () => {
       pull: "daily at 7:00",
       done: "after pull is done",
       failed: "after pull fails",
-      any: "after pull finishes",
+      any: "after pull finishes either way",
       web: "always on · starts on Mac startup · restarts after pull is done",
       api: "always on · starts on Mac startup · stops after pull fails",
       db: "always on · starts on Mac startup",
       watch: "while Pomade is running",
-      "one/later": "from first open of p1 while Pomade is running · starts after pull finishes",
+      "one/later": "from first open of p1 while Pomade is running · starts after pull finishes either way",
     });
   });
 
@@ -101,7 +101,7 @@ describe("a job's trigger in words", () => {
     const said = Object.fromEntries(snapshot.jobs.map((entry) => (entry.valid ? [entry.job.id, jobTriggerWords(entry.job, named)] : [entry.invalid.id, ""])));
     const { web, tests, first, every, any, later } = said;
     expect(web).toBe("always on · starts on Mac startup · restarts after Pull is done");
-    expect(tests).toBe("after Pull finishes");
+    expect(tests).toBe("after Pull finishes either way");
     expect(first).toBe("on first open of One");
     expect(every).toBe("whenever One is opened");
     expect(any).toBe("whenever a project is opened");
