@@ -1,0 +1,26 @@
+/* A run's output in the colours and bold the program printed, in the terminal palette's tokens. */
+
+.red {
+  color: var(--term-red);
+}
+.green {
+  color: var(--term-green);
+}
+.amber {
+  color: var(--term-amber);
+}
+.blue {
+  color: var(--term-blue);
+}
+.magenta {
+  color: var(--term-magenta);
+}
+.cyan {
+  color: var(--term-cyan);
+}
+.dim {
+  color: var(--term-dim);
+}
+.bold {
+  font-weight: var(--fw-bold);
+}

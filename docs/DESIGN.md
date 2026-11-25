@@ -846,6 +846,20 @@ head is red, a run that waits for you amber. Its body, by what the run left:
 | Skipped or missed | why it never started ("Missed 4 runs, 17:40–17:46 · skipped." for more than one) | **Run now** (scripts and git jobs) |
 | A service event (`EventCard.tsx`, words in `eventWords.ts`) | its head: the pill ("Started", "Stopped", "Restarted", "Restarted after a crash" amber, "Gave up" red), the time and the cause ("by you", "first open of shop", "chain · after Pull: done" whose name opens Pull's run); **Cause** in a sentence with the cause's help, **Exit code** of a crash, **Session**: "still going · up 3h 48m" (or "starting, waiting for port 4000") while the session it started runs, else "ended 11:20 — it crashed" from the event that ended it; no duration, no View output | **Open terminal** while that session runs; a service that gave up and does not run, **Start** |
 
+**A run's output in its colours** (`src/scheduler/terminal-text.ts`, drawn by `src/ui/OutputText.tsx`).
+The last lines and the latest output on a card, and the output tab, show the text colours and bold
+the program printed, in the terminal palette of `src/ui/tokens.css`: the basic colours red, green,
+yellow (`--term-amber`), blue, magenta and cyan, each with its bright one, in their `--term-*`
+tokens; black and default in the text colour; white and bright black in `--term-dim`. A 256-colour
+or 24-bit colour shows in the palette colour nearest it — a grey by its lightness (dark: the text
+colour, light: dim), any other by its hue. Bold is bold; faint text without a colour is dim. A
+coloured background — a badge such as " FAIL " on red — and inverse text show as text in that
+colour, a grey background as nothing. Italic, underline, blink and the rest are left out, as is
+every other terminal code (cursor moves, window titles, links, screen clearing); a line rewritten
+with `\r` is the line it ended as, and a colour runs on across lines until the program changes it.
+The spans are React elements, never HTML. **Copy**, the notices and `pomade-runner history` take the
+text alone (`plainLines`, `plainLine`).
+
 **Open in Git** (`src/ui/RunCard.tsx`, the project in `src/ui/gitReveal.ts`) takes the person to
 a failed repo's row in Pomade's Git panel, where the conflict is resolved: Host API `git.reveal`
 (`pomade:T-320`) with the repo's root (`GitRunResult.path`) and a project that holds it — the
@@ -870,7 +884,8 @@ confirm "Run 25 runs?" — Runner runs the job 25 times, one after another; stop
 (`RunRecord`), and per service event ("Service events"): the job's id, name and kind, project, folder,
 run id, trigger and — a hook or chain run — its cause, a service event (`event`), when it was due,
 started and ended, how long it ran, the result and its reason, exit code and signal, the output
-log, the last 20 lines of the output as plain text, a git run's result (`git`), and — a run
+log, the last 20 lines of the output — each kept with its colours and bold as SGR codes of the palette
+(`styledText`), every other terminal code removed — a git run's result (`git`), and — a run
 stopped at its time limit — that limit in minutes (`limitHit`). A record of an older build reads with the
 fields it lacks at their defaults.
 - **The output log** is named in a record by job and run (`output/<encoded job id>/<run id>.log`),
@@ -1390,7 +1405,7 @@ the same notice clicked again opens its card again.
 key `out:<encoded job id>:<run id>` (`outputTab`, `src/integrations/runner-api.ts`) — titled
 "<job> · output", at the run's `output/…` route. **View output** opens it, or focuses it when it is
 open. A head with the job's name, "Captured log · <when> · read-only" and **Copy**, which puts the
-log on the clipboard (`navigator.clipboard.writeText`); then the log as plain text, followed while
+log on the clipboard as plain text (`navigator.clipboard.writeText`); then the log in its colours, followed while
 the run runs. A tab Pomade restores whose run is gone from the history (pruned) closes itself
 (`tabs.close`).
 

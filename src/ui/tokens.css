@@ -52,6 +52,8 @@
   --term-blue: #2b6cb0;
   --term-red: #c0374b;
   --term-amber: #a5660f;
+  --term-magenta: #9c3f9c;
+  --term-cyan: #157a86;
 
   --font-ui: -apple-system, "SF Pro Text", "SF Pro", system-ui, "Segoe UI", sans-serif;
   --font-mono: "SF Mono", "Menlo", "Monaco", ui-monospace, monospace;

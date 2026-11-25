@@ -218,7 +218,7 @@ describe("runs", () => {
         exitCode: 0,
         signal: null,
         log: keptLog("backup", "20261118-120000-000001"),
-        lastLines: ["copying", "backed up 3 files"],
+        lastLines: ["\x1b[32mcopying\x1b[0m", "backed up 3 files"],
         git: null,
         limitHit: null,
       };

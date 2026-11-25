@@ -28,6 +28,7 @@ import { needsYouRecordPath, type RecordsFolder } from "../locations";
 import type { Log } from "./log";
 import { FIRING_LIMIT, FIRING_WINDOW_MS } from "./loop-guard";
 import { dayTime, durationWords, failureWords, missedRunsWords, runWords, type ActiveRun, type AgentWait, type NeedsYouItem, type RunRecord } from "./model";
+import { plainLine } from "./terminal-text";
 
 /** A failed-run item as it is kept. */
 interface Failure {
@@ -125,7 +126,7 @@ export function runNotice(record: RunRecord, notify: Notify): NoticeParams | nul
   switch (record.state) {
     case "failed": {
       // A git run's reason names each failed repo; its last lines say the same per repo.
-      const line = record.git === null ? [...record.lastLines].reverse().find((text) => text.trim() !== "")?.trim() : undefined;
+      const line = record.git === null ? record.lastLines.map(plainLine).reverse().find((text) => text.trim() !== "")?.trim() : undefined;
       return { title: `${record.name} failed`, body: [failureWords(record), line].filter((part) => part !== undefined).join(" · ").slice(0, 2000), action };
     }
     case "done":

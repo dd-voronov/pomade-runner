@@ -82,6 +82,10 @@ describe("runNotice", () => {
     for (const state of ["done", "skipped", "stopped-by-you"] as const) expect(runNotice(record(state), "on-failure")).toBeNull();
   });
 
+  it("says a failed run's last line as plain text when the program coloured it", () => {
+    expect(runNotice(record("failed", { lastLines: ["\x1b[1;31mboom\x1b[0m: disk full", "\x1b[90m  \x1b[0m"] }), "on-failure")?.body).toBe("exit 1 · boom: disk full");
+  });
+
   it("always notices every run that started; never notices none; a skipped run is never noticed", () => {
     expect(runNotice(record("done"), "always")).toEqual({ title: "Backup done", body: "took 12 s", action: { kind: "openApp", route } });
     expect(runNotice(record("stopped-by-you"), "always")).toEqual({ title: "Backup stopped by you", body: "took 12 s", action: { kind: "openApp", route } });

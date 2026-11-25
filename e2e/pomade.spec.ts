@@ -208,7 +208,7 @@ test.describe("Runner in Pomade", () => {
     const running = scheduler ?? (await startTheScheduler());
     const jobs = join(folders.workspace, "Apps/pomade-runner/jobs");
     await writeFile(join(jobs, "fine.md"), scriptFile("Fine", "echo fine"));
-    await writeFile(join(jobs, "fail.md"), scriptFile("Fail", "echo working; echo boom >&2; exit 3"));
+    await writeFile(join(jobs, "fail.md"), scriptFile("Fail", "echo working; printf '\\033[31mboom\\033[0m\\n' >&2; exit 3"));
     await expect.poll(() => running.output()).toContain("jobs: 3 job files, 0 invalid\n");
 
     expect((await command("run", "fine")).code).toBe(0);
@@ -228,6 +228,8 @@ test.describe("Runner in Pomade", () => {
     await expect(frame.getByTestId("run-result")).toHaveText("Failed");
     await expect(card.getByTestId("run-exit")).toHaveText("3");
     await expect(card.getByTestId("run-last-lines")).toHaveText("working\nboom");
+    // The program printed "boom" in red: the card keeps its colour.
+    await expect(card.getByTestId("run-last-lines").locator('[data-colour="red"]')).toHaveText("boom");
     await shoot(page, "pomade-run-card");
     // Opening the result resolved the item: the badge goes.
     await expect(badge()).toHaveCount(0);
@@ -284,6 +286,7 @@ test.describe("Runner in Pomade", () => {
     await expect(page.getByTestId(`tab-title-${id}`)).toHaveText("Fail · output");
     const output = page.frameLocator(`[data-testid="app-pane-${id}"] iframe`);
     await expect(output.getByTestId("run-output-text")).toHaveText("working\nboom");
+    await expect(output.getByTestId("run-output-text").locator('[data-colour="red"]')).toHaveText("boom");
     await expect(output.getByTestId("run-output-badge")).toContainText("Captured log · today");
     await shoot(page, "pomade-output-tab");
 

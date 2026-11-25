@@ -1,7 +1,7 @@
 // The history store on a temp folder: day files appended to — a crash window's record put again in
 // place — pages newest first with a cursor that stays valid, a half line left by a crash, finding a
 // run and the event that ended a session, pruning by day with the output logs, and a run's output as
-// plain last lines.
+// last lines with their colours.
 
 import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { keptOutputLogPath, liveOutputLogPath, recordsFolderOf, stateFolderOf, type RecordsFolder, type StateFolder } from "../locations";
 import { createHistory, keepOutputLog, lastLines, readOutput, type History } from "./history";
-import { plainLines, type RunRecord } from "./model";
+import type { RunRecord } from "./model";
 
 const DAY = 86_400_000;
 const T0 = Date.parse("2026-11-17T12:00:00.000Z");
@@ -225,10 +225,6 @@ describe("history", () => {
     expect(await readOutput(join(state, "missing.log"))).toEqual({ text: "", truncated: false, missing: true });
   });
 
-  it("turns terminal output into plain lines: colours, titles and cursor moves gone, a rewritten line as it ended", () => {
-    expect(plainLines("\x1b[31mred\x1b[0m\r\n\x1b]0;title\x07plain\r\nhalf 10%\rhalf 100%\r\n\x1b[2K\x1b[1Gdone\ttab\x07")).toEqual(["red", "plain", "half 100%", "done\ttab"]);
-  });
-
   it("keeps a run's last lines, plain, cut long, without trailing blank lines", async () => {
     const file = join(dir, "run.log");
     const body = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\r\n");
@@ -238,5 +234,11 @@ describe("history", () => {
     expect(last[0]).toBe("line 12");
     expect(last.at(-1)).toBe(`${"x".repeat(399)}…`);
     expect(await lastLines(join(state, "missing.log"))).toEqual([]);
+  });
+
+  it("keeps a run's last lines with the colours the program printed, each line on its own, cut by its text", async () => {
+    const file = join(dir, "run.log");
+    await writeFile(file, `\x1b]0;title\x07\x1b[1;31mFAIL one\r\ntwo\x1b[0m plain\r\n\x1b[32m${"y".repeat(500)}\x1b[0m\r\n`);
+    expect(await lastLines(file)).toEqual(["\x1b[1;31mFAIL one\x1b[0m", "\x1b[1;31mtwo\x1b[0m plain", `\x1b[32m${"y".repeat(399)}…\x1b[0m`]);
   });
 });

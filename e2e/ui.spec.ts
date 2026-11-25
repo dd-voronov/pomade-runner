@@ -502,6 +502,47 @@ test.describe("runs", () => {
     await expect(output.getByTestId("toast").last()).toHaveText("RunnerCould not copy the log: Write permission denied.");
   });
 
+  test("T-035 · a failed run's card and its output tab show the colours and bold the program printed, in the palette; Copy gives plain text", async ({ page }) => {
+    await stubClipboard(page);
+    await page.goto(harness({ route: `run/backup/${RUN}` }));
+    await setRuns(page, [{ ...failed, lastLines: ["\x1b[31mboom\x1b[0m", "fine", "\x1b[1mtotal\x1b[0m 1 failed"] }]);
+    await page.evaluate(() => window.setRuns({ output: "\x1b]0;title\x07\x1b[31mboom\x1b[0m\r\nfine\r\n\x1b[1mtotal\x1b[0m 1 failed\r\n" }));
+    const colour = (locator: Locator): Promise<string> => locator.evaluate((element) => getComputedStyle(element).color);
+    const token = (name: string): Promise<string> =>
+      app(page)
+        .locator("body")
+        .evaluate((body, variable) => {
+          const probe = document.createElement("span");
+          probe.style.color = `var(${variable})`;
+          body.append(probe);
+          const value = getComputedStyle(probe).color;
+          probe.remove();
+          return value;
+        }, name);
+    const red = await token("--term-red");
+
+    const lines = app(page).getByRole("dialog", { name: "Backup" }).getByTestId("run-last-lines");
+    await expect(lines).toHaveText("boom\nfine\ntotal 1 failed");
+    await expect(lines.locator('[data-colour="red"]')).toHaveText("boom");
+    expect(await colour(lines.locator('[data-colour="red"]'))).toBe(red);
+    expect(await colour(lines)).not.toBe(red);
+    expect(await lines.getByText("total", { exact: true }).evaluate((element) => getComputedStyle(element).fontWeight)).toBe("700");
+    await shoot(page, "tab-run-failed-colours");
+
+    await app(page).getByRole("dialog", { name: "Backup" }).getByRole("button", { name: "View output" }).click();
+    const output = outputTab(page, `out:backup:${RUN}`);
+    const text = output.getByTestId("run-output-text");
+    await expect(text).toHaveText("boom\nfine\ntotal 1 failed");
+    await expect(text.locator('[data-colour="red"]')).toHaveText("boom");
+    expect(await colour(text.locator('[data-colour="red"]'))).toBe(red);
+    expect(await colour(text)).not.toBe(red);
+    expect(await text.getByText("total", { exact: true }).evaluate((element) => getComputedStyle(element).fontWeight)).toBe("700");
+    await shoot(page, "tab-run-output-colours");
+    await output.getByTestId("run-output-copy").click();
+    await expect(output.getByTestId("toast")).toHaveText("RunnerCopied the log");
+    expect(await copied(page, `out:backup:${RUN}`)).toEqual(["boom\nfine\ntotal 1 failed\n"]);
+  });
+
   test("an output tab whose run is gone from the history — Runner pruned it, Pomade restored the tab — closes itself", async ({ page }) => {
     await page.goto(harness({ route: `run/backup/${RUN}` }));
     await setRuns(page, [failed]);

@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { Fragment, useEffect } from "react";
 import type { HostClient } from "pomade-kit/sdk";
 
-import { plainLines } from "../scheduler/model";
+import { lineText, outputLines } from "../scheduler/terminal-text";
 import { Button, Dot, useToast } from "./kit";
+import { OutputText } from "./OutputText";
 import styles from "./OutputPage.module.css";
 import { runTime, whenWords } from "./runLook";
 import { useNow } from "./useNow";
@@ -15,8 +16,9 @@ export const OUTPUT_NOT_HERE = "This run's output is not on this Mac.";
 
 /** A run's full output (the prototype's output tab, `outPane`): the run's own output tab, at the
  *  route `output/<job>/<run>`. A head with the job's name and what the log is, and Copy, which puts
- *  the log on the clipboard; then the log as plain text — followed while the run runs. A tab whose
- *  run is gone from the history (Runner pruned it, and Pomade restored the tab) closes itself. */
+ *  the log on the clipboard as plain text; then the log in the colours the program printed —
+ *  followed while the run runs. A tab whose run is gone from the history (Runner pruned it, and
+ *  Pomade restored the tab) closes itself. */
 export function OutputPage({ host, job, run }: { host: HostClient; job: string; run: string }): React.JSX.Element {
   const view = useRun(host, job, run);
   const value = view.status === "ready" ? view.value : null;
@@ -24,8 +26,8 @@ export function OutputPage({ host, job, run }: { host: HostClient; job: string; 
   const output = useRunOutput(host, job, run, running);
   const now = useNow(30_000);
   const toast = useToast();
-  const lines = output.status === "ready" && !output.value.missing ? plainLines(output.value.text) : [];
-  if (lines.at(-1) === "") lines.pop();
+  const lines = output.status === "ready" && !output.value.missing ? outputLines(output.value.text) : [];
+  if (lineText(lines.at(-1) ?? []) === "") lines.pop();
   const gone = view.status === "ready" && view.value === null;
 
   useEffect(() => {
@@ -33,7 +35,7 @@ export function OutputPage({ host, job, run }: { host: HostClient; job: string; 
   }, [host, gone, toast]);
 
   const copy = (): void => {
-    navigator.clipboard.writeText(`${lines.join("\n")}\n`).then(
+    navigator.clipboard.writeText(`${lines.map(lineText).join("\n")}\n`).then(
       () => toast("Copied the log"),
       (err: unknown) => toast(`Could not copy the log: ${err instanceof Error ? err.message : String(err)}`),
     );
@@ -69,7 +71,12 @@ export function OutputPage({ host, job, run }: { host: HostClient; job: string; 
           ) : lines.length === 0 ? (
             <span className={styles.dim}>(no output)</span>
           ) : (
-            lines.join("\n")
+            lines.map((line, index) => (
+              <Fragment key={index}>
+                <OutputText line={line} />
+                {index < lines.length - 1 && "\n"}
+              </Fragment>
+            ))
           )}
         </pre>
       ) : (

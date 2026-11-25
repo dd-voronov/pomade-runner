@@ -276,8 +276,9 @@ export interface RunRecord extends RunBase {
   signal: string | null;
   /** The full output (absolute); `null` for a run that never started. */
   log: string | null;
-  /** The last lines of the output, plain text (escape sequences removed), at most `LAST_LINES`; a git
-   *  run's are one line per repo when `pomade-git` gave its result. */
+  /** The last lines of the output, at most `LAST_LINES`, each with the colours and bold the program
+   *  printed kept as SGR codes in the palette (`styledText`, `terminal-text.ts`) and every other
+   *  terminal code removed; a git run's are one plain line per repo when `pomade-git` gave its result. */
   lastLines: string[];
   /** A git run's result as `pomade-git --json` printed it, one result per repo; `null` for any other
    *  run, and for a git run that gave none. */
@@ -1066,21 +1067,6 @@ export function durationWords(ms: number): string {
   if (minutes < 60) return seconds % 60 === 0 ? `${minutes} min` : `${minutes} min ${seconds % 60} s`;
   const hours = Math.floor(minutes / 60);
   return minutes % 60 === 0 ? `${hours} h` : `${hours} h ${minutes % 60} min`;
-}
-
-/** Terminal escape sequences: CSI (colours, cursor moves), OSC (titles, links), and the two-byte ones. */
-const ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-Z\\-_]|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
-
-/** A terminal's output as plain lines: escape sequences gone, and a line rewritten with `\r` (a
- *  progress bar) as it ended up. */
-export function plainLines(text: string): string[] {
-  return text
-    .replace(ESCAPES, "")
-    .split("\n")
-    .map((line) => {
-      const trimmed = line.replace(/\r+$/, "");
-      return trimmed.slice(trimmed.lastIndexOf("\r") + 1);
-    });
 }
 
 /** The answer to Delete on a job: its id and the file removed — `stopped` when its service was

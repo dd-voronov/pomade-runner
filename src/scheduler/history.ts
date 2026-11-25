@@ -37,7 +37,8 @@ import {
   type StateFolder,
 } from "../locations";
 import type { Log } from "./log";
-import { LAST_LINES, parseRunRecord, plainLines, type HistoryPage, type RunOutput, type RunRecord } from "./model";
+import { LAST_LINES, parseRunRecord, type HistoryPage, type RunOutput, type RunRecord } from "./model";
+import { cutLine, lineText, outputLines, styledText } from "./terminal-text";
 
 /** A page of the history's records: a `HistoryPage` but its held rows, which the runs know. */
 export type HistoryRecords = Omit<HistoryPage, "held">;
@@ -345,11 +346,11 @@ export async function readOutput(file: string, maxBytes = OUTPUT_MAX_BYTES): Pro
   }
 }
 
-/** The last `count` lines of a run's output, plain, each cut to `LINE_MAX` characters; trailing
- *  empty lines left out. */
+/** The last `count` lines of a run's output with their colours (`styledText`), each cut to
+ *  `LINE_MAX` characters of its text; trailing empty lines left out. */
 export async function lastLines(file: string, count = LAST_LINES): Promise<string[]> {
   const { text } = await readOutput(file, TAIL_BYTES);
-  const plain = plainLines(text);
-  while (plain.length > 0 && (plain.at(-1) ?? "").trim() === "") plain.pop();
-  return plain.slice(-count).map((line) => (line.length > LINE_MAX ? `${line.slice(0, LINE_MAX - 1)}…` : line));
+  const lines = outputLines(text);
+  while (lines.length > 0 && lineText(lines.at(-1) ?? []).trim() === "") lines.pop();
+  return lines.slice(-count).map((line) => styledText(cutLine(line, LINE_MAX)));
 }

@@ -11,7 +11,6 @@ import {
   limitWords,
   missedRunsWords,
   otherMissedRuns,
-  plainLines,
   RUN_ALL_CONFIRM_ABOVE,
   runWords,
   TRIGGER_WORDS,
@@ -26,8 +25,10 @@ import {
   type RunView,
 } from "../scheduler/model";
 import type { LastMessage } from "../integrations/agents";
+import { lineText, outputLines, plainLines, plainOutput, type OutputLine } from "../scheduler/terminal-text";
 import { NO_ANSWER_REASON } from "../scheduler/agent-runs";
 import { MessageText } from "./MessageText";
+import { OutputText } from "./OutputText";
 import { Button, Dialog, DialogBody, DialogFoot, DialogHead, Help, Icon, LinkButton, Pill, useToast } from "./kit";
 import styles from "./RunCard.module.css";
 import { terminalLabel } from "./rowRun";
@@ -342,7 +343,7 @@ function neverWords(record: RunRecord): string {
 }
 
 /** The lines of a run's output in a box under their label — a first line that is the command, faint. */
-function Lines({ lines, title, testId }: { lines: readonly string[]; title: string; testId: string }): React.JSX.Element {
+function Lines({ lines, title, testId }: { lines: readonly OutputLine[]; title: string; testId: string }): React.JSX.Element {
   return (
     <div>
       <h5 className={styles.label}>{title}</h5>
@@ -351,8 +352,8 @@ function Lines({ lines, title, testId }: { lines: readonly string[]; title: stri
       ) : (
         <pre className={styles.lines} data-testid={testId}>
           {lines.map((line, index) => (
-            <span key={index} className={index === 0 && line.startsWith("$") ? styles.dim : undefined}>
-              {line === "" ? " " : line}
+            <span key={index} className={index === 0 && lineText(line).startsWith("$") ? styles.dim : undefined}>
+              {lineText(line) === "" ? " " : <OutputText line={line} />}
               {index < lines.length - 1 && "\n"}
             </span>
           ))}
@@ -361,6 +362,9 @@ function Lines({ lines, title, testId }: { lines: readonly string[]; title: stri
     </div>
   );
 }
+
+/** A record's last lines, each kept with its colours (`styledText`), as lines to draw. */
+const recordLines = (record: RunRecord): OutputLine[] => record.lastLines.map((line) => outputLines(line)[0] ?? []);
 
 /** A run that ended: its exit code — red when it failed — or why it failed (a time limit: the
  *  limit), then its last lines. */
@@ -403,7 +407,7 @@ function EndedBody({ record }: { record: RunRecord }): React.JSX.Element {
           </>
         )}
       </dl>
-      <Lines lines={record.lastLines} title="Last lines" testId="run-last-lines" />
+      <Lines lines={recordLines(record)} title="Last lines" testId="run-last-lines" />
     </>
   );
 }
@@ -436,7 +440,7 @@ function AgentBody({ record, unanswered, message }: { record: RunRecord; unanswe
             {capital(NO_ANSWER_REASON)}
           </dd>
         </dl>
-        <Lines lines={record.lastLines} title="Last lines" testId="run-last-lines" />
+        <Lines lines={recordLines(record)} title="Last lines" testId="run-last-lines" />
       </>
     );
   return (
@@ -495,8 +499,8 @@ function RunningBody({ host, view }: { host: HostClient; view: ActiveRun }): Rea
         <p className={styles.note}>{output.status === "loading" ? "Reading its output…" : output.status === "failed" ? output.message : "Runner's scheduler is not running."}</p>
       </>
     );
-  const lines = plainLines(output.value.text);
-  if (lines.at(-1) === "") lines.pop();
+  const lines = outputLines(output.value.text);
+  if (lineText(lines.at(-1) ?? []) === "") lines.pop();
   return (
     <>
       {background}
@@ -524,7 +528,7 @@ function WaitingBody({ host, view, wait }: { host: HostClient; view: ActiveRun; 
     <>
       <p data-testid="run-waits">{WAITING_SENTENCE[wait.prompt]}</p>
       {output.status === "ready" ? (
-        <Lines lines={promptLines(lines)} title="Waiting at" testId="run-prompt" />
+        <Lines lines={plainOutput(promptLines(lines))} title="Waiting at" testId="run-prompt" />
       ) : (
         <p className={styles.note}>{output.status === "loading" ? "Reading its output…" : output.status === "failed" ? output.message : "Runner's scheduler is not running."}</p>
       )}
