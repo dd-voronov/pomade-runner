@@ -37,5 +37,7 @@ describe("renamed jobs", () => {
     // A move back and forth ends where it began, without looping.
     again.add(new Map([["c/web", "a/web"]]));
     expect(again.formerIds("a/web", new Set())).toEqual(["b/web", "c/web"]);
+    // The write `add` started ends before the folder is removed, which it would race.
+    await again.flush();
   });
 });

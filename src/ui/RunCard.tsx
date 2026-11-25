@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { WORKSPACE_PROJECT_ID, type GitRunResult } from "pomade-kit/protocol";
-import type { HostClient } from "pomade-kit/sdk";
+import { HostError, type HostClient } from "pomade-kit/sdk";
 
 import { APP_ID } from "../app";
 import { DISMISS_METHOD, editRoute, MISSED_METHOD, outputTab, RUN_NOW_METHOD, runRoute } from "../integrations/runner-api";
@@ -41,6 +41,8 @@ import { NO_SESSION, useLastMessage, type AgentsState } from "./useAgents";
 import { useRunningNow } from "./useNow";
 import { useRunOutput } from "./useRunOutput";
 import { useRun } from "./useRunnerApi";
+import { repoRoot, revealProject } from "./gitReveal";
+import { useGitReveal } from "./platformCalls";
 
 /** A run's result card (the prototype's `cardHtml`), a dialog over History that Esc, the close
  *  button or a click outside closes back to History. Its head says the run's job, result, when,
@@ -289,7 +291,7 @@ function RunCard({
           ) : record === null ? null : record.action !== null || !started ? (
             <p data-testid="run-reason">{neverWords(record)}</p>
           ) : record.git !== null ? (
-            <GitBody record={record} />
+            <GitBody host={host} record={record} />
           ) : record.agent !== null ? (
             <AgentBody record={record} unanswered={unanswered} message={message} />
           ) : (
@@ -551,9 +553,21 @@ function repoNotes(results: readonly GitRunResult[]): string[] {
   });
 }
 
-/** A git run: each repo with its commit and steps, in order; what a repo that did not finish adds. */
-function GitBody({ record }: { record: RunRecord }): React.JSX.Element {
+/** A git run: each repo with its commit and steps, in order; what a repo that did not finish adds. A
+ *  failed repo's **Open in Git** — while Pomade serves `git.reveal` — takes the person to its row in
+ *  the Git panel of the project `revealProject` picks. */
+function GitBody({ host, record }: { host: HostClient; record: RunRecord }): React.JSX.Element {
   const results = record.git?.results ?? [];
+  const toast = useToast();
+  const reveal = useGitReveal(results.some((result) => result.status === "failed"));
+  const openInGit = (result: GitRunResult): void => {
+    if (reveal === null) return;
+    Promise.all([host.git.getState(), host.project.list()])
+      .then(([{ repos }, { projects }]) => reveal({ path: result.path, projectId: revealProject(repoRoot(result.path, repos), record.project, projects) }))
+      .catch((err: unknown) =>
+        toast(err instanceof HostError && err.code === "not-found" ? `Could not open ${result.repo} in Git: Pomade has no such repo or project now` : `Could not open ${result.repo} in Git: ${err instanceof Error ? err.message : String(err)}`),
+      );
+  };
   return (
     <>
       <div>
@@ -570,6 +584,11 @@ function GitBody({ record }: { record: RunRecord }): React.JSX.Element {
                   <code className={styles.hash} data-tip="Commit hash">
                     {result.commit.slice(0, 7)}
                   </code>
+                )}
+                {result.status === "failed" && reveal !== null && (
+                  <Button size="sm" className={styles.openInGit} data-help="c.git" onClick={() => openInGit(result)}>
+                    Open in Git
+                  </Button>
                 )}
               </div>
               <div className={styles.steps}>

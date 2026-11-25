@@ -117,6 +117,19 @@ describe("a job's last result", () => {
     expect(look(record("failed", { git: git(["9f8e7d6c5b4a"]), reason: "notes: push rejected" }))).toMatchObject({ sub: "today 11:17 · 3s" });
   });
 
+  it("a done pull's chip says what it got — the commit stays in the sub line; unknown, plain done", () => {
+    const pull = (commits: number | undefined, commit: string | null = null) => ({
+      op: "pull" as const,
+      job: "P",
+      at: "2026-11-17T11:20:00.000Z",
+      results: [{ repo: "notes", path: "/ws/notes", op: "pull" as const, status: "done" as const, reason: null, commit, steps: [{ step: "pull" as const, outcome: "done" as const, detail: "pulled", ...(commits === undefined ? {} : { commits }) }] }],
+    });
+    expect(look(record("done", { git: pull(2) }))).toMatchObject({ words: "done · 2 commits pulled", sub: "today 11:17 · 3s" });
+    expect(look(record("done", { git: pull(1) }))).toMatchObject({ words: "done · 1 commit pulled" });
+    expect(look(record("done", { git: pull(0, "a1b2c3d4e5f6") }))).toMatchObject({ words: "done · up to date", sub: "today 11:17 · a1b2c3d" });
+    expect(look(record("done", { git: pull(undefined) }))).toMatchObject({ words: "done" });
+  });
+
   it("gives a run that never started its reason and no duration", () => {
     const due = at(16, 20, 0);
     expect(look(record("skipped", { reason: "previous run still going", durationMs: null, startedAt: null, dueAt: due, endedAt: due }))).toMatchObject({

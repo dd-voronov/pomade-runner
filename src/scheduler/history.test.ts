@@ -91,6 +91,14 @@ describe("history", () => {
     expect((await history.page({ job: null, before: "nonsense", limit: 1 })).records.map((r) => r.run)).toEqual(["r5"]);
   });
 
+  it("a git run's record keeps what each pull got (`commits`), as `pomade-git` printed it", async () => {
+    const steps = [{ step: "pull" as const, outcome: "done" as const, detail: "got 2 commits from origin/main", commits: 2 }];
+    const git = { op: "pull" as const, job: "Pull", at: "2026-11-17T11:59:59.000Z", results: [{ repo: "notes", path: "/ws/notes", op: "pull" as const, status: "done" as const, reason: null, steps, commit: null }] };
+    await history.append(record("pull", "r1", T0, { kind: "git", git }));
+    const [read] = (await history.page({ job: null, before: null, limit: 1 })).records;
+    expect(read?.git?.results[0]?.steps[0]).toEqual(steps[0]);
+  });
+
   it("several records of one day page within the day", async () => {
     for (let i = 0; i < 4; i++) await history.append(record("a", `r${i}`, T0 + i * 1000));
     const first = await history.page({ job: null, before: null, limit: 3 });

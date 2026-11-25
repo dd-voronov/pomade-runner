@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import type { GitRunStep } from "pomade-kit/protocol";
+
 import { APP_VERSION } from "../../app";
 import type { RunnerSession, ServicesReport, ServiceStatus, SessionsReport } from "../../keeper/model";
 import type { ControlCallResult } from "../../scheduler/control/client";
 import type { ControlMethod, ControlMethods, JobEnabled, JobResumed, MissedSettled, RunStarted, SchedulerStatus } from "../../scheduler/control/protocol";
-import { dayTime, type ActiveRun, type HistoryPage, type JobListing, type RunsReport, type SwitchState } from "../../scheduler/model";
+import { dayTime, type ActiveRun, type HistoryPage, type JobListing, type RunRecord, type RunsReport, type SwitchState } from "../../scheduler/model";
 import type { ProjectRecord } from "../model";
 import { runCli, USAGE } from "./cli";
 
@@ -419,6 +421,14 @@ describe("pomade-runner", () => {
         { ...listing, job: "hooked", name: "Hooked", trigger: "at Mac login", next: null, last: { ...failed, state: "skipped", reason: "previous run still going", startedAt: null, durationMs: null } },
         { ...listing, job: "slow", name: "Slow", trigger: "at Mac login", next: null, last: { ...failed, reason: "stopped: time limit, 45 min", exitCode: null, signal: "SIGTERM", durationMs: 2_700_000, limitHit: 45 } },
         { ...listing, job: "web", name: "Web", kind: "service", trigger: "always on · starts at login", next: null, last: null, service: web },
+        {
+          ...listing,
+          job: "pull",
+          name: "Pull",
+          kind: "git",
+          next: null,
+          last: { ...failed, kind: "git", state: "done", exitCode: 0, git: { op: "pull", job: "Pull", at: "2026-11-17T12:00:00.000Z", results: [{ repo: "notes", path: "/ws/notes", op: "pull", status: "done", reason: null, commit: null, steps: [{ step: "pull", outcome: "done", detail: "got 2 commits from origin/main", commits: 2 } as GitRunStep] }] } },
+        },
         { ...listing, job: "bad", name: "bad", kind: null, enabled: false, trigger: null, problem: "bad.md:2: kind — missing.", next: null, last: null },
       ];
       const r = await run(["list"], undefined, { list: { status: "ok", value } });
@@ -430,6 +440,7 @@ describe("pomade-runner", () => {
         "hooked  Hooked  script  at Mac login  no next run · last skipped · previous run still going, 2026-11-17T12:00:03.000Z",
         "slow  Slow  script  at Mac login  no next run · last stopped: time limit, 45 min, 2026-11-17T12:00:03.000Z, took 45 min",
         "web  Web  service  always on · starts at login  running, pid 7, since 2026-11-17T08:00:00.000Z",
+        "pull  Pull  git  daily at 13:00  no next run · last done · 2 commits pulled, 2026-11-17T12:00:03.000Z, took 3 s",
         "bad  bad  invalid — bad.md:2: kind — missing.",
         "",
       ]);
@@ -467,12 +478,22 @@ describe("pomade-runner", () => {
       ];
       const git = { ...failed, job: "notes", name: "notes", kind: "git" as const, state: "done" as const, exitCode: 0, log: null, git: { op: "commit-push" as const, job: "notes", at: "2026-11-17T12:00:00.000Z", results } };
       expect((await run(["history"], undefined, { history: { status: "ok", value: { held: [], records: [git], next: null } } })).out).toBe(
-        "notes  notes  scheduled  done, 2026-11-17T12:00:03.000Z, took 3 s\n    notes · committed a1b2c3d · pushed\n    blog · skipped · agent working\n",
+        "notes  notes  scheduled  done · a1b2c3d, 2026-11-17T12:00:03.000Z, took 3 s\n    notes · committed a1b2c3d · pushed\n    blog · skipped · agent working\n",
       );
+      // A pull says what it got, summed over its repos; unknown on any repo (an older Pomade), plain "done".
+      const pull = (...counts: (number | undefined)[]) => ({
+        ...git,
+        git: { ...git.git, op: "pull" as const, results: counts.map((commits, index) => ({ repo: `r${index}`, path: `/ws/r${index}`, op: "pull" as const, status: "done" as const, reason: null, commit: null, steps: [{ step: "pull" as const, outcome: "done" as const, detail: "pulled", ...(commits === undefined ? {} : { commits }) }] })) },
+      });
+      const first = async (record: RunRecord) => (await run(["history"], undefined, { history: { status: "ok", value: { held: [], records: [record], next: null } } })).out.split("\n")[0];
+      expect(await first(pull(2))).toBe("notes  notes  scheduled  done · 2 commits pulled, 2026-11-17T12:00:03.000Z, took 3 s");
+      expect(await first(pull(1, 0))).toBe("notes  notes  scheduled  done · 1 commit pulled, 2026-11-17T12:00:03.000Z, took 3 s");
+      expect(await first(pull(0))).toBe("notes  notes  scheduled  done · up to date, 2026-11-17T12:00:03.000Z, took 3 s");
+      expect(await first(pull(2, undefined))).toBe("notes  notes  scheduled  done, 2026-11-17T12:00:03.000Z, took 3 s");
       // A job the switch holds leads, with its runs held so far; it alone is not "No runs yet".
       const held = { state: "held" as const, job: "lint", name: "Lint", kind: "script" as const, project: null, folder: "", missed: { count: 2, first: new Date(2026, 10, 17, 17, 40).getTime(), last: new Date(2026, 10, 17, 17, 42).getTime() } };
       expect((await run(["history"], undefined, { history: { status: "ok", value: { held: [held], records: [git], next: null } } })).out).toBe(
-        "lint  Lint  scheduled  held · 2 runs so far, 17:40–17:42\nnotes  notes  scheduled  done, 2026-11-17T12:00:03.000Z, took 3 s\n    notes · committed a1b2c3d · pushed\n    blog · skipped · agent working\n",
+        "lint  Lint  scheduled  held · 2 runs so far, 17:40–17:42\nnotes  notes  scheduled  done · a1b2c3d, 2026-11-17T12:00:03.000Z, took 3 s\n    notes · committed a1b2c3d · pushed\n    blog · skipped · agent working\n",
       );
       expect((await run(["history", "lint"], undefined, { history: { status: "ok", value: { held: [{ ...held, missed: { ...held.missed, count: 1, first: held.missed.last } }], records: [], next: null } } })).out).toBe(
         "lint  Lint  scheduled  held · 1 run so far, 17:42\n",

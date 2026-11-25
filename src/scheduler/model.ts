@@ -6,6 +6,7 @@
 
 import { isGitRunOutput, type GitRunOutput } from "pomade-kit/protocol";
 
+import { pulledCommits } from "../integrations/pomade-next";
 import { HOOK_EVENTS, JOB_KINDS, SERVICE_ACTIONS, SESSION_STATUS_WORDS, SESSION_STATUSES, type HookEvent, type JobKind, type ServiceAction } from "../jobs/model";
 import { isServiceStatus, type ServiceStatus } from "../keeper/model";
 
@@ -890,7 +891,7 @@ export function runWords(view: RunView): string {
     case "running":
       return waitingAt(view) !== null ? "waiting for you" : waitsForBackground(view) ? BACKGROUND_WORDS : "running";
     case "done":
-      return "action" in view && view.action !== null ? ACTION_DONE_WORDS[view.action] : "done";
+      return "action" in view && view.action !== null ? ACTION_DONE_WORDS[view.action] : "git" in view ? gitDoneWords(view.git) : "done";
     case "stopped-by-you":
       return "stopped by you";
     case "skipped":
@@ -900,6 +901,21 @@ export function runWords(view: RunView): string {
     case "failed":
       return view.limitHit === null ? `failed · ${failureWords(view)}` : limitWords(view.limitHit);
   }
+}
+
+/** What a git run pulled, in words: "2 commits pulled", "1 commit pulled", "up to date" for none —
+ *  the sum over its repos; `null` when it made no done pull or any count is unknown. */
+export function pulledWords(git: GitRunOutput | null): string | null {
+  const commits = pulledCommits(git);
+  if (commits === null) return null;
+  return commits === 0 ? "up to date" : `${commits} ${commits === 1 ? "commit" : "commits"} pulled`;
+}
+
+/** A done git run in words: "done", its commit, what it pulled — "done · a1b2c3d · up to date",
+ *  "done · 2 commits pulled"; plain "done" for a run without a result. */
+function gitDoneWords(git: GitRunOutput | null): string {
+  const commit = git?.results.find((result) => result.commit !== null)?.commit;
+  return ["done", typeof commit === "string" ? commit.slice(0, 7) : null, pulledWords(git)].filter((part) => part !== null).join(" · ");
 }
 
 /** A run stopped at its job's time limit, in words: "stopped: time limit, 45 min". */

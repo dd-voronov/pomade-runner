@@ -112,6 +112,7 @@ export const HELP = {
   'c.lastmsg': ['The agent\'s final message of the run.', 'Example: the summary itself.'],
   'c.session': ['Opens the agent session in a Pomade tab so you can ask follow-ups.', 'Example: "expand on the second point".'],
   'c.output': ['The full captured log of the run, kept as long as "Keep history and output" in Settings says.', 'Example: everything the script printed.'],
+  'c.git': ['Opens Pomade\'s Git panel at this repo, in a project that holds it: the job\'s own, else the first project whose folder holds the repo, else the Workspace.', 'Example: resolve the conflict that stopped the pull.'],
   'c.steps': ['What Pomade\'s git did in each repo, in order.', 'Example: committed a1b2c3d · pulled · pushed.'],
   'c.runat': ['Runs the missed job once at the time you pick.', 'Example: tonight 23:00 · +2h.'],
   't.owned': ['Runner owns this terminal session. Closing the tab only detaches — the process keeps running.', 'Example: quit Pomade and Dev server still answers on its port.']

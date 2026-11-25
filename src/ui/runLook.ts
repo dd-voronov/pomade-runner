@@ -61,12 +61,10 @@ export function isHeld(item: HistoryItem): item is HeldRun {
  *  record that takes its place on release lands. */
 const HELD_LOOK = { tone: "warning", live: false, help: "sw.held", label: "Held", pill: "warning", cardTone: undefined, filter: "missed" } as const;
 
-/** A done run's words: a chain's action on a service ("done · restarted"), a git run's commit
- *  ("done · a1b2c3d"), else "done". */
+/** A done run's words: a chain's action on a service ("done · restarted"), a git run's commit and
+ *  what it pulled ("done · a1b2c3d", "done · 2 commits pulled"; `runWords`), else "done". */
 function doneWords(view: RunRecord): string {
-  if (view.action !== null) return `done · ${ACTION_DONE_WORDS[view.action]}`;
-  const commit = view.git?.results.find((result) => result.commit !== null)?.commit;
-  return commit === undefined || commit === null ? "done" : `done · ${commit.slice(0, 7)}`;
+  return view.action !== null ? `done · ${ACTION_DONE_WORDS[view.action]}` : runWords(view);
 }
 
 /** A run's look; with `now`, a running run that has become a long-run warning says so: "running ·

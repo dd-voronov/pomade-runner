@@ -8,7 +8,7 @@ import { pomadeBound, type Job, type ServiceJob } from "../jobs/model";
 import { GIT_OPERATION_WORDS } from "../jobs/words";
 import type { ServiceStatus } from "../keeper/model";
 import { FIRING_LIMIT, FIRING_WINDOW_MS } from "../scheduler/loop-guard";
-import { BACKGROUND_WORDS, runWords, TRIGGER_WORDS, waitingAt, waitsForBackground, type ActiveRun, type JobRuns, type RunRecord, type RunTrigger } from "../scheduler/model";
+import { BACKGROUND_WORDS, pulledWords, runWords, TRIGGER_WORDS, waitingAt, waitsForBackground, type ActiveRun, type JobRuns, type RunRecord, type RunTrigger } from "../scheduler/model";
 import type { HelpKey } from "./help";
 import type { DotTone } from "./kit";
 import { shortDuration } from "./runLook";
@@ -64,7 +64,8 @@ function recordLook(record: RunRecord, now: number): LastLook {
   const base = { live: false, run: record.run, ...finished(record, now) };
   switch (record.state) {
     case "done":
-      return { ...base, tone: "ok", words: "done", help: "st.done" };
+      // A git run's commit is in the sub line; what it pulled joins the chip: "done · 2 commits pulled".
+      return { ...base, tone: "ok", words: ["done", pulledWords(record.git)].filter((part) => part !== null).join(" · "), help: "st.done" };
     case "failed":
       // A run stopped at its time limit says so: "stopped: time limit, 45 min".
       return record.limitHit !== null

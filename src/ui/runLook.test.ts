@@ -107,6 +107,27 @@ describe("a run's status: tone, words, help, pill, chip", () => {
     expect(runLook(git).words).toBe("done · a1b2c3d");
   });
 
+  it("a done pull says what it got, summed over its repos: commits pulled, or up to date; unknown on any repo, plain done", () => {
+    const pulled = (counts: (number | undefined)[], commit: string | null = null) =>
+      record({
+        kind: "git",
+        git: {
+          op: "pull",
+          job: "P",
+          at: "2026-11-17T12:00:00Z",
+          results: counts.map((commits, index) => ({ repo: `r${index}`, path: `/r${index}`, op: "pull" as const, status: "done" as const, reason: null, commit: index === 0 ? commit : null, steps: [{ step: "pull" as const, outcome: "done" as const, detail: "pulled", ...(commits === undefined ? {} : { commits }) }] })),
+        },
+      });
+    expect(runLook(pulled([2])).words).toBe("done · 2 commits pulled");
+    expect(runLook(pulled([1])).words).toBe("done · 1 commit pulled");
+    expect(runLook(pulled([0])).words).toBe("done · up to date");
+    expect(runLook(pulled([2, 0, 3])).words).toBe("done · 5 commits pulled");
+    expect(runLook(pulled([2, undefined])).words).toBe("done");
+    expect(runLook(pulled([undefined])).words).toBe("done");
+    // A commit & push: its commit, then what its pull got.
+    expect(runLook(pulled([0], "a1b2c3d4e5f6")).words).toBe("done · a1b2c3d · up to date");
+  });
+
   it("a run waiting for its agent's background work says so, with the clock too; a long-run warning asks over it", () => {
     const background = active({ kind: "agent", agent: { ...AGENT, waiting: null, background: "idle" }, startedAt: NOW - 60_000 });
     expect(runLook(background, NOW).words).toBe("running · waiting for the agent's background work");

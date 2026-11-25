@@ -603,6 +603,77 @@ test.describe("runs", () => {
     await expect.poll(() => page.evaluate(() => window.runnerCalls)).toContainEqual({ method: "jobs.run", params: { job: "notes" } });
   });
 
+  test("a failed repo on a git run's card has Open in Git while Pomade serves git.reveal: the call names the repo and the project that holds it; a done repo or run has none; an older Pomade, none at all", async ({ page }) => {
+    const repo = (name: string, path: string, status: "done" | "failed") => ({
+      repo: name,
+      path,
+      op: "pull" as const,
+      status,
+      reason: { done: null, failed: `Their changes conflict with yours in ${name}.md.` }[status],
+      steps: [{ step: "pull" as const, outcome: status, detail: { done: "got 2 commits from origin/main", failed: "conflict" }[status] }],
+      commit: null,
+    });
+    const git: RunRecord = {
+      ...failed,
+      job: "pull",
+      name: "Pull",
+      kind: "git",
+      project: "alpha",
+      exitCode: 1,
+      reason: "blog: conflict",
+      lastLines: [],
+      git: {
+        op: "pull",
+        job: "Pull",
+        at: new Date(at(13, 0)).toISOString(),
+        results: [repo("notes", "/fake/workspace/notes", "done"), repo("blog", "/fake/workspace/Projects/blog", "failed"), repo("notes", "/fake/workspace/notes", "failed"), repo("gone", "/fake/workspace/Projects/gone", "failed")],
+      },
+    };
+    // The job's project, alpha, does not hold blog; blog and zeta do — blog first by id. No project holds notes.
+    const projects = JSON.stringify([
+      { id: "zeta", name: "Zeta", root: "Projects" },
+      { id: "alpha", name: "Alpha", root: "Projects/alpha" },
+      { id: "blog", name: "Blog", root: "Projects/blog" },
+    ]);
+    const query = { route: `run/pull/${RUN}`, projects, repos: "blog=Projects/blog" };
+    await page.goto(harness({ ...query, gitReveal: "1" }));
+    await setRuns(page, [git]);
+    const repos = app(page).getByTestId("run-card").getByTestId("run-git-repo");
+    await expect(repos).toHaveCount(4);
+    const open = (index: number) => repos.nth(index).getByRole("button", { name: "Open in Git" });
+    await expect(open(1)).toBeVisible();
+    await expect(open(0)).toHaveCount(0);
+    await expect(open(2)).toBeVisible();
+    await expect(app(page).getByRole("button", { name: "Open in Git" })).toHaveCount(3);
+    // One probe for the UI session, its path empty — not a reveal.
+    expect(await page.evaluate(() => [window.gitRevealAsked, window.gitReveals.length])).toEqual([1, 0]);
+    await open(1).hover();
+    await expect(app(page).getByTestId("tooltip")).toContainText("Opens Pomade's Git panel at this repo");
+    await shoot(page, "tab-run-git-open-in-git");
+    await open(1).click();
+    await expect.poll(() => page.evaluate(() => window.gitReveals)).toEqual([{ path: "/fake/workspace/Projects/blog", projectId: "blog" }]);
+    await open(2).click();
+    await expect.poll(() => page.evaluate(() => window.gitReveals.at(-1))).toEqual({ path: "/fake/workspace/notes", projectId: "__workspace__" });
+    // A repo Pomade does not have: the call says not-found, and the card says so.
+    await open(3).click();
+    await expect(app(page).getByTestId("toast").last()).toHaveText("RunnerCould not open gone in Git: Pomade has no such repo or project now");
+
+    // A done run's card: no Open in Git.
+    await setRuns(page, [{ ...git, state: "done", reason: null, exitCode: 0, git: { ...git.git!, results: [repo("blog", "/fake/workspace/Projects/blog", "done")] } }]);
+    await expect(repos).toHaveCount(1);
+    await expect(app(page).getByRole("button", { name: "Open in Git" })).toHaveCount(0);
+
+    // A Pomade without git.reveal (the fake host answers unknown-method): the failed repos have no button.
+    await page.goto(harness(query));
+    await setRuns(page, [git]);
+    await expect(repos).toHaveCount(4);
+    await expect.poll(() => page.evaluate(() => window.gitRevealAsked)).toBe(1);
+    await expect(app(page).getByTestId("run-result")).toHaveText("Failed");
+    await expect(repos.nth(1).getByTestId("run-git-step")).toHaveText("conflict");
+    await expect(app(page).getByRole("button", { name: "Open in Git" })).toHaveCount(0);
+    await shoot(page, "tab-run-git-no-reveal");
+  });
+
   test("the tab opens at a run's route, as a notice's click opens it", async ({ page }) => {
     await page.goto(harness({ route: `run/backup/${RUN}` }));
     await setRuns(page, [failed]);
@@ -1473,7 +1544,9 @@ test.describe("the Jobs view", () => {
     await page.waitForFunction(() => typeof window.setRuns === "function");
     const now = await page.evaluate(() => Date.now());
     const failed = record("backup", "Backup", "failed", now - 3_600_000);
-    const done = record("alpha/pull", "Pull", "done", now - 7_200_000, { kind: "git", project: "alpha" });
+    // A pull that got 2 commits, as a Pomade that counts them prints it (`commits`).
+    const pulled = { op: "pull" as const, job: "Pull", at: new Date(now - 7_200_000).toISOString(), results: [{ repo: "notes", path: "/fake/workspace/notes", op: "pull" as const, status: "done" as const, reason: null, commit: null, steps: [{ step: "pull" as const, outcome: "done" as const, detail: "got 2 commits from origin/main", commits: 2 }] }] };
+    const done = record("alpha/pull", "Pull", "done", now - 7_200_000, { kind: "git", project: "alpha", git: pulled });
     const running: ActiveRun = {
       job: "beta/lint",
       name: "Lint",
@@ -1523,6 +1596,7 @@ test.describe("the Jobs view", () => {
     await expect(row("backup").getByTestId("job-last-sub")).toHaveText(/^(today|yesterday) \d+:\d\d · 3s$/);
     await expect(row("backup").getByTestId("job-next")).toContainText("in 12 min");
     await expect(row("alpha/pull").getByTestId("job-status")).toHaveAttribute("data-help", "st.done");
+    await expect(row("alpha/pull").getByTestId("job-status")).toHaveText("done · 2 commits pulled");
     await expect(row("alpha/pull").getByTestId("job-next")).toHaveText(/^(Today|Tomorrow|[A-Z][a-z]{2}) \d+:\d\d$/);
     // A run going shows ahead of the last finished one.
     await expect(row("beta/lint").getByTestId("job-status")).toHaveText("running");

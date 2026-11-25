@@ -170,3 +170,14 @@
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
 }
+
+/* A failed repo's Open in Git, at the end of its top line; its 1 px over the line's height does not
+   grow the row. */
+.openInGit {
+  margin-block: -1px;
+  margin-left: auto;
+}
+
+.hash + .openInGit {
+  margin-left: 0;
+}

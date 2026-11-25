@@ -12,6 +12,7 @@
 // `iframe[data-frame]`: `main` for the one opened, the key for a keyed tab's.
 
 import { createFakeHost, mountApp, type MountedApp } from "pomade-kit/fake-host";
+import { CHANNEL, WORKSPACE_PROJECT_ID } from "pomade-kit/protocol";
 
 import manifest from "../../app/manifest.json" with { type: "json" };
 import { STRIP_ICON } from "../../src/app";
@@ -55,15 +56,18 @@ function harnessRepos(param: string | null): [string, string][] {
   ];
 }
 
+const hostProjects = projects === "prototype" ? PROTOTYPE_PROJECTS : { projects: projects === null ? [{ id: "alpha", name: "Alpha", root: "Projects/alpha" }] : (JSON.parse(projects) as { id: string; name: string; root: string }[]) };
+// The workspace's one repo, as Pomade's git state reads it: the name git jobs name it by.
+// `?repos=a,b` names more, each directly under the workspace root, or `name=root` at a
+// workspace-relative root (`my-workspace=` is the workspace root's).
+const hostRepos = harnessRepos(query.get("repos")).map(([name, root]) => ({ name, root, absPath: root === "" ? "/fake/workspace" : `/fake/workspace/${root}`, remoteUrl: null, branch: "main", upstream: null, ahead: 0, behind: 0, hasCommits: true, changes: [] }));
+
 const fakeHost = createFakeHost({
   manifest,
   pomadeVersion: "0.0.0-e2e",
-  ...(projects === "prototype" ? PROTOTYPE_PROJECTS : { projects: projects === null ? [{ id: "alpha", name: "Alpha", root: "Projects/alpha" }] : (JSON.parse(projects) as { id: string; name: string; root: string }[]) }),
+  ...hostProjects,
   activeProject: query.get("active") ?? "alpha",
-  // The workspace's one repo, as Pomade's git state reads it: the name git jobs name it by.
-  // `?repos=a,b` names more, each directly under the workspace root, or `name=root` at a
-  // workspace-relative root (`my-workspace=` is the workspace root's).
-  git: harnessRepos(query.get("repos")).map(([name, root]) => ({ name, root, absPath: root === "" ? "/fake/workspace" : `/fake/workspace/${root}`, remoteUrl: null, branch: "main", upstream: null, ahead: 0, behind: 0, hasCommits: true, changes: [] })),
+  git: hostRepos,
   ...(hostApi === null ? {} : { hostApi: Number(hostApi) }),
   apps: agentsStandIn(query.get("agents")),
   roster: HARNESS_ROSTER,
@@ -73,6 +77,39 @@ const fakeHost = createFakeHost({
 window.fakeHost = fakeHost;
 
 if (query.get("scheduler") !== "none" && hostApi === null) await startFakeScheduler(fakeHost);
+// `?gitReveal=1` makes the host a Pomade that serves `git.reveal`, which pomade-kit's fake host does
+// not know yet (`src/integrations/pomade-next.ts`): the harness answers it before the fake host
+// hears it — `invalid-params` for a path that is not absolute, `not-found` for a repo or project the
+// host lacks — and keeps each call it served in `window.gitReveals`. Without it the fake host answers
+// `unknown-method`, as a Pomade before the call does. `window.gitRevealAsked` counts every
+// `git.reveal` a frame sent, probes included, either way.
+window.gitReveals = [];
+window.gitRevealAsked = 0;
+const servesReveal = query.get("gitReveal") === "1";
+const knownProjects = new Set([WORKSPACE_PROJECT_ID, ...hostProjects.projects.map((project) => project.id)]);
+window.addEventListener("message", (event) => {
+  const data = event.data as { channel?: unknown; type?: unknown; id?: unknown; method?: unknown; params?: unknown } | null;
+  if (data?.channel !== CHANNEL || data.type !== "call" || data.method !== "git.reveal" || typeof data.id !== "string" || event.source === null) return;
+  window.gitRevealAsked++;
+  if (!servesReveal) return;
+  event.stopImmediatePropagation();
+  const params = (data.params ?? {}) as { path?: unknown; projectId?: unknown };
+  const answer = (result: { ok: true; value: object } | { ok: false; error: { code: string; message: string } }): void => {
+    (event.source as Window).postMessage({ channel: CHANNEL, type: "result", id: data.id, ...result }, "*");
+  };
+  const { path, projectId } = params;
+  if (typeof path !== "string" || !path.startsWith("/") || (projectId !== undefined && typeof projectId !== "string")) {
+    answer({ ok: false, error: { code: "invalid-params", message: "git.reveal: path must be an absolute repo root" } });
+    return;
+  }
+  window.gitReveals.push({ path, ...(projectId === undefined ? {} : { projectId }) });
+  if (!hostRepos.some((repo) => repo.absPath === path) || (projectId !== undefined && !knownProjects.has(projectId))) {
+    answer({ ok: false, error: { code: "not-found", message: "git.reveal: no such repo or project" } });
+    return;
+  }
+  answer({ ok: true, value: {} });
+});
+
 const route = query.get("route");
 if (query.get("surface") === "panel") {
   window.mounted = mountApp(fakeHost, { src: app, surface: "panel", icon: STRIP_ICON });

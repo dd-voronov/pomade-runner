@@ -9,6 +9,10 @@ import type { HeldRun, RunRecord, RunsReport } from "../../src/scheduler/model";
 declare global {
   interface Window {
     fakeHost: FakeHost;
+    /** The `git.reveal` calls the harness answered (`?gitReveal=1`), in order; the probe's empty path is not one. */
+    gitReveals: { path: string; projectId?: string }[];
+    /** Every `git.reveal` a frame sent, probes included, whether the harness serves it or not. */
+    gitRevealAsked: number;
     /** The Runner frame the harness mounted. */
     mounted: MountedApp;
     /** Set what the stand-in scheduler says of a service (`harness/scheduler.ts`). */

@@ -27,7 +27,7 @@ workspace-level app: one list of every job, filterable to the current project.
 | **UI** | the Runner side panel and the Runner tab, in Pomade (`pomade-app://pomade-runner/`) | hidden-not-unmounted, like every pane |
 | **Scheduler** | the always-on backend: loads job files; supervises the services; evaluates triggers; applies missed-run, queue and load policies; starts the keeper and starts runs through it as its owner; writes history; posts notices; publishes events; serves Runner's API | a login item (launchd) that keeps running when Pomade quits; updated and restarted freely; reconnects to the keeper and its running sessions on restart |
 | **Keeper** | `pomade-kit/keeper`, run as Runner's own detached process (`backend/keeper.mjs`): holds every service's and run's terminal session (PTY); serves the attach protocol Pomade tabs use; reports exits | started by the scheduler (`startKeeper`), and started again when it dies; does not notice a scheduler restart or update; a keeper update hands the open PTYs to the new keeper process, so sessions keep running |
-| **`pomade-runner` command** | `check [file…]` validates job files and the settings file · `projects` lists the project ids and jobs sub-folders · `list` prints every job with its kind, trigger in words, next run and last result · `run <job>` runs a job now — a script's or git job's run, a service's Start · `history [job]` prints the jobs the switch holds and the latest runs · `runs` prints the switch, the runs going with what each queued one waits for, and Needs you · `pause [low\|all]` · `resume` set the switch · `resume-job <job>` lifts the loop guard's pause of a job · `missed <job> run-once|run-all|run-at <time>|skip` settles a job's missed runs · `enable <job>` · `disable <job>` · `services` shows every service and where it stands · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions | on `PATH` via `~/.pomade/bin`; reads the job files and the settings and talks to the scheduler directly, so it works with Pomade closed |
+| **`pomade-runner` command** | `check [file…]` validates job files and the settings file · `projects` lists the project ids and jobs sub-folders · `list` prints every job with its kind, trigger in words, next run and last result · `run <job>` runs a job now — a script's or git job's run, a service's Start · `history [job]` prints the jobs the switch holds and the latest runs, each result in History's words ("done · 2 commits pulled") · `runs` prints the switch, the runs going with what each queued one waits for, and Needs you · `pause [low\|all]` · `resume` set the switch · `resume-job <job>` lifts the loop guard's pause of a job · `missed <job> run-once|run-all|run-at <time>|skip` settles a job's missed runs · `enable <job>` · `disable <job>` · `services` shows every service and where it stands · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions | on `PATH` via `~/.pomade/bin`; reads the job files and the settings and talks to the scheduler directly, so it works with Pomade closed |
 | **Skill** | `pomade-runner-jobs` teaches agents the job format and location | master in `app/skills/pomade-runner-jobs/SKILL.md`, shipped in the build at `skills/pomade-runner-jobs` (the manifest's `skills`); the scheduler keeps a copy in the workspace's skills folder, and gives it to no agent |
 
 **What Runner tracks:** only jobs created in Runner. A terminal opened by hand, inside Pomade or
@@ -772,7 +772,9 @@ limit, Run now, hooks, chains, History, notices and Needs you.
   | Stop, time limit, a lost session | either | as for a script |
 
 - **The record** keeps the `GitRunOutput` whole (`git`): per repo done / skipped / failed and the
-  reason, the steps, the commit hash. Its last lines are one line per repo: "notes · committed
+  reason, the steps, the commit hash, and a done pull step's `commits` — the commits it got, 0 for
+  up to date — when the Pomade that ran it prints one (`pomade:T-321`; absent means unknown, never
+  0; read by `stepCommits` in `src/integrations/pomade-next.ts`). Its last lines are one line per repo: "notes · committed
   a1b2c3d · pulled · pushed", "notes · skipped · agent working", "notes · failed · <the
   reason>"; without a result, the output log's last lines. The result file goes once the record
   holds it. The run's folder is the workspace root (`""`).
@@ -793,13 +795,25 @@ head is red, a run that waits for you amber. Its body, by what the run left:
 | Run | Card body | Card foot |
 |---|---|---|
 | Script, ended | exit code (red when failed) or the reason it failed — a time limit as "Stopped: Time limit, 45 min — the job's time limit" — and the last lines | **View output** · **Run again**; a caught-up run that ran for more than one missed run, while it is its job's latest and no Run all of the job goes (`otherMissedRuns`), **Run the other N** between them — on every ended run's card |
-| Git, ended | each repo: its commit hash and its steps (✓ done, ✗ failed, faint skipped), and a reason a step does not say | **View output** · **Run again** |
+| Git, ended | each repo: its commit hash and its steps (✓ done, ✗ failed, faint skipped), and a reason a step does not say; a failed repo's top line ends with **Open in Git** (below) | **View output** · **Run again** |
 | Agent, ended | a failed run's reason in red; the agent's last message (`sessions.lastMessage` by the run's session, its Markdown drawn as text: paragraphs, lists, bold, emphasis, code), or why it cannot be read — no session known, none written yet, the Agents app not running; "The agent never started a session." when the Agents app has no such session (`not-found`), its raw error not shown; a run whose turn ended without an answer: the last lines in its place | **Open session** (not for a session the agent never started) (a Pomade agent tab resuming the session — `agentTabs.resume` in the job's project and folder — or the live tab already on it) · **View output** · **Run again** |
 | Running | the latest output, followed while it runs | **Open terminal** · **Stop run** |
 | Agent, waiting for you | what it waits at ("The agent stopped at a permission prompt and waits for your answer."; for an agent that has not started, that it stopped at a screen Runner does not know — a consent, a login, a first-run step — and to look at its terminal), **Waiting at**: the end of its output from the step that asks (`promptLines`), and that the time limit is paused | **Open at the prompt** (its terminal tab) · **Stop run** |
 | Queued | what it waits for, in a sentence — waiting for a slot, the low-priority runs holding the slots by name ("Two low-priority runs are going (Wiki lint, Photo backup). This one starts when one of them finishes.") | **Run now** |
 | Missed, waiting for you | when it was due — for more than one missed run, "This job missed 4 runs, 17:40–17:46." — and that its policy waits for you; **Run at…** opens a field that reads the time as it is typed | **Run now** · **Run at…** · **Skip**; for more than one **Run once** · **Run all N** · **Run at…** · **Skip** |
 | Skipped or missed; a chain's action on a service | why it never started ("Missed 4 runs, 17:40–17:46 · skipped." for more than one), or what the chain did | **Run now** (scripts and git jobs) |
+
+**Open in Git** (`src/ui/RunCard.tsx`, the project in `src/ui/gitReveal.ts`) takes the person to
+a failed repo's row in Pomade's Git panel, where the conflict is resolved: Host API `git.reveal`
+(`pomade:T-320`) with the repo's root (`GitRunResult.path`) and a project that holds it — the
+job's own when its folder holds the repo; else the first project, by id, whose folder holds it;
+else the Workspace. A repo Pomade has no row for, or a project gone, answers `not-found`, and the
+card toasts "Could not open notes in Git: Pomade has no such repo or project now". The button is
+there only while Pomade serves the call: the kit's client has no method for it yet, so the frame
+sends it over its own transport (`src/ui/platformCalls.ts`), and the first card with a failed
+repo in a UI session probes once with an empty path — `invalid-params` or `not-found` means the
+call is served, `unknown-method` or `capability-denied` that it is not; nothing moves in Pomade
+either way. An answer that says neither is not kept, so the next card asks again.
 
 Every card ends with **Edit job**. **View output** opens the run's **output tab** beside the
 Runner tab — a Pomade tab of its own, one per run — with the full captured log (a git run's holds
@@ -1164,7 +1178,8 @@ to it, light theme only.
     "started 12:31 · 17m" for an agent run at a prompt, "queued · 1 ahead" over "since 12:46",
     "missed · waiting for you" over when it was due — else the loop guard's pause, amber "paused ·
     looks like a loop" over "yesterday 18:40 · 10× in 10 min" — else its latest finished one:
-    "done", "failed · exit 1", "stopped: time limit, 45 min", "skipped · …", "missed · …", "stopped
+    "done" — a done pull's what it got, "done · 2 commits pulled", "done · up to date" (`pulledWords`) —,
+    "failed · exit 1", "stopped: time limit, 45 min", "skipped · …", "missed · …", "stopped
     by you", over when it started (or, one that never did, was due) and how long it took, "today
     8:32 · 4m 12s" — a done git run's commit in place of the duration, "yesterday 20:00 · a1b2c3d" —
     and a trigger that is not the job's own, "· caught up" or "· manual"; "never ran" for none. A
@@ -1208,8 +1223,10 @@ to it, light theme only.
   missed**; one opens its job in Jobs) and every record, one list newest
   first by when each started — or, one that has not, was due — under day heads (Today, Yesterday,
   "Sun 15 Nov"). Each row: the time, the kind icon, the job, the result (`runLook`: dot and words
-  — "failed · exit 1", "done · restarted", "queued · 1 ahead", "running · 3h — still expected?",
-  "waiting for you" —
+  — "failed · exit 1", "done · restarted", a done git run's commit and what it pulled ("done ·
+  a1b2c3d", "done · 2 commits pulled", "done · 1 commit pulled", "done · a1b2c3d · up to date" —
+  summed over its repos, plain "done" when any repo's count is unknown), "queued · 1 ahead",
+  "running · 3h — still expected?", "waiting for you" —
   explaining itself on hover), the duration (a running run's so far) and what started it
   (scheduled · caught up · "missed 4 runs, 17:40–17:46 · caught up once" · manual · hook: Mac
   login · chain: after Pull), with its help. The
@@ -1683,7 +1700,8 @@ Two Macs running the same workspace at once is not handled here (`P-008-multi-de
 | Platform (`pomade:E-032`) | notices and the closed-Pomade queue |
 | Platform (`pomade:E-033`) | Open session |
 | Platform (`pomade:E-034`) | attached terminals: the pane, `tabs.openAttached`, `attachedTab.action` |
-| `pomade-git` (`pomade:E-042`) | git operations, structured results |
+| `pomade-git` (`pomade:E-042`) | git operations, structured results; a done pull's `commits` (`pomade:T-321`) |
+| Platform (`pomade:T-320`) | `git.reveal`: Open in Git on a failed repo (`git.read`); declared in `src/integrations/pomade-next.ts` until `pomade-kit` v0.18.0 |
 | `pomade-kit` | SDK, schedule format, date phrases, agent scanners, the keeper library and attach protocol, the git runs contract |
 | `pomade-agents` (`calls`) | `roster.list`, `roster.launchSpec`, `roster.projectsFor`, `sessions.lastMessage`, `sessions.find` (`src/integrations/agents.ts`); events B `session.closed` and C `session.statusChanged` (`src/integrations/agent-events.ts`, the agents' hooks) |
 
