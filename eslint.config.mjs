@@ -41,7 +41,7 @@ const ui = typeAware("tsconfig.ui.json");
 const e2e = typeAware("tsconfig.e2e.json");
 
 export default tseslint.config(
-  { ignores: ["dist/**", "test-results/**", "playwright-report/**", "prototype/**", "**/*.d.ts"] },
+  { ignores: ["dist/**", "test-results/**", "playwright-report/**", "private/**", "**/*.d.ts"] },
   tseslint.configs.base,
   { name: "pomade-runner/scripts", files: ["eslint.config.mjs", "scripts/**/*.mjs"], rules: baseHygieneRules },
   {

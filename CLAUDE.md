@@ -1,0 +1,15 @@
+# pomade-runner — instructions for agents
+
+`pomade-runner` is the Pomade app that runs jobs on schedules, hooks and chains; the platform is the
+sibling repo `../Pomade`. Personal working rules come from the workspace `CLAUDE.md`, loaded
+automatically.
+
+**Every session, before anything else, read:**
+
+1. `../Pomade/private/WORKING-AGREEMENT.md` — how the Pomade family works, and which doc to read for
+   which task.
+2. `private/SESSION-HANDOFF.md` — work left hanging by this repo's last session (often empty).
+3. `private/REPO.md` — this repo: its docs, data, stack, commands and local rules.
+
+**A worker** — a sub-agent briefed by an orchestrating session — skips all three: read only what your
+brief names.

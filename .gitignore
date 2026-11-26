@@ -7,3 +7,6 @@ playwright-report/
 *.tsbuildinfo
 .DS_Store
 .claude/worktrees/
+
+# the private repo, checked out beside the code
+/private/
