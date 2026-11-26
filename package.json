@@ -3,7 +3,7 @@
   "version": "0.1.0-rc.7",
   "description": "Runner — the Pomade app that runs services, scripts, git operations and agents on schedules and hooks",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "repository": "github:dd-voronov/pomade-runner",
   "engines": {
