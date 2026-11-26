@@ -1,4 +1,4 @@
-// When a scheduled job runs (docs/DESIGN.md "Triggers"): on every tick the scheduler asks which of
+// When a scheduled job runs (docs/ARCHITECTURE.md "Triggers"): on every tick the scheduler asks which of
 // a schedule's occurrences fell since its previous look. The occurrences come from `pomade-kit`'s
 // engine — local time, the Mac's clock, DST rules — never computed here. Pure.
 

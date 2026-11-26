@@ -1,4 +1,4 @@
-// Hooks (docs/DESIGN.md "Hooks"): an event fires every job whose `hook` names it and whose filters
+// Hooks (docs/ARCHITECTURE.md "Hooks"): an event fires every job whose `hook` names it and whose filters
 // it passes — a filter left out takes any value. Runner's own event is `login`; Pomade's —
 // `pomade-started`, `project-first-open`, `project-opened`, `project-created` — and `pomade-agents`' —
 // `session-finished`, `session-status` — come in through the same firing path (`Runs.hook`). Pure.

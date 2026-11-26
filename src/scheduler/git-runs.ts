@@ -1,4 +1,4 @@
-// Git runs (docs/DESIGN.md "Git runs"): what Runner runs for a git job, how it reads the result and
+// Git runs (docs/ARCHITECTURE.md "Git runs"): what Runner runs for a git job, how it reads the result and
 // what it answers Pomade's repo rows (`jobs.forRepo`). Pure: the scheduler does the I/O.
 //
 // - **The command line.** `pomade-git <operation> <repo…> --json --job "<job name>"`, run by the

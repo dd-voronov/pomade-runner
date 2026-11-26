@@ -1,4 +1,4 @@
-// Runner's view of runs (docs/DESIGN.md "Runs", "History", "Needs you", "Missed runs and load"):
+// Runner's view of runs (docs/ARCHITECTURE.md "Runs", "History", "Needs you", "Missed runs and load"):
 // what the scheduler holds and serves to the `pomade-runner` command and to Runner's frames — the
 // runs going now and what each queued one waits for, the history records of finished ones, what
 // runs next, the switch, and what needs the person. Plain JSON. Pure: shared by the scheduler, the
@@ -66,7 +66,7 @@ export type Waits =
 
 export type RunState = ActiveState | RunResult;
 
-/** An agent run's own: who ran, how, in which session (docs/DESIGN.md "Agent runs"). */
+/** An agent run's own: who ran, how, in which session (docs/ARCHITECTURE.md "Agent runs"). */
 export interface AgentRun {
   /** The agent's roster id. */
   agent: string;
@@ -212,7 +212,7 @@ export interface ActiveRun extends RunBase {
   warningDismissed: boolean;
 }
 
-/** What happened to a service (docs/DESIGN.md "Service events"): it started, stopped, was
+/** What happened to a service (docs/ARCHITECTURE.md "Service events"): it started, stopped, was
  *  restarted — by you, a chain, after a crash, after its keeper ended, or as its project moved — or
  *  gave up after a crash loop. */
 export const SERVICE_EVENT_KINDS = ["started", "stopped", "restarted", "gave-up"] as const;
@@ -255,7 +255,7 @@ export interface ServiceEvent {
   ends: CrashEnd[];
 }
 
-/** A finished run: one history record. A service event is a record too, with its `event` (docs/DESIGN.md
+/** A finished run: one history record. A service event is a record too, with its `event` (docs/ARCHITECTURE.md
  *  "Service events"): it never started a run (`startedAt` is `null`), `dueAt` is when it happened
  *  — a crash window's first restart — and `endedAt` when it was last written; `state` is `done`, or
  *  `failed` for one that gave up and a chain's action the keeper refused, or `skipped` for a chain's

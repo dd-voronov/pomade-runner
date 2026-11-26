@@ -1,4 +1,4 @@
-// The payloads of Runner's run events on the platform bus (docs/DESIGN.md "Interfaces"): `run.started`
+// The payloads of Runner's run events on the platform bus (docs/ARCHITECTURE.md "Interfaces"): `run.started`
 // when a run's session starts, `run.finished` when it ends — the same job and run, `run.finished`
 // repeating every field of `run.started` with how it ended. An agent run's add its session, agent,
 // mode, start folder, that Runner started it, when, and its terminal (its session in the keeper): the

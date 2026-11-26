@@ -1,4 +1,4 @@
-// The Mac login (docs/DESIGN.md "Firing hooks", **Mac login**): a scheduler start is a login when
+// The Mac login (docs/ARCHITECTURE.md "Firing hooks", **Mac login**): a scheduler start is a login when
 // the Mac's console login is another than the one the scheduler last acted on. The keeper does not
 // tell it — it outlives a log-out — so the console login is read from macOS: its `loginwindow`
 // process of this user, the console session's leader. macOS starts a new one at every log-out and

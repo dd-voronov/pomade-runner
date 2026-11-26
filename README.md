@@ -5,8 +5,8 @@ while Pomade runs — and scripts, git operations and unattended agent runs on s
 or by hand.
 
 It is one piece of the Pomade family. The platform and its rules live in the sibling repo `Pomade`
-(`docs/PLATFORM.md`); the shared library is `pomade-kit`. The design is `docs/DESIGN.md`, the
-plan `docs/PLAN.md`.
+(`docs/PLATFORM.md`); the shared library is `pomade-kit`. The architecture is
+`docs/ARCHITECTURE.md`.
 
 ## What is in the box
 
@@ -24,8 +24,8 @@ packages the keeper loads at run time in `dist/node_modules/`, so the folder run
 copied.
 
 Jobs are Markdown files in `<workspace>/Apps/pomade-runner/jobs/` — the format is in
-`docs/DESIGN.md` "Job files" and, for agents, in the skill. Runner's workspace settings are
-`<workspace>/Apps/pomade-runner/settings.yaml` (`docs/DESIGN.md` "Settings"). `pomade-runner check`
+`docs/ARCHITECTURE.md` "Job files" and, for agents, in the skill. Runner's workspace settings are
+`<workspace>/Apps/pomade-runner/settings.yaml` (`docs/ARCHITECTURE.md` "Settings"). `pomade-runner check`
 validates both.
 
 ## Develop

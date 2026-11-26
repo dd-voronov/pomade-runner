@@ -16,7 +16,7 @@ broker (`jobs.list`, `services.list`, `runs.list`, `history.list`, `runs.get`, `
 `src/ui/useRunnerApi.ts` holds the live reads, each asked again on the scheduler's change event.
 The look is light only.
 
-The design is in [DESIGN](../DESIGN.md) "UI" (side panel, Runner tab, routes, result card, the
+The design is in [ARCHITECTURE](../ARCHITECTURE.md) "UI" (side panel, Runner tab, routes, result card, the
 output tab, job form, deleting a job, help) — this page is the code map and what a change must keep true.
 
 ## What it does and its rules

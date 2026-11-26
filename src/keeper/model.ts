@@ -98,7 +98,7 @@ export function isSessionsReport(value: unknown): value is SessionsReport {
   return isRecord(value) && isKeeperLink(value.keeper) && Array.isArray(value.sessions) && value.sessions.every(isRunnerSession);
 }
 
-/** Where a service stands (docs/DESIGN.md "Services"):
+/** Where a service stands (docs/ARCHITECTURE.md "Services"):
  *  - `queued`: due to start, waiting its turn in the staged start;
  *  - `starting`: runs, not up yet (its readiness check);
  *  - `running`: up;

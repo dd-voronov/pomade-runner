@@ -12,7 +12,7 @@ Runner is the Pomade app that runs things without you. It keeps **services** run
 on the Mac) and in chains (one job after another). It keeps going when the Mac sleeps or Pomade is
 closed, keeps the Mac responsive while it works, and tells you the result in Pomade's notices and on a
 result card. This guide describes how to use it. How it is built is in
-[`modules/`](../modules/index.md); the design is in [DESIGN](../DESIGN.md).
+[`modules/`](../modules/index.md); the design is in [ARCHITECTURE](../ARCHITECTURE.md).
 
 - **[Getting started](getting-started.md)** — installing Runner, the side panel (the switch, Needs you,
   Running now, Next up), the Runner tab with its four views, and the scheduler that keeps working when

@@ -1,4 +1,4 @@
-// Which queued runs start now, and what each of the others waits for (docs/DESIGN.md "Missed runs
+// Which queued runs start now, and what each of the others waits for (docs/ARCHITECTURE.md "Missed runs
 // and load"). The queue is the runs going, oldest first; each queued run waits for the first of:
 //
 // 1. **its time** — Run at… sets one;

@@ -1,4 +1,4 @@
-// Where Runner keeps what it writes (docs/DESIGN.md "Data and locations"), in two folders:
+// Where Runner keeps what it writes (docs/ARCHITECTURE.md "Data and locations"), in two folders:
 //
 // - **The records folder** — `<workspace>/Apps/pomade-runner/records/`, beside the Owner's `jobs/`
 //   and `settings.yaml`: what belongs to the Owner's working process — run history with each

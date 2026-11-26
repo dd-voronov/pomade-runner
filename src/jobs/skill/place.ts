@@ -1,4 +1,4 @@
-// The agent skill in the workspace's skills folder (docs/DESIGN.md "The agent skill"). Runner keeps a
+// The agent skill in the workspace's skills folder (docs/ARCHITECTURE.md "The agent skill"). Runner keeps a
 // copy of its installed build's skill at `<skills folder>/pomade-runner-jobs/SKILL.md` — a real file,
 // since the skills folder may sit in its own git repository synced to other Macs — and gives it to no
 // agent: which agents get it is the person's choice. The scheduler places it at every start (an

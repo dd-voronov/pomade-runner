@@ -1,4 +1,4 @@
-// Service supervision (docs/DESIGN.md "Services"): keeps every service job in the state its file
+// Service supervision (docs/ARCHITECTURE.md "Services"): keeps every service job in the state its file
 // and the person ask for. Every tick it compares each service with its session in the keeper and
 // acts — starts what should run, one at a time; stops what is disabled or whose file is gone; tells
 // when a starting service is up — and every session's end it hears from the keeper (`onExit`)
@@ -14,7 +14,7 @@
 // Every action — a tick, Start, Stop, Restart — runs in one lane, one after another. Time comes from
 // the clock and the network checks from `probe`, both given, so every rule is tested without waiting.
 //
-// Every start, stop, restart and give-up is a service event (`onEvent`, docs/DESIGN.md "Service
+// Every start, stop, restart and give-up is a service event (`onEvent`, docs/ARCHITECTURE.md "Service
 // events"), written to History with its cause: what made a staged start due — the Mac login, Pomade's
 // start, its project's first open, its job file — is kept until it starts; Start, Stop and Restart
 // are yours, or a chain's (whose record the runs write); a stop in its tab is heard as its session's
@@ -483,7 +483,7 @@ export function createSupervisor(options: SupervisorOptions): Supervisor {
   /** The service `job` now, as `entries()` has it. */
   const entryById = (job: string): Entry | undefined => entries().find((candidate) => candidate.job === job);
 
-  /** Write a service event of `entry` (docs/DESIGN.md "Service events"): `at` its time (default
+  /** Write a service event of `entry` (docs/ARCHITECTURE.md "Service events"): `at` its time (default
    *  now), `run` its row's id (default a new one), `put` to replace the row of that id. */
   function emit(
     entry: Entry,

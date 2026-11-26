@@ -1,4 +1,4 @@
-// An agent run's own rules (docs/DESIGN.md "Agent runs"), pure: what its session runs, how its end
+// An agent run's own rules (docs/ARCHITECTURE.md "Agent runs"), pure: what its session runs, how its end
 // reads — a turn that ended without an answer included — and which session the lookup by folder and
 // start time picks.
 // The launch itself — the roster, the launch spec, the keeper session — is in `runs.ts`; following

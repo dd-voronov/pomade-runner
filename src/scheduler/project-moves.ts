@@ -1,4 +1,4 @@
-// A project renamed or moved in Pomade (docs/DESIGN.md "Project renamed"): its jobs are bound to it
+// A project renamed or moved in Pomade (docs/ARCHITECTURE.md "Project renamed"): its jobs are bound to it
 // by the stable id, so they keep working; what names its folder follows it. Runner compares
 // Pomade's projects as it hears them with the ones it heard before — on `project.renamed`, and on
 // every connection, so a move made while the scheduler was down is followed too — and for each

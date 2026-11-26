@@ -1,4 +1,4 @@
-// The run lifecycle (docs/DESIGN.md "Runs", "Missed runs and load"): every tick the scheduler looks
+// The run lifecycle (docs/ARCHITECTURE.md "Runs", "Missed runs and load"): every tick the scheduler looks
 // at the schedules, fires what is due on time, hands what was missed to each job's missed-run
 // policy, starts queued runs as keeper sessions as far as the switch, the warm-up and the slots let
 // it, stops a run past its time limit, warns of a long one, and records every run that ends in the
@@ -234,7 +234,7 @@ export function fileRunsStore(records: RecordsFolder, state: StateFolder, log: L
   };
 }
 
-/** A run's environment, beyond the login shell's (docs/DESIGN.md "Triggers", "Context for
+/** A run's environment, beyond the login shell's (docs/ARCHITECTURE.md "Triggers", "Context for
  *  scripts"): the job, the run and its trigger; the job's project; a hook's context; a chain's
  *  parent. */
 export function runEnv(job: Job, run: string, trigger: RunTrigger, projectPath: string | null, cause: RunCause | null): Record<string, string> {

@@ -1,4 +1,4 @@
-// Run history (docs/DESIGN.md "History"): one record per finished run, in Runner's records folder
+// Run history (docs/ARCHITECTURE.md "History"): one record per finished run, in Runner's records folder
 // in the workspace, and the run's output log beside it — moved there from the state folder, where
 // the keeper wrote it while the run went, when the run ends (`keepOutputLog`).
 //

@@ -1,4 +1,4 @@
-// The records' move into the workspace (docs/DESIGN.md "Data and locations"): what a state folder
+// The records' move into the workspace (docs/ARCHITECTURE.md "Data and locations"): what a state folder
 // still holds of the Owner's records — run history, `runs.json`, `switch.json`, `needs-you.json`,
 // the services the Owner stopped — goes into the workspace's records folder when the scheduler
 // starts on that workspace, so nothing already recorded is lost — with the output logs of the runs

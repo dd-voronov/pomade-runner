@@ -1,4 +1,4 @@
-// Runner's names for the keeper's sessions and for runs (docs/DESIGN.md "Sessions"). A job id is a
+// Runner's names for the keeper's sessions and for runs (docs/ARCHITECTURE.md "Sessions"). A job id is a
 // path (`blog/dev-server`), and a keeper session id allows only letters, digits and `._:-`, so
 // the job id is encoded into it, reversibly: the session id alone says which job it belongs to.
 // Pure.

@@ -14,7 +14,7 @@ sessions, writes history, posts notices and serves Runner's API. It works with P
 closed; an agent run needs Pomade up and has the scheduler open it
 ([`integrations`](index.md) `pomade-open.ts`).
 
-The design — states, rules, numbers, data files — is in [DESIGN](../DESIGN.md): "Triggers", "Runs",
+The design — states, rules, numbers, data files — is in [ARCHITECTURE](../ARCHITECTURE.md): "Triggers", "Runs",
 "Project renamed", "Missed runs and load", "Services" (with "Service events"), "Settings",
 "Notifications", "Data and locations", "Interfaces", "The scheduler's control socket". This page is the code map and what a change must
 keep true.

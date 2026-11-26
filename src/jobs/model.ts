@@ -1,4 +1,4 @@
-// The job model: what a job file says once it is read and checked (docs/DESIGN.md "Job files").
+// The job model: what a job file says once it is read and checked (docs/ARCHITECTURE.md "Job files").
 // Plain JSON throughout, so the scheduler serves it to the UI unchanged. Pure: no I/O.
 
 import { GIT_RUN_OPS, type GitRunOp } from "pomade-kit/protocol";

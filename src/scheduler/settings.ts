@@ -1,4 +1,4 @@
-// Runner's workspace settings (docs/DESIGN.md "Settings"): one plain YAML file,
+// Runner's workspace settings (docs/ARCHITECTURE.md "Settings"): one plain YAML file,
 // `<workspace>/Apps/pomade-runner/settings.yaml`, synced with the workspace like the job files. A
 // missing file, or a field left out, means its default. The file is checked the way job files are —
 // every problem names its field, its line and the fix — and a field with a problem counts as its

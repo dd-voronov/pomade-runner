@@ -1,4 +1,4 @@
-// The scheduler on the workspace Pomade records (docs/DESIGN.md "Data and locations"): Runner's
+// The scheduler on the workspace Pomade records (docs/ARCHITECTURE.md "Data and locations"): Runner's
 // records are in the workspace, so the scheduler runs on one workspace at a time.
 //
 // - **No workspace known** — Pomade never recorded one: the scheduler waits. It looks again every

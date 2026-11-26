@@ -1,4 +1,4 @@
-// The keeper's reach to the macOS login keychain (docs/DESIGN.md "Sessions", **Keychain check**).
+// The keeper's reach to the macOS login keychain (docs/ARCHITECTURE.md "Sessions", **Keychain check**).
 // A keeper can lose it while it runs: every process it starts then fails `security list-keychains`,
 // and an agent started there finds no login. Before an agent run starts, the scheduler runs this
 // check as a short session in the keeper (`Sessions.checkKeychain`) and reads it by its exit

@@ -1,4 +1,4 @@
-// What a job's missed-run policy makes of its missed occurrences (docs/DESIGN.md "Missed runs and
+// What a job's missed-run policy makes of its missed occurrences (docs/ARCHITECTURE.md "Missed runs and
 // load"). However many were missed, a job gets one decision, about the latest — and the decision
 // keeps how many were missed and the first and last missed time (`MissedRuns`), which the run or
 // record it makes carries:

@@ -1,4 +1,4 @@
-// Pomade opened for agent runs (docs/DESIGN.md "Agent runs"): an agent run's launch spec comes from
+// Pomade opened for agent runs (docs/ARCHITECTURE.md "Agent runs"): an agent run's launch spec comes from
 // the Agents app through Pomade's broker, so one due while Pomade is not up for it waits while
 // Runner opens Pomade — `pomade-kit/node`'s `launchPomade()`, which runs the launch Pomade recorded
 // in `host.json` and waits for its socket to answer — and then waits, within a bound, until

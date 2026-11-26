@@ -1,5 +1,5 @@
 // Which Pomade start this is, whether a workspace's "Pomade started" hooks fired for it, and which of
-// its projects were opened since (docs/DESIGN.md "Firing hooks"). `pomade.ready` is sticky — a
+// its projects were opened since (docs/ARCHITECTURE.md "Firing hooks"). `pomade.ready` is sticky — a
 // scheduler that connects, or connects again, while the same Pomade runs hears it at once — so the
 // event alone does not say Pomade just started. A Pomade start is named by its socket: Pomade
 // creates it at every start and removes it when it quits, so the file's inode and birth time differ

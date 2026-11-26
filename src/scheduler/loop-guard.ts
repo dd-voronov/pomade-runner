@@ -1,4 +1,4 @@
-// The loop safety net (docs/DESIGN.md "Loop guards"): a job fired more than `FIRING_LIMIT` times
+// The loop safety net (docs/ARCHITECTURE.md "Loop guards"): a job fired more than `FIRING_LIMIT` times
 // within `FIRING_WINDOW_MS` by hooks or chains is paused — that firing and every later one by a hook
 // or a chain is dropped — until the person resumes it. Run now is the person's and never counts.
 // What it keeps is plain JSON, kept with the runs in `runs.json`, so a pause survives restarts.

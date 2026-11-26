@@ -1,4 +1,4 @@
-// "Needs you" and notices (docs/DESIGN.md "Notifications"): what Runner tells the person, and what
+// "Needs you" and notices (docs/ARCHITECTURE.md "Notifications"): what Runner tells the person, and what
 // stays in front of them until they deal with it.
 //
 // - **A run that ends** is noticed as its job's `notify` says: `always` every run that started,

@@ -1,4 +1,4 @@
-// One job file on its own: its frontmatter read against the format (docs/DESIGN.md "Job files"),
+// One job file on its own: its frontmatter read against the format (docs/ARCHITECTURE.md "Job files"),
 // with the defaults of its kind. Every problem names its field, its line and the fix. What needs
 // the other files or Pomade's projects — chains, names, project ids — is checked in `check.ts`.
 

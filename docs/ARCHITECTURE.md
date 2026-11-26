@@ -1,11 +1,11 @@
 ---
-doc: docs/DESIGN.md
-audience: engineers, product; every worker on a Runner ticket
-holds: the living design of Runner — its parts, jobs and job files, triggers, runs, missed runs and load, settings, notifications, UI, data, interfaces and stack
+doc: docs/ARCHITECTURE.md
+audience: engineers, product
+holds: the map and design of Runner — what it is, the stack, its parts, the repo layout and the docs map, its interfaces, jobs and job files, settings, data and locations, triggers, runs, missed runs and load, notifications, the UI, test hooks
 kind: reference
 ---
 
-# Runner — design
+# Runner — Architecture
 
 `pomade-runner` ("Runner" in the UI) is the Pomade app that runs things without the Owner. It runs:
 - **always-on services**: from Mac startup, outliving Pomade, or only while Pomade runs;
@@ -15,10 +15,24 @@ It keeps runs going when the Mac sleeps or Pomade is closed, and keeps the Mac r
 they run. Every result reaches the Owner as a notification and a result card. It is a
 workspace-level app: one list of every job, filterable to the current project.
 
-- **Reasoning and history:** the G3 grill outcome
-  (`../Pomade/docs/auxiliary/grills/2026-11-09-g3-runner.md`) and the final reconciliation
-  (`../Pomade/docs/auxiliary/grills/2026-11-09-final-reconciliation-g1-g4.md`).
-- **Platform rules:** `../Pomade/docs/PLATFORM.md`.
+This page is the map and the design: the stack, the parts, where things live in code, Runner's
+interfaces, the job format, the data and where it is kept, and how triggers, runs, load,
+notifications and the UI behave. The code map of each module — its files, rules, invariants, tests
+and limits — is in [`modules/`](modules/index.md); how to use Runner is in the
+[user guide](user-guide/index.md). The platform's rules are in `../Pomade/docs/PLATFORM.md`; what an
+app codes against is `../Pomade/docs/HOST-API.md`.
+
+## Stack
+
+TypeScript (strict) everywhere, on `pomade-kit` (`github:dd-voronov/pomade-kit#v0.19.0`; the pinned
+tag is in `package.json`).
+
+| Part | Built with | Why |
+|---|---|---|
+| UI | React 19, CSS modules over `src/ui/tokens.css`, bundled by Vite | the tab grows into several views and a form with many dependent fields: component state and composition carry that; Pomade's renderer is React with CSS modules and tokens, so the look and the habits are shared; no UI framework on top |
+| Scheduler, keeper, command | Node programs on Pomade's runtime (Electron in Node mode), each bundled by esbuild into one `.mjs` file with everything it imports; the four packages the keeper loads at run time ship beside them | an installed copy has no `node_modules` of the repo; one file per entry runs from the build folder alone |
+| Tests | vitest for logic; Playwright for the built app — the UI in `pomade-kit`'s fake host, the scheduler and command as processes, Runner hosted by a real Pomade, the install script | the family's split: input matrices in vitest, behavior through the real thing in e2e |
+| Lint | ESLint flat config, type-aware typescript-eslint with hand-picked rules, React's hook rules, Playwright's rules | the platform's approach: silent bug classes, not style |
 
 ## Parts
 
@@ -30,6 +44,10 @@ workspace-level app: one list of every job, filterable to the current project.
 | **`pomade-runner` command** | `check [file…]` validates job files and the settings file · `projects` lists the project ids and jobs sub-folders · `list` prints every job with its kind, trigger in words, next run and last result · `run <job>` runs a job now — a script's or git job's run, a service's Start · `history [job]` prints the jobs the switch holds and the latest runs and service events, each result in History's words ("done · 2 commits pulled") · `runs` prints the switch, the runs going with what each queued one waits for, and Needs you · `pause [low\|all]` · `resume` set the switch · `resume-job <job>` lifts the loop guard's pause of a job · `missed <job> run-once|run-all|run-at <time>|skip` settles a job's missed runs · `enable <job>` · `disable <job>` · `services` shows every service and where it stands · `stop <service>` · `restart <service>` · `sessions` shows the keeper and its sessions | on `PATH` via `~/.pomade/bin`; reads the job files and the settings and talks to the scheduler directly, so it works with Pomade closed |
 | **Skill** | `pomade-runner-jobs` teaches agents the job format and location | master in `app/skills/pomade-runner-jobs/SKILL.md`, shipped in the build at `skills/pomade-runner-jobs` (the manifest's `skills`); the scheduler keeps a copy in the workspace's skills folder, and gives it to no agent |
 
+**Placement:** an app (`../Pomade/docs/PLATFORM.md` rule 1). The UI runs in a Pomade tab or side
+panel; a backend and commands only where the hosting model allows them (PLATFORM "How an app lives
+inside Pomade").
+
 **What Runner tracks:** only jobs created in Runner. A terminal opened by hand, inside Pomade or
 outside it, is just a terminal.
 
@@ -37,6 +55,173 @@ outside it, is just a terminal.
 Pomade is closed. An agent run needs Pomade to start — its launch spec comes from `pomade-agents`
 through Pomade's broker: one due while Pomade is closed has Runner open Pomade first ("Agent runs",
 **Pomade opened for a run**). Once started it runs in the keeper like any run.
+
+## Repo layout
+
+A module is a real area of Runner with a home in the code; every non-test file under `src/` belongs
+to exactly one. The full map — each module's files, the e2e support and the e2e specs — is
+[`modules/index.md`](modules/index.md); the two large modules have a page of their own.
+
+| Module | Covers | Where in code |
+|---|---|---|
+| `keeper` | Runner's side of the keeper (`pomade-kit/keeper`): its entry, starting and owning it from the scheduler, run and service sessions, per-run output logs, header actions, service supervision, the keychain check and replacing the keeper, following an agent run's turns, process priority | `src/keeper/` |
+| `scheduler` | the always-on backend (login item): triggers (schedules, hooks, chains), the loop guard, missed-run policies, the start queue and load control, the run lifecycle for scripts, agents and git (an agent run's keychain check, its waits for you and for its background work, how its end reads), history and captured output (a run's output with the program's colours and bold, `terminal-text.ts`), Needs you, the workspace settings, project moves, deleting a job, the control socket | `src/scheduler/` — [`modules/scheduler.md`](modules/scheduler.md) |
+| `jobs` | the job file format (the `description` field included), loading and watching the jobs folder, validation, writing job files field-only (a multi-line description as a literal block), a trigger in words, the `pomade-runner` command, the agent skill's copy in the skills folder | `src/jobs/`; the command in `src/jobs/cli/`; the skill's master copy in `app/skills/pomade-runner-jobs/SKILL.md` |
+| `ui` | the side panel, the Runner tab (Jobs · History · Services · Settings), the job form, result cards, the output tab (a run's output in the program's colours, `OutputText.tsx`), the help tooltips, the design-system kit | `src/ui/` — [`modules/ui.md`](modules/ui.md) |
+| `integrations` | everything that crosses the app boundary: agent jobs (`pomade-agents`), git jobs (`pomade-git`), platform events and notifications, Runner's published API and events, Pomade opened for an agent run, native macOS notifications | `src/integrations/` |
+| `meta` | the app's static files, the build and install scripts, what every module shares, the test suites | `app/`; `scripts/`; `install`, `uninstall`; the configs at the root; `src/app.ts`, `src/locations.ts`; `e2e/` |
+
+**The build folder** (`dist/`, what `pomade apps install` copies):
+
+| Path | What |
+|---|---|
+| `manifest.json`, `icon.svg` | the static files of `app/` |
+| `index.html`, `assets/` | the UI — one bundle for the panel, the tab and a plain browser |
+| `backend/scheduler.mjs` | the scheduler, the manifest's always-on `backend` (`restartOnUpdate`: an update restarts it) |
+| `backend/keeper.mjs` | the keeper's entry, which the scheduler starts with the keeper's version as its argument |
+| `node_modules/` | what the keeper loads with `require` at run time, which a bundle cannot carry: `node-pty` (`package.json`, `lib/`, `prebuilds/darwin-*` — its binary is N-API, so it loads in any Pomade runtime with no rebuild; the build sets its helper's executable bit), `@xterm/headless`, `@xterm/addon-serialize`, `@xterm/addon-unicode11` — the versions `pomade-kit` resolves |
+| `cli/pomade-runner.mjs` | the `pomade-runner` command |
+| `skills/pomade-runner-jobs/` | the agent skill, from `app/skills/` (the manifest's `skills`; the build checks each folder has its `SKILL.md`) |
+
+**The docs** (`docs/`, and `README.md` at the root — what is in the box, develop, test, install, the
+dev link):
+
+| Doc | Holds |
+|---|---|
+| [`modules/index.md`](modules/index.md) | the module map — each module's scope and where it lives in code, with every non-test file under `src/`, the e2e support and the build accounted for |
+| [`modules/scheduler.md`](modules/scheduler.md) | the scheduler module (with the keeper's supervision and turn-following it drives) — what it does and its rules, the file map of `src/scheduler/`, invariants, tests, known limits |
+| [`modules/ui.md`](modules/ui.md) | the ui module — what it does and its rules, the file map of `src/ui/`, invariants, tests, known limits |
+| [`user-guide/index.md`](user-guide/index.md) | the Runner user guide's map — what Runner is for and a summary of each guide page |
+| [`user-guide/getting-started.md`](user-guide/getting-started.md) | installing Runner, the side panel, the Runner tab and its views, the switch, the scheduler that runs with Pomade closed |
+| [`user-guide/jobs.md`](user-guide/jobs.md) | the four kinds of job, the job file (the description included), the Jobs view, creating and editing a job in the form, Enabled, Open file, Delete, policies |
+| [`user-guide/schedules.md`](user-guide/schedules.md) | the schedule shapes of the job form, the weekdays filter, typing a time in words, how a schedule fires, the schedule in the job file |
+| [`user-guide/hooks-and-chains.md`](user-guide/hooks-and-chains.md) | every hook event and its filters, chains, the environment a run gets, the loop guard and Resume |
+| [`user-guide/services.md`](user-guide/services.md) | services — creating one, when it starts and counts as up, crashes and restarts, Start, Stop and Restart, services that wait for a project or for Pomade, when Pomade quits, the Services view, the service's terminal tab, its starts and stops in History |
+| [`user-guide/agent-jobs.md`](user-guide/agent-jobs.md) | agent jobs — the Agent section of the job form, modes and Full autonomy, how a run starts and finishes (an agent's background work, a turn without an answer), a run that waits for you (a prompt, a question, Claude's consent to Full autonomy, a screen Runner does not know, an agent that has not started), the keeper's keychain, Open session, Pomade opened for a run, what needs the Agents app |
+| [`user-guide/git-jobs.md`](user-guide/git-jobs.md) | git jobs — the Git section of the job form and its repository list, what a run does and how it ends, what a pull got, the result card and Open in Git, how Pomade's Git panel shows the jobs |
+| [`user-guide/missed-runs-and-load.md`](user-guide/missed-runs-and-load.md) | missed runs and their policies, Wait for me and Run at…, overlap, the switch, low priority and the slots, the warm-up, time limits, the long-run warning, the Settings view |
+| [`user-guide/results.md`](user-guide/results.md) | History and its filters, service events, the result card (a turn without an answer, background work, Runner's answers, Open in Git), a run's output tab, Needs you and its items, notices and the badge, Next up and Running now |
+| [`user-guide/command.md`](user-guide/command.md) | the pomade-runner command — every subcommand, what it prints, exit codes, what needs the scheduler or Pomade running |
+| [`user-guide/known-limits.md`](user-guide/known-limits.md) | what Runner does not do or does only in part |
+
+## Interfaces
+
+**Runner offers:**
+- **`jobs.list`** through the broker, to Runner's own frames: the checked jobs (see "Job files").
+  **`jobs.changed`** on the platform bus tells them to ask again.
+- **`services.list`** through the broker, to Runner's own frames: every service and where it
+  stands, and the projects opened since Pomade started (`ServicesReport`, check
+  `isServicesReport`); **`services.changed`** tells them to ask again. **`services.start`**, **`services.stop`**, **`services.restart`** with `{ job }` (its id or
+  name), from Runner's own frames only, answer `ServiceActionResult` — the service's status after,
+  or why it was refused. A start or restart may wait for a running session to end: callers give it
+  `SERVICE_ACTION_TIMEOUT_MS` (`src/integrations/runner-api.ts`).
+- **Runs**, through the broker:
+  - **`runs.list`** → `RunsReport` (`isRunsReport`): the runs going (missed runs waiting for you,
+    queued ones with what each waits for, running ones), Next up (`NextRun`: the next
+    `NEXT_UP_RUNS` runs of the enabled scheduled jobs and the Run at… ones, soonest first, each
+    `held` when the switch's position holds it), each run job's next and latest run and whether
+    the switch holds it (`JobRuns.held`), Needs you, the switch, and how many scheduled runs it has
+    held so far (`heldRuns`); every run and record carries the missed runs it stands for (`missed`);
+    **`runs.changed`** tells Runner's frames to ask again — on every change, and when the scheduler
+    connects.
+  - **`history.list`** `{ job?, before?, limit? }` → `HistoryPage` (`isHistoryPage`): the records,
+    newest first, and the cursor of the next older page; the newest page (no `before`) leads with
+    the held rows (`held: HeldRun[]` — of `job` when one is asked for; `[]` on older pages);
+    **`history.sessionEnd`** `{ job, run }` → `RunRecord` or `null`: the service event that ended
+    the session the event `run` started; **`runs.get`** `{ job, run }` →
+    `RunView` or `null`; **`runs.output`** `{ job, run }` → `RunOutput`: the end of its log, at
+    most 1 MiB.
+  - From Runner's own frames only: **`jobs.run`** `{ job }` → `RunActionResult` (Run now) ·
+    **`jobs.setEnabled`** `{ job, enabled }` → `EnableResult`: writes `enabled:` into the job's file,
+    field-only · **`needsYou.dismiss`** `{ id }` → `{ resolved }` · **`runs.missed`** `{ job, choice:
+    "run-now" | "run-at" | "skip" | "run-all" | "run-others", at?, run? }` → `MissedChoiceResult`
+    (when it runs and how many runs it made, or why not; `run-others` names the caught-up `run`) ·
+    **`runs.stop`** `{ job, run }` → `RunStopResult` · **`switch.set`** `{ position }` →
+    `SwitchState` · **`jobs.resume`** `{ job }` → `ResumeResult`: the loop guard's pause lifted, or
+    why not. · **`jobs.delete`** `{ job }` → `DeleteResult` (`isDeleteResult`): the job
+    deleted as "Deleting a job" says — its id, its file's path, and whether its service was stopped
+    first — or why not; callers give it `DELETE_JOB_TIMEOUT_MS`.
+- **Settings**, through the broker: **`settings.get`** → `SettingsReport` (`isSettingsReport`);
+  from Runner's own frames only **`settings.set`** `{ field, value }` → `SettingsWriteResult`;
+  **`settings.changed`** tells Runner's frames to ask again. **`environment.get`** →
+  `EnvironmentReport` (`isEnvironmentReport`, `src/scheduler/environment.ts`): what the Settings
+  view shows read-only about the Mac — `notifications` (`allowed`, `denied`, `not-asked`, or
+  `unavailable`: the scheduler posts no native notification) and `skill` (`folder`: the skill's
+  copy, workspace-relative, `<skills-folder>/pomade-runner-jobs`; `problem`: why it could not be
+  written there, or `null`).
+- **`jobs.forRepo`** through the broker, to any caller — Pomade's Git panel asks as `pomade`
+  (PLATFORM rule 7): the jobs that target a repo (`repoJobs`, `src/scheduler/git-runs.ts`). The
+  contract is `pomade-kit/protocol`'s (`REPO_JOBS_METHOD`, `RepoJobsParams`, `RepoJobsResult`,
+  `RepoJob`). Params `{ repo: { name, path } }`; a job targets the repo when one of its `repos` is
+  the name, or the absolute path. The answer, by id: every valid, enabled git job that targets it,
+  with its operation, `schedule` — its trigger in words, as the Jobs view shows it ("daily at 13:00
+  and 20:00", "at Mac login", "manual") — `nextRun` (ISO 8601, or `null`), `lastResult` (the repo's own
+  result in the latest run when it has one, else the run's: a missed run is `skipped`, one stopped
+  by you `failed`; `at` its end) and `route` (`jobs/<encoded job id>`). Answered from the snapshot
+  in memory, in milliseconds.
+- **Events** on the platform bus: **`run.started`** when a run's session starts, **`run.finished`**
+  when a run that started ends (a skipped run, or one that never started, publishes neither). Live
+  only: published while the scheduler is connected to Pomade.
+  - Payload (`RunStartedPayload`, `RunFinishedPayload`): `job` (id), `name`, `run`, `kind`,
+    `folder` (workspace-relative), `project` (id or `null`), `trigger`; on run finished also
+    `result` (`done` · `failed` · `stopped-by-you`) and `exitCode`.
+  - An agent run's also carry what `pomade-agents` reads them by (`../pomade-agents/docs/CONTRACTS.md`
+    "Subscribed events"; `src/scheduler/run-events.ts`): `sessionId` (`null` while not known —
+    `run.finished` carries one found after the start), `agent`, `mode`, `cwd` (absolute, symlinks
+    resolved), `startedByRunner: true`, `startedAt` (ISO 8601 with a zone: the session's start,
+    at or before the transcript's first record) and `terminal` (the run's session in Runner's
+    keeper, `run:<encoded job id>:<run id>`, or `null` when the run has no keeper session: what
+    the Agents app's Live now row and **Open run terminal** attach to with `tabs.openAttached`).
+    A script, git or service run's events carry none of these. `run.finished` repeats every field
+    of `run.started` for the same `job` and `run`.
+  - `pomade-agents` subscribes (its "agent live here?" and event B use them), and never calls
+    Runner.
+- **The `pomade-runner` command.**
+
+**Runner uses:**
+
+| Source | What |
+|---|---|
+| Platform (`pomade:E-027`) | app hosting |
+| Platform (`pomade:E-028`) | always-on backend, commands, broker, launching Pomade |
+| Platform (`pomade:E-029`) | side panel and badge |
+| Platform (`pomade:E-030`) | projects, stable ids, repos (`git.read`: the names git jobs take), open file, folder picker |
+| Platform (`pomade:E-031`) | events: `pomade.ready`, `project.opened`, `project.created`, `project.renamed` (hooks, projects) |
+| Platform (`pomade:E-032`) | notices and the closed-Pomade queue |
+| Platform (`pomade:E-033`) | Open session |
+| Platform (`pomade:E-034`) | attached terminals: the pane, `tabs.openAttached`, `attachedTab.action` |
+| `pomade-git` (`pomade:E-042`) | git operations, structured results; a done pull's `commits` (`pomade:T-321`) |
+| Platform (`pomade:T-320`) | `git.reveal`: Open in Git on a failed repo (`git.read`) |
+| `pomade-kit` (v0.19.0) | SDK, schedule format, date phrases, agent scanners, the keeper library and attach protocol, the git runs contract |
+| `pomade-agents` (`calls`) | `roster.list`, `roster.launchSpec`, `roster.projectsFor`, `sessions.lastMessage`, `sessions.find` (`src/integrations/agents.ts`); events B `session.closed` and C `session.statusChanged` (`src/integrations/agent-events.ts`, the agents' hooks) |
+
+**The scheduler's control socket.** The command reaches the scheduler over the scheduler's own
+unix socket, `<userData>/app-state/pomade-runner/scheduler.sock`, so it works with Pomade closed:
+- **Protocol:** one JSON object per line, request → response; `src/scheduler/control/protocol.ts`
+  is the one definition both sides import. A request names the protocol version it speaks and
+  every response carries the scheduler's; a mismatch is answered with an error that says both. An
+  older scheduler answers a method it does not have with `unknown-method`.
+- **Methods:** `status` (the scheduler: version, pid, start, last tick on its clock, Pomade link) ·
+  `sessions` (the keeper's state and every session with its job, run and output log;
+  `pomade-runner sessions` prints it) · `services` (the keeper's state and every service: its
+  `ServiceStatus`; `pomade-runner services` prints it) · `run { job }` (Run now: a script's run,
+  or a service's Start — `RunStarted`) · `stop { job }` · `restart { job }` (Stop, Restart a
+  service, answering its status after) · `enable { job }` · `disable { job }` (`enabled:` written
+  into the job's file) · `list` (every job: `JobListing`; `pomade-runner list`) · `history { job,
+  limit }` (`HistoryPage`; `pomade-runner history`) · `runs` (`RunsReport`; `pomade-runner runs`) ·
+  `switch { position }` (sets the switch, or — `position: null` — reads it: `SwitchState`;
+  `pomade-runner pause`, `resume`) · `resumeJob { job }` (lifts the loop guard's pause of a job:
+  `JobResumed`; `pomade-runner resume-job`) · `missed { job, choice }` (a missed-run choice —
+  `MissedChoice`: `run-now`, `run-at` with `at`, `skip`, `run-all`, `run-others` with `run` — answered
+  `MissedSettled`: the job, when it runs and how many runs; `pomade-runner missed`). A job is named by its id or name; what cannot be done is
+  `refused`, with the reason — "Runs" and "Services" say what.
+- **Location:** found from `POMADE_APP_KEY_FILE` (`<userData>/app-keys/pomade-runner`), which
+  Pomade gives the scheduler and the command alike — each Pomade (dev, stable, a test run) has its
+  own scheduler.
+- **One scheduler per Pomade:** a second one finds the first answering on the socket and exits
+  cleanly, never touching the keeper; the socket file of a killed scheduler is replaced.
+- **Starting needs** `POMADE_APP_KEY_FILE` (a readable key) and `POMADE_KEEPER_SOCKET`; without
+  them the scheduler logs why and exits with 1.
 
 ## Jobs
 
@@ -170,6 +355,134 @@ Runner itself and call again on `jobs.changed`; no answer means the scheduler is
 the frame says so. The form writes job files through the Host API (`src/ui/jobFiles.ts`): new
 files under a free slug in the right folder, field-only changes, and a re-read on every change on
 disk.
+
+## Settings
+
+The workspace's Runner settings, in `<workspace>/Apps/pomade-runner/settings.yaml` (synced with the
+workspace): plain YAML, one field per setting.
+
+```yaml
+max-low-priority-runs: 2   # low-priority runs at once; the rest wait "queued · N ahead"
+warm-up: 2m                # after login or wake, before caught-up runs
+long-run-warning: 3h       # a run going this long asks "still expected?"
+history-days: 30           # run history and output logs kept
+skills-folder: Knowledge/_skills/apps/   # where Runner keeps its agent skill
+```
+
+| Field | Value | Default |
+|---|---|---|
+| `max-low-priority-runs` | a whole number, 1–16 | 2 |
+| `warm-up` | a duration, `0m`–`1h` | `2m` |
+| `long-run-warning` | a duration, `1m`–`24h` | `3h` |
+| `history-days` | a whole number, 1–365 | 30 |
+| `skills-folder` | a folder inside the workspace, relative to its root (an absolute path, `~` or one that climbs out with `..` is a problem) | `Knowledge/_skills/apps/` |
+
+- A missing file, a field left out or an empty one means its default.
+- **Checked like a job file** (`src/scheduler/settings.ts`, with the job files' YAML reader): every
+  problem is one line, `path:line: field — problem. Fix: …`, a misspelled field gets the closest
+  one; a field with a problem counts as its default until it is fixed. `pomade-runner check` checks
+  it with the job files, or alone when it is the file named.
+- **Followed live:** the scheduler reads it on every tick, so an edit applies within a second, and
+  tells Runner's frames (`settings.changed`); `settings.get` answers what applies and the problems.
+- **Written field-only** by the scheduler (`settings.set { field, value }`: a count, a duration in
+  minutes, a folder, or `null` for the default): only the field's line changes, comments and the rest stay
+  byte for byte. A value out of range, or a file that is not readable YAML, is refused with the
+  reason. The scheduler is the one writer, with the one validator, Pomade open or closed.
+
+## Data and locations
+
+**App data:** the Owner's job files and settings, and what Runner records, in
+`<workspace>/Apps/pomade-runner/`; machine-local state in Pomade's user data
+(`app-state/pomade-runner/`); the agent skill's copy in the workspace's skills folder.
+
+Runner writes in two folders, both named only in `src/locations.ts`, each with its own type
+(`RecordsFolder`, `StateFolder`) so a path in one is never taken for the other:
+
+- **The records folder**, `<workspace>/Apps/pomade-runner/records/` (`RECORDS_FOLDER`): what is part
+  of the Owner's working process — what ran, what failed, what waits, where the switch stands — so
+  a copy of the workspace carries it to another Mac. It sits beside the Owner's `jobs/` and
+  `settings.yaml`, never inside `jobs/`, so the jobs watcher and `pomade-runner check` never read a
+  record as a job. Nothing in it grows while a run goes: a run's output log moves in at the run's
+  end.
+- **The state folder**, `<userData>/app-state/pomade-runner/` of the Pomade that hosts Runner: what
+  describes this Mac's processes — the control socket, the keeper, the output being written, crash
+  counts, Pomade's projects as last heard, the console login last acted on.
+
+| What | Where |
+|---|---|
+| Job files | `<workspace>/Apps/pomade-runner/jobs/` (synced with the workspace) |
+| Workspace settings (max low-priority runs 2, warm-up 2 min, long-run warning 3h, history 30 days, skills folder `Knowledge/_skills/apps/`) | `<workspace>/Apps/pomade-runner/settings.yaml` |
+| The agent skill's copy | `<workspace>/<skills-folder>/pomade-runner-jobs/SKILL.md` |
+| Run history (one file per day, JSON Lines) | `<workspace>/Apps/pomade-runner/records/history/YYYY-MM-DD.jsonl` |
+| A finished run's output log, moved in when the run ends | `<workspace>/Apps/pomade-runner/records/output/<encoded job id>/<run id>.log` |
+| Runs going (missed runs waiting for you, queued, running), each job's latest record, the last alive time, the looks the switch holds, the loop guard's firings and pauses | `<workspace>/Apps/pomade-runner/records/runs.json` |
+| The switch's position | `<workspace>/Apps/pomade-runner/records/switch.json` |
+| Needs-you items, the giving-ups noticed | `<workspace>/Apps/pomade-runner/records/needs-you.json` |
+| The services the Owner stopped | `<workspace>/Apps/pomade-runner/records/services.json` |
+| Jobs whose id changed when their project moved (old id → new id) | `<workspace>/Apps/pomade-runner/records/renamed.json` |
+| The output a live run or a service is writing | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.log` |
+| A git run's result while it runs (`pomade-git --json`'s output) | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.json` |
+| Session records (job, run, output log, end) | `<userData>/app-state/pomade-runner/sessions.json` |
+| Service supervision on this Mac (crash counts, a restart due, a service given up on, the last start's problem) | `<userData>/app-state/pomade-runner/services.json` |
+| Pomade's projects as last heard (for `POMADE_PROJECT_PATH`, and to tell a project moved) | `<userData>/app-state/pomade-runner/projects.json` |
+| The Pomade start each workspace's Pomade started hooks fired for, and the projects opened in it | `<userData>/app-state/pomade-runner/pomade-started.json` |
+| The console login the scheduler last acted on (a Mac login is a start at another) | `<userData>/app-state/pomade-runner/login.json` |
+| Where this Mac put the agent skill's copy last | `<userData>/app-state/pomade-runner/skill.json` |
+| The keeper's own state (session records, exit statuses, `keeper.log`) and its stdout and stderr (`keeper.out`) | `<userData>/app-state/pomade-runner/keeper/` |
+| Scheduler log (its stdout and stderr) | `<userData>/app-logs/pomade-runner/backend.log` |
+| Scheduler control socket | `<userData>/app-state/pomade-runner/scheduler.sock` |
+| Keeper socket (`POMADE_KEEPER_SOCKET`) | `<userData>/run/keepers/pomade-runner.sock` |
+| Installed build (the scheduler's login item path) | `<userData>/apps/pomade-runner/` |
+
+**The workspace.** The scheduler, the keeper it starts and the command learn the workspace the one
+way the platform gives: `POMADE_WORKSPACE`, else the workspace pointer in Pomade's home
+(`pomade-kit`'s `resolveWorkspace()`). The scheduler runs on one workspace at a time
+(`src/scheduler/workspace-follow.ts`), looking again every tick:
+- **None known** — Pomade never recorded one: the scheduler waits. It serves no control socket,
+  starts no keeper and writes nothing anywhere; its log says once that it waits. With no workspace
+  there are no jobs, so waiting loses nothing. It starts once one is recorded.
+- **Another one recorded:** the scheduler stops — the keeper and its sessions keep running — and
+  starts again on the new workspace, with that workspace's records; the time since that
+  workspace's last alive time is missed and goes to each job's policy. A pointer that goes away
+  leaves the scheduler where it is.
+
+**The one-time move** (`src/scheduler/records-move.ts`). At every start, before its records load,
+the scheduler moves what the state folder still holds of the records — history, `runs.json`,
+`switch.json`, `needs-you.json`, the services the Owner stopped, and the output logs of the runs
+already finished — into the workspace's records folder:
+- every file reaches its place whole (a temporary file renamed, a log renamed) before its source
+  goes, so a move stopped at any point loses nothing and the next start finishes it; with nothing
+  left to move it only looks;
+- a moved record names its log by job and run; a run going at that moment keeps writing its log in
+  the state folder and moves it at its end; services' logs and git results stay;
+- what the workspace already holds stays: a day of history both have gets the lines it lacks; a
+  `runs.json`, `switch.json` or `needs-you.json` already there is the workspace's own, and this
+  Mac's is left in the state folder, unread; the stopped services are read out of the state
+  folder's `services.json`, which stays for its crash counts, unless the workspace has its list;
+- a file that cannot move is said in the scheduler's log and tried again at the next start.
+
+Two Macs running the same workspace at once is not handled here (`P-008`).
+
+**The agent skill** (`src/jobs/skill/place.ts`). Runner keeps a copy of its build's skill at
+`<workspace>/<skills-folder>/pomade-runner-jobs/SKILL.md` — a real file, not a link, since the
+skills folder may be its own git repository synced to other Macs — and gives it to no agent:
+which agents get it is the person's choice, made by hand or in the Agents app.
+- **When:** the scheduler places it at every start — an install, a bundled install and an update
+  all start or restart it (`restartOnUpdate`) — when `skills-folder` changes, and when Settings asks
+  (`environment.get`). The file is written (a temporary file renamed) only when its text differs
+  from the installed one.
+- **Moving:** where this Mac placed it last is recorded in the state folder (`skill.json`); once the
+  copy is written in a new folder, the old `pomade-runner-jobs/` folder is removed.
+- **Only its own copy:** Runner writes into or removes a `pomade-runner-jobs/` folder only when it
+  is missing, empty, or Runner's copy — a real folder holding just a `SKILL.md` whose frontmatter
+  names `pomade-runner-jobs` (Finder's `.DS_Store` aside). Anything else at that name is left, and
+  said.
+- **A problem** — a skills folder Runner cannot write, the name taken by something else — is one
+  line in the scheduler's log (once, until it changes) and the reason in Settings' skill row,
+  never a crash; the copy placed before stays until a new one is written.
+- **Uninstall:** `./uninstall` removes the app, then the copy recorded in that Pomade's state
+  folder (`node src/jobs/skill/place.ts remove [--stable]`) — an uninstalled app's skill would
+  describe a command that is gone. Links someone made to the copy are theirs and stay.
 
 ## Triggers
 
@@ -1087,39 +1400,6 @@ The run lifecycle (`src/scheduler/runs.ts`) with what it hands to: the missed-ru
   Open (its attached tab) · Stop (stopped by you) · Dismiss (gone for this run), noticed once. Its
   warning is kept with the run in `runs.json`: a restart neither forgets nor notices it again.
 
-## Settings
-
-The workspace's Runner settings, in `<workspace>/Apps/pomade-runner/settings.yaml` (synced with the
-workspace): plain YAML, one field per setting.
-
-```yaml
-max-low-priority-runs: 2   # low-priority runs at once; the rest wait "queued · N ahead"
-warm-up: 2m                # after login or wake, before caught-up runs
-long-run-warning: 3h       # a run going this long asks "still expected?"
-history-days: 30           # run history and output logs kept
-skills-folder: Knowledge/_skills/apps/   # where Runner keeps its agent skill
-```
-
-| Field | Value | Default |
-|---|---|---|
-| `max-low-priority-runs` | a whole number, 1–16 | 2 |
-| `warm-up` | a duration, `0m`–`1h` | `2m` |
-| `long-run-warning` | a duration, `1m`–`24h` | `3h` |
-| `history-days` | a whole number, 1–365 | 30 |
-| `skills-folder` | a folder inside the workspace, relative to its root (an absolute path, `~` or one that climbs out with `..` is a problem) | `Knowledge/_skills/apps/` |
-
-- A missing file, a field left out or an empty one means its default.
-- **Checked like a job file** (`src/scheduler/settings.ts`, with the job files' YAML reader): every
-  problem is one line, `path:line: field — problem. Fix: …`, a misspelled field gets the closest
-  one; a field with a problem counts as its default until it is fixed. `pomade-runner check` checks
-  it with the job files, or alone when it is the file named.
-- **Followed live:** the scheduler reads it on every tick, so an edit applies within a second, and
-  tells Runner's frames (`settings.changed`); `settings.get` answers what applies and the problems.
-- **Written field-only** by the scheduler (`settings.set { field, value }`: a count, a duration in
-  minutes, a folder, or `null` for the default): only the field's line changes, comments and the rest stay
-  byte for byte. A value out of range, or a file that is not readable YAML, is refused with the
-  reason. The scheduler is the one writer, with the one validator, Pomade open or closed.
-
 ## Notifications
 
 - **Notify me** per job: always · on failure · never. A run that ended is noticed as its job says:
@@ -1182,9 +1462,6 @@ skills-folder: Knowledge/_skills/apps/   # where Runner keeps its agent skill
   - "needs you" items also post a native macOS notification, whose click opens Pomade at the item.
 
 ## UI
-
-**Design source:** the approved clickable prototype, `prototype/index.html`; the real UI is built
-to it, light theme only.
 
 **Side panel** (the Runner icon on the left strip):
 1. the three-position switch (`src/ui/SwitchControl.tsx`), pinned above the scroll: Running · Pause
@@ -1644,243 +1921,12 @@ example. This is a product requirement, not polish. Every text is in `src/ui/hel
 `<area>.<what>` (`st.*` statuses, `f.*` form fields, `p.*` policies, `s.*` settings, `c.*` result
 cards, `need.*` Needs-you cards); `Help` shows one by its key.
 
-## Data and locations
-
-Runner writes in two folders, both named only in `src/locations.ts`, each with its own type
-(`RecordsFolder`, `StateFolder`) so a path in one is never taken for the other:
-
-- **The records folder**, `<workspace>/Apps/pomade-runner/records/` (`RECORDS_FOLDER`): what is part
-  of the Owner's working process — what ran, what failed, what waits, where the switch stands — so
-  a copy of the workspace carries it to another Mac. It sits beside the Owner's `jobs/` and
-  `settings.yaml`, never inside `jobs/`, so the jobs watcher and `pomade-runner check` never read a
-  record as a job. Nothing in it grows while a run goes: a run's output log moves in at the run's
-  end.
-- **The state folder**, `<userData>/app-state/pomade-runner/` of the Pomade that hosts Runner: what
-  describes this Mac's processes — the control socket, the keeper, the output being written, crash
-  counts, Pomade's projects as last heard, the console login last acted on.
-
-| What | Where |
-|---|---|
-| Job files | `<workspace>/Apps/pomade-runner/jobs/` (synced with the workspace) |
-| Workspace settings (max low-priority runs 2, warm-up 2 min, long-run warning 3h, history 30 days, skills folder `Knowledge/_skills/apps/`) | `<workspace>/Apps/pomade-runner/settings.yaml` |
-| The agent skill's copy | `<workspace>/<skills-folder>/pomade-runner-jobs/SKILL.md` |
-| Run history (one file per day, JSON Lines) | `<workspace>/Apps/pomade-runner/records/history/YYYY-MM-DD.jsonl` |
-| A finished run's output log, moved in when the run ends | `<workspace>/Apps/pomade-runner/records/output/<encoded job id>/<run id>.log` |
-| Runs going (missed runs waiting for you, queued, running), each job's latest record, the last alive time, the looks the switch holds, the loop guard's firings and pauses | `<workspace>/Apps/pomade-runner/records/runs.json` |
-| The switch's position | `<workspace>/Apps/pomade-runner/records/switch.json` |
-| Needs-you items, the giving-ups noticed | `<workspace>/Apps/pomade-runner/records/needs-you.json` |
-| The services the Owner stopped | `<workspace>/Apps/pomade-runner/records/services.json` |
-| Jobs whose id changed when their project moved (old id → new id) | `<workspace>/Apps/pomade-runner/records/renamed.json` |
-| The output a live run or a service is writing | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.log` |
-| A git run's result while it runs (`pomade-git --json`'s output) | `<userData>/app-state/pomade-runner/output/<encoded job id>/<run id>.json` |
-| Session records (job, run, output log, end) | `<userData>/app-state/pomade-runner/sessions.json` |
-| Service supervision on this Mac (crash counts, a restart due, a service given up on, the last start's problem) | `<userData>/app-state/pomade-runner/services.json` |
-| Pomade's projects as last heard (for `POMADE_PROJECT_PATH`, and to tell a project moved) | `<userData>/app-state/pomade-runner/projects.json` |
-| The Pomade start each workspace's Pomade started hooks fired for, and the projects opened in it | `<userData>/app-state/pomade-runner/pomade-started.json` |
-| The console login the scheduler last acted on (a Mac login is a start at another) | `<userData>/app-state/pomade-runner/login.json` |
-| Where this Mac put the agent skill's copy last | `<userData>/app-state/pomade-runner/skill.json` |
-| The keeper's own state (session records, exit statuses, `keeper.log`) and its stdout and stderr (`keeper.out`) | `<userData>/app-state/pomade-runner/keeper/` |
-| Scheduler log (its stdout and stderr) | `<userData>/app-logs/pomade-runner/backend.log` |
-| Scheduler control socket | `<userData>/app-state/pomade-runner/scheduler.sock` |
-| Keeper socket (`POMADE_KEEPER_SOCKET`) | `<userData>/run/keepers/pomade-runner.sock` |
-| Installed build (the scheduler's login item path) | `<userData>/apps/pomade-runner/` |
-
-**The workspace.** The scheduler, the keeper it starts and the command learn the workspace the one
-way the platform gives: `POMADE_WORKSPACE`, else the workspace pointer in Pomade's home
-(`pomade-kit`'s `resolveWorkspace()`). The scheduler runs on one workspace at a time
-(`src/scheduler/workspace-follow.ts`), looking again every tick:
-- **None known** — Pomade never recorded one: the scheduler waits. It serves no control socket,
-  starts no keeper and writes nothing anywhere; its log says once that it waits. With no workspace
-  there are no jobs, so waiting loses nothing. It starts once one is recorded.
-- **Another one recorded:** the scheduler stops — the keeper and its sessions keep running — and
-  starts again on the new workspace, with that workspace's records; the time since that
-  workspace's last alive time is missed and goes to each job's policy. A pointer that goes away
-  leaves the scheduler where it is.
-
-**The one-time move** (`src/scheduler/records-move.ts`). At every start, before its records load,
-the scheduler moves what the state folder still holds of the records — history, `runs.json`,
-`switch.json`, `needs-you.json`, the services the Owner stopped, and the output logs of the runs
-already finished — into the workspace's records folder:
-- every file reaches its place whole (a temporary file renamed, a log renamed) before its source
-  goes, so a move stopped at any point loses nothing and the next start finishes it; with nothing
-  left to move it only looks;
-- a moved record names its log by job and run; a run going at that moment keeps writing its log in
-  the state folder and moves it at its end; services' logs and git results stay;
-- what the workspace already holds stays: a day of history both have gets the lines it lacks; a
-  `runs.json`, `switch.json` or `needs-you.json` already there is the workspace's own, and this
-  Mac's is left in the state folder, unread; the stopped services are read out of the state
-  folder's `services.json`, which stays for its crash counts, unless the workspace has its list;
-- a file that cannot move is said in the scheduler's log and tried again at the next start.
-
-Two Macs running the same workspace at once is not handled here (`P-008-multi-device-double-fire`).
-
-## Interfaces
-
-**Runner offers:**
-- **`jobs.list`** through the broker, to Runner's own frames: the checked jobs (see "Job files").
-  **`jobs.changed`** on the platform bus tells them to ask again.
-- **`services.list`** through the broker, to Runner's own frames: every service and where it
-  stands, and the projects opened since Pomade started (`ServicesReport`, check
-  `isServicesReport`); **`services.changed`** tells them to ask again. **`services.start`**, **`services.stop`**, **`services.restart`** with `{ job }` (its id or
-  name), from Runner's own frames only, answer `ServiceActionResult` — the service's status after,
-  or why it was refused. A start or restart may wait for a running session to end: callers give it
-  `SERVICE_ACTION_TIMEOUT_MS` (`src/integrations/runner-api.ts`).
-- **Runs**, through the broker:
-  - **`runs.list`** → `RunsReport` (`isRunsReport`): the runs going (missed runs waiting for you,
-    queued ones with what each waits for, running ones), Next up (`NextRun`: the next
-    `NEXT_UP_RUNS` runs of the enabled scheduled jobs and the Run at… ones, soonest first, each
-    `held` when the switch's position holds it), each run job's next and latest run and whether
-    the switch holds it (`JobRuns.held`), Needs you, the switch, and how many scheduled runs it has
-    held so far (`heldRuns`); every run and record carries the missed runs it stands for (`missed`);
-    **`runs.changed`** tells Runner's frames to ask again — on every change, and when the scheduler
-    connects.
-  - **`history.list`** `{ job?, before?, limit? }` → `HistoryPage` (`isHistoryPage`): the records,
-    newest first, and the cursor of the next older page; the newest page (no `before`) leads with
-    the held rows (`held: HeldRun[]` — of `job` when one is asked for; `[]` on older pages);
-    **`history.sessionEnd`** `{ job, run }` → `RunRecord` or `null`: the service event that ended
-    the session the event `run` started; **`runs.get`** `{ job, run }` →
-    `RunView` or `null`; **`runs.output`** `{ job, run }` → `RunOutput`: the end of its log, at
-    most 1 MiB.
-  - From Runner's own frames only: **`jobs.run`** `{ job }` → `RunActionResult` (Run now) ·
-    **`jobs.setEnabled`** `{ job, enabled }` → `EnableResult`: writes `enabled:` into the job's file,
-    field-only · **`needsYou.dismiss`** `{ id }` → `{ resolved }` · **`runs.missed`** `{ job, choice:
-    "run-now" | "run-at" | "skip" | "run-all" | "run-others", at?, run? }` → `MissedChoiceResult`
-    (when it runs and how many runs it made, or why not; `run-others` names the caught-up `run`) ·
-    **`runs.stop`** `{ job, run }` → `RunStopResult` · **`switch.set`** `{ position }` →
-    `SwitchState` · **`jobs.resume`** `{ job }` → `ResumeResult`: the loop guard's pause lifted, or
-    why not. · **`jobs.delete`** `{ job }` → `DeleteResult` (`isDeleteResult`): the job
-    deleted as "Deleting a job" says — its id, its file's path, and whether its service was stopped
-    first — or why not; callers give it `DELETE_JOB_TIMEOUT_MS`.
-- **Settings**, through the broker: **`settings.get`** → `SettingsReport` (`isSettingsReport`);
-  from Runner's own frames only **`settings.set`** `{ field, value }` → `SettingsWriteResult`;
-  **`settings.changed`** tells Runner's frames to ask again. **`environment.get`** →
-  `EnvironmentReport` (`isEnvironmentReport`, `src/scheduler/environment.ts`): what the Settings
-  view shows read-only about the Mac — `notifications` (`allowed`, `denied`, `not-asked`, or
-  `unavailable`: the scheduler posts no native notification) and `skill` (`folder`: the skill's
-  copy, workspace-relative, `<skills-folder>/pomade-runner-jobs`; `problem`: why it could not be
-  written there, or `null`).
-- **`jobs.forRepo`** through the broker, to any caller — Pomade's Git panel asks as `pomade`
-  (PLATFORM rule 7): the jobs that target a repo (`repoJobs`, `src/scheduler/git-runs.ts`). The
-  contract is `pomade-kit/protocol`'s (`REPO_JOBS_METHOD`, `RepoJobsParams`, `RepoJobsResult`,
-  `RepoJob`). Params `{ repo: { name, path } }`; a job targets the repo when one of its `repos` is
-  the name, or the absolute path. The answer, by id: every valid, enabled git job that targets it,
-  with its operation, `schedule` — its trigger in words, as the Jobs view shows it ("daily at 13:00
-  and 20:00", "at Mac login", "manual") — `nextRun` (ISO 8601, or `null`), `lastResult` (the repo's own
-  result in the latest run when it has one, else the run's: a missed run is `skipped`, one stopped
-  by you `failed`; `at` its end) and `route` (`jobs/<encoded job id>`). Answered from the snapshot
-  in memory, in milliseconds.
-- **Events** on the platform bus: **`run.started`** when a run's session starts, **`run.finished`**
-  when a run that started ends (a skipped run, or one that never started, publishes neither). Live
-  only: published while the scheduler is connected to Pomade.
-  - Payload (`RunStartedPayload`, `RunFinishedPayload`): `job` (id), `name`, `run`, `kind`,
-    `folder` (workspace-relative), `project` (id or `null`), `trigger`; on run finished also
-    `result` (`done` · `failed` · `stopped-by-you`) and `exitCode`.
-  - An agent run's also carry what `pomade-agents` reads them by (`../pomade-agents/docs/CONTRACTS.md`
-    "Subscribed events"; `src/scheduler/run-events.ts`): `sessionId` (`null` while not known —
-    `run.finished` carries one found after the start), `agent`, `mode`, `cwd` (absolute, symlinks
-    resolved), `startedByRunner: true`, `startedAt` (ISO 8601 with a zone: the session's start,
-    at or before the transcript's first record) and `terminal` (the run's session in Runner's
-    keeper, `run:<encoded job id>:<run id>`, or `null` when the run has no keeper session: what
-    the Agents app's Live now row and **Open run terminal** attach to with `tabs.openAttached`).
-    A script, git or service run's events carry none of these. `run.finished` repeats every field
-    of `run.started` for the same `job` and `run`.
-  - `pomade-agents` subscribes (its "agent live here?" and event B use them), and never calls
-    Runner.
-- **The `pomade-runner` command.**
-
-**Runner uses:**
-
-| Source | What |
-|---|---|
-| Platform (`pomade:E-027`) | app hosting |
-| Platform (`pomade:E-028`) | always-on backend, commands, broker, launching Pomade |
-| Platform (`pomade:E-029`) | side panel and badge |
-| Platform (`pomade:E-030`) | projects, stable ids, repos (`git.read`: the names git jobs take), open file, folder picker |
-| Platform (`pomade:E-031`) | events: `pomade.ready`, `project.opened`, `project.created`, `project.renamed` (hooks, projects) |
-| Platform (`pomade:E-032`) | notices and the closed-Pomade queue |
-| Platform (`pomade:E-033`) | Open session |
-| Platform (`pomade:E-034`) | attached terminals: the pane, `tabs.openAttached`, `attachedTab.action` |
-| `pomade-git` (`pomade:E-042`) | git operations, structured results; a done pull's `commits` (`pomade:T-321`) |
-| Platform (`pomade:T-320`) | `git.reveal`: Open in Git on a failed repo (`git.read`) |
-| `pomade-kit` (v0.19.0) | SDK, schedule format, date phrases, agent scanners, the keeper library and attach protocol, the git runs contract |
-| `pomade-agents` (`calls`) | `roster.list`, `roster.launchSpec`, `roster.projectsFor`, `sessions.lastMessage`, `sessions.find` (`src/integrations/agents.ts`); events B `session.closed` and C `session.statusChanged` (`src/integrations/agent-events.ts`, the agents' hooks) |
-
-## Stack
-
-TypeScript (strict) everywhere, on `pomade-kit` (`github:dd-voronov/pomade-kit#v0.19.0`).
-
-| Part | Built with | Why |
-|---|---|---|
-| UI | React 19, CSS modules over `src/ui/tokens.css`, bundled by Vite | the tab grows into several views and a form with many dependent fields: component state and composition carry that; Pomade's renderer is React with CSS modules and tokens, so the look and the habits are shared; no UI framework on top |
-| Scheduler, keeper, command | Node programs on Pomade's runtime (Electron in Node mode), each bundled by esbuild into one `.mjs` file with everything it imports; the four packages the keeper loads at run time ship beside them | an installed copy has no `node_modules` of the repo; one file per entry runs from the build folder alone |
-| Tests | vitest for logic; Playwright for the built app — the UI in `pomade-kit`'s fake host, the scheduler and command as processes, Runner hosted by a real Pomade, the install script | the family's split: input matrices in vitest, behavior through the real thing in e2e |
-| Lint | ESLint flat config, type-aware typescript-eslint with hand-picked rules, React's hook rules, Playwright's rules | the platform's approach: silent bug classes, not style |
-
-**The build folder** (`dist/`, what `pomade apps install` copies):
-
-| Path | What |
-|---|---|
-| `manifest.json`, `icon.svg` | the static files of `app/` |
-| `index.html`, `assets/` | the UI — one bundle for the panel, the tab and a plain browser |
-| `backend/scheduler.mjs` | the scheduler, the manifest's always-on `backend` (`restartOnUpdate`: an update restarts it) |
-| `backend/keeper.mjs` | the keeper's entry, which the scheduler starts with the keeper's version as its argument |
-| `node_modules/` | what the keeper loads with `require` at run time, which a bundle cannot carry: `node-pty` (`package.json`, `lib/`, `prebuilds/darwin-*` — its binary is N-API, so it loads in any Pomade runtime with no rebuild; the build sets its helper's executable bit), `@xterm/headless`, `@xterm/addon-serialize`, `@xterm/addon-unicode11` — the versions `pomade-kit` resolves |
-| `cli/pomade-runner.mjs` | the `pomade-runner` command |
-| `skills/pomade-runner-jobs/` | the agent skill, from `app/skills/` (the manifest's `skills`; the build checks each folder has its `SKILL.md`) |
-
-**The agent skill** (`src/jobs/skill/place.ts`). Runner keeps a copy of its build's skill at
-`<workspace>/<skills-folder>/pomade-runner-jobs/SKILL.md` — a real file, not a link, since the
-skills folder may be its own git repository synced to other Macs — and gives it to no agent:
-which agents get it is the person's choice, made by hand or in the Agents app.
-- **When:** the scheduler places it at every start — an install, a bundled install and an update
-  all start or restart it (`restartOnUpdate`) — when `skills-folder` changes, and when Settings asks
-  (`environment.get`). The file is written (a temporary file renamed) only when its text differs
-  from the installed one.
-- **Moving:** where this Mac placed it last is recorded in the state folder (`skill.json`); once the
-  copy is written in a new folder, the old `pomade-runner-jobs/` folder is removed.
-- **Only its own copy:** Runner writes into or removes a `pomade-runner-jobs/` folder only when it
-  is missing, empty, or Runner's copy — a real folder holding just a `SKILL.md` whose frontmatter
-  names `pomade-runner-jobs` (Finder's `.DS_Store` aside). Anything else at that name is left, and
-  said.
-- **A problem** — a skills folder Runner cannot write, the name taken by something else — is one
-  line in the scheduler's log (once, until it changes) and the reason in Settings' skill row,
-  never a crash; the copy placed before stays until a new one is written.
-- **Uninstall:** `./uninstall` removes the app, then the copy recorded in that Pomade's state
-  folder (`node src/jobs/skill/place.ts remove [--stable]`) — an uninstalled app's skill would
-  describe a command that is gone. Links someone made to the copy are theirs and stay.
-
-**Theme.** Light only: `src/ui/tokens.css` carries the approved prototype's light token set —
+**Theme.** Light only: `src/ui/tokens.css` carries the light token set —
 Pomade's names and light values — and `color-scheme: light`, whatever the system's colour scheme.
 
-**The scheduler's control socket.** The command reaches the scheduler over the scheduler's own
-unix socket, `<userData>/app-state/pomade-runner/scheduler.sock`, so it works with Pomade closed:
-- **Protocol:** one JSON object per line, request → response; `src/scheduler/control/protocol.ts`
-  is the one definition both sides import. A request names the protocol version it speaks and
-  every response carries the scheduler's; a mismatch is answered with an error that says both. An
-  older scheduler answers a method it does not have with `unknown-method`.
-- **Methods:** `status` (the scheduler: version, pid, start, last tick on its clock, Pomade link) ·
-  `sessions` (the keeper's state and every session with its job, run and output log;
-  `pomade-runner sessions` prints it) · `services` (the keeper's state and every service: its
-  `ServiceStatus`; `pomade-runner services` prints it) · `run { job }` (Run now: a script's run,
-  or a service's Start — `RunStarted`) · `stop { job }` · `restart { job }` (Stop, Restart a
-  service, answering its status after) · `enable { job }` · `disable { job }` (`enabled:` written
-  into the job's file) · `list` (every job: `JobListing`; `pomade-runner list`) · `history { job,
-  limit }` (`HistoryPage`; `pomade-runner history`) · `runs` (`RunsReport`; `pomade-runner runs`) ·
-  `switch { position }` (sets the switch, or — `position: null` — reads it: `SwitchState`;
-  `pomade-runner pause`, `resume`) · `resumeJob { job }` (lifts the loop guard's pause of a job:
-  `JobResumed`; `pomade-runner resume-job`) · `missed { job, choice }` (a missed-run choice —
-  `MissedChoice`: `run-now`, `run-at` with `at`, `skip`, `run-all`, `run-others` with `run` — answered
-  `MissedSettled`: the job, when it runs and how many runs; `pomade-runner missed`). A job is named by its id or name; what cannot be done is
-  `refused`, with the reason — "Runs" and "Services" say what.
-- **Location:** found from `POMADE_APP_KEY_FILE` (`<userData>/app-keys/pomade-runner`), which
-  Pomade gives the scheduler and the command alike — each Pomade (dev, stable, a test run) has its
-  own scheduler.
-- **One scheduler per Pomade:** a second one finds the first answering on the socket and exits
-  cleanly, never touching the keeper; the socket file of a killed scheduler is replaced.
-- **Starting needs** `POMADE_APP_KEY_FILE` (a readable key) and `POMADE_KEEPER_SOCKET`; without
-  them the scheduler logs why and exits with 1.
+## Test hooks
 
-**Test hooks.** Every part of the scheduler reads the time from the `Clock` it is given
+Every part of the scheduler reads the time from the `Clock` it is given
 (`src/scheduler/clock.ts`). For a run of the real process, `POMADE_RUNNER_TICK_MS` shortens its
 1 s tick, and `POMADE_RUNNER_CLOCK` (an ISO date-time; without an offset, local time) starts its
 clock at another time, running `POMADE_RUNNER_CLOCK_RATE` times as fast (default 1) — so a day's

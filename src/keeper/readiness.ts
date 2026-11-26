@@ -1,4 +1,4 @@
-// A service's readiness checks that need the network (docs/DESIGN.md "Services"): `ready: { port }`
+// A service's readiness checks that need the network (docs/ARCHITECTURE.md "Services"): `ready: { port }`
 // is up once the port on this Mac accepts a connection, `ready: { url }` once the URL answers at all
 // — any HTTP status, a redirect included: the server is up, whatever it says.
 

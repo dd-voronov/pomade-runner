@@ -107,7 +107,7 @@ export const RUN_STARTED_EVENT = "run.started";
 /** Published on the bus when a run that started ends: `RunFinishedPayload`. */
 export const RUN_FINISHED_EVENT = "run.finished";
 
-/** `run.started`'s payload (docs/DESIGN.md "Interfaces"). */
+/** `run.started`'s payload (docs/ARCHITECTURE.md "Interfaces"). */
 export interface RunStartedPayload {
   /** The job's id. */
   job: string;

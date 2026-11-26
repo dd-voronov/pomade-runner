@@ -1,4 +1,4 @@
-// Chains (docs/DESIGN.md "Chains"): when a run of a job ends, the jobs that follow it fire. A run
+// Chains (docs/ARCHITECTURE.md "Chains"): when a run of a job ends, the jobs that follow it fire. A run
 // that ended `done` or `failed` is a parent — a failure of any kind: an exit code, a signal, a time
 // limit, a start the keeper refused, a session lost. A run stopped by the person, skipped or missed
 // is none: the person stepped in, or nothing ran. A follower fires when its `after.result` is the
