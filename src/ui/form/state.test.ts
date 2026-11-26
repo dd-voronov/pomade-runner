@@ -33,7 +33,7 @@ const PROJECTS: ProjectRecord[] = [
   { id: "p-graph", name: "Graphs", root: "Projects/blog/graphs" },
 ];
 
-const HAND = "---\nkind: service # keeps the web app up\nname: Dev server\nproject: p-blog\nfolder: Projects/blog\ncommand: ./start.sh\nready: { port: 5173 } # vite\nowner: daniil\n---\nNotes for humans.\n";
+const HAND = "---\nkind: service # keeps the web app up\nname: Dev server\nproject: p-blog\nfolder: Projects/blog\ncommand: ./start.sh\nready: { port: 5173 } # vite\nowner: sam\n---\nNotes for humans.\n";
 
 function snapshotOf(files: Record<string, string>): JobsSnapshot {
   return checkJobs(Object.entries(files).map(([path, text]) => ({ path, text })), { workspace: "/ws", projects: PROJECTS });
@@ -238,7 +238,7 @@ describe("editing a job file", () => {
     expect(fieldChanges(state)).toEqual({ command: "npm run dev", notify: "always" });
     expect(wouldBe(state, WITH_WEB, PROJECTS)).toEqual({
       path: PATH,
-      text: HAND.replace("./start.sh", "npm run dev").replace("owner: daniil\n", "owner: daniil\nnotify: always\n"),
+      text: HAND.replace("./start.sh", "npm run dev").replace("owner: sam\n", "owner: sam\nnotify: always\n"),
       movesFrom: null,
     });
     // Back to what the file says: nothing to write.
@@ -249,7 +249,7 @@ describe("editing a job file", () => {
     const state = setValue(edit(), "description", "  Serves the blog.\nRestart it after a pull.\n\n");
     expect(fieldChanges(state)).toEqual({ description: "Serves the blog.\nRestart it after a pull." });
     const text = wouldBe(state, WITH_WEB, PROJECTS).text;
-    expect(text).toBe(HAND.replace("owner: daniil\n", "owner: daniil\ndescription: |-\n  Serves the blog.\n  Restart it after a pull.\n"));
+    expect(text).toBe(HAND.replace("owner: sam\n", "owner: sam\ndescription: |-\n  Serves the blog.\n  Restart it after a pull.\n"));
     const saved = editForm(PATH, text);
     expect(saved?.values.description).toBe("Serves the blog.\nRestart it after a pull.");
     if (saved === null) throw new Error("not editable");

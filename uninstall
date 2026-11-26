@@ -3,7 +3,7 @@
 # workspace's skills folder from this Mac (only when the folder holds Runner's copy alone).
 #
 #   ./uninstall            from the dev Pomade
-#   ./uninstall --stable   from the stable Pomade — only on Daniil's explicit word
+#   ./uninstall --stable   from the stable Pomade — only on the Owner's explicit word
 #
 # POMADE_REPO is the Pomade checkout whose `pomade` command does the removal (default ../Pomade).
 set -eu

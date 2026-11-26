@@ -2082,7 +2082,7 @@ test.describe("the Jobs view", () => {
   });
 
   test("T-041 · a job's description: one line in the form until a click opens its box; saved, the file holds it, Edit shows it, and the name's tooltip shows it on as many lines — the trigger's own tooltip never over the name", async ({ page }) => {
-    const THREE = "Backs up the notes folder to the NAS.\nNeeds the drive mounted (Mount drive).\nAsk Daniil before changing the target.";
+    const THREE = "Backs up the notes folder to the NAS.\nNeeds the drive mounted (Mount drive).\nAsk Sam before changing the target.";
     const ONE = "Mounts the backup drive at login.";
     await start(page, {}, { "backup.md": BACKUP, "mount.md": file("script", "Mount drive", `description: ${ONE}\nfolder: .\ncommand: ./mount.sh\nhook: { event: login }\n`) });
     const tip = app(page).getByTestId("tooltip");
@@ -2123,7 +2123,7 @@ test.describe("the Jobs view", () => {
     await app(page).getByTestId("form-save").click();
     await expect(app(page).getByTestId("tab-jobs")).toBeVisible();
     expect(await page.evaluate(() => window.fakeHost.readFile("Apps/pomade-runner/jobs/backup.md"))).toBe(
-      BACKUP.replace(/---\n$/, "description: |-\n  Backs up the notes folder to the NAS.\n  Needs the drive mounted (Mount drive).\n  Ask Daniil before changing the target.\n---\n"),
+      BACKUP.replace(/---\n$/, "description: |-\n  Backs up the notes folder to the NAS.\n  Needs the drive mounted (Mount drive).\n  Ask Sam before changing the target.\n---\n"),
     );
 
     // Its name shows the three lines; the trigger under it keeps its own tooltip.

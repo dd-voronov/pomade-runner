@@ -4,7 +4,7 @@
 # into the workspace's skills folder; no agent is given it.
 #
 #   ./install            into the dev Pomade
-#   ./install --stable   into the stable Pomade — only on Daniil's explicit word
+#   ./install --stable   into the stable Pomade — only on the Owner's explicit word
 #
 # POMADE_REPO is the Pomade checkout whose `pomade` command does the install (default ../Pomade).
 set -eu

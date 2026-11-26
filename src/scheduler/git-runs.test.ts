@@ -56,9 +56,9 @@ function gitJob(text: string): GitJob {
 describe("the command line", () => {
   it("quotes every word for the shell, and sends the JSON result to the run's file", () => {
     expect(shellQuote("it's")).toBe(`'it'\\''s'`);
-    const job = gitJob("---\nkind: git\nname: Daniil's notes · twice\ngit: { operation: commit-push, repos: [notes, \"My repo\"] }\nschedule:\n  daily: { at: 13:00 }\n---\n");
+    const job = gitJob("---\nkind: git\nname: Sam's notes · twice\ngit: { operation: commit-push, repos: [notes, \"My repo\"] }\nschedule:\n  daily: { at: 13:00 }\n---\n");
     expect(gitCommandLine("/home/bin/pomade-git", job, "/state/output/notes/r.json")).toBe(
-      `'/home/bin/pomade-git' 'commit-push' 'notes' 'My repo' '--json' '--job' 'Daniil'\\''s notes · twice' > '/state/output/notes/r.json'`,
+      `'/home/bin/pomade-git' 'commit-push' 'notes' 'My repo' '--json' '--job' 'Sam'\\''s notes · twice' > '/state/output/notes/r.json'`,
     );
   });
 });
