@@ -26,7 +26,7 @@ const hostApi = query.get("hostApi");
 const projects = query.get("projects");
 
 // `?projects=prototype` gives the host the approved prototype's projects and groups, for the
-// screenshots that compare with it (`scripts/shots.mjs`).
+// screenshots that compare with it.
 const PROTOTYPE_PROJECTS = {
   groups: [
     { id: "g-os", name: "Personal" },

@@ -14,7 +14,7 @@ connection are one-screen messages. Everything the UI knows comes from Runner's 
 broker (`jobs.list`, `services.list`, `runs.list`, `history.list`, `runs.get`, `runs.output`,
 `settings.get`, `environment.get`, and the actions) and from Pomade (projects, repos, the route);
 `src/ui/useRunnerApi.ts` holds the live reads, each asked again on the scheduler's change event.
-The look is light only, on the tokens of the approved prototype.
+The look is light only.
 
 The design is in [DESIGN](../DESIGN.md) "UI" (side panel, Runner tab, routes, result card, the
 output tab, job form, deleting a job, help) — this page is the code map and what a change must keep true.

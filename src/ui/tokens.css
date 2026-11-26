@@ -1,5 +1,4 @@
-/* Runner's design tokens, light only. The names and values are the approved prototype's
-   (`prototype/index.html`), whose light set is Pomade's renderer tokens.css, so a Runner frame reads
+/* Runner's design tokens, light only: the light set of Pomade's renderer tokens.css, so a Runner frame reads
    as part of the window around it. Every colour, size, radius, shadow and duration in the UI's CSS
    is one of these. */
 

@@ -116,7 +116,7 @@ After it:
   find the command once Pomade's command folder is on `PATH` (Pomade ▸ Settings ▸ General ▸
   Commands).
 
-`./install --stable` installs into the stable Pomade. That happens only on the Owner's explicit word.
+`./install --stable` installs into the stable Pomade.
 
 To remove Runner: `./uninstall` — it removes the app (`pomade apps remove pomade-runner`), then the
 skill copy this Mac placed. `./uninstall --stable` is for the stable Pomade.
