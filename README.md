@@ -80,6 +80,9 @@ data and home. A Pomade you are using is never touched.
 
 `RUNNER_SHOTS=<folder> npm run test:e2e` also saves screenshots of every UI state.
 
+`RUNNER_E2E_PORT_BASE` (default 4327) moves the e2e's two web servers to that port and the next, so
+two checkouts run their e2e at the same time.
+
 ## Install
 
 ```sh
